@@ -73,7 +73,8 @@ enum class VPIObjectForm : uint8_t {
   Typespec,
   TypespecMember,
   Range,
-  IntegralConstant
+  IntegralConstant,
+  ClassObject
 };
 
 enum class VPISemanticIteratorKind : uint8_t {
@@ -134,6 +135,11 @@ struct __vpiHandle {
   // owner.  Keep that provenance on the opaque handle itself so a direct
   // hierarchical lookup of a static class member remains usable.
   bool classDefinitionOrigin = false;
+  // Weak receiver identity. IEEE 37.2.2 releases these handles when GC
+  // reclaims the object; a VPI reference must not extend its lifetime.
+  obelisk_rt_object_v1 *dynamicObject = nullptr;
+  uint64_t dynamicIdentity = 0;
+
   uint32_t selectionRootType = 0;
   obelisk::reflection::VPIIndexedAccessKind selectionAccessKind =
       obelisk::reflection::VPIIndexedAccessKind::VariableElement;
@@ -233,6 +239,10 @@ struct VPIState {
   uint64_t nextCallbackId = 1;
   uint64_t nextSystemTfId = 1;
   uint32_t callbackDepth = 0;
+  uint32_t callDepth = 0;
+  uint64_t lastClassCollection = 0;
+  bool hasDynamicHandles = false;
+
   uint64_t runtimeObserverCallbacks = 0;
   std::unordered_map<uint64_t, VPICallback> callbacks;
   std::vector<uint64_t> callbackOrder;
@@ -315,10 +325,66 @@ void setError(VPIState *state, const char *message, int level = vpiError,
   OBELISK_RT_CATCH_ALL {}
 }
 
-void beginVPICall() {
-  if (VPIState *state = currentState())
-    state->errorLevel = 0;
+bool dynamicHandleIsLive(const __vpiHandle &handle,
+                         obelisk_rt_gc_lane_v1 *lane) {
+  ManagedObjectLease lease;
+  return obelisk_rt_managed_object_acquire(
+             lane, handle.dynamicObject, OBELISK_RT_MANAGED_INVALID, &lease) ==
+             OBELISK_RT_OK &&
+         obelisk_rt_v1_object_id(handle.dynamicObject) == handle.dynamicIdentity;
 }
+
+// Only the VPI owner thread mutates its handle registry. Collection may run
+// on another lane, so use its existing atomic collection counter to defer
+// reclamation until the next outer VPI call. Never acquire the transaction
+// lock from inside the collector, or erase a handle borrowed by a nested call.
+void pruneDynamicHandles(VPIState *state) {
+  if (!state->hasDynamicHandles || state->callDepth || state->callbackDepth)
+    return;
+  obelisk_rt_gc_statistics_v1 statistics{};
+  if (obelisk_rt_v1_gc_statistics(state->context, &statistics) != OBELISK_RT_OK ||
+      statistics.collection_count == state->lastClassCollection)
+    return;
+  ManagedExecutionScope managed(state->context);
+  if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane())
+    return;
+  // Entering the lane may have waited for another collection. Snapshot only
+  // after entry, so a later collection always causes another pruning pass.
+  if (obelisk_rt_v1_gc_statistics(state->context, &statistics) != OBELISK_RT_OK)
+    return;
+  state->hasDynamicHandles = false;
+  for (auto entry = state->handles.begin(); entry != state->handles.end();) {
+    const __vpiHandle &handle = *entry->second;
+    if (handle.dynamicObject &&
+        !dynamicHandleIsLive(handle, managed.getLane())) {
+      entry = state->handles.erase(entry);
+      continue;
+    }
+    state->hasDynamicHandles |= handle.dynamicObject != nullptr;
+    ++entry;
+  }
+  state->lastClassCollection = statistics.collection_count;
+}
+
+class VPICallScope {
+public:
+  VPICallScope() : state(currentState()) {
+    if (state) {
+      state->errorLevel = 0;
+      pruneDynamicHandles(state);
+      ++state->callDepth;
+    }
+  }
+  ~VPICallScope() {
+    if (state && currentState() == state)
+      --state->callDepth;
+  }
+  VPICallScope(const VPICallScope &) = delete;
+  VPICallScope &operator=(const VPICallScope &) = delete;
+
+private:
+  VPIState *state;
+};
 
 VPIState *requireState() {
   VPIState *state = currentState();
@@ -346,7 +412,16 @@ __vpiHandle *findHandle(vpiHandle opaque) {
     setError(state, "invalid or released VPI handle");
     return nullptr;
   }
-  return found->second.get();
+  __vpiHandle *handle = found->second.get();
+  if (handle->dynamicObject) {
+    ManagedExecutionScope managed(state->context);
+    if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane() ||
+        !dynamicHandleIsLive(*handle, managed.getLane())) {
+      setError(state, "invalid or reclaimed VPI class object handle");
+      return nullptr;
+    }
+  }
+  return handle;
 }
 
 __vpiHandle *validate(vpiHandle opaque,
@@ -499,6 +574,15 @@ vpiHandle makeTypespecHandle(VPIState *state, obelisk_rt_design_cursor_v1 base,
         exactType != vpiInterfaceTypespec)
       return nullptr;
     return makeHandle(state, info.identity_target, exactType);
+  }
+  if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_CLASS) {
+    obelisk_rt_design_cursor_v1 canonical{};
+    auto status = obelisk_rt_cached_vpi_semantic_class_typespec(
+        state->context, semanticCursor, &canonical);
+    if (status == OBELISK_RT_OK)
+      return makeHandle(state, canonical, vpiClassTypespec);
+    if (status != OBELISK_RT_EOF)
+      return nullptr;
   }
   uint32_t exactType = semanticTypespecKind(state, semanticCursor);
   if (exactType == 0)
@@ -3661,6 +3745,92 @@ bool decodeValue(__vpiHandle *handle, const s_vpi_value *source, uint64_t width,
   }
 }
 
+vpiHandle makeClassObjectHandle(__vpiHandle *source) {
+  if (source->classDefinitionOrigin) {
+    setError(source->owner,
+             "a lexical class variable has no live class object", vpiNotice);
+    return nullptr;
+  }
+  ContextTransaction transaction(source->owner->context);
+  ManagedExecutionScope managed(source->owner->context);
+  if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane()) {
+    setError(source->owner, "class VPI query cannot enter GC scope", vpiInternal);
+    return nullptr;
+  }
+  uint64_t word = 0;
+  if (!readManagedStateWord(source, word) || word == 0)
+    return nullptr;
+  auto *object = obelisk_rt_object_from_managed_word(word);
+  ManagedObjectLease lease;
+  if (!object ||
+      obelisk_rt_managed_object_acquire(managed.getLane(), object,
+                                        OBELISK_RT_MANAGED_CLASS, &lease) !=
+          OBELISK_RT_OK ||
+      obelisk_rt_managed_object_context(object) != source->owner->context) {
+    setError(source->owner, "invalid class reference in VPI design state",
+             vpiInternal);
+    return nullptr;
+  }
+  uint64_t identity = obelisk_rt_v1_object_id(object);
+  if (identity == 0 || identity > INT64_MAX) {
+    setError(source->owner, "invalid class identity in VPI design state",
+             vpiInternal);
+    return nullptr;
+  }
+  obelisk_rt_design_cursor_v1 typespec{};
+  bool isProtected = false;
+  const auto *descriptor = obelisk_rt_managed_object_class_descriptor(object);
+  obelisk_rt_status typeStatus =
+      descriptor ? obelisk_rt_cached_vpi_class_typespec(
+                       source->owner->context, descriptor->class_id, &typespec)
+                 : OBELISK_RT_INVALID_HANDLE;
+  if ((typeStatus != OBELISK_RT_OK && typeStatus != OBELISK_RT_EOF) ||
+      (typeStatus == OBELISK_RT_OK &&
+       !fixedProtectionFor(source->owner, typespec, isProtected))) {
+    setError(source->owner, "class VPI type metadata is unavailable", vpiInternal);
+    return nullptr;
+  }
+  OBELISK_RT_TRY {
+    auto handle = std::make_unique<__vpiHandle>();
+    handle->owner = source->owner;
+    handle->form = VPIObjectForm::ClassObject;
+    handle->exactVpiType = vpiClassObj;
+    handle->allocationScheme = vpiDynamicScheme;
+    handle->dynamicObject = object;
+    handle->dynamicIdentity = identity;
+    handle->cursor = typespec;
+    handle->protectedObject = isProtected;
+    source->owner->hasDynamicHandles = true;
+    return keepHandle(source->owner, std::move(handle));
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(source->owner, "could not allocate VPI class object handle",
+             vpiSystem);
+    return nullptr;
+  }
+}
+
+vpiHandle classObjectTypespec(__vpiHandle *handle) {
+  ManagedExecutionScope managed(handle->owner->context);
+  if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane())
+    return nullptr;
+  ManagedObjectLease lease;
+  if (obelisk_rt_managed_object_acquire(
+          managed.getLane(), handle->dynamicObject, OBELISK_RT_MANAGED_CLASS,
+          &lease) != OBELISK_RT_OK ||
+      obelisk_rt_v1_object_id(handle->dynamicObject) != handle->dynamicIdentity)
+    return nullptr;
+  const auto *descriptor =
+      obelisk_rt_managed_object_class_descriptor(handle->dynamicObject);
+  obelisk_rt_design_cursor_v1 typespec{};
+  if (!descriptor ||
+      obelisk_rt_cached_vpi_class_typespec(
+          handle->owner->context, descriptor->class_id, &typespec) !=
+          OBELISK_RT_OK)
+    return nullptr;
+  return makeHandle(handle->owner, typespec, vpiClassTypespec);
+}
+
 } // namespace
 
 obelisk_rt_status
@@ -3952,7 +4122,7 @@ obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context) {
 
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
                                                            vpiHandle scope) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   VPIState *state = requireState();
   if (!state || !name)
     return nullptr;
@@ -4048,7 +4218,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
 
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
                                                    vpiHandle reference) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   // IEEE 1800-2023 37.43 detail 4 defines this NULL-root query as the
   // currently active frame. Live frame materialization is intentionally a
   // separate feature; outside procedural execution the correct result is a
@@ -4081,6 +4251,10 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       obelisk_rt_cached_vpi_type(handle->owner->context, handle->cursor,
                                  &sourceType) != OBELISK_RT_OK)
     return nullptr;
+  if (sourceType == vpiClassVar && type == vpiClassObj)
+    return makeClassObjectHandle(handle);
+  if (handle->form == VPIObjectForm::ClassObject)
+    return type == vpiClassTypespec ? classObjectTypespec(handle) : nullptr;
   // Class-variable type queries denote the declared specialization even
   // when the image also records a lexical typedef-use relation (37.32/37.33).
   // The semantic path retains the lexical exception for class definitions.
@@ -4365,6 +4539,15 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       obelisk::reflection::VPITraversalMode::Handle);
   if (edge && edge->automaticRelation ==
                   obelisk::reflection::VPIAutomaticRelation::ParentScope) {
+    // Static declarations and anchored code units carry lexical ownership in
+    // relation records. Their physical owner only makes the image reachable.
+    if (!handle->statement) {
+      obelisk_rt_design_info_v1 info{};
+      if (!infoFor(handle, info) ||
+          info.kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+          (info.capabilities & OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0)
+        return nullptr;
+    }
     obelisk_rt_design_cursor_v1 parent{};
     uint32_t parentType = 0;
     bool parentIsStatement = false;
@@ -4385,34 +4568,14 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
         obelisk::runtime::hasClassDefinitionValueOrigin(
             sourceType, handle->classDefinitionOrigin, parentType));
   }
-  // Generated traversal legality is authoritative for statement objects.
-  // Helper/container statement kinds deliberately have no vpiScope edge and
-  // must not fall through to the name-based hierarchy compatibility path.
-  if (handle->statement)
-    return nullptr;
-  if (type != vpiScope)
-    return nullptr;
-  std::string fullName;
-  if (!nameFor(handle, fullName))
-    return nullptr;
-  size_t separator = fullName.rfind('.');
-  if (separator == std::string::npos) {
-    obelisk_rt_design_cursor_v1 root{};
-    if (obelisk_rt_cached_design_root(handle->owner->context, &root) !=
-        OBELISK_RT_OK)
-      return nullptr;
-    return makeHandle(handle->owner, root);
-  }
-  fullName.resize(separator);
-  obelisk_rt_design_cursor_v1 parent{};
-  return lookup(handle->owner, fullName, parent)
-             ? makeHandle(handle->owner, parent)
-             : nullptr;
+  // A hierarchical spelling does not establish a VPI relation. Queries
+  // without a generated edge or an explicit/semantic target return NULL.
+  return nullptr;
 }
 
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
                                                     vpiHandle reference) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   VPIState *state = requireState();
   if (!state)
     return nullptr;
@@ -4681,7 +4844,14 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
   const auto *edge = obelisk::reflection::findVPITraversal(
       sourceType, static_cast<uint32_t>(type),
       obelisk::reflection::VPITraversalMode::Iterate);
-  if (!edge || edge->statementContainment)
+  // Physical children implement only generated direct-child relations.
+  // Cross-references (for example imports) require explicit targets even if
+  // a physical child happens to have a compatible kind. NULL-root discovery
+  // remains defined by the generated root target set.
+  if (!edge || edge->statementContainment ||
+      (reference &&
+       (!sourceDesign || edge->automaticRelation !=
+                             obelisk::reflection::VPIAutomaticRelation::DirectChild)))
     return nullptr;
   obelisk_rt_design_cursor_v1 cursor{};
   obelisk_rt_status status =
@@ -4715,7 +4885,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
 }
 
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   __vpiHandle *iterator = validate(opaque, VPIHandleKind::Iterator);
   if (!iterator)
     return nullptr;
@@ -4996,7 +5166,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
                                                 vpiHandle opaque) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   if (!opaque) {
     VPIState *state = requireState();
     if (!state)
@@ -5029,10 +5199,12 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
           obelisk::reflection::VPIPropertyRealization::FixedImage ||
       propertyDescriptor->realization ==
           obelisk::reflection::VPIPropertyRealization::DefinitionImage) {
-    // Runtime-created handles have no immutable physical source and are never
-    // protected.  All source-code objects use the validated sparse image.
+    // Registration handles have no source protection. Dynamic class objects
+    // inherit protection from their allocated type; declarations use the image.
     if (handle->kind != VPIHandleKind::Object && property == vpiIsProtected)
       return 0;
+    if (handle->form == VPIObjectForm::ClassObject && property == vpiIsProtected)
+      return handle->protectedObject;
     VPIFixedPropertyValue value{};
     if (!fixedPropertyFor(handle, *propertyDescriptor, value))
       return vpiUndefined;
@@ -5447,7 +5619,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT64 vpi_get64(PLI_INT32 property,
                                                   vpiHandle opaque) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   __vpiHandle *handle = findHandle(opaque);
   if (!handle)
     return vpiUndefined;
@@ -5470,6 +5642,8 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT64 vpi_get64(PLI_INT32 property,
       return vpiUndefined;
     return static_cast<PLI_INT64>(value.payload);
   }
+  if (property == vpiObjId && handle->form == VPIObjectForm::ClassObject)
+    return static_cast<PLI_INT64>(handle->dynamicIdentity);
   if (property == vpiObjId && vpiTypeForHandle(handle) == vpiClassVar) {
     ContextTransaction transaction(handle->owner->context);
     ManagedExecutionScope managed(handle->owner->context);
@@ -5509,7 +5683,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT64 vpi_get64(PLI_INT32 property,
 
 extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
                                                      vpiHandle opaque) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   __vpiHandle *handle = findHandle(opaque);
   if (!handle)
     return nullptr;
@@ -5833,7 +6007,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
 
 extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
                                                  p_vpi_value destination) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   __vpiHandle *handle = validate(opaque);
   if (!handle)
     return;
@@ -6190,7 +6364,7 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
 
 extern "C" OBELISK_VPI_EXPORT void vpi_get_time(vpiHandle opaque,
                                                 p_vpi_time destination) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   VPIState *state = requireState();
   if (!state)
     return;
@@ -6255,7 +6429,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_put_value(vpiHandle opaque,
                                                       p_vpi_value source,
                                                       p_vpi_time,
                                                       PLI_INT32 flags) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   __vpiHandle *handle = validate(opaque);
   if (!handle)
     return nullptr;
@@ -6305,7 +6479,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_put_value(vpiHandle opaque,
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_compare_objects(vpiHandle first,
                                                             vpiHandle second) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   __vpiHandle *left = findHandle(first);
   __vpiHandle *right = findHandle(second);
   if (!left || !right || left->kind != right->kind)
@@ -6325,6 +6499,10 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_compare_objects(vpiHandle first,
     setError(left->owner, "VPI handle kind does not denote an object");
     return 0;
   }
+  if (left->form == VPIObjectForm::ClassObject ||
+      right->form == VPIObjectForm::ClassObject)
+    return left->form == right->form &&
+           left->dynamicIdentity == right->dynamicIdentity;
   bool sameSelection =
       left->selectionRootType == right->selectionRootType &&
       left->selectionAccessKind == right->selectionAccessKind &&
@@ -6358,7 +6536,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_compare_objects(vpiHandle first,
 }
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_release_handle(vpiHandle opaque) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   VPIState *state = requireState();
   const uintptr_t token = reinterpret_cast<uintptr_t>(opaque);
   if (!state || !token) {
@@ -6370,6 +6548,8 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_release_handle(vpiHandle opaque) {
     setError(state, "VPI handle was already released or is invalid");
     return 0;
   }
+  if (found->second->dynamicObject && !findHandle(opaque))
+    return 0;
   state->handles.erase(found);
   return 1;
 }
@@ -6397,7 +6577,7 @@ vpi_chk_error(p_vpi_error_info destination) {
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_vprintf(PLI_BYTE8 *format,
                                                     va_list arguments) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   return requireState() && format ? std::vprintf(format, arguments) : -1;
 }
 
@@ -6410,19 +6590,19 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_printf(PLI_BYTE8 *format, ...) {
 }
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_flush(void) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   return requireState() ? std::fflush(nullptr) : -1;
 }
 
 extern "C" OBELISK_VPI_EXPORT void *vpi_get_userdata(vpiHandle opaque) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   __vpiHandle *handle = validate(opaque);
   return handle ? handle->userData : nullptr;
 }
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_put_userdata(vpiHandle opaque,
                                                          void *data) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   __vpiHandle *handle = validate(opaque);
   if (!handle)
     return 0;
@@ -6432,7 +6612,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_put_userdata(vpiHandle opaque,
 
 extern "C" OBELISK_VPI_EXPORT vpiHandle
 vpi_register_cb(p_cb_data callbackData) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   VPIState *state = currentState();
   if (!state || !callbackData || !callbackData->cb_rtn) {
     setError(state, "VPI callback registration requires data and a routine");
@@ -6551,7 +6731,7 @@ vpi_register_cb(p_cb_data callbackData) {
 }
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_remove_cb(vpiHandle opaque) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   VPIState *state = requireState();
   if (!state)
     return 0;
@@ -6566,7 +6746,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_remove_cb(vpiHandle opaque) {
 
 extern "C" OBELISK_VPI_EXPORT void vpi_get_cb_info(vpiHandle opaque,
                                                    p_cb_data destination) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   if (!destination)
     return;
   *destination = {};
@@ -6585,7 +6765,7 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_cb_info(vpiHandle opaque,
 
 extern "C" OBELISK_VPI_EXPORT void
 vpi_get_systf_info(vpiHandle opaque, p_vpi_systf_data destination) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   VPIState *state = requireState();
   if (destination)
     *destination = {};
@@ -6614,7 +6794,7 @@ vpi_get_systf_info(vpiHandle opaque, p_vpi_systf_data destination) {
 
 extern "C" OBELISK_VPI_EXPORT vpiHandle
 vpi_register_systf(p_vpi_systf_data registration) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   VPIState *state = currentState();
   if (!state || !registration) {
     setError(state, "VPI system task/function registration requires data");
@@ -6704,7 +6884,7 @@ vpi_register_systf(p_vpi_systf_data registration) {
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT32
 vpi_get_vlog_info(p_vpi_vlog_info info) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   static char product[] = "Obelisk";
   static char version[] = "prototype";
   VPIState *state = requireState();
@@ -6745,7 +6925,7 @@ vpi_get_vlog_info(p_vpi_vlog_info info) {
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get_data(PLI_INT32, PLI_BYTE8 *,
                                                      PLI_INT32) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   VPIState *state = requireState();
   if (!state)
     return 0;
@@ -6755,7 +6935,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get_data(PLI_INT32, PLI_BYTE8 *,
 
 extern "C" OBELISK_VPI_EXPORT void vpi_get_delays(vpiHandle opaque,
                                                   p_vpi_delay destination) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   VPIState *state = requireState();
   if (!state)
     return;
@@ -7013,7 +7193,7 @@ void failArrayValueQuery(VPIState *state, p_vpi_arrayvalue destination,
 extern "C" OBELISK_VPI_EXPORT void
 vpi_get_value_array(vpiHandle opaque, p_vpi_arrayvalue destination,
                     PLI_INT32 *indices, PLI_UINT32 num) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   VPIState *state = requireState();
   if (!state)
     return;
@@ -7419,7 +7599,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_multi(PLI_INT32 type,
                                                          vpiHandle first,
                                                          vpiHandle second,
                                                          ...) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   VPIState *state = requireState();
   if (!state)
     return nullptr;
@@ -7476,7 +7656,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_multi(PLI_INT32 type,
 }
 
 extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_mcd_name(PLI_UINT32 descriptor) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   VPIState *state = requireState();
   if (!state)
     return nullptr;
@@ -7502,13 +7682,13 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_mcd_name(PLI_UINT32 descriptor) {
 
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_index(vpiHandle object,
                                                             PLI_INT32 index) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   return handleByIndices(object, 1, &index);
 }
 
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_multi_index(
     vpiHandle object, PLI_INT32 count, PLI_INT32 *indices) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   return handleByIndices(object, count, indices);
 }
 
@@ -7601,7 +7781,7 @@ PLI_INT32 persistCoverage(VPIState *state, bool save, PLI_INT32 type,
 } // namespace
 
 extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_control(PLI_INT32 operation, ...) {
-  beginVPICall();
+  VPICallScope vpiCallScope;
   VPIState *state = requireState();
   if (!state)
     return 0;

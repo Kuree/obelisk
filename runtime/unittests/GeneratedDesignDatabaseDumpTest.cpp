@@ -174,6 +174,7 @@ TEST(GeneratedDesignDatabase, Dump) {
   uint64_t semanticTypeOffset = 0, semanticTypeCount = 0;
   uint64_t semanticEdgeOffset = 0, semanticEdgeCount = 0;
   uint64_t semanticRootBindingOffset = 0, semanticRootBindingCount = 0;
+  uint64_t classTypeBindingOffset = 0, classTypeBindingCount = 0;
   uint64_t relationIndexOffset = 0, relationIndexCount = 0;
   uint64_t relationIndexDimensionOffset = 0, relationIndexDimensionCount = 0;
   uint64_t relationIndexKeyOffset = 0, relationIndexKeyCount = 0;
@@ -212,6 +213,8 @@ TEST(GeneratedDesignDatabase, Dump) {
     semanticEdgeCount = directory.getSemanticTypeEdgeCount();
     semanticRootBindingOffset = directory.getSemanticRootBindingOffset();
     semanticRootBindingCount = directory.getSemanticRootBindingCount();
+    classTypeBindingOffset = directory.getClassTypeBindingOffset();
+    classTypeBindingCount = directory.getClassTypeBindingCount();
     relationIndexOffset = directory.getRelationIndexOffset();
     relationIndexCount = directory.getRelationIndexCount();
     relationIndexDimensionOffset = directory.getRelationIndexDimensionOffset();
@@ -277,6 +280,8 @@ TEST(GeneratedDesignDatabase, Dump) {
                        SemanticTypeEdgeLayout);
   ASSERT_SECTION_RANGE(semanticRootBindingOffset, semanticRootBindingCount,
                        SemanticRootBindingLayout);
+  ASSERT_SECTION_RANGE(classTypeBindingOffset, classTypeBindingCount,
+                       ClassTypeBindingLayout);
   ASSERT_SECTION_RANGE(relationIndexOffset, relationIndexCount,
                        RelationIndexLayout);
   ASSERT_SECTION_RANGE(relationIndexDimensionOffset,
@@ -494,6 +499,23 @@ TEST(GeneratedDesignDatabase, Dump) {
     output << "semantic_root source_table=" << table << " object=" << object
            << " object_name=" << names[object]
            << " semantic_type=" << root.getSemanticType() << '\n';
+  }
+
+  for (uint64_t index = 0; index != classTypeBindingCount; ++index) {
+    ClassTypeBindingView binding(image + classTypeBindingOffset +
+                                 index * ClassTypeBindingLayout.size);
+    uint32_t packed = binding.getTypespecIndexAndTable();
+    size_t table = static_cast<size_t>(unpackTableIndexKind(packed));
+    uint32_t target = unpackTableIndex(packed);
+    ASSERT_TRUE(table == static_cast<size_t>(TableKind::Object) ||
+                table == static_cast<size_t>(TableKind::StaticObject));
+    const auto &names = table == static_cast<size_t>(TableKind::Object)
+                            ? objectIndexNames
+                            : staticObjectIndexNames;
+    ASSERT_LT(target, names.size());
+    output << "class_type_binding class_id=" << binding.getClassID()
+           << " typespec_table=" << table << " typespec=" << target
+           << " typespec_name=" << names[target] << '\n';
   }
 
   for (uint64_t index = 0; index != relationIndexCount; ++index) {
@@ -2083,5 +2105,347 @@ TEST(GeneratedDesignDatabase, NetIdentityQueries) {
   EXPECT_EQ(vpi_release_handle(physicalSimNet), 1);
   EXPECT_EQ(vpi_release_handle(alias), 1);
   EXPECT_EQ(vpi_release_handle(physical), 1);
+  obelisk_rt_v1_context_destroy(runtime);
+}
+
+TEST(GeneratedDesignDatabase, ClassSpecializationBindings) {
+  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  ASSERT_NE(inputPath, nullptr);
+  mlir::DialectRegistry registry;
+  registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
+                  obelisk::sim::ObeliskSimulationDialect>();
+  mlir::MLIRContext context(registry);
+  auto module = mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
+  ASSERT_TRUE(module);
+  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
+  obelisk::SimulationBytecodeOptions options;
+  options.vpi = "read";
+  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  ASSERT_TRUE(mlir::succeeded(encoded));
+  uint64_t bytecodeChecksum = 0;
+  for (unsigned byte = 0; byte != 8; ++byte)
+    bytecodeChecksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
+  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+                                               encoded->executionFlags,
+                                               0,
+                                               encoded->bytecode.data(),
+                                               encoded->bytecode.size(),
+                                               encoded->designDatabase.data(),
+                                               encoded->designDatabase.size(),
+                                               encoded->stateBitCount,
+                                               bytecodeChecksum};
+  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+  obelisk_rt_context *runtime = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
+            OBELISK_RT_OK);
+  auto lookup = [&](const char *name) {
+    obelisk_rt_design_cursor_v1 cursor{};
+    EXPECT_EQ(obelisk_rt_cached_design_lookup(
+                  runtime, reinterpret_cast<const uint8_t *>(name),
+                  std::strlen(name), &cursor),
+              OBELISK_RT_OK);
+    return cursor;
+  };
+  obelisk_rt_design_cursor_v1 one{}, two{};
+  ASSERT_EQ(obelisk_rt_cached_vpi_class_typespec(runtime, 1, &one),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_cached_vpi_class_typespec(runtime, 2, &two),
+            OBELISK_RT_OK);
+  auto lexical = lookup("top.Generic");
+  EXPECT_NE(one.offset, two.offset);
+  obelisk_rt_design_cursor_v1 result{};
+  EXPECT_EQ(obelisk_rt_cached_vpi_class_typespec(runtime, 1, &result),
+            OBELISK_RT_OK);
+  EXPECT_EQ(result.offset, one.offset);
+  EXPECT_EQ(obelisk_rt_cached_vpi_class_typespec(runtime, 2, &result),
+            OBELISK_RT_OK);
+  EXPECT_EQ(result.offset, two.offset);
+  EXPECT_EQ(obelisk_rt_cached_vpi_class_typespec(runtime, 3, &result),
+            OBELISK_RT_EOF);
+  EXPECT_EQ(result.offset, 0u);
+  EXPECT_EQ(obelisk_rt_cached_vpi_class_typespec(runtime, 1, nullptr),
+            OBELISK_RT_INVALID_ARGUMENT);
+  const obelisk_rt_design_cursor_v1 sources[] = {lookup("top.obj"),
+                                                 lookup("top.Alias"), one, two};
+  for (unsigned index = 0; index != 4; ++index) {
+    obelisk_rt_design_cursor_v1 semantic{};
+    ASSERT_EQ(obelisk_rt_cached_design_semantic_root(runtime, sources[index],
+                                                     &semantic),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_cached_vpi_semantic_class_typespec(runtime, semantic,
+                                                            &result),
+              OBELISK_RT_OK);
+    EXPECT_EQ(result.offset, index == 3 ? two.offset : one.offset);
+    obelisk_rt_design_semantic_type_info_v1 info{};
+    ASSERT_EQ(
+        obelisk_rt_cached_design_semantic_type_info(runtime, semantic, &info),
+        OBELISK_RT_OK);
+    EXPECT_EQ(info.identity_target.offset, lexical.offset);
+  }
+  for (unsigned index = 0; index != 2; ++index) {
+    const uint8_t *name = nullptr;
+    uint64_t size = 0;
+    ASSERT_EQ(
+        obelisk_rt_cached_design_name(runtime, index ? two : one, &name, &size),
+        OBELISK_RT_OK);
+    EXPECT_EQ(std::string(reinterpret_cast<const char *>(name), size),
+              index ? "top.Generic$two" : "top.Generic$one");
+  }
+  EXPECT_EQ(obelisk_rt_cached_vpi_semantic_class_typespec(runtime, {}, &result),
+            OBELISK_RT_INVALID_HANDLE);
+  obelisk_rt_v1_context_destroy(runtime);
+
+  HeaderView header(encoded->designDatabase.data());
+  SemanticDirectoryView directory(encoded->designDatabase.data() +
+                                  header.getReserved());
+  ASSERT_EQ(directory.getClassTypeBindingCount(), 2u);
+  ASSERT_EQ(directory.getSemanticClassBindingCount(), 3u);
+  const uint64_t classOffset = directory.getClassTypeBindingOffset();
+  const uint64_t semanticOffset = directory.getSemanticClassBindingOffset();
+  const ClassTypeBindingView first(encoded->designDatabase.data() +
+                                   classOffset);
+  const SemanticClassBindingView firstSemantic(encoded->designDatabase.data() +
+                                               semanticOffset);
+  uint64_t aliasBindingOffset = UINT64_MAX;
+  for (uint64_t index = 0; index != directory.getSemanticClassBindingCount();
+       ++index) {
+    uint64_t offset = semanticOffset + index * SemanticClassBindingLayout.size;
+    SemanticClassBindingView binding(encoded->designDatabase.data() + offset);
+    SemanticTypeView type(encoded->designDatabase.data() +
+                          directory.getSemanticTypeOffset() +
+                          binding.getSemanticType() * SemanticTypeLayout.size);
+    if (type.getAliasObjectIndexAndTable() != UINT32_MAX)
+      aliasBindingOffset = offset;
+  }
+  ASSERT_NE(aliasBindingOffset, UINT64_MAX);
+  auto expectRejected = [&](std::vector<uint8_t> image) {
+    put64(image, field::HeaderChecksum, imageChecksum(image));
+    execution.design_database = image.data();
+    execution.design_database_size = image.size();
+    EXPECT_EQ(obelisk_rt_v1_design_validate(&execution),
+              OBELISK_RT_INVALID_DESIGN);
+  };
+  auto original = [&] {
+    return std::vector<uint8_t>(encoded->designDatabase.begin(),
+                                encoded->designDatabase.end());
+  };
+  auto malformed = original();
+  ClassTypeBindingWriter(malformed.data() + classOffset).setClassID(0);
+  expectRejected(malformed);
+  malformed = original();
+  ClassTypeBindingWriter(malformed.data() + classOffset +
+                         ClassTypeBindingLayout.size)
+      .setClassID(first.getClassID());
+  expectRejected(malformed);
+  malformed = original();
+  ClassTypeBindingWriter(malformed.data() + classOffset)
+      .setTypespecIndexAndTable(UINT32_MAX);
+  expectRejected(malformed);
+  malformed = original();
+  ClassTypeBindingWriter(malformed.data() + classOffset +
+                         ClassTypeBindingLayout.size)
+      .setTypespecIndexAndTable(first.getTypespecIndexAndTable());
+  expectRejected(malformed);
+  malformed = original();
+  SemanticClassBindingWriter(malformed.data() + semanticOffset)
+      .setSemanticType(UINT32_MAX);
+  expectRejected(malformed);
+  malformed = original();
+  SemanticClassBindingWriter(malformed.data() + semanticOffset)
+      .setTypespecIndexAndTable(UINT32_MAX);
+  expectRejected(malformed);
+  malformed = original();
+  SemanticClassBindingWriter(malformed.data() + semanticOffset +
+                             SemanticClassBindingLayout.size)
+      .setSemanticType(firstSemantic.getSemanticType());
+  expectRejected(malformed);
+  malformed = original();
+  // An alias must retain its specialization even when a sibling specialization
+  // shares the same lexical class definition.
+  ClassTypeBindingView second(encoded->designDatabase.data() + classOffset +
+                              ClassTypeBindingLayout.size);
+  SemanticClassBindingWriter(malformed.data() + aliasBindingOffset)
+      .setTypespecIndexAndTable(second.getTypespecIndexAndTable());
+  expectRejected(malformed);
+  malformed = original();
+  SemanticDirectoryWriter(malformed.data() + header.getReserved())
+      .setSemanticClassBindingCount(0);
+  expectRejected(malformed);
+  malformed = original();
+  SemanticDirectoryWriter(malformed.data() + header.getReserved())
+      .setClassTypeBindingOffset(directory.getSemanticTypeOffset());
+  expectRejected(malformed);
+}
+
+TEST(GeneratedDesignDatabase, LiveClassObjectTypes) {
+  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  ASSERT_NE(inputPath, nullptr);
+  mlir::DialectRegistry registry;
+  registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
+                  obelisk::sim::ObeliskSimulationDialect>();
+  mlir::MLIRContext context(registry);
+  auto module = mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
+  ASSERT_TRUE(module);
+  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
+  obelisk::SimulationBytecodeOptions options;
+  options.vpi = "full";
+  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  ASSERT_TRUE(mlir::succeeded(encoded));
+  uint64_t bytecodeChecksum = 0;
+  for (unsigned byte = 0; byte != 8; ++byte)
+    bytecodeChecksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
+  const obelisk_rt_execution_descriptor_v1 execution{
+      OBELISK_RT_VERSION,
+      encoded->executionFlags,
+      0,
+      encoded->bytecode.data(),
+      encoded->bytecode.size(),
+      encoded->designDatabase.data(),
+      encoded->designDatabase.size(),
+      encoded->stateBitCount,
+      bytecodeChecksum};
+  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+  obelisk_rt_context *runtime = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(runtime, &lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+
+  char variableName[] = "top.obj";
+  char baseName[] = "top.Base";
+  char derivedName[] = "top.Derived";
+  char hiddenName[] = "top.Hidden";
+  vpiHandle variable = vpi_handle_by_name(variableName, nullptr);
+  vpiHandle baseDefinition = vpi_handle_by_name(baseName, nullptr);
+  vpiHandle derivedDefinition = vpi_handle_by_name(derivedName, nullptr);
+  vpiHandle hiddenDefinition = vpi_handle_by_name(hiddenName, nullptr);
+  ASSERT_NE(variable, nullptr);
+  ASSERT_NE(baseDefinition, nullptr);
+  ASSERT_NE(derivedDefinition, nullptr);
+  ASSERT_NE(hiddenDefinition, nullptr);
+  auto specialization = [](vpiHandle definition) {
+    vpiHandle iterator = vpi_iterate(vpiClassTypespec, definition);
+    EXPECT_NE(iterator, nullptr);
+    vpiHandle type = iterator ? vpi_scan(iterator) : nullptr;
+    EXPECT_NE(type, nullptr);
+    if (iterator) {
+      EXPECT_EQ(vpi_scan(iterator), nullptr);
+    }
+    return type;
+  };
+  vpiHandle baseType = specialization(baseDefinition);
+  vpiHandle derivedType = specialization(derivedDefinition);
+  ASSERT_NE(baseType, nullptr);
+  ASSERT_NE(derivedType, nullptr);
+  EXPECT_EQ(vpi_get(vpiIsProtected, hiddenDefinition), 1);
+  EXPECT_EQ(vpi_iterate(vpiClassTypespec, hiddenDefinition), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  vpiHandle declaredType = vpi_handle(vpiClassTypespec, variable);
+  ASSERT_NE(declaredType, nullptr);
+  EXPECT_EQ(vpi_compare_objects(declaredType, baseType), 1);
+  EXPECT_EQ(vpi_handle(vpiClassObj, variable), nullptr);
+  EXPECT_EQ(vpi_get64(vpiObjId, variable), 0);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  const char debugName[] = "same_display_name";
+  obelisk_rt_class_descriptor_v1 baseDescriptor{};
+  baseDescriptor.version = OBELISK_RT_VERSION;
+  baseDescriptor.class_id = 1;
+  baseDescriptor.instance_size = sizeof(void *);
+  baseDescriptor.instance_alignment = alignof(void *);
+  baseDescriptor.debug_name = debugName;
+  baseDescriptor.debug_name_size = sizeof(debugName) - 1;
+  obelisk_rt_class_descriptor_v1 derivedDescriptor = baseDescriptor;
+  derivedDescriptor.class_id = 2;
+  derivedDescriptor.base = &baseDescriptor;
+  obelisk_rt_class_descriptor_v1 hiddenDescriptor = derivedDescriptor;
+  hiddenDescriptor.class_id = 3;
+  ASSERT_EQ(obelisk_rt_v1_class_register(runtime, &baseDescriptor),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_class_register(runtime, &derivedDescriptor),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_class_register(runtime, &hiddenDescriptor),
+            OBELISK_RT_OK);
+  obelisk_rt_design_cursor_v1 variableCursor{};
+  ASSERT_EQ(obelisk_rt_cached_design_lookup(
+                runtime, reinterpret_cast<const uint8_t *>(variableName),
+                std::strlen(variableName), &variableCursor),
+            OBELISK_RT_OK);
+  for (unsigned index = 0; index != 2; ++index) {
+    const auto *descriptor = index ? &hiddenDescriptor : &derivedDescriptor;
+    obelisk_rt_object_v1 *object = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, descriptor, &object),
+              OBELISK_RT_OK);
+    obelisk_rt_gc_root_v1 root{};
+    ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &object), OBELISK_RT_OK);
+    uint64_t word = obelisk_rt_managed_word_from_object(object);
+    ASSERT_EQ(
+        obelisk_rt_v1_design_write(runtime, variableCursor, &word, nullptr, 64),
+        OBELISK_RT_OK);
+    vpiHandle objectHandle = vpi_handle(vpiClassObj, variable);
+    vpiHandle aliasHandle = vpi_handle(vpiClassObj, variable);
+    ASSERT_NE(objectHandle, nullptr);
+    ASSERT_NE(aliasHandle, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, objectHandle), vpiClassObj);
+    EXPECT_EQ(vpi_get(vpiIsProtected, objectHandle), index ? 1 : 0);
+    EXPECT_EQ(vpi_compare_objects(objectHandle, aliasHandle), 1);
+    EXPECT_EQ(vpi_compare_objects(objectHandle, variable), 0);
+    vpiHandle stillDeclaredType = vpi_handle(vpiClassTypespec, variable);
+    ASSERT_NE(stillDeclaredType, nullptr);
+    EXPECT_EQ(vpi_compare_objects(stillDeclaredType, baseType), 1);
+    EXPECT_EQ(vpi_get64(vpiObjId, variable),
+              static_cast<PLI_INT64>(obelisk_rt_v1_object_id(object)));
+    vpiHandle actualType = nullptr;
+    vpiHandle definition = nullptr;
+    vpiHandle extends = nullptr;
+    if (index) {
+      EXPECT_EQ(vpi_get64(vpiObjId, objectHandle), vpiUndefined);
+      EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+      EXPECT_EQ(vpi_handle(vpiClassTypespec, objectHandle), nullptr);
+      EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+    } else {
+      EXPECT_EQ(vpi_get64(vpiObjId, objectHandle),
+                static_cast<PLI_INT64>(obelisk_rt_v1_object_id(object)));
+      actualType = vpi_handle(vpiClassTypespec, objectHandle);
+      ASSERT_NE(actualType, nullptr);
+      EXPECT_EQ(vpi_compare_objects(actualType, derivedType), 1);
+      EXPECT_EQ(vpi_compare_objects(actualType, baseType), 0);
+      definition = vpi_handle(vpiClassDefn, actualType);
+      extends = vpi_handle(vpiExtends, actualType);
+      ASSERT_NE(definition, nullptr);
+      ASSERT_NE(extends, nullptr);
+      EXPECT_EQ(vpi_compare_objects(definition, derivedDefinition), 1);
+      EXPECT_EQ(vpi_compare_objects(extends, baseType), 1);
+    }
+    EXPECT_EQ(vpi_release_handle(objectHandle), 1);
+    word = 0;
+    ASSERT_EQ(
+        obelisk_rt_v1_design_write(runtime, variableCursor, &word, nullptr, 64),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+    EXPECT_EQ(vpi_get(vpiType, aliasHandle), vpiUndefined);
+    EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+    if (actualType) {
+      // Type handles refer to immutable design inventory and outlive instances.
+      EXPECT_EQ(vpi_get(vpiType, actualType), vpiClassTypespec);
+      EXPECT_EQ(vpi_compare_objects(actualType, derivedType), 1);
+      EXPECT_EQ(vpi_release_handle(definition), 1);
+      EXPECT_EQ(vpi_release_handle(extends), 1);
+      EXPECT_EQ(vpi_release_handle(actualType), 1);
+    }
+    EXPECT_EQ(vpi_release_handle(stillDeclaredType), 1);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  }
+  for (vpiHandle handle :
+       {variable, baseDefinition, derivedDefinition, hiddenDefinition, baseType,
+        derivedType, declaredType})
+    EXPECT_EQ(vpi_release_handle(handle), 1);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
   obelisk_rt_v1_context_destroy(runtime);
 }

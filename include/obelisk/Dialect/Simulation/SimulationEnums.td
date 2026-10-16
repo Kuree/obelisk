@@ -101,10 +101,11 @@ def SimVPIObjectRefNet : I32EnumAttrCase<"Net", 2, "net">;
 def SimVPIObjectRefNetIdentity
     : I32EnumAttrCase<"NetIdentity", 3, "net_identity">;
 def SimVPIObjectRefPort : I32EnumAttrCase<"Port", 4, "port">;
+def SimVPIObjectRefSymbol : I32EnumAttrCase<"Symbol", 5, "symbol">;
 def SimVPIObjectRefKind : I32EnumAttr<
     "VPIObjectRefKind", "stable VPI relation endpoint identity", [
       SimVPIObjectRefStatement, SimVPIObjectRefStorage, SimVPIObjectRefNet,
-      SimVPIObjectRefNetIdentity, SimVPIObjectRefPort
+      SimVPIObjectRefNetIdentity, SimVPIObjectRefPort, SimVPIObjectRefSymbol
     ]> {
   let cppNamespace = "::obelisk::sim";
 }
@@ -641,10 +642,12 @@ def SimVPITypespecInterface
     : I32EnumAttrCase<"Interface", 1, "interface">;
 def SimVPITypespecAnonymousEnum
     : I32EnumAttrCase<"AnonymousEnum", 2, "anonymous_enum">;
+def SimVPITypespecClassSpecialization
+    : I32EnumAttrCase<"ClassSpecialization", 3, "class_specialization">;
 def SimVPITypespecOrigin
     : I32EnumAttr<"VPITypespecOrigin", "VPI typespec inventory origin", [
         SimVPITypespecTypedef, SimVPITypespecInterface,
-        SimVPITypespecAnonymousEnum
+        SimVPITypespecAnonymousEnum, SimVPITypespecClassSpecialization
       ]> {
   let cppNamespace = "::obelisk::sim";
 }

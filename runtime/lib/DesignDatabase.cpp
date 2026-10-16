@@ -43,6 +43,10 @@ constexpr uint64_t kSemanticTypeEdgeSize =
     obelisk::reflection::SemanticTypeEdgeLayout.size;
 constexpr uint64_t kSemanticRootBindingSize =
     obelisk::reflection::SemanticRootBindingLayout.size;
+constexpr uint64_t kClassTypeBindingSize =
+    obelisk::reflection::ClassTypeBindingLayout.size;
+constexpr uint64_t kSemanticClassBindingSize =
+    obelisk::reflection::SemanticClassBindingLayout.size;
 constexpr uint64_t kRelationIndexSize =
     obelisk::reflection::RelationIndexLayout.size;
 constexpr uint64_t kRelationIndexDimensionSize =
@@ -236,6 +240,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
   uint64_t semanticTypeOffset = 0, semanticTypeCount = 0;
   uint64_t semanticTypeEdgeOffset = 0, semanticTypeEdgeCount = 0;
   uint64_t semanticRootBindingOffset = 0, semanticRootBindingCount = 0;
+  uint64_t classTypeBindingOffset = 0, classTypeBindingCount = 0;
+  uint64_t semanticClassBindingOffset = 0, semanticClassBindingCount = 0;
   uint64_t relationIndexOffset = 0, relationIndexCount = 0;
   uint64_t relationIndexDimensionOffset = 0, relationIndexDimensionCount = 0;
   uint64_t relationIndexKeyOffset = 0, relationIndexKeyCount = 0;
@@ -322,6 +328,11 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     frozenValueBindingCount = read64(directory + 376);
     frozenValuePayloadOffset = read64(directory + 384);
     frozenValuePayloadSize = read64(directory + 392);
+    obelisk::reflection::SemanticDirectoryView reader(directory);
+    classTypeBindingOffset = reader.getClassTypeBindingOffset();
+    classTypeBindingCount = reader.getClassTypeBindingCount();
+    semanticClassBindingOffset = reader.getSemanticClassBindingOffset();
+    semanticClassBindingCount = reader.getSemanticClassBindingCount();
   }
   database = {data,
               execution->design_database_size,
@@ -349,6 +360,10 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               semanticTypeEdgeCount,
               semanticRootBindingOffset,
               semanticRootBindingCount,
+              classTypeBindingOffset,
+              classTypeBindingCount,
+              semanticClassBindingOffset,
+              semanticClassBindingCount,
               relationIndexOffset,
               relationIndexCount,
               relationIndexDimensionOffset,
@@ -415,6 +430,10 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
          kSemanticTypeEdgeSize},
         {database.semanticRootBindings, database.semanticRootBindingCount,
          kSemanticRootBindingSize},
+        {database.classTypeBindings, database.classTypeBindingCount,
+         kClassTypeBindingSize},
+        {database.semanticClassBindings, database.semanticClassBindingCount,
+         kSemanticClassBindingSize},
         {database.relationIndices, database.relationIndexCount,
          kRelationIndexSize},
         {database.relationIndexDimensions, database.relationIndexDimensionCount,
@@ -484,6 +503,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         database.semanticTypeCount != 0 ||
         database.semanticTypeEdgeCount != 0 ||
         database.semanticRootBindingCount != 0 ||
+        database.classTypeBindingCount != 0 ||
+        database.semanticClassBindingCount != 0 ||
         database.relationIndexCount != 0 ||
         database.relationIndexDimensionCount != 0 ||
         database.relationIndexKeyCount != 0 ||
@@ -524,6 +545,11 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
                   kSemanticTypeEdgeSize, database.size) ||
       !validRange(database.semanticRootBindings,
                   database.semanticRootBindingCount, kSemanticRootBindingSize,
+                  database.size) ||
+      !validRange(database.classTypeBindings, database.classTypeBindingCount,
+                  kClassTypeBindingSize, database.size) ||
+      !validRange(database.semanticClassBindings,
+                  database.semanticClassBindingCount, kSemanticClassBindingSize,
                   database.size) ||
       !validRange(database.relationIndices, database.relationIndexCount,
                   kRelationIndexSize, database.size) ||
@@ -590,6 +616,10 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        database.semanticTypes < kHeaderSize) ||
       (database.semanticTypeEdgeCount != 0 &&
        database.semanticTypeEdges < kHeaderSize) ||
+      (database.classTypeBindingCount != 0 &&
+       database.classTypeBindings < kHeaderSize) ||
+      (database.semanticClassBindingCount != 0 &&
+       database.semanticClassBindings < kHeaderSize) ||
       (database.semanticRootBindingCount != 0 &&
        database.semanticRootBindings < kHeaderSize) ||
       (database.relationIndexCount != 0 &&
@@ -658,6 +688,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       database.semanticTypeCount > UINT32_MAX ||
       database.semanticTypeEdgeCount > UINT32_MAX ||
       database.semanticRootBindingCount > UINT32_MAX ||
+      database.classTypeBindingCount > UINT32_MAX ||
+      database.semanticClassBindingCount > UINT32_MAX ||
       database.relationIndexCount > UINT32_MAX ||
       database.relationIndexDimensionCount > UINT32_MAX ||
       database.relationIndexKeyCount > UINT32_MAX ||
@@ -868,6 +900,10 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        kSemanticTypeEdgeSize},
       {database.semanticRootBindings, database.semanticRootBindingCount,
        kSemanticRootBindingSize},
+      {database.classTypeBindings, database.classTypeBindingCount,
+       kClassTypeBindingSize},
+      {database.semanticClassBindings, database.semanticClassBindingCount,
+       kSemanticClassBindingSize},
       {database.relationIndices, database.relationIndexCount,
        kRelationIndexSize},
       {database.relationIndexDimensions, database.relationIndexDimensionCount,
@@ -1666,9 +1702,8 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
       if (kind == OBELISK_RT_DESIGN_RECORD_PORT) {
         if (portCaps == 0 ||
-            (refPort &&
-             portCaps != (OBELISK_RT_DESIGN_CAP_PORT_INPUT |
-                          OBELISK_RT_DESIGN_CAP_PORT_OUTPUT)) ||
+            (refPort && portCaps != (OBELISK_RT_DESIGN_CAP_PORT_INPUT |
+                                     OBELISK_RT_DESIGN_CAP_PORT_OUTPUT)) ||
             caps != (OBELISK_RT_DESIGN_CAP_READ | portCaps | ordinalCaps |
                      (caps & OBELISK_RT_DESIGN_CAP_PORT_REF) |
                      (caps & OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE)))
@@ -2616,6 +2651,76 @@ bool validateDatabaseImpl(const Database &database) {
     if (rootKind != objectReferenceVPIKind(database, objectOffset))
       return false;
   }
+
+  // Each runtime class has one canonical specialization. Semantic aliases
+  // may bind to it independently while retaining their lexical ClassDefn.
+  std::unordered_map<uint32_t, uint32_t> canonicalClassRoots;
+  uint64_t previousClassID = 0;
+  for (uint64_t index = 0; index != database.classTypeBindingCount; ++index) {
+    obelisk::reflection::ClassTypeBindingView binding(
+        database.data + database.classTypeBindings +
+        index * kClassTypeBindingSize);
+    uint64_t classID = binding.getClassID();
+    uint32_t packed = binding.getTypespecIndexAndTable();
+    uint64_t targetOffset = 0;
+    uint32_t root = UINT32_MAX;
+    if (classID == 0 || (index && classID <= previousClassID) ||
+        !packedObjectReferenceOffset(database, packed, targetOffset) ||
+        objectReferenceVPIKind(database, targetOffset) !=
+            static_cast<uint32_t>(
+                obelisk::reflection::VPIObjectKind::ClassTypespec) ||
+        !findSemanticRootBinding(database, packed, root) ||
+        root >= database.semanticTypeCount ||
+        !canonicalClassRoots.emplace(packed, root).second)
+      return false;
+    const uint8_t *type = database.data + database.semanticTypes +
+                          uint64_t{root} * kSemanticTypeSize;
+    if ((read32(type) & UINT32_C(0xff)) != OBELISK_RT_DESIGN_SEMANTIC_CLASS ||
+        read32(type + 12) != UINT32_MAX)
+      return false;
+    previousClassID = classID;
+  }
+  std::unordered_set<uint32_t> canonicalClassRootBindings;
+  std::unordered_map<uint32_t, uint32_t> semanticClassTargets;
+  uint32_t previousClassSemantic = 0;
+  for (uint64_t index = 0; index != database.semanticClassBindingCount;
+       ++index) {
+    obelisk::reflection::SemanticClassBindingView binding(
+        database.data + database.semanticClassBindings +
+        index * kSemanticClassBindingSize);
+    uint32_t semantic = binding.getSemanticType();
+    auto target = canonicalClassRoots.find(binding.getTypespecIndexAndTable());
+    if (semantic >= database.semanticTypeCount ||
+        (index && semantic <= previousClassSemantic) ||
+        target == canonicalClassRoots.end())
+      return false;
+    const uint8_t *type = database.data + database.semanticTypes +
+                          uint64_t{semantic} * kSemanticTypeSize;
+    const uint8_t *canonical = database.data + database.semanticTypes +
+                               uint64_t{target->second} * kSemanticTypeSize;
+    if ((read32(type) & UINT32_C(0xff)) != OBELISK_RT_DESIGN_SEMANTIC_CLASS ||
+        read32(type + 16) != read32(canonical + 16))
+      return false;
+    if (semantic == target->second)
+      canonicalClassRootBindings.insert(binding.getTypespecIndexAndTable());
+    semanticClassTargets.emplace(semantic, binding.getTypespecIndexAndTable());
+    previousClassSemantic = semantic;
+  }
+  for (const auto &[semantic, target] : semanticClassTargets) {
+    const uint8_t *type = database.data + database.semanticTypes +
+                          uint64_t{semantic} * kSemanticTypeSize;
+    uint32_t alias = read32(type + 12);
+    if (alias == UINT32_MAX)
+      continue;
+    uint32_t aliasRoot = UINT32_MAX;
+    if (!findSemanticRootBinding(database, alias, aliasRoot))
+      return false;
+    auto binding = semanticClassTargets.find(aliasRoot);
+    if (binding == semanticClassTargets.end() || binding->second != target)
+      return false;
+  }
+  if (canonicalClassRootBindings.size() != canonicalClassRoots.size())
+    return false;
 
   // Validate the hash-consed immutable value pool once. Query-time lookup is
   // then one binary search over sparse source bindings and one indexed load.
@@ -4378,6 +4483,10 @@ bool sameDatabase(const Database &left, const Database &right) noexcept {
          left.semanticTypeEdgeCount == right.semanticTypeEdgeCount &&
          left.semanticRootBindings == right.semanticRootBindings &&
          left.semanticRootBindingCount == right.semanticRootBindingCount &&
+         left.classTypeBindings == right.classTypeBindings &&
+         left.classTypeBindingCount == right.classTypeBindingCount &&
+         left.semanticClassBindings == right.semanticClassBindings &&
+         left.semanticClassBindingCount == right.semanticClassBindingCount &&
          left.relationIndices == right.relationIndices &&
          left.relationIndexCount == right.relationIndexCount &&
          left.relationIndexDimensions == right.relationIndexDimensions &&
@@ -6059,6 +6168,74 @@ obelisk_rt_status obelisk_rt_cached_design_semantic_root(
                   : OBELISK_RT_INVALID_HANDLE;
 }
 
+obelisk_rt_status obelisk_rt_cached_vpi_class_typespec(
+    const obelisk_rt_context *context, uint64_t classID,
+    obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+  if (!outCursor)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outCursor = {};
+  const Database *database = cachedDatabase(context);
+  if (!database)
+    return OBELISK_RT_INVALID_HANDLE;
+  uint64_t low = 0, high = database->classTypeBindingCount;
+  while (low < high) {
+    uint64_t middle = low + (high - low) / 2;
+    obelisk::reflection::ClassTypeBindingView binding(
+        database->data + database->classTypeBindings +
+        middle * kClassTypeBindingSize);
+    if (binding.getClassID() < classID)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == database->classTypeBindingCount)
+    return OBELISK_RT_EOF;
+  obelisk::reflection::ClassTypeBindingView binding(
+      database->data + database->classTypeBindings +
+      low * kClassTypeBindingSize);
+  if (binding.getClassID() != classID)
+    return OBELISK_RT_EOF;
+  return packedObjectReferenceOffset(
+             *database, binding.getTypespecIndexAndTable(), outCursor->offset)
+             ? OBELISK_RT_OK
+             : OBELISK_RT_INVALID_DESIGN;
+}
+
+obelisk_rt_status obelisk_rt_cached_vpi_semantic_class_typespec(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 semantic,
+    obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+  if (!outCursor)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outCursor = {};
+  const Database *database = cachedDatabase(context);
+  if (!database || semantic.offset == 0 ||
+      semantic.offset > database->semanticTypeCount)
+    return OBELISK_RT_INVALID_HANDLE;
+  uint32_t semanticIndex = static_cast<uint32_t>(semantic.offset - 1);
+  uint64_t low = 0, high = database->semanticClassBindingCount;
+  while (low < high) {
+    uint64_t middle = low + (high - low) / 2;
+    obelisk::reflection::SemanticClassBindingView binding(
+        database->data + database->semanticClassBindings +
+        middle * kSemanticClassBindingSize);
+    if (binding.getSemanticType() < semanticIndex)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == database->semanticClassBindingCount)
+    return OBELISK_RT_EOF;
+  obelisk::reflection::SemanticClassBindingView binding(
+      database->data + database->semanticClassBindings +
+      low * kSemanticClassBindingSize);
+  if (binding.getSemanticType() != semanticIndex)
+    return OBELISK_RT_EOF;
+  return packedObjectReferenceOffset(
+             *database, binding.getTypespecIndexAndTable(), outCursor->offset)
+             ? OBELISK_RT_OK
+             : OBELISK_RT_INVALID_DESIGN;
+}
+
 obelisk_rt_status obelisk_rt_cached_design_semantic_type_info(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     obelisk_rt_design_semantic_type_info_v1 *outInfo) noexcept {
@@ -6494,8 +6671,7 @@ uint64_t packedMask(uint64_t width) {
 }
 
 template <typename Plane>
-uint64_t loadPackedState(const Plane &plane, uint64_t offset,
-                         uint64_t width) {
+uint64_t loadPackedState(const Plane &plane, uint64_t offset, uint64_t width) {
   size_t word = static_cast<size_t>(offset / 64);
   unsigned shift = static_cast<unsigned>(offset % 64);
   uint64_t result = plane[word] >> shift;
@@ -6505,8 +6681,8 @@ uint64_t loadPackedState(const Plane &plane, uint64_t offset,
 }
 
 template <typename Plane>
-void storePackedState(Plane &plane, uint64_t offset,
-                      uint64_t width, uint64_t value) {
+void storePackedState(Plane &plane, uint64_t offset, uint64_t width,
+                      uint64_t value) {
   size_t word = static_cast<size_t>(offset / 64);
   unsigned shift = static_cast<unsigned>(offset % 64);
   uint64_t mask = packedMask(width);
@@ -6715,15 +6891,12 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
       size_t publishedBytes = static_cast<size_t>((width + 7) / 8);
       uint8_t *publishedOldValue =
           write ? publishedPlanes : static_cast<uint8_t *>(nullptr);
-      uint8_t *publishedOldUnknown =
-          write ? publishedPlanes + publishedBytes
-                : static_cast<uint8_t *>(nullptr);
-      uint8_t *publishedValue =
-          write ? publishedPlanes + publishedBytes * 2
-                : static_cast<uint8_t *>(nullptr);
-      uint8_t *publishedUnknown =
-          write ? publishedPlanes + publishedBytes * 3
-                : static_cast<uint8_t *>(nullptr);
+      uint8_t *publishedOldUnknown = write ? publishedPlanes + publishedBytes
+                                           : static_cast<uint8_t *>(nullptr);
+      uint8_t *publishedValue = write ? publishedPlanes + publishedBytes * 2
+                                      : static_cast<uint8_t *>(nullptr);
+      uint8_t *publishedUnknown = write ? publishedPlanes + publishedBytes * 3
+                                        : static_cast<uint8_t *>(nullptr);
       for (uint64_t bit = 0; bit != width; ++bit) {
         uint64_t sourceLimb = bit / 64;
         uint64_t sourceMask = uint64_t{1} << (bit % 64);
@@ -7046,9 +7219,8 @@ obelisk_rt_v1_design_release(obelisk_rt_context *context,
         context->stateUnknown[limb] = newUnknownBit
                                           ? context->stateUnknown[limb] | mask
                                           : context->stateUnknown[limb] & ~mask;
-        uint32_t edges =
-            transitionEdges(oldValueBit, oldUnknownBit, newValueBit,
-                            newUnknownBit);
+        uint32_t edges = transitionEdges(oldValueBit, oldUnknownBit,
+                                         newValueBit, newUnknownBit);
         stateChanged |= edges != 0;
       }
       setPackedByte(oldValue.data(), bit, oldValueBit);
@@ -7067,9 +7239,9 @@ obelisk_rt_v1_design_release(obelisk_rt_context *context,
   // A procedural variable retains the forced value. Continuously driven
   // storage and nets immediately reveal their retained driver state.
   if (stateChanged) {
-    publishOverrideTransition(
-        context, signalBase, bitWidth, oldValue.data(), oldUnknown.data(),
-        newValue.data(), newUnknown.data());
+    publishOverrideTransition(context, signalBase, bitWidth, oldValue.data(),
+                              oldUnknown.data(), newValue.data(),
+                              newUnknown.data());
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (context->schedulerStatus != OBELISK_RT_OK)
       return context->schedulerStatus;

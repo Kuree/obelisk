@@ -299,6 +299,7 @@ def SimVPIStatementRelationDeclOp : SimOp<
 }
 
 def SimVPIRelationDeclOp : SimOp<"vpi_relation.decl", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemWrite<SimInventoryResource>]>
   ]> {
   let summary = "immutable general VPI object relation";

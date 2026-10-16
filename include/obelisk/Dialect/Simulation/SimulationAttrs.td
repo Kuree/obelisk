@@ -49,11 +49,20 @@ def SimVPIObjectRefAttr : SimAttr<"VPIObjectRef", "vpi_ref"> {
   let description = [{
     Identifies an existing immutable design-inventory declaration without
     exposing its eventual reflection-image table index. Each reference kind
-    has its own stable ID namespace. The serializer resolves references only
-    after physical object records have been sorted.
+    has its own stable ID namespace. Symbol references name immutable object
+    anchors, typespecs, or nettype declarations in the design symbol table.
+    Backed anchors also reference executable scopes and code units. The
+    serializer resolves references only after physical records have been sorted.
   }];
   let parameters = (ins EnumParameter<SimVPIObjectRefKind>:$kind,
-      "::mlir::IntegerAttr":$id);
+      OptionalParameter<"::mlir::IntegerAttr">:$id,
+      OptionalParameter<"::mlir::FlatSymbolRefAttr">:$symbol);
+  let builders = [AttrBuilder<(ins "VPIObjectRefKind":$kind,
+      "::mlir::IntegerAttr":$id), [{
+    return $_get($_ctxt, kind, id, ::mlir::FlatSymbolRefAttr{});
+  }]>, AttrBuilder<(ins "::mlir::FlatSymbolRefAttr":$symbol), [{
+    return $_get($_ctxt, VPIObjectRefKind::Symbol, ::mlir::IntegerAttr{}, symbol);
+  }]>];
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }

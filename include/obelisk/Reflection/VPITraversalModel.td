@@ -1362,18 +1362,20 @@ def InstanceTaskFunctions : VPITraversalEdge<InstanceObjects, TaskFuncRel,
 def InstanceNets : VPITraversalEdge<InstanceObjects, Net, IterateMode,
   NetObjects, NoOrder, "37.10", 0, AutomaticDirectChild>;
 def InstanceNetArrays : VPITraversalEdge<InstanceObjects, NetArray,
-  IterateMode, NetArrayObjects, NoOrder, "37.10">;
+  IterateMode, NetArrayObjects, NoOrder, "37.10", 0, AutomaticDirectChild>;
 def InstanceVariables : VPITraversalEdge<InstanceObjects, VariablesRel,
   IterateMode, DataVariableObjects, NoOrder, "37.10", 0,
   AutomaticDirectChild>;
 def InstanceRegs : VPITraversalEdge<InstanceObjects, Reg, IterateMode,
   RegObjects, NoOrder, "37.10", 0, AutomaticDirectChild>;
 def InstanceRegArrays : VPITraversalEdge<InstanceObjects, RegArray,
-  IterateMode, RegArrayObjects, NoOrder, "37.10">;
+  IterateMode, RegArrayObjects, NoOrder, "37.10", 0, AutomaticDirectChild>;
 def InstanceNamedEvents : VPITraversalEdge<InstanceObjects, NamedEvent,
-  IterateMode, NamedEventTargetObjects, NoOrder, "37.10">;
+  IterateMode, NamedEventTargetObjects, NoOrder, "37.10", 0,
+  AutomaticDirectChild>;
 def InstanceNamedEventArrays : VPITraversalEdge<InstanceObjects,
-  NamedEventArray, IterateMode, NamedEventArrayObjects, NoOrder, "37.10">;
+  NamedEventArray, IterateMode, NamedEventArrayObjects, NoOrder, "37.10", 0,
+  AutomaticDirectChild>;
 def InstanceParameters : VPITraversalEdge<InstanceObjects, Parameter,
   IterateMode, ParameterIterationObjects, NoOrder, "37.10">;
 def InstanceTypeParameters : VPITraversalEdge<InstanceObjects, TypeParameter,
@@ -1402,7 +1404,12 @@ def ScopeNamedEventArrays : VPITraversalEdge<NonInstanceScopeObjects,
   "37.12; 37.85">;
 def ScopeVariables : VPITraversalEdge<NonInstanceScopeObjects, VariablesRel,
   IterateMode, DataVariableObjects, NoOrder, "37.12; 37.85">;
-def ScopeVirtualInterfaces : VPITraversalEdge<ScopeSource,
+def InstanceVirtualInterfaces : VPITraversalEdge<InstanceObjects,
+  VirtualInterfaceVar, IterateMode, VirtualInterfaceObjects, NoOrder,
+  "37.12", 0, AutomaticDirectChild>;
+def ScopeVirtualInterfaces : VPITraversalEdge<
+  VPIObjectSet<"NonInstanceVirtualInterfaceScopes", [], [ScopeFamily],
+    [Package, Module, Interface, Program]>,
   VirtualInterfaceVar, IterateMode, VirtualInterfaceObjects, NoOrder,
   "37.12">;
 def ScopeParameters : VPITraversalEdge<NonInstanceScopeObjects, Parameter,

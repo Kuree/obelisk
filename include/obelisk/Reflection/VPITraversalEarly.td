@@ -264,7 +264,7 @@ def VPIEarlyArrayPrograms : VPITraversalEdge<ProgramArrayObjects, Program,
 def VPIEarlyRootInstances : VPITraversalEdge<RootSource, InstanceRel,
   IterateMode, VPIEarlyInstances, NoOrder, "37.10">;
 def VPIEarlyInstancePrograms : VPITraversalEdge<InstanceObjects, Program,
-  IterateMode, ProgramObjects, NoOrder, "37.10">;
+  IterateMode, ProgramObjects, NoOrder, "37.10", 0, AutomaticDirectChild>;
 def VPIEarlyInstanceProgramArrays : VPITraversalEdge<InstanceObjects,
   ProgramArray, IterateMode, ProgramArrayObjects, NoOrder, "37.10">;
 def VPIEarlyInstanceNettypeDecls : VPITraversalEdge<InstanceObjects,
@@ -534,7 +534,7 @@ def VPIEarlyVarSelectTypespec : VPITraversalEdge<
     [VarSelect, BitSelect, PartSelect, IndexedPartSelect]>,
   Typespec, HandleMode, VPIEarlyTypespecs, NoOrder, "37.19; 37.58; 37.59">;
 def VPIEarlyModuleMemories : VPITraversalEdge<ModuleSource, Memory,
-  IterateMode, RegArrayObjects, NoOrder, "37.20">;
+  IterateMode, RegArrayObjects, NoOrder, "37.20", 0, AutomaticDirectChild>;
 def VPIEarlyMemoryLeftRange : VPITraversalEdge<RegArrayObjects, LeftRangeRel,
   HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.20">;
 def VPIEarlyMemoryRightRange : VPITraversalEdge<RegArrayObjects,

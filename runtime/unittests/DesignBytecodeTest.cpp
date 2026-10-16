@@ -7559,6 +7559,8 @@ TEST(VPI, ClassVariableObjectIdTracksLiveManagedIdentity) {
   ASSERT_NE(aliasHandle, nullptr);
   EXPECT_EQ(vpi_compare_objects(firstHandle, aliasHandle), 1);
   EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), 0);
+  EXPECT_EQ(vpi_handle(vpiClassObj, firstHandle), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   EXPECT_EQ(vpi_get(vpiObjId, firstHandle), vpiUndefined);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
@@ -7604,6 +7606,17 @@ TEST(VPI, ClassVariableObjectIdTracksLiveManagedIdentity) {
   const PLI_INT64 firstIdentity =
       static_cast<PLI_INT64>(obelisk_rt_v1_object_id(firstObject));
   ASSERT_NE(firstIdentity, 0);
+  vpiHandle firstObjectHandle = vpi_handle(vpiClassObj, firstHandle);
+  vpiHandle aliasObjectHandle = vpi_handle(vpiClassObj, aliasHandle);
+  ASSERT_NE(firstObjectHandle, nullptr);
+  ASSERT_NE(aliasObjectHandle, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, firstObjectHandle), vpiClassObj);
+  EXPECT_EQ(vpi_get(vpiIsProtected, firstObjectHandle), 0);
+  EXPECT_EQ(vpi_get(vpiAllocScheme, firstObjectHandle), vpiDynamicScheme);
+  EXPECT_EQ(vpi_get64(vpiObjId, firstObjectHandle), firstIdentity);
+  EXPECT_EQ(vpi_compare_objects(firstObjectHandle, aliasObjectHandle), 1);
+  EXPECT_EQ(vpi_compare_objects(firstObjectHandle, firstHandle), 0);
+
   EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), firstIdentity);
   EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), firstIdentity);
   EXPECT_EQ(vpi_get64(vpiObjId, aliasHandle), firstIdentity);
@@ -7617,6 +7630,13 @@ TEST(VPI, ClassVariableObjectIdTracksLiveManagedIdentity) {
   const PLI_INT64 secondIdentity =
       static_cast<PLI_INT64>(obelisk_rt_v1_object_id(secondObject));
   ASSERT_NE(secondIdentity, 0);
+  vpiHandle secondObjectHandle = vpi_handle(vpiClassObj, firstHandle);
+  ASSERT_NE(secondObjectHandle, nullptr);
+  EXPECT_EQ(vpi_get64(vpiObjId, firstObjectHandle), firstIdentity);
+  EXPECT_EQ(vpi_get64(vpiObjId, secondObjectHandle), secondIdentity);
+  EXPECT_EQ(vpi_compare_objects(firstObjectHandle, secondObjectHandle), 0);
+  EXPECT_EQ(vpi_release_handle(secondObjectHandle), 1);
+
   EXPECT_NE(secondIdentity, firstIdentity);
   EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), secondIdentity);
   EXPECT_EQ(vpi_get64(vpiObjId, aliasHandle), secondIdentity);
@@ -7648,6 +7668,14 @@ TEST(VPI, ClassVariableObjectIdTracksLiveManagedIdentity) {
   ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &secondRoot), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &firstRoot), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  // VPI references are weak: after SV roots disappear, collection releases
+  // every handle to the object (37.2.2), including aliases.
+  EXPECT_EQ(vpi_get(vpiType, firstObjectHandle), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_get64(vpiObjId, aliasObjectHandle), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_release_handle(firstObjectHandle), 0);
+  EXPECT_EQ(vpi_release_handle(aliasObjectHandle), 0);
   EXPECT_EQ(obelisk_rt_v1_object_id(firstObject), 0u);
   EXPECT_EQ(obelisk_rt_v1_object_id(secondObject), 0u);
   ASSERT_EQ(
@@ -10046,6 +10074,17 @@ TEST(VPI, ClassDefinitionValueRestrictionTracksHandleProvenance) {
   fixture.database = makeDatabase();
   put32(fixture.database, scopeOffset,
         designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, vpiClassDefn));
+  // Class member inventory is an explicit semantic relation. A physical
+  // owner alone must not fabricate arbitrary VPI iterations.
+  const uint64_t relationOffset = (fixture.database.size() + 7) & ~uint64_t{7};
+  fixture.database.resize(relationOffset + 16, 0);
+  put64(fixture.database, 24, fixture.database.size());
+  put64(fixture.database, 160, relationOffset);
+  put64(fixture.database, 168, 1);
+  put32(fixture.database, relationOffset + 4, uint32_t{1} << 30);
+  put16(fixture.database, relationOffset + 12, vpiVariables);
+  put16(fixture.database, relationOffset + 14,
+        designRelationSource(0, vpiClassDefn, true));
   put64(fixture.database, 32, imageChecksum(fixture.database));
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
@@ -15789,6 +15828,140 @@ TEST(DesignDatabase, RejectsCorruptionAndUnauthorizedWrites) {
   EXPECT_EQ(
       obelisk_rt_v1_design_write(context, object, value.data(), nullptr, 65),
       OBELISK_RT_PERMISSION_DENIED);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+
+TEST(VPI, DoesNotInferImportsFromPhysicalChildren) {
+  Fixture fixture;
+  fixture.database = makeCodeUnitDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+
+  char moduleName[] = "top";
+  vpiHandle module = vpi_handle_by_name(moduleName, nullptr);
+  ASSERT_NE(module, nullptr);
+  // A local function has a kind permitted by vpiImport, but it is not an
+  // imported declaration. IEEE 1800-2023 37.12 keeps these relations distinct.
+  EXPECT_EQ(vpi_iterate(vpiImport, module), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  vpiHandle methods = vpi_iterate(vpiTaskFunc, module);
+  ASSERT_NE(methods, nullptr);
+  vpiHandle method = vpi_scan(methods);
+  ASSERT_NE(method, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, method), vpiFunction);
+  EXPECT_STREQ(vpi_get_str(vpiFullName, method), "top.fn");
+  EXPECT_EQ(vpi_scan(methods), nullptr);
+  vpiHandle owner = vpi_handle(vpiScope, method);
+  ASSERT_NE(owner, nullptr);
+  EXPECT_EQ(vpi_compare_objects(owner, module), 1);
+  EXPECT_EQ(vpi_release_handle(owner), 1);
+  EXPECT_EQ(vpi_release_handle(method), 1);
+  EXPECT_EQ(vpi_release_handle(module), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, RootDiscoveryDoesNotInventModuleScopeRelations) {
+  Fixture fixture;
+  fixture.database = makeStatementDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+
+  vpiHandle modules = vpi_iterate(vpiModule, nullptr);
+  ASSERT_NE(modules, nullptr);
+  vpiHandle module = vpi_scan(modules);
+  ASSERT_NE(module, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, module), vpiModule);
+  EXPECT_STREQ(vpi_get_str(vpiFullName, module), "top.child");
+  EXPECT_EQ(vpi_scan(modules), nullptr);
+  // 37.5 has no vpiScope query on modules. The dotted spelling does not add it.
+  EXPECT_EQ(vpi_handle(vpiScope, module), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(vpi_release_handle(module), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, LexicalObjectsRequireExplicitParentRelations) {
+  for (bool codeUnit : {false, true}) {
+    SCOPED_TRACE(codeUnit ? "anchored code unit" : "static class definition");
+    Fixture fixture;
+    fixture.database = codeUnit ? makeCodeUnitDatabase() : makeDatabase(false);
+    if (codeUnit) {
+      put32(fixture.database, 336 + 4, OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR);
+    } else {
+      put32(fixture.database, 240,
+            designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+                             vpiClassDefn));
+      put32(fixture.database, 240 + 4, 0);
+    }
+    put64(fixture.database, 32, imageChecksum(fixture.database));
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+
+    char methodName[] = "top.fn";
+    char className[] = "top.value";
+    vpiHandle object = vpi_handle_by_name(codeUnit ? methodName : className,
+                                        nullptr);
+    ASSERT_NE(object, nullptr);
+    EXPECT_EQ(vpi_handle(vpiScope, object), nullptr);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    EXPECT_EQ(vpi_release_handle(object), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+
+TEST(VPI, PhysicalArraysRetainTheirDeclaredContainmentQueries) {
+  Fixture fixture;
+  fixture.database = makeVPITypedArrayDatabase(
+      vpiLogicTypespec, OBELISK_RT_DESIGN_SEMANTIC_LOGIC, 1,
+      OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE);
+  put32(fixture.database, 176,
+        designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, vpiModule));
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  char moduleName[] = "top";
+  char arrayName[] = "top.value";
+  vpiHandle module = vpi_handle_by_name(moduleName, nullptr);
+  vpiHandle array = vpi_handle_by_name(arrayName, nullptr);
+  ASSERT_NE(module, nullptr);
+  ASSERT_NE(array, nullptr);
+  for (int selector : {vpiVariables, vpiRegArray, vpiMemory}) {
+    SCOPED_TRACE(selector);
+    vpiHandle iterator = vpi_iterate(selector, module);
+    ASSERT_NE(iterator, nullptr);
+    vpiHandle child = vpi_scan(iterator);
+    ASSERT_NE(child, nullptr);
+    EXPECT_EQ(vpi_compare_objects(child, array), 1);
+    EXPECT_EQ(vpi_scan(iterator), nullptr);
+    EXPECT_EQ(vpi_release_handle(child), 1);
+  }
+  EXPECT_EQ(vpi_release_handle(array), 1);
+  EXPECT_EQ(vpi_release_handle(module), 1);
   obelisk_rt_v1_context_destroy(context);
 }
 

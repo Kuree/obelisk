@@ -270,6 +270,19 @@ def SemanticRootBindingType : ReflectionField<"SemanticType", 4, U32LE>;
 def SemanticRootBinding : ReflectionLayout<"SemanticRootBinding", 8,
   [SemanticRootBindingObjectIndexAndTable, SemanticRootBindingType]>;
 
+// Runtime class identity and semantic class nodes independently bind to the
+// canonical specialization object. Typedef aliases can introduce additional
+// semantic nodes without duplicating the runtime class descriptor.
+def ClassTypeBindingClassID : ReflectionField<"ClassID", 0, U64LE>;
+def ClassTypeBindingTypespec : ReflectionField<"TypespecIndexAndTable", 8, U32LE>;
+def ClassTypeBinding : ReflectionLayout<"ClassTypeBinding", 12,
+  [ClassTypeBindingClassID, ClassTypeBindingTypespec]>;
+def SemanticClassBindingType : ReflectionField<"SemanticType", 0, U32LE>;
+def SemanticClassBindingTypespec
+    : ReflectionField<"TypespecIndexAndTable", 4, U32LE>;
+def SemanticClassBinding : ReflectionLayout<"SemanticClassBinding", 8,
+  [SemanticClassBindingType, SemanticClassBindingTypespec]>;
+
 // Immutable indexing geometry for relation-backed static arrays.  Records are
 // sorted by object-table index; dense arrays reference declared ranges in
 // left-to-right order, while sparse generate arrays reference exact source
@@ -586,7 +599,15 @@ def SemanticDirectoryFrozenValuePayloadOffset
     : ReflectionField<"FrozenValuePayloadOffset", 384, U64LE>;
 def SemanticDirectoryFrozenValuePayloadSize
     : ReflectionField<"FrozenValuePayloadSize", 392, U64LE>;
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 400,
+def SemanticDirectoryClassTypeBindingOffset
+    : ReflectionField<"ClassTypeBindingOffset", 400, U64LE>;
+def SemanticDirectoryClassTypeBindingCount
+    : ReflectionField<"ClassTypeBindingCount", 408, U64LE>;
+def SemanticDirectorySemanticClassBindingOffset
+    : ReflectionField<"SemanticClassBindingOffset", 416, U64LE>;
+def SemanticDirectorySemanticClassBindingCount
+    : ReflectionField<"SemanticClassBindingCount", 424, U64LE>;
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 432,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -633,7 +654,11 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 400,
    SemanticDirectoryFrozenValueBindingOffset,
    SemanticDirectoryFrozenValueBindingCount,
    SemanticDirectoryFrozenValuePayloadOffset,
-   SemanticDirectoryFrozenValuePayloadSize]>;
+   SemanticDirectoryFrozenValuePayloadSize,
+   SemanticDirectoryClassTypeBindingOffset,
+   SemanticDirectoryClassTypeBindingCount,
+   SemanticDirectorySemanticClassBindingOffset,
+   SemanticDirectorySemanticClassBindingCount]>;
 
 def ScopeRecord : ReflectionRecordKind<"Scope", 1, Scope>;
 def StorageRecord : ReflectionRecordKind<"Storage", 2, Object>;

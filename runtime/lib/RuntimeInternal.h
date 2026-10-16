@@ -1691,6 +1691,10 @@ struct DesignDatabaseCache {
   uint64_t semanticTypeEdgeCount = 0;
   uint64_t semanticRootBindings = 0;
   uint64_t semanticRootBindingCount = 0;
+  uint64_t classTypeBindings = 0;
+  uint64_t classTypeBindingCount = 0;
+  uint64_t semanticClassBindings = 0;
+  uint64_t semanticClassBindingCount = 0;
   uint64_t relationIndices = 0;
   uint64_t relationIndexCount = 0;
   uint64_t relationIndexDimensions = 0;
@@ -1903,8 +1907,7 @@ struct FunctionalCoverageTypeKey {
 namespace obelisk::coverage::detail {
 template <> struct IndexKey<::FunctionalCoverageTypeKey> {
   template <typename Bytes>
-  static void append(Bytes &bytes,
-                     const ::FunctionalCoverageTypeKey &key) {
+  static void append(Bytes &bytes, const ::FunctionalCoverageTypeKey &key) {
     IndexKey<uint64_t>::append(bytes, key.typeID);
     IndexKey<Digest>::append(bytes, key.configuration);
   }
@@ -3020,8 +3023,8 @@ bool obelisk_rt_managed_heap_collections_polled(ManagedHeap *heap);
 bool obelisk_rt_managed_heap_collection_requested(ManagedHeap *heap);
 /// Reclaim pressure that is due between two activations. Does nothing while
 /// this thread runs a managed activation.
-obelisk_rt_status
-obelisk_rt_managed_heap_collect_between_activations(obelisk_rt_context *context);
+obelisk_rt_status obelisk_rt_managed_heap_collect_between_activations(
+    obelisk_rt_context *context);
 obelisk_rt_status
 obelisk_rt_managed_execution_enter(obelisk_rt_context *context,
                                    obelisk_rt_gc_lane_v1 **outLane,
@@ -3675,6 +3678,13 @@ obelisk_rt_status obelisk_rt_cached_design_type_child(
     uint64_t index, obelisk_rt_design_cursor_v1 *outCursor) noexcept;
 obelisk_rt_status obelisk_rt_cached_design_semantic_root(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 object,
+    obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+// Canonical specialization bindings preserve the lexical semantic identity.
+obelisk_rt_status obelisk_rt_cached_vpi_class_typespec(
+    const obelisk_rt_context *context, uint64_t classID,
+    obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_semantic_class_typespec(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 semantic,
     obelisk_rt_design_cursor_v1 *outCursor) noexcept;
 obelisk_rt_status obelisk_rt_cached_design_semantic_type_info(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,

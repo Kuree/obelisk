@@ -1419,6 +1419,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       }
       case sim::VPIObjectRefKind::Statement:
       case sim::VPIObjectRefKind::Port:
+      case sim::VPIObjectRefKind::Symbol:
         break;
       }
       bool ref =
@@ -1977,6 +1978,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       }
     }
 
+    DenseMap<Operation *, uint32_t> classSpecializationOrdinals;
     for (sim::SimVPITypespecDeclOp typespec : typespecs) {
       auto owner = anchorsBySymbol.find(typespec.getOwnerAttr().getValue());
       if (owner == anchorsBySymbol.end()) {
@@ -1985,7 +1987,25 @@ SmallVector<uint8_t> serializeDesignDatabase(
       }
       ImageObjectRef ownerRef = anchorRefs.lookup(owner->second);
       ImageObjectRef typespecRef = typespecRefs.lookup(typespec);
-      if (typespec.getOrigin() == sim::VPITypespecOrigin::Typedef) {
+      if (typespec.getOrigin() == sim::VPITypespecOrigin::ClassSpecialization) {
+        uint32_t ordinal = classSpecializationOrdinals[owner->second]++;
+        if (failed(addRelation(
+                typespec, ownerRef.table, ownerRef.index, ownerRef.vpiKind,
+                static_cast<uint32_t>(VPIObjectKind::ClassTypespec),
+                VPITraversalMode::Iterate, typespecRef.table, typespecRef.index,
+                typespecRef.vpiKind, ordinal)) ||
+            failed(addRelation(typespec, typespecRef.table, typespecRef.index,
+                               typespecRef.vpiKind,
+                               static_cast<uint32_t>(VPIObjectKind::ClassDefn),
+                               VPITraversalMode::Handle, ownerRef.table,
+                               ownerRef.index, ownerRef.vpiKind)) ||
+            failed(addRelation(typespec, typespecRef.table, typespecRef.index,
+                               typespecRef.vpiKind,
+                               static_cast<uint32_t>(VPIRelationKind::ScopeRel),
+                               VPITraversalMode::Handle, ownerRef.table,
+                               ownerRef.index, ownerRef.vpiKind)))
+          return {};
+      } else if (typespec.getOrigin() == sim::VPITypespecOrigin::Typedef) {
         uint32_t ordinal = typedefOrdinals[owner->second]++;
         if (failed(addRelation(
                 owner->second, ownerRef.table, ownerRef.index, ownerRef.vpiKind,
@@ -2236,11 +2256,22 @@ SmallVector<uint8_t> serializeDesignDatabase(
            static_cast<uint16_t>(relation.getSelector()), sourceKindAndTable});
     }
   }
+  // Explicit graph edges cannot replace or extend a slice owned by another
+  // inventory producer. In particular, typespec owners, aliases, and lexical
+  // anchors synthesize relations that are not all tagged automatic in the LRM
+  // traversal model. Check the final physical identities, including backings.
+  DenseSet<uint64_t> synthesizedRelationGroups;
+  for (const RelationRecord &relation : relations)
+    synthesizedRelationGroups.insert(
+        relationIdentity(relation.sourceIndex, relation.selector,
+                         relation.sourceKindAndTable, 0)
+            .first);
   for (sim::SimVPIRelationDeclOp relation : generalRelationDeclarations) {
     auto resolveReference =
         [&](sim::VPIObjectRefAttr reference,
             StringRef endpoint) -> std::optional<ImageObjectRef> {
-      uint64_t id = reference.getId().getValue().getZExtValue();
+      uint64_t id =
+          reference.getId() ? reference.getId().getValue().getZExtValue() : 0;
       std::optional<ImageObjectRef> resolved;
       switch (reference.getKind()) {
       case sim::VPIObjectRefKind::Statement: {
@@ -2274,11 +2305,23 @@ SmallVector<uint8_t> serializeDesignDatabase(
           resolved = found->second;
         break;
       }
+      case sim::VPIObjectRefKind::Symbol: {
+        StringRef name = reference.getSymbol().getValue();
+        if (auto anchor = anchorsBySymbol.find(name);
+            anchor != anchorsBySymbol.end())
+          resolved = anchorRefs.lookup(anchor->second);
+        else if (auto typespec = typespecsBySymbol.find(name);
+                 typespec != typespecsBySymbol.end())
+          resolved = typespecRefs.lookup(typespec->second);
+        else if (auto nettype = nettypesBySymbol.find(name);
+                 nettype != nettypesBySymbol.end())
+          resolved = nettypeRefs.lookup(nettype->second);
+        break;
+      }
       }
       if (!resolved)
-        relation.emitOpError() << endpoint << " VPI reference "
-                               << stringifyVPIObjectRefKind(reference.getKind())
-                               << " ID " << id << " was not serialized";
+        relation.emitOpError() << endpoint << " VPI reference " << reference
+                               << " was not serialized";
       return resolved;
     };
     std::optional<ImageObjectRef> source =
@@ -2289,6 +2332,22 @@ SmallVector<uint8_t> serializeDesignDatabase(
       return {};
     auto mode = static_cast<VPITraversalMode>(
         static_cast<uint32_t>(relation.getMode()));
+    uint16_t packedSource = 0;
+    if (!tryPackRelationSource(source->table, source->vpiKind,
+                               mode == VPITraversalMode::Iterate,
+                               packedSource)) {
+      relation.emitOpError("relation source VPI kind cannot be packed");
+      return {};
+    }
+    if (synthesizedRelationGroups.contains(
+            relationIdentity(source->index, relation.getSelector(),
+                             packedSource, 0)
+                .first)) {
+      relation.emitOpError(
+          "relation source, selector, and access mode are already supplied "
+          "by design inventory");
+      return {};
+    }
     if (failed(addRelation(relation, source->table, source->index,
                            source->vpiKind, relation.getSelector(), mode,
                            target->table, target->index, target->vpiKind,
@@ -2627,6 +2686,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     return {};
 
   llvm::StringMap<ImageObjectRef> semanticIdentityObjects;
+  llvm::StringMap<ImageObjectRef> classSpecializationObjects;
   for (sim::SimVPIObjectAnchorOp anchor : anchors) {
     sim::VPIObjectBackingAttr backing = anchor.getBackingAttr();
     if (!backing || backing.getKind() != sim::VPIObjectBackingKind::Class ||
@@ -2641,6 +2701,21 @@ SmallVector<uint8_t> serializeDesignDatabase(
   }
   for (sim::SimVPITypespecDeclOp typespec : typespecs) {
     sim::VPITypeSemanticsAttr semantic = typespec.getTargetType();
+    if (typespec.getOrigin() == sim::VPITypespecOrigin::ClassSpecialization) {
+      auto owner = anchorsBySymbol.find(typespec.getOwnerAttr().getValue());
+      auto reference = typespecRefs.find(typespec);
+      if (owner == anchorsBySymbol.end() || reference == typespecRefs.end()) {
+        typespec.emitOpError(
+            "canonical class specialization was not serialized");
+        return {};
+      }
+      StringRef identity = semantic.getSymbol().getRootReference().getValue();
+      classSpecializationObjects[identity] = reference->second;
+      // Keep class semantic identity lexical. The separate specialization
+      // binding below distinguishes classes instantiated from one generic defn.
+      semanticIdentityObjects[identity] = anchorRefs.lookup(owner->second);
+      continue;
+    }
     if (semantic.getKind() != sim::VPITypeKind::VirtualInterface ||
         !semantic.getSymbol() ||
         typespec.getOrigin() != sim::VPITypespecOrigin::Interface)
@@ -2683,6 +2758,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
   SmallVector<SemanticTypeRecord> semanticTypes;
   SmallVector<SemanticTypeEdgeRecord> semanticTypeEdges;
   SmallVector<SemanticRootBindingRecord> semanticRootBindings;
+  struct ClassTypeBindingRecord {
+    uint64_t classID;
+    uint32_t typespecIndexAndTable;
+  };
+  struct SemanticClassBindingRecord {
+    uint32_t semanticType;
+    uint32_t typespecIndexAndTable;
+  };
+  SmallVector<ClassTypeBindingRecord> classTypeBindings;
+  SmallVector<SemanticClassBindingRecord> semanticClassBindings;
   DenseMap<std::tuple<Attribute, uint32_t, uint32_t>, uint32_t>
       semanticTypeIndices;
   bool semanticTypeError = false;
@@ -2697,6 +2782,24 @@ SmallVector<uint8_t> serializeDesignDatabase(
     }
     return true;
   };
+  for (sim::SimVPITypespecDeclOp typespec : typespecs) {
+    if (typespec.getOrigin() != sim::VPITypespecOrigin::ClassSpecialization)
+      continue;
+    auto declaration =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+            typespec, typespec.getTargetType().getSymbol());
+    uint32_t packed = 0;
+    if (!declaration ||
+        !packSemanticObject(typespecRefs.lookup(typespec), packed)) {
+      typespec.emitOpError("could not bind canonical class specialization");
+      return {};
+    }
+    classTypeBindings.push_back({declaration.getId(), packed});
+  }
+  llvm::sort(classTypeBindings, [](const auto &left, const auto &right) {
+    return left.classID < right.classID;
+  });
+
   auto semanticArrayShape = [&](sim::SimVPIObjectAnchorOp anchor) {
     DenseI64ArrayAttr ranges = anchor.getIndexRangesAttr();
     DenseI64ArrayAttr dimensionFlags = anchor.getIndexDimensionFlagsAttr();
@@ -2830,6 +2933,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint32_t index = static_cast<uint32_t>(semanticTypes.size());
     semanticTypeIndices[key] = index;
     semanticTypes.push_back({semantic, 0, 0, 0, aliasObject, identityTarget});
+    if (semantic.getKind() == sim::VPITypeKind::Class) {
+      auto canonical = classSpecializationObjects.find(
+          semantic.getSymbol().getRootReference().getValue());
+      if (canonical != classSpecializationObjects.end()) {
+        uint32_t packed = 0;
+        if (!packSemanticObject(canonical->second, packed))
+          return std::nullopt;
+        semanticClassBindings.push_back({index, packed});
+      }
+    }
     const uint32_t firstEdge = static_cast<uint32_t>(semanticTypeEdges.size());
     const uint32_t edgeCount =
         static_cast<uint32_t>(semantic.getChildren().size());
@@ -3619,9 +3732,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
   uint64_t semanticRootBindingOffset =
       semanticTypeEdgeOffset +
       semanticTypeEdges.size() * SemanticTypeEdgeLayout.size;
-  uint64_t relationIndexOffset =
+  uint64_t classTypeBindingOffset =
       semanticRootBindingOffset +
       semanticRootBindings.size() * SemanticRootBindingLayout.size;
+  uint64_t semanticClassBindingOffset =
+      classTypeBindingOffset +
+      classTypeBindings.size() * ClassTypeBindingLayout.size;
+  uint64_t relationIndexOffset =
+      semanticClassBindingOffset +
+      semanticClassBindings.size() * SemanticClassBindingLayout.size;
   uint64_t relationIndexDimensionOffset =
       relationIndexOffset + relationIndices.size() * RelationIndexLayout.size;
   uint64_t relationIndexKeyOffset =
@@ -3928,6 +4047,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setSemanticTypeEdgeCount(semanticTypeEdges.size());
     writer.setSemanticRootBindingOffset(semanticRootBindingOffset);
     writer.setSemanticRootBindingCount(semanticRootBindings.size());
+    writer.setClassTypeBindingOffset(classTypeBindingOffset);
+    writer.setClassTypeBindingCount(classTypeBindings.size());
+    writer.setSemanticClassBindingOffset(semanticClassBindingOffset);
+    writer.setSemanticClassBindingCount(semanticClassBindings.size());
     writer.setRelationIndexOffset(relationIndexOffset);
     writer.setRelationIndexCount(relationIndices.size());
     writer.setRelationIndexDimensionOffset(relationIndexDimensionOffset);
@@ -4058,6 +4181,19 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setName(
         entry.name.empty() ? 0 : static_cast<uint32_t>(intern(entry.name)));
     writer.setPackedOffset(entry.packedOffset);
+  }
+  for (auto [index, binding] : llvm::enumerate(classTypeBindings)) {
+    ClassTypeBindingWriter writer(output.data() + classTypeBindingOffset +
+                                  index * ClassTypeBindingLayout.size);
+    writer.setClassID(binding.classID);
+    writer.setTypespecIndexAndTable(binding.typespecIndexAndTable);
+  }
+  for (auto [index, binding] : llvm::enumerate(semanticClassBindings)) {
+    SemanticClassBindingWriter writer(output.data() +
+                                      semanticClassBindingOffset +
+                                      index * SemanticClassBindingLayout.size);
+    writer.setSemanticType(binding.semanticType);
+    writer.setTypespecIndexAndTable(binding.typespecIndexAndTable);
   }
   for (auto [index, binding] : llvm::enumerate(semanticRootBindings)) {
     SemanticRootBindingWriter writer(output.data() + semanticRootBindingOffset +
