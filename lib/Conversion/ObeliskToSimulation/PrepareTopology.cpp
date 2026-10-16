@@ -1226,6 +1226,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   auto sourceAnchorKind = [&](Operation *operation) -> std::optional<VPIKind> {
     if (!isa<semantic::SVCompilationUnitSymbolOp, semantic::SVPackageSymbolOp,
              semantic::SVClassTypeOp, semantic::SVGenericClassDefSymbolOp,
+             semantic::SVSourceClassDefinitionSymbolOp,
              semantic::SVSubroutineSymbolOp,
              semantic::SVSourceClassMethodSymbolOp,
              semantic::SVConstraintBlockSymbolOp, semantic::SVPropertySymbolOp,
@@ -1262,9 +1263,9 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
                  : VPIKind::Function;
     if (isa<semantic::SVSourceTypeParameterSymbolOp,
             semantic::SVSourceValueParameterSymbolOp>(operation)) {
-      auto owner = dyn_cast<semantic::SVGenericClassDefSymbolOp>(
-          operation->getParentOp());
-      if (!owner)
+      Operation *owner = operation->getParentOp();
+      if (!isa_and_nonnull<semantic::SVGenericClassDefSymbolOp,
+                           semantic::SVSourceClassDefinitionSymbolOp>(owner))
         return std::nullopt;
       if (auto package =
               dyn_cast<semantic::SVPackageSymbolOp>(owner->getParentOp());
@@ -1316,13 +1317,18 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         if (name == "semaphore" || name == "mailbox" || name == "process")
           return std::nullopt;
       }
-    if (isa<semantic::SVGenericClassDefSymbolOp>(operation))
+    if (auto generic = dyn_cast<semantic::SVGenericClassDefSymbolOp>(operation))
+      return generic.getLexicalDefinitionAttr()
+                 ? std::nullopt
+                 : std::optional(VPIKind::ClassDefn);
+    if (isa<semantic::SVSourceClassDefinitionSymbolOp>(operation))
       return VPIKind::ClassDefn;
     if (auto classType = dyn_cast<semantic::SVClassTypeOp>(operation)) {
       // A generic declaration has one lexical class definition. Its
       // elaborated class types are specializations of that definition, not
       // additional source declarations (IEEE 1800-2023 37.32).
       if (isa<semantic::SVGenericClassDefSymbolOp>(classType->getParentOp()) ||
+          classType.getLexicalDefinitionAttr() ||
           classType.getIsUninstantiated())
         return std::nullopt;
       return VPIKind::ClassDefn;
@@ -1480,13 +1486,20 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   }
   llvm::DenseMap<Operation *, FlatSymbolRefAttr> classTypespecSymbols;
   llvm::DenseMap<Operation *, FlatSymbolRefAttr> classDefinitionSymbols;
+  SymbolTableCollection lexicalClassSymbols;
+  auto hasSeparateLexicalClass = [](semantic::SVClassTypeOp classType) {
+    return classType.getLexicalDefinitionAttr() ||
+           isa<semantic::SVGenericClassDefSymbolOp>(classType->getParentOp());
+  };
   for (semantic::SVClassTypeOp classType : classes.sources) {
     StringAttr runtimeSymbol = classes.symbols.lookup(classType);
     classTypespecSymbols[classType] = FlatSymbolRefAttr::get(
         builder.getContext(),
         (runtimeSymbol.getValue() + "_vpi_typespec").str());
     Operation *definition = classType;
-    if (isa<semantic::SVGenericClassDefSymbolOp>(classType->getParentOp()))
+    if (auto reference = classType.getLexicalDefinitionAttr())
+      definition = lexicalClassSymbols.lookupSymbolIn(module, reference);
+    else if (isa<semantic::SVGenericClassDefSymbolOp>(classType->getParentOp()))
       definition = classType->getParentOp();
     classDefinitionSymbols[classType] = anchorSymbols.lookup(definition);
   }
@@ -1550,6 +1563,11 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           builder.getI32IntegerAttr(value)));
       addBoolean(645, isMethod);
     };
+    if (auto definition =
+            dyn_cast<semantic::SVSourceClassDefinitionSymbolOp>(source))
+      properties.push_back(sim::VPIPropertyAttr::get(
+          builder.getContext(), builder.getI32IntegerAttr(635),
+          builder.getBoolAttr(definition.getIsAbstract())));
     if (auto method = dyn_cast<semantic::SVSourceClassMethodSymbolOp>(source)) {
       addMethodProperties(method.getMemberVisibility(), true);
       BoolAttr virtuality = method.getSourceVirtualityAttr();
@@ -2735,7 +2753,10 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   SymbolTableCollection sourceTypeSymbols;
   DenseMap<Operation *, sim::VPITypeSemanticsAttr> lexicalDeclaredTypes;
   DenseMap<Operation *, FlatSymbolRefAttr> lexicalUnresolvedAliases;
-  module.walk([&](semantic::SVGenericClassDefSymbolOp definition) {
+  module.walk([&](Operation *definition) {
+    if (!isa<semantic::SVGenericClassDefSymbolOp,
+             semantic::SVSourceClassDefinitionSymbolOp>(definition))
+      return;
     FlatSymbolRefAttr owner = anchorSymbols.lookup(definition);
     if (!owner)
       return;
@@ -2995,7 +3016,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   // member views. The executable method belongs to the canonical view so its
   // IO declarations and body remain reachable from live class objects.
   for (semantic::SVClassTypeOp classType : classes.sources) {
-    if (isa<semantic::SVGenericClassDefSymbolOp>(classType->getParentOp()))
+    if (hasSeparateLexicalClass(classType))
       continue;
     uint64_t ordinal = 0;
     for (Operation *child : getChildren(classType)) {
@@ -3258,9 +3279,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     // A nonparameterized class typespec may also represent the lexical
     // construct. Parameterized lexical extends expressions need their own
     // unresolved source typespec, rather than one chosen specialization.
-    if (isa<semantic::SVGenericClassDefSymbolOp>(classType->getParentOp()) ||
-        (baseClass &&
-         isa<semantic::SVGenericClassDefSymbolOp>(baseClass->getParentOp())))
+    if (hasSeparateLexicalClass(classType) ||
+        (baseClass && hasSeparateLexicalClass(baseClass)))
       continue;
     std::string symbolName =
         "__obelisk_vpi_anchor_" + std::to_string(nextSyntheticInventoryId);
@@ -4120,7 +4140,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         retainVPISourceTypeIdentity(property, declaration, *vpiType);
       };
       emitMember(classTypespecSymbols.lookup(classType));
-      if (!isa<semantic::SVGenericClassDefSymbolOp>(classType->getParentOp()))
+      if (!hasSeparateLexicalClass(classType))
         emitMember(classDefinitionSymbols.lookup(classType));
     }
   }

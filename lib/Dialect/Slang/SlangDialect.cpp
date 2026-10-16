@@ -525,22 +525,43 @@ LogicalResult RandCaseStatementOp::verify() {
   return success();
 }
 
-LogicalResult SourceClassPropertySymbolOp::verify() {
-  return sourceclass::verifyDataDeclaration<
-      GenericClassDefSymbolOp, SourceDeclaredTypeOp,
-      SourceDeclaredTypeReferenceOp, SourceUnavailableTypeOp,
+LogicalResult SourceClassDefinitionSymbolOp::verify() {
+  return sourceclass::verifyDefinition<
+      GenericClassDefSymbolOp, SourceClassDefinitionSymbolOp,
       SourceClassPropertySymbolOp, SourceClassTypeAliasSymbolOp,
       SourceClassMethodSymbolOp, SourceTypeParameterSymbolOp,
       SourceValueParameterSymbolOp>(*this);
 }
 
+LogicalResult ClassTypeOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  return sourceclass::verifyLexicalDefinition<
+      SourceClassDefinitionSymbolOp, GenericClassDefSymbolOp, ClassTypeOp>(
+      *this, symbols);
+}
+
+LogicalResult
+GenericClassDefSymbolOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  return sourceclass::verifyLexicalDefinition<
+      SourceClassDefinitionSymbolOp, GenericClassDefSymbolOp, ClassTypeOp>(
+      *this, symbols);
+}
+
+LogicalResult SourceClassPropertySymbolOp::verify() {
+  return sourceclass::verifyDataDeclaration<
+      GenericClassDefSymbolOp, SourceClassDefinitionSymbolOp,
+      SourceDeclaredTypeOp, SourceDeclaredTypeReferenceOp,
+      SourceUnavailableTypeOp, SourceClassPropertySymbolOp,
+      SourceClassTypeAliasSymbolOp, SourceClassMethodSymbolOp,
+      SourceTypeParameterSymbolOp, SourceValueParameterSymbolOp>(*this);
+}
+
 LogicalResult SourceClassTypeAliasSymbolOp::verify() {
   return sourceclass::verifyDataDeclaration<
-      GenericClassDefSymbolOp, SourceDeclaredTypeOp,
-      SourceDeclaredTypeReferenceOp, SourceUnavailableTypeOp,
-      SourceClassPropertySymbolOp, SourceClassTypeAliasSymbolOp,
-      SourceClassMethodSymbolOp, SourceTypeParameterSymbolOp,
-      SourceValueParameterSymbolOp>(*this);
+      GenericClassDefSymbolOp, SourceClassDefinitionSymbolOp,
+      SourceDeclaredTypeOp, SourceDeclaredTypeReferenceOp,
+      SourceUnavailableTypeOp, SourceClassPropertySymbolOp,
+      SourceClassTypeAliasSymbolOp, SourceClassMethodSymbolOp,
+      SourceTypeParameterSymbolOp, SourceValueParameterSymbolOp>(*this);
 }
 
 LogicalResult SourceDeclaredTypeOp::verify() {
@@ -582,23 +603,24 @@ LogicalResult SourceUnavailableTypeOp::verify() {
 }
 
 LogicalResult SourceClassMethodSymbolOp::verify() {
-  return sourceclass::verifyMethod<GenericClassDefSymbolOp,
-                                   SourceValueParameterSymbolOp,
-                                   SourceTypeParameterSymbolOp>(
+  return sourceclass::verifyMethod<
+      GenericClassDefSymbolOp, SourceClassDefinitionSymbolOp,
+      SourceValueParameterSymbolOp, SourceTypeParameterSymbolOp>(
       *this, getSubroutineKind() == SubroutineKind::Task);
 }
 
 LogicalResult SourceTypeParameterSymbolOp::verify() {
   return sourceparameter::verifyTypeParameter<
-      GenericClassDefSymbolOp, SourceTypeDefaultOp,
-      SourceTypeReferenceDefaultOp, SourceUnsupportedDefaultOp,
-      SourceValueParameterSymbolOp>(*this);
+      GenericClassDefSymbolOp, SourceClassDefinitionSymbolOp,
+      SourceTypeDefaultOp, SourceTypeReferenceDefaultOp,
+      SourceUnsupportedDefaultOp, SourceValueParameterSymbolOp>(*this);
 }
 
 LogicalResult SourceValueParameterSymbolOp::verify() {
   return sourceparameter::verifyValueParameter<
-      GenericClassDefSymbolOp, SourceTypeParameterSymbolOp,
-      SourceValueDefaultOp, SourceUnsupportedDefaultOp>(*this);
+      GenericClassDefSymbolOp, SourceClassDefinitionSymbolOp,
+      SourceTypeParameterSymbolOp, SourceValueDefaultOp,
+      SourceUnsupportedDefaultOp>(*this);
 }
 
 LogicalResult SourceValueDefaultOp::verify() {

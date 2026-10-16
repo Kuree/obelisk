@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s -split-input-file -verify-diagnostics
 
 module {
-  // expected-error @+1 {{source method requires a generic class owner}}
+  // expected-error @+1 {{source method requires a lexical class owner}}
   obelisk.sv.source.class_method @f attributes {name = "f", node_id = 1 : i64, subroutine_kind = 0 : i32, default_lifetime = 0 : i32, member_visibility = 0 : i32} {}
 }
 

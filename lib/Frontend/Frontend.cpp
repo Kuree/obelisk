@@ -1301,6 +1301,32 @@ public:
       pending.operation->setAttr(pending.attributeName,
                                  builder.getArrayAttr(references));
     }
+    for (const auto &[symbol, operation] : emittedSymbolOperations) {
+      if (!isa<slangir::ClassTypeOp, slangir::GenericClassDefSymbolOp>(
+              operation))
+        continue;
+      const auto &definition = sourceClassDefinition(*symbol);
+      if (&definition == symbol)
+        continue;
+      auto definingOp = emittedSymbolOperations.find(&definition);
+      if (definingOp != emittedSymbolOperations.end() &&
+          !isa<slangir::SourceClassDefinitionSymbolOp>(definingOp->second))
+        continue;
+      auto target = emittedSymbolPaths.find(&definition);
+      if (target == emittedSymbolPaths.end()) {
+        operation->emitError("nested class has no imported lexical definition");
+        sawInvalidNode = true;
+        continue;
+      }
+      SmallVector<FlatSymbolRefAttr> nested;
+      for (StringRef component :
+           ArrayRef<std::string>(target->second).drop_front())
+        nested.push_back(
+            FlatSymbolRefAttr::get(builder.getContext(), component));
+      operation->setAttr("lexical_definition",
+                         SymbolRefAttr::get(builder.getContext(),
+                                            target->second.front(), nested));
+    }
     return success(!sawInvalidNode);
   }
 
@@ -5825,15 +5851,91 @@ private:
     node.getBody().emplaceBlock();
   }
 
-  void importSourceClassDataMember(
-      const slang::ast::Symbol &member,
-      const slang::ast::GenericClassDefSymbol &definition,
-      const OriginalParameterMap &types) {
+  llvm::DenseMap<const slang::ast::Symbol *, const slang::ast::Symbol *>
+      sourceClassDefinitions;
+  llvm::DenseMap<
+      std::pair<const slang::ast::Symbol *, const slang::syntax::SyntaxNode *>,
+      const slang::ast::Symbol *>
+      nestedSourceClasses;
+  llvm::DenseMap<const slang::ast::Symbol *, std::string> sourceClassPaths;
+
+  const slang::ast::Symbol &
+  sourceClassDefinition(const slang::ast::Symbol &symbol) const {
+    if (auto found = sourceClassDefinitions.find(&symbol);
+        found != sourceClassDefinitions.end())
+      return *found->second;
+    if (symbol.kind == slang::ast::SymbolKind::ClassType)
+      if (auto *generic = symbol.as<slang::ast::ClassType>().genericClass)
+        return sourceClassDefinition(*generic);
+    const auto *scope = symbol.getParentScope();
+    if (scope && scope->asSymbol().kind == slang::ast::SymbolKind::ClassType) {
+      const auto &parent = sourceClassDefinition(scope->asSymbol());
+      if (auto found = nestedSourceClasses.find({&parent, symbol.getSyntax()});
+          found != nestedSourceClasses.end())
+        return *found->second;
+    }
+    return symbol;
+  }
+
+  std::string sourceClassPath(const slang::ast::Symbol &symbol) {
+    auto found = sourceClassPaths.find(&symbol);
+    return found == sourceClassPaths.end() ? getSymbolPath(symbol)
+                                           : found->second;
+  }
+
+  void importSourceNestedClass(const slang::ast::Symbol &definition,
+                               const slang::ast::Symbol &member) {
+    if (!member.getSyntax())
+      return;
+    const slang::ast::ClassType *source = nullptr;
+    const bool parameterized =
+        member.kind == slang::ast::SymbolKind::GenericClassDef;
+    if (parameterized) {
+      const auto &invalid = member.as<slang::ast::GenericClassDefSymbol>()
+                                .getInvalidSpecialization();
+      if (!invalid.isClass())
+        return;
+      source = &invalid.as<slang::ast::ClassType>();
+    } else {
+      source = &member.as<slang::ast::ClassType>();
+    }
+    auto attrs = originalSourceAttributes(getSourceRange(member));
+    attrs.set("sym_name", getInternalSymbolName(member));
+    attrs.set("name", builder.getStringAttr(member.name));
+    std::string hierarchy =
+        sourceClassPath(definition) + "::" + std::string(member.name);
+    attrs.set("hierarchical_name", builder.getStringAttr(hierarchy));
+    attrs.set("is_abstract", builder.getBoolAttr(source->isAbstract));
+    attrs.set("is_interface", builder.getBoolAttr(source->isInterface));
+    attrs.set("is_final", builder.getBoolAttr(source->isFinal));
+    attrs.set("is_parameterized", builder.getBoolAttr(parameterized));
+    auto declaration = slangir::SourceClassDefinitionSymbolOp::create(
+        builder, sourceLocation(member.location), TypeRange{}, ValueRange{},
+        attrs.getAttrs());
+    auto &body = declaration.getBody().emplaceBlock();
+    nestedSourceClasses[{&definition, member.getSyntax()}] = &member;
+    sourceClassDefinitions[&member] = &member;
+    sourceClassDefinitions[source] = &member;
+    sourceClassPaths[&member] = std::move(hierarchy);
+    currentSymbolPath.push_back(getInternalSymbolName(member).getValue().str());
+    emittedSymbolPaths.try_emplace(&member, currentSymbolPath);
+    emittedSymbolOperations.try_emplace(&member, declaration);
+    {
+      OpBuilder::InsertionGuard guard(builder);
+      builder.setInsertionPointToStart(&body);
+      importSourceClassMembers(member, *source);
+    }
+    currentSymbolPath.pop_back();
+  }
+
+  void importSourceClassDataMember(const slang::ast::Symbol &member,
+                                   const slang::ast::Symbol &definition,
+                                   const OriginalParameterMap &types) {
     auto attrs = originalSourceAttributes(getSourceRange(member));
     attrs.set("sym_name", getInternalSymbolName(member));
     attrs.set("name", builder.getStringAttr(member.name));
     attrs.set("hierarchical_name",
-              builder.getStringAttr(getSymbolPath(definition) +
+              builder.getStringAttr(sourceClassPath(definition) +
                                     "::" + std::string(member.name)));
     const slang::ast::DeclaredType *declared = nullptr;
     Operation *operation = nullptr;
@@ -5874,9 +5976,8 @@ private:
   }
 
   template <typename Method>
-  void
-  importSourceClassMethod(const Method &method,
-                          const slang::ast::GenericClassDefSymbol &definition) {
+  void importSourceClassMethod(const Method &method,
+                               const slang::ast::Symbol &definition) {
     using MF = slang::ast::MethodFlags;
     // Implicit methods have no declaration in the lexical class inventory.
     if (!method.getSyntax() || method.flags.has(MF::BuiltIn))
@@ -5890,7 +5991,7 @@ private:
     attrs.set("sym_name", getInternalSymbolName(method));
     attrs.set("name", builder.getStringAttr(method.name));
     attrs.set("hierarchical_name",
-              builder.getStringAttr(getSymbolPath(definition) +
+              builder.getStringAttr(sourceClassPath(definition) +
                                     "::" + std::string(method.name)));
     attrs.set("subroutine_kind",
               slangir::SubroutineKindAttr::get(
@@ -5957,11 +6058,22 @@ private:
     if (!invalidType.isClass())
       return;
     const auto &source = invalidType.as<slang::ast::ClassType>();
+    sourceClassDefinitions[&source] = &definition;
+    importSourceClassMembers(definition, source);
+  }
+
+  void importSourceClassMembers(const slang::ast::Symbol &definition,
+                                const slang::ast::ClassType &source) {
     auto parameters = originalParameterMap(source);
     OriginalParameterMap sourceTypes;
     for (const auto &member : source.members()) {
       if (member.getParentScope() != &source)
         continue;
+      if (member.kind == slang::ast::SymbolKind::ClassType ||
+          member.kind == slang::ast::SymbolKind::GenericClassDef) {
+        importSourceNestedClass(definition, member);
+        continue;
+      }
       if (member.kind == slang::ast::SymbolKind::TypeParameter) {
         auto reference = FlatSymbolRefAttr::get(getInternalSymbolName(member));
         sourceTypes[&member] = reference;
@@ -5998,7 +6110,7 @@ private:
       attrs.set("sym_name", getInternalSymbolName(member));
       attrs.set("name", builder.getStringAttr(member.name));
       attrs.set("hierarchical_name",
-                builder.getStringAttr(getSymbolPath(definition) +
+                builder.getStringAttr(sourceClassPath(definition) +
                                       "::" + std::string(member.name)));
       if (parameter.isLocalParam())
         attrs.set("is_local_param", builder.getUnitAttr());
@@ -6197,7 +6309,8 @@ private:
       llvm::sort(specializations, [](const auto &lhs, const auto &rhs) {
         return lhs.first < rhs.first;
       });
-      importSourceClassMembers(node);
+      if (&sourceClassDefinition(node) == &node)
+        importSourceClassMembers(node);
       for (const auto &entry : specializations)
         entry.second->visit(*this);
     } else if constexpr (std::same_as<T, slang::ast::ClassType>) {

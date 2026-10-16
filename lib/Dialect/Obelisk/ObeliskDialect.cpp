@@ -595,22 +595,43 @@ LogicalResult SVRandCaseStatementOp::verify() {
   return success();
 }
 
-LogicalResult SVSourceClassPropertySymbolOp::verify() {
-  return sourceclass::verifyDataDeclaration<
-      SVGenericClassDefSymbolOp, SVSourceDeclaredTypeOp,
-      SVSourceDeclaredTypeReferenceOp, SVSourceUnavailableTypeOp,
+LogicalResult SVSourceClassDefinitionSymbolOp::verify() {
+  return sourceclass::verifyDefinition<
+      SVGenericClassDefSymbolOp, SVSourceClassDefinitionSymbolOp,
       SVSourceClassPropertySymbolOp, SVSourceClassTypeAliasSymbolOp,
       SVSourceClassMethodSymbolOp, SVSourceTypeParameterSymbolOp,
       SVSourceValueParameterSymbolOp>(*this);
 }
 
+LogicalResult SVClassTypeOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  return sourceclass::verifyLexicalDefinition<SVSourceClassDefinitionSymbolOp,
+                                              SVGenericClassDefSymbolOp,
+                                              SVClassTypeOp>(*this, symbols);
+}
+
+LogicalResult
+SVGenericClassDefSymbolOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  return sourceclass::verifyLexicalDefinition<SVSourceClassDefinitionSymbolOp,
+                                              SVGenericClassDefSymbolOp,
+                                              SVClassTypeOp>(*this, symbols);
+}
+
+LogicalResult SVSourceClassPropertySymbolOp::verify() {
+  return sourceclass::verifyDataDeclaration<
+      SVGenericClassDefSymbolOp, SVSourceClassDefinitionSymbolOp,
+      SVSourceDeclaredTypeOp, SVSourceDeclaredTypeReferenceOp,
+      SVSourceUnavailableTypeOp, SVSourceClassPropertySymbolOp,
+      SVSourceClassTypeAliasSymbolOp, SVSourceClassMethodSymbolOp,
+      SVSourceTypeParameterSymbolOp, SVSourceValueParameterSymbolOp>(*this);
+}
+
 LogicalResult SVSourceClassTypeAliasSymbolOp::verify() {
   return sourceclass::verifyDataDeclaration<
-      SVGenericClassDefSymbolOp, SVSourceDeclaredTypeOp,
-      SVSourceDeclaredTypeReferenceOp, SVSourceUnavailableTypeOp,
-      SVSourceClassPropertySymbolOp, SVSourceClassTypeAliasSymbolOp,
-      SVSourceClassMethodSymbolOp, SVSourceTypeParameterSymbolOp,
-      SVSourceValueParameterSymbolOp>(*this);
+      SVGenericClassDefSymbolOp, SVSourceClassDefinitionSymbolOp,
+      SVSourceDeclaredTypeOp, SVSourceDeclaredTypeReferenceOp,
+      SVSourceUnavailableTypeOp, SVSourceClassPropertySymbolOp,
+      SVSourceClassTypeAliasSymbolOp, SVSourceClassMethodSymbolOp,
+      SVSourceTypeParameterSymbolOp, SVSourceValueParameterSymbolOp>(*this);
 }
 
 LogicalResult SVSourceDeclaredTypeOp::verify() {
@@ -653,23 +674,24 @@ LogicalResult SVSourceUnavailableTypeOp::verify() {
 }
 
 LogicalResult SVSourceClassMethodSymbolOp::verify() {
-  return sourceclass::verifyMethod<SVGenericClassDefSymbolOp,
-                                   SVSourceValueParameterSymbolOp,
-                                   SVSourceTypeParameterSymbolOp>(
+  return sourceclass::verifyMethod<
+      SVGenericClassDefSymbolOp, SVSourceClassDefinitionSymbolOp,
+      SVSourceValueParameterSymbolOp, SVSourceTypeParameterSymbolOp>(
       *this, getSubroutineKind() == SVSubroutineKind::Task);
 }
 
 LogicalResult SVSourceTypeParameterSymbolOp::verify() {
   return sourceparameter::verifyTypeParameter<
-      SVGenericClassDefSymbolOp, SVSourceTypeDefaultOp,
-      SVSourceTypeReferenceDefaultOp, SVSourceUnsupportedDefaultOp,
-      SVSourceValueParameterSymbolOp>(*this);
+      SVGenericClassDefSymbolOp, SVSourceClassDefinitionSymbolOp,
+      SVSourceTypeDefaultOp, SVSourceTypeReferenceDefaultOp,
+      SVSourceUnsupportedDefaultOp, SVSourceValueParameterSymbolOp>(*this);
 }
 
 LogicalResult SVSourceValueParameterSymbolOp::verify() {
   return sourceparameter::verifyValueParameter<
-      SVGenericClassDefSymbolOp, SVSourceTypeParameterSymbolOp,
-      SVSourceValueDefaultOp, SVSourceUnsupportedDefaultOp>(*this);
+      SVGenericClassDefSymbolOp, SVSourceClassDefinitionSymbolOp,
+      SVSourceTypeParameterSymbolOp, SVSourceValueDefaultOp,
+      SVSourceUnsupportedDefaultOp>(*this);
 }
 
 LogicalResult SVSourceValueDefaultOp::verify() {

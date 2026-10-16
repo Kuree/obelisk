@@ -570,6 +570,7 @@ FailureOr<CoverageWithCandidatePlan> buildCoverageWithCandidatePlan(
 bool isSupportedClassDeclaration(Operation *op) {
   return isa<
       semantic::SVClassTypeOp, semantic::SVGenericClassDefSymbolOp,
+      semantic::SVSourceClassDefinitionSymbolOp,
       semantic::SVSourceClassMethodSymbolOp,
       semantic::SVSourceTypeParameterSymbolOp,
       semantic::SVSourceValueParameterSymbolOp,

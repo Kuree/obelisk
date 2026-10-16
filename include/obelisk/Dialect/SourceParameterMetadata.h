@@ -14,13 +14,13 @@ inline size_t childCount(mlir::Operation *op) {
              : op->getRegion(0).front().getOperations().size();
 }
 
-template <typename GenericClass, typename ConcreteDefault,
+template <typename GenericClass, typename SourceClass, typename ConcreteDefault,
           typename ReferenceDefault, typename UnsupportedDefault,
           typename OtherParameter, typename Parameter>
 mlir::LogicalResult verifyTypeParameter(Parameter op) {
-  if (!mlir::isa_and_nonnull<GenericClass>(op->getParentOp()))
+  if (!mlir::isa_and_nonnull<GenericClass, SourceClass>(op->getParentOp()))
     return op.emitOpError(
-        "source type parameter requires a generic class owner");
+        "source type parameter requires a lexical class owner");
   if (op.getSemanticTypeAttr())
     return op.emitOpError(
         "source type parameter cannot carry an effective type");
@@ -84,12 +84,13 @@ mlir::LogicalResult verifyTypeReference(Reference op,
   return mlir::success();
 }
 
-template <typename GenericClass, typename TypeParameter, typename ValueDefault,
-          typename UnsupportedDefault, typename Parameter>
+template <typename GenericClass, typename SourceClass, typename TypeParameter,
+          typename ValueDefault, typename UnsupportedDefault,
+          typename Parameter>
 mlir::LogicalResult verifyValueParameter(Parameter op) {
-  if (!mlir::isa_and_nonnull<GenericClass>(op->getParentOp()))
+  if (!mlir::isa_and_nonnull<GenericClass, SourceClass>(op->getParentOp()))
     return op.emitOpError(
-        "source value parameter requires a generic class owner");
+        "source value parameter requires a lexical class owner");
   if (op.getSemanticTypeAttr())
     return op.emitOpError(
         "source value parameter cannot carry an effective type");

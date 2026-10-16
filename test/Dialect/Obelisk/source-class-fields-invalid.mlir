@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s -split-input-file -verify-diagnostics
 
 module {
-  // expected-error @+1 {{source declaration requires a generic class owner}}
+  // expected-error @+1 {{source declaration requires a lexical class owner}}
   obelisk.sv.source.class_property @x attributes {name = "x", node_id = 1 : i64, lifetime = 0 : i32, member_visibility = 0 : i32, rand_mode = 0 : i32} { obelisk.sv.source.declared_type attributes {node_id = 2 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {} }
 }
 

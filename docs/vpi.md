@@ -72,10 +72,14 @@ remain queryable; value access reports a notice. A dependent field such as
 `T value` has no public variable kind until specialization and is therefore
 not fabricated as a `vpiReg`. Its source declaration is retained for subsequent
 specialization. Dependent typedef aliases retain distinct named typespec
-identities with exact `vpiTypedefAlias` chains to their unresolved type parameters. They appear only
-in the typedef inventory; declaration-only effective type, default, and
-localparam queries report a notice. Nested generic types, broader concrete type
-syntax, and broader original-default expression forms remain incomplete.
+identities with exact `vpiTypedefAlias` chains to their unresolved type
+parameters. They appear only in the typedef inventory; declaration-only
+effective type, default, and localparam queries report a notice. Nested lexical
+class declarations retain their own `vpiClassDefn` and `vpiInternalScope`
+inventory, including concrete source members and nested generic declarations
+that have no realized specialization. Realized nested typespecs refer back to
+that same lexical definition across enclosing class specializations. Dependent
+base/type syntax and broader original-default expression forms remain incomplete.
 
 Mailbox, semaphore, and process variables also expose `vpiClassObj` and
 `vpiClassTypespec`. Upcasting a user class to its mailbox or semaphore base
