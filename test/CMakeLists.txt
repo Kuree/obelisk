@@ -335,6 +335,7 @@ add_executable(obelisk-design-database-dump-test EXCLUDE_FROM_ALL
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIConstantEvaluationTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIIntegralCastsTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIComputedBoundsTest.cpp"
+  "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIConcatBoundsTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIGenerateParametersTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIRTLPropertiesTest.cpp"
 )

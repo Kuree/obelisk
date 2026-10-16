@@ -131,6 +131,37 @@ inline constexpr bool hasIntegralOperatorContext(uint32_t code) {
          rule == Rule::Conditional;
 }
 
+// 11.4.12 and 11.8: concatenations have unsigned results and self-determined
+// operands.
+// The multiplier is an immutable value proof supplied by the caller; its state
+// domain does not contribute to the result. Zero-width forms are not yet part
+// of the retained integral-type contract.
+inline constexpr bool
+validVPIIntegralConcatenation(uint32_t code, VPIIntegralExpressionShape result,
+                              const VPIIntegralExpressionShape *operands,
+                              uint32_t count, uint64_t repetitions = 1) {
+  bool repeated = code == 34;
+  if ((code != 33 && !repeated) || count < (repeated ? 2u : 1u) ||
+      !result.width || result.width > UINT32_MAX || result.isSigned ||
+      !repetitions || repetitions > UINT32_MAX ||
+      (!repeated && repetitions != 1))
+    return false;
+  uint64_t width = 0;
+  bool state = false;
+  for (uint32_t index = 0; index != count; ++index) {
+    if (!operands[index].width || operands[index].width > UINT32_MAX)
+      return false;
+    if (repeated && index == 0)
+      continue;
+    width += operands[index].width;
+    if (width > UINT32_MAX)
+      return false;
+    state |= operands[index].fourState;
+  }
+  return width <= UINT32_MAX / repetitions &&
+         width * repetitions == result.width && result.fourState == state;
+}
+
 inline constexpr bool
 validVPIIntegralOperator(uint32_t code, VPIIntegralExpressionShape result,
                          const VPIIntegralExpressionShape *operands,

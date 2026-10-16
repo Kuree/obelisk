@@ -627,11 +627,26 @@ LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
         return std::nullopt;
       auto descriptor =
           reflection::findVPISourceOperator(*expression.getOpType());
-      if (!descriptor || reflection::integralOperatorRule(descriptor->value) ==
-                             reflection::VPIIntegralOperatorRule::Unsupported)
+      bool concatenation = *expression.getOpType() == concatOp ||
+                           *expression.getOpType() == multiConcatOp;
+      if (!concatenation &&
+          (!descriptor || reflection::integralOperatorRule(descriptor->value) ==
+                              reflection::VPIIntegralOperatorRule::Unsupported))
         return std::nullopt;
-      SmallVector<const Endpoint *, 3> result(descriptor->arity, nullptr);
-      for (auto relation : outgoing[symbolic(expression.getSymNameAttr())]) {
+      auto &relations = outgoing[symbolic(expression.getSymNameAttr())];
+      size_t count =
+          concatenation
+              ? llvm::count_if(relations,
+                               [](auto relation) {
+                                 return relation.getSelector() ==
+                                        uint32_t(Relation::OperandRel);
+                               })
+              : descriptor->arity;
+      if (concatenation &&
+          count < (*expression.getOpType() == multiConcatOp ? 2u : 1u))
+        return std::nullopt;
+      SmallVector<const Endpoint *, 3> result(count, nullptr);
+      for (auto relation : relations) {
         if (relation.getSelector() == uint32_t(Relation::UseRel))
           continue;
         if (relation.getSelector() != uint32_t(Relation::OperandRel) ||

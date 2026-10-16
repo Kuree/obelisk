@@ -7,6 +7,7 @@
 #include "obelisk/Reflection/VPIObjectModel.h"
 #include "obelisk/Runtime/Runtime.h"
 #include <array>
+#include <optional>
 
 namespace obelisk::vpiexpression {
 using designbytecode::LimbVector;
@@ -48,6 +49,50 @@ inline Logic boolean(uint32_t truthValue, bool fourState) {
                fourState,
                {uint64_t(truthValue == 1)},
                {uint64_t(truthValue == 2 && fourState)}};
+}
+
+// This checked entry point also serves the immutable DAG proof, before every
+// child has undergone root-specific validation. No result allocation precedes
+// the complete width and multiplier proof.
+inline std::optional<Logic> evaluateConcatenation(
+    uint32_t code, VPIIntegralExpressionShape result, const Logic *values,
+    const VPIIntegralExpressionShape *shapes, uint32_t count) {
+  using namespace designbytecode;
+  bool repeated = code == 34;
+  if ((code != 33 && !repeated) || count < (repeated ? 2u : 1u))
+    return std::nullopt;
+  for (uint32_t index = 0; index != count; ++index)
+    if (!shapes[index].width || shapes[index].width > UINT32_MAX ||
+        values[index].width != shapes[index].width ||
+        values[index].value.size() != limbCount(values[index].width) ||
+        values[index].unknown.size() != limbCount(values[index].width))
+      return std::nullopt;
+  uint64_t repetitions = 1;
+  if (repeated) {
+    const Logic &multiplier = values[0];
+    if (anyUnknown(multiplier) ||
+        (shapes[0].isSigned && bit(multiplier.value, multiplier.width - 1)))
+      return std::nullopt;
+    for (size_t limb = 1; limb != multiplier.value.size(); ++limb)
+      if (multiplier.value[limb])
+        return std::nullopt;
+    repetitions = multiplier.value[0];
+  }
+  if (!reflection::validVPIIntegralConcatenation(code, result, shapes, count,
+                                                 repetitions))
+    return std::nullopt;
+  uint32_t width = result.width;
+  Logic joined{width, result.fourState, LimbVector(limbCount(width)),
+               LimbVector(limbCount(width))};
+  uint32_t offset = 0;
+  for (uint64_t repetition = 0; repetition != repetitions; ++repetition)
+    for (uint32_t index = count; index-- != uint32_t(repeated);)
+      for (uint32_t source = 0; source != values[index].width; ++source) {
+        setBit(joined.value, offset, bit(values[index].value, source));
+        setBit(joined.unknown, offset, bit(values[index].unknown, source));
+        ++offset;
+      }
+  return joined;
 }
 
 // The immutable image has already proved the arity, result shape and each

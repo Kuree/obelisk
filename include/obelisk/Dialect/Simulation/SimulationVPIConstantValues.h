@@ -46,14 +46,41 @@ inline std::optional<VPIConstantValue> evaluateVPIIntegralConstant(
     llvm::ArrayRef<reflection::VPIIntegralExpressionShape> shapes) {
   using llvm::APInt;
   using Rule = reflection::VPIIntegralOperatorRule;
-  if (values.size() != shapes.size() || result.width > UINT32_MAX ||
-      !reflection::validVPIIntegralOperator(code, result, shapes.data(),
-                                            shapes.size()))
+  if (values.size() != shapes.size() || values.size() > UINT32_MAX)
     return std::nullopt;
   for (size_t index = 0; index != values.size(); ++index)
     if (values[index].value.getBitWidth() != shapes[index].width ||
         values[index].unknown.getBitWidth() != shapes[index].width)
       return std::nullopt;
+  if (code == 33 || code == 34) {
+    bool repeated = code == 34;
+    if (values.size() < (repeated ? 2u : 1u))
+      return std::nullopt;
+    uint64_t repetitions = 1;
+    if (repeated) {
+      const auto &multiplier = values.front();
+      if (!multiplier.unknown.isZero() || multiplier.value.isZero() ||
+          (shapes.front().isSigned && multiplier.value.isNegative()) ||
+          multiplier.value.getActiveBits() > 32)
+        return std::nullopt;
+      repetitions = multiplier.value.getZExtValue();
+    }
+    if (!reflection::validVPIIntegralConcatenation(code, result, shapes.data(),
+                                                   shapes.size(), repetitions))
+      return std::nullopt;
+    VPIConstantValue joined{APInt(result.width, 0), APInt(result.width, 0)};
+    unsigned offset = 0;
+    for (uint64_t repetition = 0; repetition != repetitions; ++repetition)
+      for (size_t index = values.size(); index-- != size_t(repeated);) {
+        joined.value.insertBits(values[index].value, offset);
+        joined.unknown.insertBits(values[index].unknown, offset);
+        offset += shapes[index].width;
+      }
+    return joined;
+  }
+  if (!reflection::validVPIIntegralOperator(code, result, shapes.data(),
+                                            shapes.size()))
+    return std::nullopt;
   const unsigned width = result.width;
   const Rule rule = reflection::integralOperatorRule(code);
   if (rule == Rule::Cast)

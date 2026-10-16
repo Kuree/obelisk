@@ -192,3 +192,91 @@ TEST(VPIConstantEvaluation, IntegralCasts) {
                                                    &child, 1));
   EXPECT_FALSE(reflection::validVPISourceOnlyArity(67, 1));
 }
+
+TEST(VPIConstantEvaluation, Concatenations) {
+  using namespace obelisk;
+  using Shape = reflection::VPIIntegralExpressionShape;
+  using llvm::APInt;
+  auto check = [&](uint32_t code, std::vector<std::string> bits,
+                   std::vector<Shape> shapes, Shape result,
+                   std::optional<std::string> expected) {
+    std::vector<sim::VPIConstantValue> constants;
+    std::vector<designbytecode::Logic> values;
+    ASSERT_EQ(bits.size(), shapes.size());
+    for (size_t index = 0; index != bits.size(); ++index) {
+      const auto &input = bits[index];
+      unsigned width = input.size();
+      ASSERT_EQ(width, shapes[index].width);
+      APInt value(width, 0), unknown(width, 0);
+      designbytecode::Logic runtime{width, shapes[index].fourState, {}, {}};
+      runtime.value.assign(designbytecode::limbCount(width), 0);
+      runtime.unknown.assign(designbytecode::limbCount(width), 0);
+      for (unsigned bit = 0; bit != width; ++bit) {
+        char digit = input[width - bit - 1];
+        bool v = digit == '1' || digit == 'z';
+        bool u = digit == 'x' || digit == 'z';
+        if (v)
+          value.setBit(bit);
+        if (u)
+          unknown.setBit(bit);
+        designbytecode::setBit(runtime.value, bit, v);
+        designbytecode::setBit(runtime.unknown, bit, u);
+      }
+      constants.push_back({std::move(value), std::move(unknown)});
+      values.push_back(std::move(runtime));
+    }
+    auto compiler =
+        sim::evaluateVPIIntegralConstant(code, result, constants, shapes);
+    auto runtime = vpiexpression::evaluateConcatenation(
+        code, result, values.data(), shapes.data(), shapes.size());
+    if (!expected) {
+      EXPECT_FALSE(compiler);
+      EXPECT_FALSE(runtime);
+      return;
+    }
+    ASSERT_TRUE(compiler);
+    ASSERT_TRUE(runtime);
+    std::string compilerBits, runtimeBits;
+    for (unsigned bit = result.width; bit-- != 0;) {
+      bool v = compiler->value[bit], u = compiler->unknown[bit];
+      compilerBits += u ? (v ? 'z' : 'x') : (v ? '1' : '0');
+      v = designbytecode::bit(runtime->value, bit);
+      u = designbytecode::bit(runtime->unknown, bit);
+      runtimeBits += u ? (v ? 'z' : 'x') : (v ? '1' : '0');
+    }
+    EXPECT_EQ(compilerBits, *expected);
+    EXPECT_EQ(runtimeBits, *expected);
+  };
+  // More than three operands, mixed state domains, and limb boundaries. The
+  // independent string oracle also proves operand order and X/Z preservation.
+  check(33, {"10", "xz1", "0", std::string(65, '1')},
+        {{2, true, false},
+         {3, false, true},
+         {1, false, false},
+         {65, false, false}},
+        {71, false, true}, "10xz10" + std::string(65, '1'));
+  check(34, {"10", "10", "xz"},
+        {{2, false, false}, {2, true, false}, {2, false, true}},
+        {8, false, true}, "10xz10xz");
+  check(34, {"10", std::string(64, '1') + "0"},
+        {{2, false, false}, {65, false, false}}, {130, false, false},
+        std::string(64, '1') + "0" + std::string(64, '1') + "0");
+  // A known four-state multiplier does not make two-state data four-state.
+  check(34, {"10", "01"}, {{2, false, true}, {2, true, false}},
+        {4, false, false}, "0101");
+  check(34, {"1x", "01"}, {{2, false, true}, {2, true, false}},
+        {4, false, false}, std::nullopt);
+  check(34, {"10", "01"}, {{2, true, false}, {2, false, false}},
+        {4, false, false}, std::nullopt);
+  check(34, {"00", "01"}, {{2, false, false}, {2, false, false}},
+        {4, false, false}, std::nullopt);
+  check(34, {std::string(65, '1'), "01"},
+        {{65, false, false}, {2, false, false}}, {4, false, false},
+        std::nullopt);
+  check(33, {"10", "01"}, {{2, false, false}, {2, false, false}},
+        {3, false, false}, std::nullopt);
+  check(33, {"10", "01"}, {{2, false, false}, {2, false, false}},
+        {4, true, false}, std::nullopt);
+  check(33, {"10", "01"}, {{2, false, true}, {2, false, false}},
+        {4, false, false}, std::nullopt);
+}

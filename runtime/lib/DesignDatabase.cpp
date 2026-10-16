@@ -3685,9 +3685,13 @@ bool expressionKnownInteger(const Database &database, const uint8_t *root,
       } else if (read16(node) == uint16_t(Kind::Operation)) {
         code = read16(node + 2);
         auto descriptor = obelisk::reflection::findVPISourceOperator(code);
-        if (!descriptor || read32(node + 12) != descriptor->arity ||
-            obelisk::reflection::integralOperatorRule(code) ==
-                obelisk::reflection::VPIIntegralOperatorRule::Unsupported)
+        bool concatenation = code == 33 || code == 34;
+        if (concatenation
+                ? read32(node + 12) < (code == 34 ? 2u : 1u)
+                : (!descriptor || read32(node + 12) != descriptor->arity ||
+                   obelisk::reflection::integralOperatorRule(code) ==
+                       obelisk::reflection::VPIIntegralOperatorRule::
+                           Unsupported))
           return false;
       } else
         return false;
@@ -3735,9 +3739,28 @@ bool expressionKnownInteger(const Database &database, const uint8_t *root,
       }
       continue;
     }
+    uint32_t count = read32(node + 12);
+    if (code == 33 || code == 34) {
+      std::vector<Logic> inputs;
+      std::vector<Shape> shapes;
+      inputs.reserve(count);
+      shapes.reserve(count);
+      for (uint32_t child = 0; child != count; ++child) {
+        auto found = values.find(operandAt(child));
+        if (found == values.end())
+          return false;
+        inputs.push_back(found->second.value);
+        shapes.push_back(found->second.shape);
+      }
+      auto joined = obelisk::vpiexpression::evaluateConcatenation(
+          code, shape, inputs.data(), shapes.data(), count);
+      if (!joined)
+        return false;
+      values.emplace(current, Constant{std::move(*joined), shape});
+      continue;
+    }
     std::array<Logic, 3> inputs;
     std::array<Shape, 3> shapes;
-    uint32_t count = read32(node + 12);
     if (count > inputs.size())
       return false;
     for (uint32_t child = 0; child != count; ++child) {
