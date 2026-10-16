@@ -291,6 +291,14 @@ the current slot by another one runs on the next pass over its region. Other
 callback reasons, delayed writes, system task/function registration, VPI
 strength and trireg access, and VPI-registered waveform dumping are not
 implemented.
+Static `vpiStrength0` and `vpiStrength1` queries cover explicit continuous
+assignments and built-in gates. Ordinary defaults reuse the shared primitive
+subtype or continuous-assignment kind; only nondefault strengths need image
+rows. Pull sources ignore the opposite polarity under 28.10; Obelisk reports
+canonical Pull for that unused polarity, matching its executable driver
+representation. Switch strengths depend on their inputs and remain unavailable
+through these static queries.
+
 SystemVerilog trireg execution itself, including charge strength, retention,
 decay, and connected charge sharing, is implemented independently of VPI.
 Unsupported registration calls made from a startup table produce a clear

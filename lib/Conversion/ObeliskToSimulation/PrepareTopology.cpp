@@ -36,6 +36,22 @@ using namespace mlir;
 namespace obelisk::simlowering {
 namespace {
 
+static int32_t vpiDriveStrength(semantic::SVDriveStrength strength) {
+  switch (strength) {
+  case semantic::SVDriveStrength::Supply:
+    return 0x80; // vpiSupplyDrive
+  case semantic::SVDriveStrength::Strong:
+    return 0x40; // vpiStrongDrive
+  case semantic::SVDriveStrength::Pull:
+    return 0x20; // vpiPullDrive
+  case semantic::SVDriveStrength::Weak:
+    return 0x08; // vpiWeakDrive
+  case semantic::SVDriveStrength::HighZ:
+    return 0x01; // vpiHiZ
+  }
+  llvm_unreachable("unknown SystemVerilog drive strength");
+}
+
 static sim::Strength lowerChargeStrength(semantic::SVChargeStrength strength) {
   switch (strength) {
   case semantic::SVChargeStrength::Small:
@@ -1522,9 +1538,58 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
       definition = classType->getParentOp();
     classDefinitionSymbols[classType] = anchorSymbols.lookup(definition);
   }
+  auto driverProperties = [&](Operation *source) -> sim::VPIPropertySetAttr {
+    int32_t defaultStrength = 0;
+    std::optional<semantic::SVDriveStrength> strength0, strength1;
+    bool ignore0 = false, ignore1 = false;
+    if (auto assignment =
+            dyn_cast<semantic::SVContinuousAssignSymbolOp>(source)) {
+      defaultStrength = 64; // IEEE 10.3: strong0 and strong1.
+      strength0 = assignment.getDriveStrength0();
+      strength1 = assignment.getDriveStrength1();
+    } else if (auto primitive =
+                   dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(source)) {
+      if (primitive->hasAttr("udp_metadata"))
+        return {};
+      auto name = primitive->getAttrOfType<StringAttr>("primitive_name");
+      const auto *subtype = name ? reflection::findVPIBuiltinPrimitive(
+                                       std::string_view(name.getValue()))
+                                 : nullptr;
+      if (!subtype || !subtype->defaultDriveStrength)
+        return {};
+      defaultStrength = subtype->defaultDriveStrength;
+      strength0 = primitive.getDriveStrength0();
+      strength1 = primitive.getDriveStrength1();
+      // IEEE 28.10 ignores the unused pull-source polarity. Keep the same
+      // canonical pull value as executable driver lowering for that polarity.
+      ignore0 = subtype->value == 25;
+      ignore1 = subtype->value == 26;
+    } else {
+      return {};
+    }
+    SmallVector<Attribute> properties;
+    auto add = [&](uint32_t selector,
+                   std::optional<semantic::SVDriveStrength> strength,
+                   bool ignored) {
+      if (ignored || !strength ||
+          vpiDriveStrength(*strength) == defaultStrength)
+        return;
+      properties.push_back(sim::VPIPropertyAttr::get(
+          builder.getContext(), builder.getI32IntegerAttr(selector),
+          builder.getI32IntegerAttr(vpiDriveStrength(*strength))));
+    };
+    add(31, strength0, ignore0);
+    add(32, strength1, ignore1);
+    if (properties.empty())
+      return {};
+    return sim::VPIPropertySetAttr::get(builder.getContext(),
+                                        builder.getArrayAttr(properties));
+  };
   llvm::DenseMap<Operation *, uint64_t> nextAnchorOrdinal;
   auto identityProperties = [&](Operation *source, VPIKind sourceKind) {
     SmallVector<Attribute> properties;
+    if (auto strengths = driverProperties(source))
+      llvm::append_range(properties, strengths.getProperties());
     auto addBoolean = [&](uint32_t selector, bool value) {
       if (!value)
         return;
@@ -1779,24 +1844,9 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     addInteger(27, chargeStrength); // vpiChargeStrength
     bool declarationAssignment = !getNetInitializerExpressions(net).empty();
     if (declarationAssignment) {
-      auto driveStrength = [](semantic::SVDriveStrength strength) -> int32_t {
-        switch (strength) {
-        case semantic::SVDriveStrength::Supply:
-          return 0x80; // vpiSupplyDrive
-        case semantic::SVDriveStrength::Strong:
-          return 0x40; // vpiStrongDrive
-        case semantic::SVDriveStrength::Pull:
-          return 0x20; // vpiPullDrive
-        case semantic::SVDriveStrength::Weak:
-          return 0x08; // vpiWeakDrive
-        case semantic::SVDriveStrength::HighZ:
-          return 0x01; // vpiHiZ
-        }
-        llvm_unreachable("unknown SystemVerilog drive strength");
-      };
-      addInteger(31, driveStrength(net.getDriveStrength0().value_or(
+      addInteger(31, vpiDriveStrength(net.getDriveStrength0().value_or(
                          semantic::SVDriveStrength::Strong)));
-      addInteger(32, driveStrength(net.getDriveStrength1().value_or(
+      addInteger(32, vpiDriveStrength(net.getDriveStrength1().value_or(
                          semantic::SVDriveStrength::Strong)));
     }
     addBoolean(43, declarationAssignment);
@@ -2263,10 +2313,12 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
         for (size_t statement = 0; statement != statementCount; ++statement) {
           uint64_t statementId = nextStatementId++;
           uint64_t ordinal = nextStatementOrdinal[owner][selector]++;
-          sim::SimStatementDeclOp::create(builder, location, statementId,
-                                          IntegerAttr{}, scopes.lookup(source),
-                                          selector, IntegerAttr{}, StringAttr{},
-                                          UnitAttr{}, UnitAttr{});
+          auto declaration = sim::SimStatementDeclOp::create(
+              builder, location, statementId, IntegerAttr{},
+              scopes.lookup(source), selector, IntegerAttr{}, StringAttr{},
+              UnitAttr{}, UnitAttr{});
+          if (auto strengths = driverProperties(source))
+            declaration->setAttr("vpi_properties", strengths);
           if (statementKind == VPIKind::ContAssign)
             scopeOwnedStatementPlans.push_back(
                 {source, statementId, scopes.lookup(source), statementKind});

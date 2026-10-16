@@ -724,6 +724,8 @@ def NetAndGenScopeObjects : VPIObjectSet<"NetAndGenScopeObjects", [GenScope],
 def ReadPrimTermObjects : VPIObjectSet<"ReadPrimTermObjects", [PrimTerm]>;
 def StrengthPropertyObjects : VPIObjectSet<"StrengthPropertyObjects",
   [Gate, Switch, Udp, ContAssign, ContAssignBit], [NetFamily]>;
+def StaticDriverStrengthObjects : VPIObjectSet<"StaticDriverStrengthObjects",
+  [Gate, ContAssign], [NetFamily]>;
 def PrimitiveDefinitionObjects : VPIObjectSet<"PrimitiveDefinitionObjects",
   [Gate, Switch, Udp, UdpDefn]>;
 def ReadModPathObjects : VPIObjectSet<"ReadModPathObjects", [ModPath]>;
@@ -888,11 +890,11 @@ def TermIndexProperty : VPIProperty<"vpiTermIndex", 30, IntegerProperty,
 def Strength0Property : VPIProperty<"vpiStrength0", 31, IntegerProperty,
   StrengthPropertyObjects, "37.16; 37.35; 37.47", StaticProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
-  DerivedProperty, NetPropertyObjects>;
+  DerivedProperty, StaticDriverStrengthObjects>;
 def Strength1Property : VPIProperty<"vpiStrength1", 32, IntegerProperty,
   StrengthPropertyObjects, "37.16; 37.35; 37.47", StaticProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
-  DerivedProperty, NetPropertyObjects>;
+  DerivedProperty, StaticDriverStrengthObjects>;
 def Strength0HiZ : VPIIntegerPropertyValue<Strength0Property, 1>;
 def Strength0Weak : VPIIntegerPropertyValue<Strength0Property, 8>;
 def Strength0Pull : VPIIntegerPropertyValue<Strength0Property, 32>;
@@ -915,6 +917,8 @@ class VPIBuiltinPrimitive<int value_, string apiName_, string sourceName_,
     : VPISymbolicPropertyValue<PrimTypeProperty, value_, apiName_> {
   string sourceName = sourceName_;
   VPIObjectKind objectKind = objectKind_;
+  // IEEE 28.3.2: switches pass input strengths; gates have static defaults.
+  int defaultDriveStrength = !if(!eq(objectKind_, Gate), 64, 0);
 }
 def PrimitiveAnd : VPIBuiltinPrimitive<1, "vpiAndPrim", "and", Gate>;
 def PrimitiveNand : VPIBuiltinPrimitive<2, "vpiNandPrim", "nand", Gate>;
@@ -940,8 +944,12 @@ def PrimitiveRtranif1 : VPIBuiltinPrimitive<21, "vpiRtranif1Prim", "rtranif1", S
 def PrimitiveTran : VPIBuiltinPrimitive<22, "vpiTranPrim", "tran", Switch>;
 def PrimitiveTranif0 : VPIBuiltinPrimitive<23, "vpiTranif0Prim", "tranif0", Switch>;
 def PrimitiveTranif1 : VPIBuiltinPrimitive<24, "vpiTranif1Prim", "tranif1", Switch>;
-def PrimitivePullup : VPIBuiltinPrimitive<25, "vpiPullupPrim", "pullup", Gate>;
-def PrimitivePulldown : VPIBuiltinPrimitive<26, "vpiPulldownPrim", "pulldown", Gate>;
+def PrimitivePullup : VPIBuiltinPrimitive<25, "vpiPullupPrim", "pullup", Gate> {
+  let defaultDriveStrength = 32;
+}
+def PrimitivePulldown : VPIBuiltinPrimitive<26, "vpiPulldownPrim", "pulldown", Gate> {
+  let defaultDriveStrength = 32;
+}
 def PrimitiveSeq : VPISymbolicPropertyValue<PrimTypeProperty, 27, "vpiSeqPrim">;
 def PrimitiveComb : VPISymbolicPropertyValue<PrimTypeProperty, 28, "vpiCombPrim">;
 def PolarityProperty : VPIProperty<"vpiPolarity", 34, IntegerProperty,

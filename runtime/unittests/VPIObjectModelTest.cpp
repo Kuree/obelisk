@@ -1487,36 +1487,37 @@ TEST(VPIObjectModel, PrimitiveTypesMatchLrmConstantsAndSourceSpellings) {
     const char *name;
     const char *source;
     uint32_t kind;
+    uint32_t defaultStrength;
   };
   const Entry expected[] = {
-      {vpiAndPrim, "vpiAndPrim", "and", vpiGate},
-      {vpiNandPrim, "vpiNandPrim", "nand", vpiGate},
-      {vpiNorPrim, "vpiNorPrim", "nor", vpiGate},
-      {vpiOrPrim, "vpiOrPrim", "or", vpiGate},
-      {vpiXorPrim, "vpiXorPrim", "xor", vpiGate},
-      {vpiXnorPrim, "vpiXnorPrim", "xnor", vpiGate},
-      {vpiBufPrim, "vpiBufPrim", "buf", vpiGate},
-      {vpiNotPrim, "vpiNotPrim", "not", vpiGate},
-      {vpiBufif0Prim, "vpiBufif0Prim", "bufif0", vpiGate},
-      {vpiBufif1Prim, "vpiBufif1Prim", "bufif1", vpiGate},
-      {vpiNotif0Prim, "vpiNotif0Prim", "notif0", vpiGate},
-      {vpiNotif1Prim, "vpiNotif1Prim", "notif1", vpiGate},
-      {vpiNmosPrim, "vpiNmosPrim", "nmos", vpiSwitch},
-      {vpiPmosPrim, "vpiPmosPrim", "pmos", vpiSwitch},
-      {vpiCmosPrim, "vpiCmosPrim", "cmos", vpiSwitch},
-      {vpiRnmosPrim, "vpiRnmosPrim", "rnmos", vpiSwitch},
-      {vpiRpmosPrim, "vpiRpmosPrim", "rpmos", vpiSwitch},
-      {vpiRcmosPrim, "vpiRcmosPrim", "rcmos", vpiSwitch},
-      {vpiRtranPrim, "vpiRtranPrim", "rtran", vpiSwitch},
-      {vpiRtranif0Prim, "vpiRtranif0Prim", "rtranif0", vpiSwitch},
-      {vpiRtranif1Prim, "vpiRtranif1Prim", "rtranif1", vpiSwitch},
-      {vpiTranPrim, "vpiTranPrim", "tran", vpiSwitch},
-      {vpiTranif0Prim, "vpiTranif0Prim", "tranif0", vpiSwitch},
-      {vpiTranif1Prim, "vpiTranif1Prim", "tranif1", vpiSwitch},
-      {vpiPullupPrim, "vpiPullupPrim", "pullup", vpiGate},
-      {vpiPulldownPrim, "vpiPulldownPrim", "pulldown", vpiGate},
-      {vpiSeqPrim, "vpiSeqPrim", "", vpiUdp},
-      {vpiCombPrim, "vpiCombPrim", "", vpiUdp},
+      {vpiAndPrim, "vpiAndPrim", "and", vpiGate, vpiStrongDrive},
+      {vpiNandPrim, "vpiNandPrim", "nand", vpiGate, vpiStrongDrive},
+      {vpiNorPrim, "vpiNorPrim", "nor", vpiGate, vpiStrongDrive},
+      {vpiOrPrim, "vpiOrPrim", "or", vpiGate, vpiStrongDrive},
+      {vpiXorPrim, "vpiXorPrim", "xor", vpiGate, vpiStrongDrive},
+      {vpiXnorPrim, "vpiXnorPrim", "xnor", vpiGate, vpiStrongDrive},
+      {vpiBufPrim, "vpiBufPrim", "buf", vpiGate, vpiStrongDrive},
+      {vpiNotPrim, "vpiNotPrim", "not", vpiGate, vpiStrongDrive},
+      {vpiBufif0Prim, "vpiBufif0Prim", "bufif0", vpiGate, vpiStrongDrive},
+      {vpiBufif1Prim, "vpiBufif1Prim", "bufif1", vpiGate, vpiStrongDrive},
+      {vpiNotif0Prim, "vpiNotif0Prim", "notif0", vpiGate, vpiStrongDrive},
+      {vpiNotif1Prim, "vpiNotif1Prim", "notif1", vpiGate, vpiStrongDrive},
+      {vpiNmosPrim, "vpiNmosPrim", "nmos", vpiSwitch, 0},
+      {vpiPmosPrim, "vpiPmosPrim", "pmos", vpiSwitch, 0},
+      {vpiCmosPrim, "vpiCmosPrim", "cmos", vpiSwitch, 0},
+      {vpiRnmosPrim, "vpiRnmosPrim", "rnmos", vpiSwitch, 0},
+      {vpiRpmosPrim, "vpiRpmosPrim", "rpmos", vpiSwitch, 0},
+      {vpiRcmosPrim, "vpiRcmosPrim", "rcmos", vpiSwitch, 0},
+      {vpiRtranPrim, "vpiRtranPrim", "rtran", vpiSwitch, 0},
+      {vpiRtranif0Prim, "vpiRtranif0Prim", "rtranif0", vpiSwitch, 0},
+      {vpiRtranif1Prim, "vpiRtranif1Prim", "rtranif1", vpiSwitch, 0},
+      {vpiTranPrim, "vpiTranPrim", "tran", vpiSwitch, 0},
+      {vpiTranif0Prim, "vpiTranif0Prim", "tranif0", vpiSwitch, 0},
+      {vpiTranif1Prim, "vpiTranif1Prim", "tranif1", vpiSwitch, 0},
+      {vpiPullupPrim, "vpiPullupPrim", "pullup", vpiGate, vpiPullDrive},
+      {vpiPulldownPrim, "vpiPulldownPrim", "pulldown", vpiGate, vpiPullDrive},
+      {vpiSeqPrim, "vpiSeqPrim", "", vpiUdp, 0},
+      {vpiCombPrim, "vpiCombPrim", "", vpiUdp, 0},
   };
   for (const auto &entry : expected) {
     SCOPED_TRACE(entry.name);
@@ -1535,6 +1536,7 @@ TEST(VPIObjectModel, PrimitiveTypesMatchLrmConstantsAndSourceSpellings) {
     }
     ASSERT_NE(primitive, nullptr);
     EXPECT_EQ(primitive->objectKind, entry.kind);
+    EXPECT_EQ(primitive->defaultDriveStrength, entry.defaultStrength);
     EXPECT_STREQ(primitive->sourceName, entry.source);
     EXPECT_EQ(findVPIBuiltinPrimitive(entry.source), primitive);
   }
@@ -2381,6 +2383,11 @@ TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
                       descriptor.property == vpiNetDeclAssign ||
                       descriptor.property == vpiStrength0 ||
                       descriptor.property == vpiStrength1))
+      expected = PropertyRealization::FixedImage;
+    if ((descriptor.sourceType == vpiGate ||
+         descriptor.sourceType == vpiContAssign) &&
+        (descriptor.property == vpiStrength0 ||
+         descriptor.property == vpiStrength1))
       expected = PropertyRealization::FixedImage;
     if (netSource && descriptor.property == vpiResolvedNetType)
       expected = PropertyRealization::IndexedImage;

@@ -1993,6 +1993,7 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         "  const char *sourceName;\n"
         "  uint16_t value;\n"
         "  uint16_t objectKind;\n"
+        "  uint16_t defaultDriveStrength;\n"
         "};\n\n"
         "inline constexpr VPIBuiltinPrimitiveDescriptor vpiBuiltinPrimitives[] "
         "= {\n";
@@ -2005,7 +2006,11 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         !primitiveNames.insert(name).second)
       PrintFatalError(primitive->getLoc(),
                       "invalid or duplicate built-in primitive");
-    os << formatv("  {{\"{0}\", {1}, {2}},\n", name, value, kind);
+    auto strength = primitive->getValueAsInt("defaultDriveStrength");
+    if (strength != 0 && strength != 32 && strength != 64)
+      PrintFatalError(primitive->getLoc(), "invalid default drive strength");
+    os << formatv("  {{\"{0}\", {1}, {2}, {3}},\n", name, value, kind,
+                  strength);
   }
   os << "};\n\n"
         "inline constexpr const VPIBuiltinPrimitiveDescriptor "

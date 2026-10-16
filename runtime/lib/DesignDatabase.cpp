@@ -9184,6 +9184,34 @@ obelisk_rt_status designVPIFixedProperty(const Database &database,
     }
   }
 
+  // Static driver defaults need no per-instance property rows. Explicit
+  // overrides above take precedence; gate defaults reuse the shared subtype.
+  if (selector == 31 || selector == 32) {
+    uint32_t kind = 0;
+    if (designVPIType(database, cursor, &kind) != OBELISK_RT_OK)
+      return OBELISK_RT_INVALID_HANDLE;
+    uint32_t strength = 0;
+    using Kind = obelisk::reflection::VPIObjectKind;
+    if (kind == static_cast<uint32_t>(Kind::ContAssign))
+      strength = 64;
+    else if (kind == static_cast<uint32_t>(Kind::Gate)) {
+      VPIFixedPropertyValue primitive{};
+      auto status = designVPIFixedProperty(database, cursor, 33, &primitive);
+      if (status != OBELISK_RT_OK)
+        return status;
+      const auto *subtype = obelisk::reflection::findVPIBuiltinPrimitive(
+          static_cast<uint32_t>(primitive.payload));
+      if (subtype && subtype->objectKind == kind)
+        strength = subtype->defaultDriveStrength;
+    }
+    if (strength) {
+      outValue->kind = static_cast<uint8_t>(
+          obelisk::reflection::VPIPropertyValueKind::Integer);
+      outValue->payload = strength;
+      return OBELISK_RT_OK;
+    }
+  }
+
   return OBELISK_RT_EOF;
 }
 
