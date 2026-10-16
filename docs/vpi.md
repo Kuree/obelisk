@@ -469,6 +469,12 @@ bit queries return assignment-bit identities only for proved assignment offsets.
 Derived local queries use the net declaration's nearest module instance,
 including aliases of the same physical backing. Interface/program local queries
 preserve their existing physical relations. Iteration snapshots dynamic
-selections without adding database records. Address/index loads, general
-arithmetic/concatenation transport, selected port connectivity, and
-assignment-bit contribution values remain followups.
+selections without adding database records. Load queries also walk ordinary
+operator operands and addressing expressions on either side of an assignment.
+Concatenation and replication retain exact assignment-bit offsets after width
+clipping; indivisible operator or address dependencies return the whole
+continuous assignment. A whole assignment dominates its bit results when both
+forms of dependency occur. Truncated data does not hide source index reads.
+Primitive input concatenations use the scalar result boundary, and output
+terminal indices remain loads. Selected port connectivity, variable loads,
+call-argument loads, and assignment-bit contribution values remain followups.

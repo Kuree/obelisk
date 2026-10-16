@@ -1940,6 +1940,7 @@ obelisk_rt_status obelisk_rt_cached_vpi_selected_use_candidates(
 struct VPINetConnectionCandidate {
   obelisk_rt_design_cursor_v1 owner{}, expression{}, peer{}, module{};
   uint32_t ownerKind = 0, expressionKind = 0, peerKind = 0;
+  bool addressOnly = false;
 };
 obelisk_rt_status obelisk_rt_cached_vpi_net_connection_candidates(
     const obelisk_rt_context *, bool drivers,

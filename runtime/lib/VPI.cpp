@@ -6560,6 +6560,175 @@ obelisk_rt_status selectedUseRanges(__vpiHandle *handle,
   return ranges.empty() ? OBELISK_RT_EOF : OBELISK_RT_OK;
 }
 
+struct VPINetConnectionRead {
+  VPINetConnectionCandidate candidate;
+  bool direct = true;
+  uint64_t resultOffset = 0;
+  uint64_t visibleWidth = UINT64_MAX;
+};
+
+// Preserve source dependencies without inferring Boolean influence. Only
+// concatenation/replication transports exact result-bit offsets; an ordinary
+// operator or an address read names the whole containing loading object.
+obelisk_rt_status expandNetConnectionReads(
+    __vpiHandle *handle, const VPINetConnectionCandidate &candidate,
+    bool bitQuery, std::vector<VPINetConnectionRead> &reads) {
+  auto *context = handle->owner->context;
+  auto width = [&](obelisk_rt_design_cursor_v1 cursor, uint64_t &result) {
+    VPIExpressionInfo recipe{};
+    if (obelisk_rt_cached_vpi_expression(context, cursor, &recipe) ==
+        OBELISK_RT_OK) {
+      result = recipe.bitWidth;
+      return !recipe.sourceOnly && result;
+    }
+    // Width planning is immutable metadata inspection. Unrelated unbound
+    // declarations/calls must not trigger value notices or require live state.
+    obelisk_rt_design_info_v1 info{};
+    if (obelisk_rt_cached_design_info(context, cursor, &info) != OBELISK_RT_OK)
+      return false;
+    result = info.bit_width;
+    return result != 0;
+  };
+  struct Pending {
+    obelisk_rt_design_cursor_v1 cursor{};
+    uint32_t kind = 0;
+    bool addressOnly = false, direct = false;
+    uint64_t offset = 0, visible = UINT64_MAX;
+  };
+  Pending root{candidate.expression,
+               candidate.expressionKind,
+               candidate.addressOnly,
+               false,
+               0,
+               UINT64_MAX};
+  uint64_t expressionWidth = 0, assignmentWidth = 0;
+  if (!root.addressOnly && width(root.cursor, expressionWidth)) {
+    VPIExpressionInfo recipe{};
+    bool concatenation =
+        obelisk_rt_cached_vpi_expression(context, root.cursor, &recipe) ==
+            OBELISK_RT_OK &&
+        recipe.kind == vpiOperation &&
+        (recipe.code == vpiConcatOp || recipe.code == vpiMultiConcatOp);
+    if (candidate.ownerKind == vpiPrimTerm) {
+      root.direct = true;
+      root.visible = 1; // Primitive input expressions use their scalar result.
+    } else if (candidate.peer.offset &&
+               width(candidate.peer, assignmentWidth) &&
+               (assignmentWidth <= expressionWidth || concatenation)) {
+      root.direct = true;
+      root.visible = std::min(assignmentWidth, expressionWidth);
+    }
+  }
+  std::vector<Pending> pending{root};
+  while (!pending.empty()) {
+    Pending current = pending.back();
+    pending.pop_back();
+    VPIExpressionInfo recipe{};
+    auto status =
+        obelisk_rt_cached_vpi_expression(context, current.cursor, &recipe);
+    if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF)
+      return status;
+    auto operand = [&](uint32_t index, Pending &child) {
+      child = current;
+      return obelisk_rt_cached_vpi_expression_operand(
+          context, current.cursor, index, &child.cursor, &child.kind);
+    };
+    const bool selection =
+        status == OBELISK_RT_OK &&
+        (recipe.kind == vpiPartSelect || recipe.kind == vpiIndexedPartSelect ||
+         obelisk::reflection::isVPIBitSelection(recipe.kind));
+    if (selection) {
+      // Address reads do not depend on the validity of the selected data span.
+      for (uint32_t index = 0; index != recipe.operandCount; ++index) {
+        Pending child;
+        if (operand(index, child) != OBELISK_RT_OK)
+          return OBELISK_RT_INVALID_DESIGN;
+        child.addressOnly = index == 0;
+        child.direct = false;
+        child.offset = 0;
+        child.visible = UINT64_MAX;
+        pending.push_back(child);
+      }
+      if (current.addressOnly)
+        continue;
+    } else if (status == OBELISK_RT_OK && recipe.kind == vpiOperation) {
+      bool concat = recipe.code == vpiConcatOp;
+      bool repeat = recipe.code == vpiMultiConcatOp;
+      if (current.addressOnly || !current.direct || recipe.sourceOnly ||
+          (!concat && !repeat)) {
+        for (uint32_t index = 0; index != recipe.operandCount; ++index) {
+          Pending child;
+          if (operand(index, child) != OBELISK_RT_OK)
+            return OBELISK_RT_INVALID_DESIGN;
+          child.direct = false;
+          child.offset = 0;
+          child.visible = UINT64_MAX;
+          pending.push_back(child);
+        }
+        continue;
+      }
+      std::vector<std::pair<Pending, uint64_t>> data;
+      uint64_t blockWidth = 0;
+      for (uint32_t index = repeat ? 1 : 0; index != recipe.operandCount;
+           ++index) {
+        Pending child;
+        uint64_t childWidth = 0;
+        if (operand(index, child) != OBELISK_RT_OK ||
+            !width(child.cursor, childWidth) ||
+            childWidth > UINT64_MAX - blockWidth)
+          return OBELISK_RT_INVALID_DESIGN;
+        blockWidth += childWidth;
+        data.push_back({child, childWidth});
+      }
+      if (!blockWidth || !recipe.bitWidth ||
+          recipe.bitWidth % blockWidth != 0 ||
+          (!repeat && recipe.bitWidth != blockWidth))
+        return OBELISK_RT_INVALID_DESIGN;
+      uint64_t repetitions = repeat ? recipe.bitWidth / blockWidth : 1;
+      // Vector queries return the same source occurrence once. The low copy
+      // already covers every visible part of an operand in all later copies.
+      if (!bitQuery)
+        repetitions = 1;
+      for (uint64_t repetition = 0; repetition != repetitions; ++repetition) {
+        uint64_t offset = repetition * blockWidth;
+        if (offset >= current.visible)
+          break;
+        for (auto child = data.rbegin(); child != data.rend(); ++child) {
+          Pending next = child->first;
+          if (offset >= current.visible) {
+            // Clipping removes the data connection, not source addressing
+            // reads within that expression. Later copies share these reads.
+            next.addressOnly = true;
+            next.direct = false;
+            next.offset = 0;
+            next.visible = UINT64_MAX;
+          } else {
+            if (offset > UINT64_MAX - current.offset)
+              return OBELISK_RT_INVALID_DESIGN;
+            next.offset = current.offset + offset;
+            next.visible = std::min(child->second, current.visible - offset);
+          }
+          pending.push_back(next);
+          offset += child->second;
+        }
+      }
+      continue;
+    } else if (current.addressOnly) {
+      continue;
+    }
+    if (current.kind != vpiNet && current.kind != vpiBitNet &&
+        current.kind != vpiNetBit && current.kind != vpiPartSelect &&
+        current.kind != vpiIndexedPartSelect)
+      continue;
+    VPINetConnectionRead read{candidate, current.direct, current.offset,
+                              current.visible};
+    read.candidate.expression = current.cursor;
+    read.candidate.expressionKind = current.kind;
+    reads.push_back(read);
+  }
+  return OBELISK_RT_OK;
+}
+
 // 37.16d18/d19: derive connectivity from exact retained source roles and
 // snapshot the selected simulation span at iterator construction.
 obelisk_rt_status
@@ -6620,6 +6789,22 @@ selectedNetConnections(__vpiHandle *handle, uint32_t selector,
   auto append = [&](VPIConnectionTarget target) {
     if (!obelisk::reflection::vpiObjectSetContains(edge->targets, target.kind))
       return;
+    // An indivisible read represents the whole assignment. Its bit objects
+    // would duplicate that loading occurrence; concat-only offsets stay exact.
+    if (bitQuery && target.kind == vpiContAssign)
+      targets.erase(std::remove_if(targets.begin(), targets.end(),
+                                   [&](const auto &other) {
+                                     return other.cursor.offset ==
+                                                target.cursor.offset &&
+                                            other.kind == vpiContAssignBit;
+                                   }),
+                    targets.end());
+    if (bitQuery && target.kind == vpiContAssignBit &&
+        std::any_of(targets.begin(), targets.end(), [&](const auto &other) {
+          return other.cursor.offset == target.cursor.offset &&
+                 other.kind == vpiContAssign;
+        }))
+      return;
     if (std::none_of(targets.begin(), targets.end(), [&](const auto &other) {
           return target.cursor.offset == other.cursor.offset &&
                  target.kind == other.kind &&
@@ -6650,10 +6835,21 @@ selectedNetConnections(__vpiHandle *handle, uint32_t selector,
                                                            candidates);
   if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF)
     return status;
-  std::unordered_set<uint64_t> derivedOwners;
+  std::vector<VPINetConnectionRead> reads;
   for (const auto &candidate : candidates) {
     if (local && candidate.module.offset != queryModule.offset)
       continue;
+    if (drivers)
+      reads.push_back({candidate, true, 0, UINT64_MAX});
+    else {
+      status = expandNetConnectionReads(handle, candidate, bitQuery, reads);
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
+  }
+  std::unordered_set<uint64_t> derivedOwners;
+  for (const auto &read : reads) {
+    const auto &candidate = read.candidate;
     __vpiHandle expression;
     expression.owner = handle->owner;
     expression.cursor = candidate.expression;
@@ -6662,8 +6858,7 @@ selectedNetConnections(__vpiHandle *handle, uint32_t selector,
     const auto *expressionPolicy = valuePolicyFor(&expression);
     VPIValueSource actual{};
     VPISelectedSpan span{};
-    // This first mapping covers direct declarations and pure selections.
-    // Arithmetic and concatenation require their own transport proof.
+    // Every flattened data read has an exact declaration/select endpoint.
     if (candidate.expressionKind != vpiNet &&
         candidate.expressionKind != vpiBitNet &&
         candidate.expressionKind != vpiNetBit &&
@@ -6713,6 +6908,9 @@ selectedNetConnections(__vpiHandle *handle, uint32_t selector,
       return status;
     if (span.info.kind != OBELISK_RT_DESIGN_RECORD_NET)
       continue;
+    span.width = std::min(span.width, read.visibleWidth);
+    if (!span.width)
+      continue;
     uint64_t first = 0;
     if (obelisk_rt_design_state_offset(context, span.cursor, span.offset,
                                        &first) != OBELISK_RT_OK)
@@ -6729,47 +6927,18 @@ selectedNetConnections(__vpiHandle *handle, uint32_t selector,
       continue;
     }
     if (candidate.ownerKind == vpiPrimTerm) {
-      // This bounded terminal mapping requires a scalar selected span.
-      if (span.width == 1)
+      // Inputs have a scalar result boundary; indivisible input operations
+      // retain all their real operand reads without inventing a bit map.
+      if (!drivers || span.width == 1)
         append({candidate.owner, vpiPrimTerm, false, UINT64_MAX});
       continue;
     }
-    if (bitQuery) {
-      // Rhs truncation/sign-extension or nonlinear transport is not an exact
-      // bit map. A same-width Lhs proves the assignment offset directly.
-      if (!drivers) {
-        switch (candidate.peerKind) {
-        case vpiNet:
-        case vpiBitNet:
-        case vpiNetBit:
-        case vpiReg:
-        case vpiBitVar:
-        case vpiRegBit:
-        case vpiIntegerVar:
-        case vpiIntVar:
-        case vpiShortIntVar:
-        case vpiLongIntVar:
-        case vpiByteVar:
-        case vpiTimeVar:
-        case vpiPartSelect:
-        case vpiIndexedPartSelect:
-          break;
-        default:
-          continue;
-        }
-        __vpiHandle peer;
-        peer.owner = handle->owner;
-        peer.cursor = candidate.peer;
-        peer.exactVpiType = candidate.peerKind;
-        inheritExpressionContext(peer, *handle);
-        const auto *peerPolicy = valuePolicyFor(&peer);
-        VPIValueSource peerSource{};
-        if (!candidate.peer.offset || !peerPolicy ||
-            !valueSourceFor(&peer, *peerPolicy, peerSource) ||
-            peerSource.info.bit_width != span.width)
-          continue;
-      }
-      append({candidate.owner, vpiContAssignBit, true, queryOffset - first});
+    if (bitQuery && (drivers || read.direct)) {
+      uint64_t offset = queryOffset - first;
+      if (offset > UINT64_MAX - read.resultOffset)
+        return OBELISK_RT_INVALID_DESIGN;
+      append({candidate.owner, vpiContAssignBit, true,
+              read.resultOffset + offset});
     } else {
       append({candidate.owner, vpiContAssign, true, UINT64_MAX});
     }

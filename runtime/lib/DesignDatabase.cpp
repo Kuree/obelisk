@@ -14665,8 +14665,11 @@ obelisk_rt_status obelisk_rt_cached_vpi_net_connection_candidates(
         if (designVPIFixedProperty(*database, candidate.owner, 20,
                                    &direction) != OBELISK_RT_OK)
           return OBELISK_RT_INVALID_DESIGN;
-        if (direction.payload != 3 && direction.payload != (drivers ? 2u : 1u))
+        if (drivers && direction.payload != 2 && direction.payload != 3)
           return OBELISK_RT_OK;
+        // An output terminal's address may read nets even though its data
+        // expression drives them. Input/inout reads include their addresses.
+        candidate.addressOnly = !drivers && direction.payload == 2;
       }
       uint32_t selector = kind == uint32_t(Kind::ContAssign)
                               ? uint32_t(drivers ? Rel::LhsRel : Rel::RhsRel)
@@ -14696,6 +14699,13 @@ obelisk_rt_status obelisk_rt_cached_vpi_net_connection_candidates(
         scope = read64(database->data + scope + 16);
       }
       candidates.push_back(candidate);
+      if (!drivers && kind == uint32_t(Kind::ContAssign) &&
+          candidate.peer.offset) {
+        candidate.expression = candidate.peer;
+        candidate.expressionKind = candidate.peerKind;
+        candidate.addressOnly = true;
+        candidates.push_back(candidate);
+      }
       return OBELISK_RT_OK;
     };
     for (uint64_t index = 0; index != database->statementCount; ++index) {
