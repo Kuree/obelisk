@@ -10,8 +10,10 @@
 
 #include "SimulationVerifiers.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Dialect/DPI/DPIDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Dialect/Simulation/SimulationVPI.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
 #include "obelisk/Runtime/StableHash.h"
 
@@ -576,6 +578,48 @@ SimVPICallPrepareOp::verifySymbolUses(SymbolTableCollection &symbols) {
   return success();
 }
 
+LogicalResult
+SimVPIFrameEnterForeignOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  auto owner = vpiProbeOwner(*this);
+  auto call =
+      symbols.lookupNearestSymbolFrom<SimVPICallDeclOp>(*this, getCallAttr());
+  if (failed(owner))
+    return failure();
+  if (!call || call.getCodeUnitId() != owner->lexicalID)
+    return emitOpError("foreign entry requires its exact lexical source call");
+  using Kind = reflection::VPIObjectKind;
+  bool task = call.getVpiKind() == static_cast<uint32_t>(Kind::TaskCall) ||
+              call.getVpiKind() == static_cast<uint32_t>(Kind::MethodTaskCall);
+  bool function =
+      call.getVpiKind() == static_cast<uint32_t>(Kind::FuncCall) ||
+      call.getVpiKind() == static_cast<uint32_t>(Kind::MethodFuncCall);
+  if (!task && !function)
+    return emitOpError("foreign entry call kind cannot be a frame origin");
+  if (getCodeUnitId() <= 0 || (call.getCalleeCodeUnitId() &&
+                               *call.getCalleeCodeUnitId() != getCodeUnitId()))
+    return emitOpError("foreign entry disagrees with the source call target");
+  for (auto unit : owner->design.getOps<SimCodeUnitDeclOp>())
+    if (unit.getId() == getCodeUnitId()) {
+      if (unit.getCodeUnitKind() != EntryKind::Function ||
+          !dpi::has<dpi::Import>(unit))
+        return emitOpError(
+            "foreign entry requires an imported Function ABI code unit");
+      if (vpiCallableSourceKind(unit) !=
+          (task ? EntryKind::Task : EntryKind::Function))
+        return emitOpError(
+            "foreign entry source task/function kind disagrees with its call");
+      bool bound =
+          llvm::any_of(owner->design.getOps<SimVPICodeUnitScopeBindingOp>(),
+                       [&](auto binding) {
+                         return binding.getCodeUnitId() == getCodeUnitId();
+                       });
+      return bound ? success()
+                   : emitOpError("foreign entry requires an exact public "
+                                 "source scope binding");
+    }
+  return emitOpError("foreign entry references an unknown code unit");
+}
+
 namespace {
 FailureOr<uint64_t> vpiResolutionTarget(Operation *operation, int64_t id) {
   auto owner = vpiProbeOwner(operation);
@@ -660,9 +704,29 @@ LogicalResult SimVPIFrameEnterOp::verify() {
   return success();
 }
 
+LogicalResult SimVPICallObservationOp::verify() {
+  Operation *call = (*this)->getPrevNode();
+  if (!call || !isa<SimCallOp, SimClassDirectCallOp, SimClassVirtualCallOp,
+                    SimDPICallOp>(call))
+    return emitOpError("must immediately follow a synchronous call");
+  if (getObserved().empty())
+    return emitOpError("requires at least one observed reference");
+  if (getEndingTargets().size() != getObserved().size())
+    return emitOpError("requires one ending-target inventory per observation");
+  for (Attribute attribute : getEndingTargets()) {
+    auto targets = dyn_cast<DenseI64ArrayAttr>(attribute);
+    if (!targets || llvm::any_of(targets.asArrayRef(),
+                                 [](int64_t target) { return target <= 0; }))
+      return emitOpError("ending targets must be positive control identities");
+  }
+  return success();
+}
+
 LogicalResult SimVPIFrameCheckpointOp::verify() {
-  if (failed(verifyPositive(*this, getStatementIdAttr(), "statement ID")))
+  if (failed(verifyNonnegative(*this, getStatementIdAttr(), "statement ID")))
     return failure();
+  if (!getStatementId())
+    return success();
   return verifyVPIProbeStatement(*this, getStatementId(), false);
 }
 
@@ -1247,6 +1311,36 @@ LogicalResult SimControlDisableOp::verify() {
   if (getActivation() && getHierarchical())
     return emitOpError(
         "hierarchical disable must not name one activation token");
+  return success();
+}
+
+LogicalResult SimControlDisableSelectedOp::verify() {
+  if (failed(verifyPositive(*this, getTargetIdAttr(), "control target ID")))
+    return failure();
+  if (getActivation() && getHierarchical())
+    return emitOpError(
+        "hierarchical disable must not name one activation token");
+  return success();
+}
+
+SuccessorOperands
+SimControlLocalBoundaryOp::getSuccessorOperands(unsigned index) {
+  assert(index < 2);
+  return SuccessorOperands(
+      MutableOperandRange(getOperation(), getOperation()->getNumOperands(), 0));
+}
+
+LogicalResult SimControlLocalBoundaryOp::verify() {
+  auto function = getOperation()->getParentOfType<SimFuncOp>();
+  if (!function || function.getEntryKind() != EntryKind::Function)
+    return emitOpError("requires a synchronous function entry");
+  if (getExit() == getBody() || getExit()->getParent() != &function.getBody() ||
+      getBody()->getParent() != &function.getBody() ||
+      getExit() == &function.getBody().front() ||
+      getBody() == &function.getBody().front() ||
+      !getExit()->getArguments().empty() || !getBody()->getArguments().empty())
+    return emitOpError(
+        "requires distinct argument-free local exit and body blocks");
   return success();
 }
 

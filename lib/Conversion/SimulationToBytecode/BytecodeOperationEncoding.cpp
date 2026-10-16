@@ -986,6 +986,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     return emitIntrinsicRegisters(plan, intrinsic, inputs,
                                   {reg(plan, op.getResult())});
   }
+  if (isa<sim::SimVPIFrameObservationEndOp>(operation))
+    return success();
   if (auto op = dyn_cast<sim::SimVPICallPrepareOp>(operation)) {
     auto call = SymbolTable::lookupNearestSymbolFrom<sim::SimVPICallDeclOp>(
         op, op.getCallAttr());
@@ -995,6 +997,11 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         plan, OBELISK_RT_INTRINSIC_V1_VPI_CALL_PREPARE,
         {emitU64Constant(plan, call.getId())}, {reg(plan, op.getTicket())});
   }
+  if (auto op = dyn_cast<sim::SimVPIFrameEnterForeignOp>(operation))
+    return emitIntrinsicRegisters(
+        plan, OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER_PREPARED,
+        {emitU64Constant(plan, op.getCodeUnitId()), emitU64Constant(plan, 0)},
+        {reg(plan, op.getActivation())});
   if (auto op = dyn_cast<sim::SimVPIResolutionPrepareOp>(operation))
     return emitIntrinsicRegisters(
         plan, OBELISK_RT_INTRINSIC_V1_VPI_RESOLUTION_PREPARE,
@@ -1044,6 +1051,17 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
       flags |= UINT32_C(1) << 31;
     return emitIntrinsic(plan, kIntrinsicControlDisable, inputs, {}, flags);
   }
+  if (auto op = dyn_cast<sim::SimControlMatchOp>(operation))
+    return binary(Compare, op.getMatches(), op.getSelected(),
+                  op.getActivation());
+  if (auto op = dyn_cast<sim::SimControlDisableSelectedOp>(operation))
+    return emitIntrinsicRegisters(
+        plan, OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE_SELECTED,
+        {emitU64Constant(plan, op.getTargetId()),
+         op.getActivation() ? reg(plan, op.getActivation())
+                            : emitU64Constant(plan, 0),
+         emitU64Constant(plan, op.getHierarchical() ? 1 : 0)},
+        {reg(plan, op.getSelected())});
   if (auto op = dyn_cast<sim::SimControlEscapePendingOp>(operation))
     return emitIntrinsic(plan, kIntrinsicControlEscapePending, {},
                          {op.getPending()});

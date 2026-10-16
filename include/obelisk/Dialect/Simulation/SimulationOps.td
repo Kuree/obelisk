@@ -4301,6 +4301,23 @@ def SimVPICallPrepareOp
   let assemblyFormat = "$runtime_context `from` $call attr-dict";
 }
 
+def SimVPIFrameEnterForeignOp : SimOp<"vpi.frame.enter_foreign", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemRead<SimInventoryResource>, MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "enter an exact imported callable whose body is foreign";
+  let description = [{
+    Consumes a prepared source call around an inlined DPI import ABI boundary.
+    The callable has an exact code-unit-to-source-scope binding, but no SV body
+    in which to emit an ordinary callee prologue. Physical transport is always
+    synchronous Function, including a source DPI task.
+  }];
+  let arguments = (ins SimContextType:$runtime_context,
+                       FlatSymbolRefAttr:$call, I64Attr:$code_unit_id);
+  let results = (outs I64:$activation);
+  let assemblyFormat = "$runtime_context `from` $call `unit` $code_unit_id attr-dict";
+}
+
 def SimVPIResolutionPrepareOp
     : SimOp<"vpi.resolution.prepare",
             [MemoryEffects<[MemWrite<SimProcessResource>]>]> {
@@ -4343,10 +4360,50 @@ def SimVPIFrameEnterOp
 def SimVPIFrameCheckpointOp
     : SimOp<"vpi.frame.checkpoint",
             [MemoryEffects<[MemWrite<SimProcessResource>]>]> {
-  let summary = "record the exact current source statement";
+  let summary = "record the exact current source statement or its unavailability";
+  let description = [{
+    Positive IDs identify exact statements in the current lexical code unit.
+    Zero explicitly clears unavailable current-statement metadata rather than
+    leaving an earlier statement falsely current. A later positive checkpoint
+    restores exact identity.
+  }];
   let arguments = (ins SimContextType:$runtime_context, I64Attr:$statement_id);
   let assemblyFormat = "$runtime_context `statement` $statement_id attr-dict";
   let hasVerifier = 1;
+}
+
+def SimVPICallObservationOp : SimOp<"vpi.call.observation", [
+    MemoryEffects<[MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "retain exact source frame borrows across a synchronous call";
+  let description = [{
+    This temporary source-lowering inventory immediately follows one exact
+    synchronous call. Its references are the observations active at that call
+    occurrence. Exceptional-return propagation consumes it to place an
+    observation_end on each actual abnormal exit; normal paths retain their
+    frame.leave endpoints. It must disappear before backend lowering.
+  }];
+  let arguments = (ins Arg<Variadic<SimRefType>,
+      "active frame observation", [MemRead<SimStorageResource>]>:$observed,
+      ArrayAttr:$ending_targets);
+  let assemblyFormat = [{`(` $observed `:` type($observed) `)` attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimVPIFrameObservationEndOp : SimOp<"vpi.frame.observation_end", [
+    MemoryEffects<[MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "end local observation borrows on an already unwound exit";
+  let description = [{
+    A nonlocal disable or process termination may already have destroyed the
+    observed activation, so the exit must not execute frame.leave again. This
+    operation ends that activation's outstanding local observation borrows at
+    the exact exceptional CFG exit. It keeps their real Ref owners live until
+    owner-release planning consumes these endpoints; native and bytecode
+    lowering then erase the marker without retaining or reading runtime state.
+  }];
+  let arguments = (ins Arg<Variadic<SimRefType>, "", [MemRead<SimStorageResource>]>:$observed);
+  let assemblyFormat = "(`(` $observed^ `:` type($observed) `)`)? attr-dict";
 }
 
 def SimVPIFrameLeaveOp
@@ -4435,6 +4492,45 @@ def SimControlDisableOp : SimOp<"control.disable", [
   let hasVerifier = 1;
 }
 
+def SimControlDisableSelectedOp : SimOp<"control.disable_selected", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>, MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "disable controls and return the exact current activation selected";
+  let description = [{
+    Returns the outermost affected dynamic activation in this logical process,
+    or zero if only other processes were affected. The returned scalar remains
+    usable after the selected control is unwound; it cannot enter or leave a
+    control. Hierarchical recursive occurrences are distinguished by this token.
+  }];
+  let arguments = (ins I64Attr:$target_id, Optional<SimControlType>:$activation,
+      DefaultValuedAttr<BoolAttr, "false">:$hierarchical);
+  let results = (outs I64:$selected);
+  let assemblyFormat = "$target_id (`activation` $activation^)? attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimControlMatchOp : SimOp<"control.match", [Pure]> {
+  let summary = "test a selected token against one exact control activation";
+  let arguments = (ins I64:$selected, SimControlType:$activation);
+  let results = (outs I1:$matches);
+  let assemblyFormat = "$selected `,` $activation attr-dict";
+}
+
+def SimControlLocalBoundaryOp : SimOp<"control.local_boundary", [
+    Terminator, DeclareOpInterfaceMethods<BranchOpInterface>]> {
+  let summary = "retain a synchronous control exit until escape CFG lowering";
+  let description = [{
+    This compiler-only boundary keeps the exact activation and exit block for
+    synchronous functions. Escape lowering creates actual branches to the exit
+    only for the matching dynamic token, then replaces this marker with its
+    ordinary body branch. It registers no scheduler continuation.
+  }];
+  let arguments = (ins SimControlType:$activation);
+  let successors = (successor AnySuccessor:$exit, AnySuccessor:$body);
+  let assemblyFormat = "$activation `exit` $exit `body` $body attr-dict";
+  let hasVerifier = 1;
+}
+
 def SimControlEscapePendingOp : SimOp<"control.escape_pending", [
     MemoryEffects<[MemRead<SimProcessResource>,
                    MemWrite<SimProcessResource>]>
@@ -4458,8 +4554,8 @@ def SimControlNonlocalExitOp : SimOp<"control.nonlocal_exit"> {
     boundary or to an abnormal task return whose caller boundary was prepared
     by the runtime.
   }];
-  let arguments = (ins I64Attr:$target_id);
-  let assemblyFormat = "$target_id attr-dict";
+  let arguments = (ins I64Attr:$target_id, Optional<I64>:$selected);
+  let assemblyFormat = "$target_id (`selected` $selected^)? attr-dict";
 }
 
 def SimStaticOnceOp : SimOp<"static.once", [

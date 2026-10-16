@@ -4195,9 +4195,13 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
-                              uint64_t activation, uint32_t allActivations) {
+static obelisk_rt_status controlDisable(obelisk_rt_context *context,
+                                        uint64_t targetID, uint64_t activation,
+                                        uint32_t allActivations,
+                                        uint64_t *outSelected) {
+  if (outSelected)
+    *outSelected = 0;
+  uint64_t selected = 0;
   if (!context || targetID == 0 || allActivations > 1)
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
@@ -4379,6 +4383,8 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
           trim = index;
           break;
         }
+      if (trim != context->activeControls.size())
+        selected = context->activeControls[trim];
       // Ordinary code follows a statically lowered exit edge after disabling
       // its own control. An observer callback has no such edge in the
       // suspended activation, so disabling one of the waiter's active
@@ -4942,10 +4948,27 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
       if (result == OBELISK_RT_OK && status != OBELISK_RT_OK)
         result = status;
     }
+    if (result == OBELISK_RT_OK && outSelected)
+      *outSelected = selected;
     return result;
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
+                              uint64_t activation, uint32_t allActivations) {
+  return controlDisable(context, targetID, activation, allActivations, nullptr);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_control_disable_selected(
+    obelisk_rt_context *context, uint64_t targetID, uint64_t activation,
+    uint32_t allActivations, uint64_t *outSelected) {
+  if (!outSelected)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return controlDisable(context, targetID, activation, allActivations,
+                        outSelected);
 }
 
 struct DesignTaskReadiness {

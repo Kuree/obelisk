@@ -13,6 +13,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/Threading.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassOptions.h"
@@ -23,6 +24,7 @@
 #include "llvm/ADT/StringSet.h"
 
 #include <memory>
+#include <set>
 #include <string>
 
 using namespace mlir;
@@ -30,6 +32,7 @@ using namespace mlir;
 namespace obelisk {
 
 #define GEN_PASS_DEF_OBELISKSIMFINALIZEPASS
+#define GEN_PASS_DEF_OBELISKSIMINSTRUMENTVPIFRAMESPASS
 #include "obelisk/Conversion/Passes.h.inc"
 
 namespace {
@@ -97,6 +100,355 @@ struct MaterializeVPIClassDispatchPass
   }
 };
 
+// Keep reflected zero-time activations explicit when a callee disables an
+// older named-block activation. The final result is compiler control state,
+// not an SV value: zero denotes normal return and a positive ID denotes the
+// exact dynamic control activation already unwound by the runtime.
+static LogicalResult propagateVPIControlEscapes(sim::SimDesignOp design) {
+  using Targets = std::set<uint64_t>;
+  llvm::StringMap<sim::SimFuncOp> functions;
+  llvm::StringMap<sim::SimClassMethodDeclOp> methods;
+  DenseMap<Operation *, Targets> targets;
+  DenseMap<uint64_t, SmallVector<sim::SimClassMethodDeclOp>> families;
+  SmallVector<Operation *> calls;
+  for (auto function : design.getOps<sim::SimFuncOp>()) {
+    functions[function.getSymName()] = function;
+    function.walk([&](sim::SimControlNonlocalExitOp exit) {
+      if (function.getEntryKind() == sim::EntryKind::Function)
+        targets[function].insert(exit.getTargetId());
+    });
+  }
+  for (auto method : design.getOps<sim::SimClassMethodDeclOp>()) {
+    methods[method.getSymName()] = method;
+    if (!method.getIsTask() && method.getSignatureId())
+      families[*method.getSignatureId()].push_back(method);
+  }
+  design.walk([&](Operation *op) {
+    if (isa<sim::SimCallOp, sim::SimClassDirectCallOp,
+            sim::SimClassVirtualCallOp>(op))
+      calls.push_back(op);
+  });
+  auto merge = [](Targets &destination, const Targets &source) {
+    size_t before = destination.size();
+    destination.insert(source.begin(), source.end());
+    return before != destination.size();
+  };
+  auto familyTargets = [&](uint64_t signature) {
+    Targets result;
+    for (auto method : families[signature])
+      if (auto implementation = method.getImplementation())
+        if (auto function = functions.lookup(*implementation))
+          merge(result, targets[function]);
+    return result;
+  };
+  auto callTargets = [&](Operation *call) {
+    if (auto virtualCall = dyn_cast<sim::SimClassVirtualCallOp>(call))
+      return familyTargets(virtualCall.getSignatureId());
+    auto callee = call->getAttrOfType<FlatSymbolRefAttr>("callee");
+    auto function =
+        callee ? functions.lookup(callee.getValue()) : sim::SimFuncOp{};
+    return function ? targets[function] : Targets{};
+  };
+  bool changed;
+  do {
+    changed = false;
+    // Every implementation of one virtual ABI family must agree, including
+    // overrides that never themselves take an exceptional return.
+    for (auto &family : families) {
+      Targets all = familyTargets(family.first);
+      for (auto method : family.second)
+        if (auto implementation = method.getImplementation())
+          if (auto function = functions.lookup(*implementation))
+            changed |= merge(targets[function], all);
+    }
+    for (Operation *call : calls) {
+      auto owner = call->getParentOfType<sim::SimFuncOp>();
+      if (owner && owner.getEntryKind() == sim::EntryKind::Function)
+        changed |= merge(targets[owner], callTargets(call));
+    }
+  } while (changed);
+
+  struct Boundary {
+    Value activation;
+    Block *body = nullptr;
+    Block *exit = nullptr;
+    SmallVector<Value> operands;
+  };
+  struct CallEscape {
+    Operation *call;
+    Targets targets;
+    DenseMap<uint64_t, Boundary> boundaries;
+  };
+  SmallVector<CallEscape> affectedCalls;
+  DominanceInfo dominance(design);
+  for (Operation *call : calls) {
+    Targets exits = callTargets(call);
+    if (exits.empty())
+      continue;
+    CallEscape entry{call, std::move(exits), DenseMap<uint64_t, Boundary>()};
+    auto owner = call->getParentOfType<sim::SimFuncOp>();
+    owner.walk([&](Operation *operation) {
+      Boundary boundary;
+      if (auto resumable = dyn_cast<sim::SimControlBoundaryOp>(operation)) {
+        boundary = {resumable.getActivation(), resumable.getBody(),
+                    resumable.getResume(),
+                    SmallVector<Value>(resumable.getResumeOperands())};
+      } else if (auto local =
+                     dyn_cast<sim::SimControlLocalBoundaryOp>(operation)) {
+        boundary = {
+            local.getActivation(), local.getBody(), local.getExit(), {}};
+      } else {
+        return;
+      }
+      auto enter = boundary.activation.getDefiningOp<sim::SimControlEnterOp>();
+      if (enter && entry.targets.count(enter.getTargetId()) &&
+          dominance.dominates(boundary.body, call->getBlock()))
+        entry.boundaries.try_emplace(enter.getTargetId(), std::move(boundary));
+    });
+    affectedCalls.push_back(std::move(entry));
+  }
+  Builder types(design.getContext());
+  Type statusType = types.getI64Type();
+  auto extended = [&](FunctionType original) {
+    SmallVector<Type> results(original.getResults());
+    results.push_back(statusType);
+    return FunctionType::get(design.getContext(), original.getInputs(),
+                             results);
+  };
+  for (auto &entry : functions) {
+    auto function = entry.getValue();
+    if (targets[function].empty())
+      continue;
+    if (function.isExternal())
+      return function.emitOpError(
+          "external ABI cannot propagate a source control escape");
+    function.setFunctionType(extended(function.getFunctionType()));
+    function.walk([&](sim::SimReturnOp result) {
+      Value selected;
+      SmallVector<sim::SimControlNonlocalExitOp> markers;
+      for (auto marker :
+           result->getBlock()->getOps<sim::SimControlNonlocalExitOp>()) {
+        selected = marker.getSelected();
+        markers.push_back(marker);
+      }
+      OpBuilder builder(result);
+      Value status =
+          selected
+              ? selected
+              : arith::ConstantIntOp::create(builder, result.getLoc(), 0, 64)
+                    .getResult();
+      result->insertOperands(result.getNumOperands(), ValueRange{status});
+      for (auto marker : markers)
+        marker.erase();
+    });
+  }
+  for (auto &entry : methods) {
+    auto method = entry.getValue();
+    bool affected = method.getSignatureId() &&
+                    !familyTargets(*method.getSignatureId()).empty();
+    if (auto implementation = method.getImplementation())
+      if (auto function = functions.lookup(*implementation))
+        affected |= !targets[function].empty();
+    if (affected && !method.getIsTask())
+      method.setFunctionTypeAttr(TypeAttr::get(
+          extended(cast<FunctionType>(method.getFunctionType()))));
+  }
+  for (CallEscape &entry : affectedCalls) {
+    Operation *old = entry.call;
+    Location loc = old->getLoc();
+    auto owner = old->getParentOfType<sim::SimFuncOp>();
+    SmallVector<Value> observations;
+    ArrayAttr endingTargets;
+    if (auto marker = dyn_cast_or_null<sim::SimVPICallObservationOp>(
+            old->getNextNode())) {
+      llvm::append_range(observations, marker.getObserved());
+      endingTargets = marker.getEndingTargets();
+      marker.erase();
+    }
+    OpBuilder builder(old);
+    OperationState state(loc, old->getName());
+    state.addOperands(old->getOperands());
+    state.addAttributes(old->getAttrs());
+    state.addTypes(old->getResultTypes());
+    state.addTypes(statusType);
+    Operation *call = builder.create(state);
+    for (auto [oldValue, newValue] :
+         llvm::zip(old->getResults(), call->getResults()))
+      oldValue.replaceAllUsesWith(newValue);
+    old->erase();
+    Value status = call->getResults().back();
+    Block *head = call->getBlock();
+    Block *normal = head->splitBlock(std::next(call->getIterator()));
+    auto *abnormal = new Block;
+    owner.getBody().getBlocks().insert(normal->getIterator(), abnormal);
+    builder.setInsertionPointToEnd(head);
+    Value zero = arith::ConstantIntOp::create(builder, loc, 0, 64);
+    Value success = arith::CmpIOp::create(
+        builder, loc, arith::CmpIPredicate::eq, status, zero);
+    cf::CondBranchOp::create(builder, loc, success, normal, abnormal);
+    builder.setInsertionPointToStart(abnormal);
+    for (uint64_t target : entry.targets) {
+      auto boundary = entry.boundaries.lookup(target);
+      if (!boundary.activation)
+        continue;
+      auto *next = new Block;
+      owner.getBody().getBlocks().insert(normal->getIterator(), next);
+      Value matches = sim::SimControlMatchOp::create(builder, loc, status,
+                                                     boundary.activation);
+      auto *exit = new Block;
+      owner.getBody().getBlocks().insert(normal->getIterator(), exit);
+      cf::CondBranchOp::create(builder, loc, matches, exit, next);
+      builder.setInsertionPointToStart(exit);
+      SmallVector<Value> ended;
+      for (auto [index, reference] : llvm::enumerate(observations))
+        if (llvm::is_contained(
+                cast<DenseI64ArrayAttr>(endingTargets[index]).asArrayRef(),
+                static_cast<int64_t>(target)))
+          ended.push_back(reference);
+      if (!ended.empty())
+        sim::SimVPIFrameObservationEndOp::create(builder, loc, ended);
+      cf::BranchOp::create(builder, loc, boundary.exit, boundary.operands);
+      builder.setInsertionPointToStart(next);
+    }
+    if (!observations.empty())
+      sim::SimVPIFrameObservationEndOp::create(builder, loc, observations);
+    SmallVector<Value> results;
+    auto resultTypes = owner.getFunctionType().getResults();
+    bool propagates = owner.getEntryKind() == sim::EntryKind::Function;
+    for (Type type : propagates ? resultTypes.drop_back() : resultTypes) {
+      Value value = createDefaultValue(builder, loc, type);
+      if (!value)
+        return owner.emitOpError("cannot form an exceptional callable return");
+      results.push_back(value);
+    }
+    if (propagates)
+      results.push_back(status);
+    sim::SimReturnOp::create(builder, loc, results);
+  }
+  SmallVector<sim::SimControlLocalBoundaryOp> localBoundaries;
+  design.walk([&](sim::SimControlLocalBoundaryOp boundary) {
+    localBoundaries.push_back(boundary);
+  });
+  for (auto boundary : localBoundaries) {
+    OpBuilder builder(boundary);
+    cf::BranchOp::create(builder, boundary.getLoc(), boundary.getBody());
+    boundary.erase();
+  }
+  SmallVector<sim::SimVPICallObservationOp> observations;
+  design.walk(
+      [&](sim::SimVPICallObservationOp op) { observations.push_back(op); });
+  for (auto op : observations)
+    op.erase();
+  return success();
+}
+
+// Source calls are frozen before per-unit lowering, while continuation edges
+// become concrete only afterwards. Attach the protocol here so every selected
+// virtual target has its own exact ticket and post-return continuation.
+class ObeliskSimInstrumentVPIFramesPass
+    : public impl::ObeliskSimInstrumentVPIFramesPassBase<
+          ObeliskSimInstrumentVPIFramesPass> {
+public:
+  void runOnOperation() override {
+    auto design = getOperation();
+    if (failed(propagateVPIControlEscapes(design)))
+      return signalPassFailure();
+    SymbolTable symbols(design);
+    SmallVector<Operation *> calls;
+    design.walk([&](Operation *operation) {
+      if (!isa<sim::SimCallOp, sim::SimTaskCallOp, sim::SimClassVirtualCallOp,
+               sim::SimClassVirtualTaskCallOp, sim::SimDPICallOp>(operation))
+        return;
+      auto function = operation->getParentOfType<sim::SimFuncOp>();
+      if (function &&
+          sim::has<sim::metadata::VpiFrameInstrumentation>(function) &&
+          sim::has<sim::metadata::VpiCallSite>(operation))
+        calls.push_back(operation);
+    });
+    for (Operation *operation : calls) {
+      auto function = operation->getParentOfType<sim::SimFuncOp>();
+      auto site = sim::get<sim::metadata::VpiCallSite>(operation);
+      auto declaration = symbols.lookup<sim::SimVPICallDeclOp>(site.getValue());
+      if (!declaration || function.getNumArguments() == 0 ||
+          !isa<sim::ContextType>(function.getArgument(0).getType())) {
+        operation->emitOpError("frame instrumentation requires an exact source "
+                               "call and runtime context");
+        return signalPassFailure();
+      }
+      // This pass is only run once after source lowering. Authored primitive
+      // IR is not selected without the explicit source instrumentation marker.
+      OpBuilder builder(operation);
+      Value context = function.getArgument(0);
+      Value ticket = sim::SimVPICallPrepareOp::create(
+          builder, operation->getLoc(), context, site);
+      if (auto foreign = dyn_cast<sim::SimDPICallOp>(operation)) {
+        auto callee = declaration.getCalleeCodeUnitId();
+        if (!callee) {
+          operation->emitOpError(
+              "direct DPI import has no exact callable binding");
+          return signalPassFailure();
+        }
+        Value activation = sim::SimVPIFrameEnterForeignOp::create(
+            builder, operation->getLoc(), context, site,
+            builder.getI64IntegerAttr(*callee));
+        builder.setInsertionPointAfter(operation);
+        sim::SimVPIFrameLeaveOp::create(builder, operation->getLoc(), context,
+                                        activation, ValueRange{});
+        sim::SimVPICallFinishOp::create(builder, operation->getLoc(), context,
+                                        ticket);
+        continue;
+      }
+      if (isa<sim::SimTaskCallOp, sim::SimClassVirtualTaskCallOp>(operation)) {
+        Block *continuation = operation->getSuccessor(0);
+        auto *resume = new Block;
+        for (auto argument : continuation->getArguments())
+          resume->addArgument(argument.getType(), argument.getLoc());
+        function.getBody().getBlocks().insert(continuation->getIterator(),
+                                              resume);
+        operation->setSuccessor(resume, 0);
+        builder.setInsertionPointToStart(resume);
+        sim::SimVPICallFinishOp::create(builder, operation->getLoc(), context,
+                                        ticket);
+        cf::BranchOp::create(builder, operation->getLoc(), continuation,
+                             resume->getArguments());
+      } else {
+        builder.setInsertionPointAfter(operation);
+        sim::SimVPICallFinishOp::create(builder, operation->getLoc(), context,
+                                        ticket);
+      }
+    }
+    // A generated net resolver helper has no source activation of its own.
+    // Its exact resolver call can still prepare a Net-origin activation when
+    // the selected source function has an instrumented callee prologue.
+    SmallVector<sim::SimCallOp> resolutionCalls;
+    design.walk([&](sim::SimCallOp call) {
+      if (sim::has<sim::metadata::VpiResolutionNet>(call))
+        resolutionCalls.push_back(call);
+    });
+    for (auto call : resolutionCalls) {
+      auto callee = symbols.lookup<sim::SimFuncOp>(call.getCallee());
+      if (!callee || !sim::has<sim::metadata::VpiFrameInstrumentation>(callee))
+        continue;
+      auto owner = call->getParentOfType<sim::SimFuncOp>();
+      if (!owner || owner.getNumArguments() == 0 ||
+          !isa<sim::ContextType>(owner.getArgument(0).getType()) ||
+          sim::has<sim::metadata::VpiCallSite>(call)) {
+        call.emitOpError("resolution frame instrumentation requires a "
+                         "generated exact call and runtime context");
+        return signalPassFailure();
+      }
+      OpBuilder builder(call);
+      Value context = owner.getArgument(0);
+      Value ticket = sim::SimVPIResolutionPrepareOp::create(
+          builder, call.getLoc(), context,
+          sim::get<sim::metadata::VpiResolutionNet>(call));
+      builder.setInsertionPointAfter(call);
+      sim::SimVPICallFinishOp::create(builder, call.getLoc(), context, ticket);
+      sim::remove<sim::metadata::VpiResolutionNet>(call);
+    }
+  }
+};
+
 // Initialization bindings have no observable effect in a closed design that
 // neither uses its random streams nor observes logical process identity.
 // Inspect lowered effects after pruning: direct calls/spawns are represented
@@ -156,6 +508,11 @@ struct ObeliskToSimulationPipelineOptions
   Option<std::string> vpi{
       *this, "vpi", llvm::cl::desc("VPI visibility mode: off, read, or full"),
       llvm::cl::init("off")};
+  Option<bool> instrumentVPIFrames{
+      *this, "instrument-vpi-frames",
+      llvm::cl::desc(
+          "enable source frame probes while bridge coverage is developed"),
+      llvm::cl::init(false)};
   Option<unsigned> optLevel{*this, "opt-level",
                             llvm::cl::desc("optimization level from 0 to 3"),
                             llvm::cl::init(3)};
@@ -432,17 +789,18 @@ void ObeliskSimFinalizePass::runOnOperation() {
 
 } // namespace
 
-void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
-                                      StringRef vpiMode, uint32_t optLevel,
-                                      StringRef staticSpecialization,
-                                      bool earlySymbolDCE,
-                                      StringRef clockedKernels) {
+static void buildObeliskToSimulationPipelineImpl(
+    OpPassManager &manager, uint32_t workers, StringRef vpiMode,
+    uint32_t optLevel, StringRef staticSpecialization, bool earlySymbolDCE,
+    StringRef clockedKernels, bool instrumentVPIFrames) {
   ObeliskSimPreparePassOptions prepareOptions;
   prepareOptions.pruneUnusedCoverage = earlySymbolDCE && vpiMode == "off";
   // Source inventory may outlive executable code. Only a VPI profile needs
-  // method bindings to retain otherwise unreachable implementations for queries.
+  // method bindings to retain otherwise unreachable implementations for
+  // queries.
   prepareOptions.preserveVPIMethodBindings = vpiMode != "off";
   prepareOptions.preserveVPIBoxBindings = vpiMode != "off";
+  prepareOptions.preserveVPIFrames = instrumentVPIFrames && vpiMode == "full";
   manager.addPass(createObeliskSimPreparePass(std::move(prepareOptions)));
   // Preparation freezes dynamic class dispatch, factory initialization, and
   // external entry points into explicit symbol references. Prune unreachable
@@ -482,8 +840,11 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     functionManager.addPass(createCanonicalizerPass());
     functionManager.addPass(createCSEPass());
   }
-  if (vpiMode != "off")
+  if (vpiMode != "off") {
     designManager.addPass(std::make_unique<MaterializeVPIClassDispatchPass>());
+    if (instrumentVPIFrames && vpiMode == "full")
+      designManager.addPass(createObeliskSimInstrumentVPIFramesPass());
+  }
   designManager.addPass(createObeliskSimMaterializeClockedSamplesPass());
   if (optLevel > 0)
     designManager.addPass(createObeliskSimDevirtualizeClassCallsPass());
@@ -732,6 +1093,16 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   manager.addPass(createObeliskSimFinalizePass());
 }
 
+void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
+                                      StringRef vpiMode, uint32_t optLevel,
+                                      StringRef staticSpecialization,
+                                      bool earlySymbolDCE,
+                                      StringRef clockedKernels) {
+  buildObeliskToSimulationPipelineImpl(manager, workers, vpiMode, optLevel,
+                                       staticSpecialization, earlySymbolDCE,
+                                       clockedKernels, false);
+}
+
 void buildObeliskToSimulationPipeline(OpPassManager &manager) {
   buildObeliskToSimulationPipeline(manager, 1, "off", 3, "auto", true);
 }
@@ -753,12 +1124,13 @@ void registerObeliskToSimulationPipeline() {
       "Lower elaborated obelisk.sv semantic IR to isolated simulation SSA",
       [](OpPassManager &manager,
          const ObeliskToSimulationPipelineOptions &options) {
-        buildObeliskToSimulationPipeline(
+        buildObeliskToSimulationPipelineImpl(
             manager, options.workers.getValue(), options.vpi.getValue(),
             options.optLevel.getValue(),
             options.staticSpecialization.getValue(),
             options.earlySymbolDCE.getValue(),
-            options.clockedKernels.getValue());
+            options.clockedKernels.getValue(),
+            options.instrumentVPIFrames.getValue());
       });
 }
 

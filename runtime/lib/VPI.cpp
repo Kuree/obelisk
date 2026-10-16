@@ -330,6 +330,7 @@ struct VPIFrameActivation {
   bool originIsStatement = false;
   obelisk_rt_design_cursor_v1 lexicalScope{};
   std::unordered_map<uint64_t, uint64_t> localReferences;
+  bool statementUnavailable = false;
 };
 
 enum class VPIFrameCallPhase { Prepared, Entered, Completed, Cancelled };
@@ -7917,16 +7918,22 @@ obelisk_rt_v1_vpi_frame_checkpoint(obelisk_rt_context *context,
   const uint64_t id = topFrame(state, context->activeLogicalProcessToken);
   if (!id)
     return OBELISK_RT_INVALID_FRAME;
+  auto &frame = state->frames.at(id);
+  if (!statementID) {
+    frame.statement = {};
+    frame.statementUnavailable = true;
+    return OBELISK_RT_OK;
+  }
   obelisk_rt_design_cursor_v1 statement{};
   uint64_t owner = UINT64_MAX;
   const auto status =
       obelisk_rt_cached_vpi_statement(context, statementID, &statement, &owner);
   if (status != OBELISK_RT_OK)
     return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
-  auto &frame = state->frames.at(id);
   if (owner != frame.lexicalCodeUnit)
     return OBELISK_RT_INVALID_FRAME;
   frame.statement = statement;
+  frame.statementUnavailable = false;
   return OBELISK_RT_OK;
 }
 
@@ -8444,6 +8451,11 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
                  ? makeThreadHandle(handle->owner, frame.logicalProcess)
                  : nullptr;
     if (type == vpiOrigin || type == vpiStmt) {
+      if (type == vpiStmt && frame.statementUnavailable) {
+        setError(handle->owner, "current source statement is unavailable",
+                 vpiNotice);
+        return nullptr;
+      }
       const auto cursor = type == vpiOrigin ? frame.origin : frame.statement;
       if (!cursor.offset)
         return nullptr;

@@ -493,6 +493,8 @@ void declareProcessSpawnRuntimeABI(ModuleOp module) {
                            {pointer, i64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_control_disable", i32,
                            {pointer, i64, i64, i32});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_control_disable_selected",
+                           i32, {pointer, i64, i64, i32, pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_control_escape_pending", i32,
                            {pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_static_once", i32,

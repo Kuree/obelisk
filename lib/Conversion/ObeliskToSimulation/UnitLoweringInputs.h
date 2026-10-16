@@ -33,6 +33,13 @@ public:
     bool voidFunction;
   };
 
+  struct VPIStatement {
+    uint64_t lexicalCodeUnitID;
+    bool isScope;
+  };
+  const VPIStatement *getVPIStatement(sim::SimDesignOp design,
+                                      uint64_t id) const;
+
   struct AggregateMember {
     uint64_t bitOffset;
     const ContainerElementDescriptor *element;
@@ -75,6 +82,8 @@ private:
   mutable mlir::SymbolTableCollection symbols;
   mutable mlir::LockedSymbolTableCollection lockedSymbols;
   llvm::DenseMap<mlir::Operation *, Callable> callables;
+  llvm::DenseMap<mlir::Operation *, llvm::DenseMap<uint64_t, VPIStatement>>
+      vpiStatements;
   llvm::DenseMap<mlir::Type, mlir::Operation *> covergroups;
   llvm::StringMap<mlir::Operation *> covergroupsByName;
   llvm::DenseMap<mlir::Type, llvm::SmallVector<mlir::Operation *>>

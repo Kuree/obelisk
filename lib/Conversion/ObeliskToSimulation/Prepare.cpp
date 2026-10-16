@@ -10813,6 +10813,12 @@ void ObeliskSimPreparePass::runOnOperation() {
         "domain", sim::ExecutionDomainAttr::get(
                       context, programDomain ? sim::ExecutionDomain::Program
                                              : sim::ExecutionDomain::Design)));
+    if (preserveVPIFrames &&
+        (isa<semantic::SVProceduralBlockSymbolOp>(unit.source) ||
+         isa<semantic::SVSubroutineSymbolOp>(unit.source)))
+      functionAttrs.push_back(
+          sim::named<sim::metadata::VpiFrameInstrumentation>(
+              builder.getUnitAttr()));
     unit.function = sim::SimFuncOp::create(
         builder, getSemanticLocation(unit.source), unit.symbol, type,
         unit.entryKind, functionAttrs, argAttrs);

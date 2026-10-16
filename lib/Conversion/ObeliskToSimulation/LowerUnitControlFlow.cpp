@@ -35,6 +35,7 @@ LogicalResult UnitLowering::lowerWhile(Operation *op) {
   Block *exitBlock = addBlock();
   emitBranch(conditionBlock);
   setCurrent(conditionBlock);
+  emitVPICheckpoint(op);
   FailureOr<Value> conditionValue = lowerExpression(children[0]);
   if (failed(conditionValue))
     return failure();
@@ -43,7 +44,11 @@ LogicalResult UnitLowering::lowerWhile(Operation *op) {
     return failure();
   cf::CondBranchOp::create(builder, location, *condition, bodyBlock,
                            ValueRange{}, exitBlock, ValueRange{});
-  loopTargets.push_back({exitBlock, conditionBlock, {}, controlScopes.size()});
+  loopTargets.push_back({exitBlock,
+                         conditionBlock,
+                         {},
+                         controlScopes.size(),
+                         vpiFrameScopes.size()});
   setCurrent(bodyBlock);
   if (failed(lowerStatement(children[1])))
     return failure();
@@ -67,13 +72,18 @@ LogicalResult UnitLowering::lowerDoWhile(Operation *op) {
   Block *exitBlock = addBlock();
   emitBranch(bodyBlock);
 
-  loopTargets.push_back({exitBlock, conditionBlock, {}, controlScopes.size()});
+  loopTargets.push_back({exitBlock,
+                         conditionBlock,
+                         {},
+                         controlScopes.size(),
+                         vpiFrameScopes.size()});
   setCurrent(bodyBlock);
   if (failed(lowerStatement(children[1])))
     return failure();
   emitBranch(conditionBlock);
 
   setCurrent(conditionBlock);
+  emitVPICheckpoint(op);
   FailureOr<Value> conditionValue = lowerExpression(children[0]);
   if (failed(conditionValue))
     return failure();
@@ -115,9 +125,11 @@ LogicalResult UnitLowering::lowerFor(semantic::SVForLoopStatementOp op) {
   // before the first condition check. Loop-variable declarations are separate
   // declaration statements in the enclosing semantic block and have already
   // been lowered before this node.
-  for (Operation *initializer : initializers)
+  for (Operation *initializer : initializers) {
+    emitVPICheckpoint(initializer);
     if (failed(lowerExpression(initializer)))
       return failure();
+  }
 
   Block *conditionBlock = addBlock();
   Block *bodyBlock = addBlock();
@@ -126,6 +138,7 @@ LogicalResult UnitLowering::lowerFor(semantic::SVForLoopStatementOp op) {
   emitBranch(conditionBlock);
 
   setCurrent(conditionBlock);
+  emitVPICheckpoint(op);
   if (condition) {
     FailureOr<Value> conditionValue = lowerExpression(condition);
     if (failed(conditionValue))
@@ -139,16 +152,19 @@ LogicalResult UnitLowering::lowerFor(semantic::SVForLoopStatementOp op) {
     cf::BranchOp::create(builder, location, bodyBlock);
   }
 
-  loopTargets.push_back({exitBlock, stepBlock, {}, controlScopes.size()});
+  loopTargets.push_back(
+      {exitBlock, stepBlock, {}, controlScopes.size(), vpiFrameScopes.size()});
   setCurrent(bodyBlock);
   if (failed(lowerStatement(body)))
     return failure();
   emitBranch(stepBlock);
 
   setCurrent(stepBlock);
-  for (Operation *step : steps)
+  for (Operation *step : steps) {
+    emitVPICheckpoint(step);
     if (failed(lowerExpression(step)))
       return failure();
+  }
   emitBranch(conditionBlock);
   loopTargets.pop_back();
   setCurrent(exitBlock);
@@ -165,7 +181,8 @@ LogicalResult UnitLowering::lowerForever(Operation *op) {
   Block *exitBlock = addBlock();
   emitBranch(bodyBlock);
 
-  loopTargets.push_back({exitBlock, bodyBlock, {}, controlScopes.size()});
+  loopTargets.push_back(
+      {exitBlock, bodyBlock, {}, controlScopes.size(), vpiFrameScopes.size()});
   setCurrent(bodyBlock);
   if (failed(lowerStatement(children.front())))
     return failure();
@@ -317,7 +334,7 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
         loopTargets.push_back({exit, parentStep,
                                SmallVector<Value>(parentStepOperands.begin(),
                                                   parentStepOperands.end()),
-                               controlScopes.size()});
+                               controlScopes.size(), vpiFrameScopes.size()});
         LogicalResult status = lowerStatement(children[1]);
         loopTargets.pop_back();
         return status;
@@ -682,8 +699,11 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
                                  dimension.observerReference);
   }
 
-  loopTargets.push_back(
-      {exit, step, {header->getArgument(0)}, controlScopes.size()});
+  loopTargets.push_back({exit,
+                         step,
+                         {header->getArgument(0)},
+                         controlScopes.size(),
+                         vpiFrameScopes.size()});
   if (failed(lowerStatement(children[1])))
     return failure();
   if (current->empty() || !current->back().hasTrait<OpTrait::IsTerminator>())
@@ -734,8 +754,11 @@ LogicalResult UnitLowering::lowerRepeat(Operation *op) {
   cf::CondBranchOp::create(builder, location, more, body, ValueRange{}, exit,
                            ValueRange{});
 
-  loopTargets.push_back(
-      {exit, step, {header->getArgument(0)}, controlScopes.size()});
+  loopTargets.push_back({exit,
+                         step,
+                         {header->getArgument(0)},
+                         controlScopes.size(),
+                         vpiFrameScopes.size()});
   setCurrent(body);
   if (failed(lowerStatement(children[1])))
     return failure();
@@ -1233,6 +1256,10 @@ UnitLowering::outlineForkBranch(
                                   outlineBuilder.getI64IntegerAttr(codeUnitID)),
       outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
   };
+  if (hasVPIFrameInstrumentation() &&
+      sim::has<sim::metadata::VpiStatementId>(branch))
+    attributes.push_back(sim::named<sim::metadata::VpiFrameInstrumentation>(
+        outlineBuilder.getUnitAttr()));
   if (outlinedThisArgument)
     attributes.push_back(sim::named<sim::metadata::ThisArgument>(
         outlineBuilder.getI32IntegerAttr(*outlinedThisArgument)));
@@ -1716,8 +1743,18 @@ LogicalResult UnitLowering::lowerBlock(semantic::SVBlockStatementOp op) {
     }
     return lowerFork(op);
   };
-  if (!path)
-    return lowerContents();
+  if (!path) {
+    bool entered = enterVPIStatementFrame(op);
+    LogicalResult result = lowerContents();
+    if (entered) {
+      if (succeeded(result) &&
+          (current->empty() ||
+           !current->back().hasTrait<OpTrait::IsTerminator>()))
+        emitVPIFrameLeaves(vpiFrameScopes.size() - 1, getSemanticLocation(op));
+      vpiFrameScopes.pop_back();
+    }
+    return result;
+  }
 
   // Slang represents a labeled concurrent assertion as a synthetic named
   // statement block. The label names the assertion instance for assertion
@@ -1784,17 +1821,31 @@ LogicalResult UnitLowering::lowerBlock(semantic::SVBlockStatementOp op) {
         builder, location, activation, ValueRange{},
         schedule::ContinuationSiteAttr{}, exit, body);
     setCurrent(body);
+  } else if (hasVPIFrameInstrumentation() &&
+             function.getEntryKind() == sim::EntryKind::Function) {
+    Block *body = addBlock();
+    sim::SimControlLocalBoundaryOp::create(builder, location, activation, exit,
+                                           body);
+    setCurrent(body);
   }
-  controlScopes.push_back(
-      {path.getValue().str(), targetID, activation, exit, blockEventTargetID});
+  const size_t vpiFrameDepth = vpiFrameScopes.size();
+  bool enteredVPIFrame = enterVPIStatementFrame(op);
+  controlScopes.push_back({path.getValue().str(), targetID, activation, exit,
+                           blockEventTargetID, vpiFrameDepth});
   LogicalResult result = lowerContents(blockEventTargetID);
   controlScopes.pop_back();
+  llvm::scope_exit popVPIFrame([&] {
+    if (enteredVPIFrame)
+      vpiFrameScopes.pop_back();
+  });
   if (failed(result))
     return failure();
   if (current->empty() || !current->back().hasTrait<OpTrait::IsTerminator>()) {
     if (blockEventTargetID &&
         op.getBlockKind() == semantic::SVStatementBlockKind::Sequential)
       emitCovergroupBlockEvent(*blockEventTargetID, /*eventKind=*/1, location);
+    if (enteredVPIFrame)
+      emitVPIFrameLeaves(vpiFrameScopes.size() - 1, location);
     sim::SimControlLeaveOp::create(builder, location, activation);
     cf::BranchOp::create(builder, location, exit);
   }
@@ -1836,12 +1887,69 @@ LogicalResult UnitLowering::lowerDisable(semantic::SVDisableStatementOp op) {
         builder.getBoolAttr(hierarchical));
     return success();
   }
+  if (hasVPIFrameInstrumentation()) {
+    Value lexicalActivation;
+    if (!hierarchical)
+      for (const ControlScope &scope : llvm::reverse(controlScopes))
+        if (scope.path == path.getValue()) {
+          lexicalActivation = scope.activation;
+          break;
+        }
+    // An out-of-scope exact name denotes all live occurrences. A lexical
+    // source inside this activation can select its actual control token.
+    bool all = hierarchical || (!lexicalActivation &&
+                                !inheritedControlIDs.contains(path.getValue()));
+    Value selected = sim::SimControlDisableSelectedOp::create(
+        builder, location, builder.getI64IntegerAttr(targetID),
+        lexicalActivation, builder.getBoolAttr(all));
+    Value zero = arith::ConstantIntOp::create(builder, location, 0, 64);
+    Value unaffected = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, selected, zero);
+    Block *continuation = addBlock();
+    Block *dispatch = addBlock();
+    cf::CondBranchOp::create(builder, location, unaffected, continuation,
+                             dispatch);
+    setCurrent(dispatch);
+    for (const ControlScope &scope : llvm::reverse(controlScopes)) {
+      if (scope.targetID != targetID)
+        continue;
+      Value matches = sim::SimControlMatchOp::create(
+          builder, location, selected, scope.activation);
+      Block *leave = addBlock();
+      Block *next = addBlock();
+      cf::CondBranchOp::create(builder, location, matches, leave, next);
+      setCurrent(leave);
+      sim::SimVPIFrameObservationEndOp::create(
+          builder, location, getVPIObservedRefs(scope.vpiFrameDepth));
+      auto branch = cf::BranchOp::create(builder, location, scope.exit);
+      if (scope.exit == outermostScopeExit)
+        outermostScopeDisables.push_back(branch);
+      setCurrent(next);
+    }
+    if (function.getEntryKind() == sim::EntryKind::Function) {
+      if (failed(emitFunctionReturn(location, std::nullopt, false,
+                                    /*emitBlockEventEnd=*/false)))
+        return failure();
+      builder.setInsertionPoint(current->getTerminator());
+      sim::SimControlNonlocalExitOp::create(
+          builder, location, builder.getI64IntegerAttr(targetID), selected);
+    } else {
+      sim::SimVPIFrameObservationEndOp::create(builder, location,
+                                               getVPIObservedRefs());
+      sim::SimReturnOp::create(builder, location, ValueRange{});
+    }
+    setCurrent(continuation);
+    return success();
+  }
   for (const ControlScope &scope : llvm::reverse(controlScopes)) {
     if (scope.path == path.getValue()) {
       sim::SimControlDisableOp::create(
           builder, location, builder.getI64IntegerAttr(targetID),
           hierarchical ? Value{} : scope.activation,
           builder.getBoolAttr(hierarchical));
+      if (hasVPIFrameInstrumentation())
+        sim::SimVPIFrameObservationEndOp::create(
+            builder, location, getVPIObservedRefs(scope.vpiFrameDepth));
       auto branch = cf::BranchOp::create(builder, location, scope.exit);
       if (scope.exit == outermostScopeExit)
         outermostScopeDisables.push_back(branch);
@@ -1854,6 +1962,9 @@ LogicalResult UnitLowering::lowerDisable(semantic::SVDisableStatementOp op) {
     sim::SimControlDisableOp::create(
         builder, location, builder.getI64IntegerAttr(targetID), Value{},
         builder.getBoolAttr(hierarchical));
+    if (hasVPIFrameInstrumentation())
+      sim::SimVPIFrameObservationEndOp::create(builder, location,
+                                               getVPIObservedRefs());
     sim::SimReturnOp::create(builder, location, ValueRange{});
     setCurrent(addBlock());
     return success();
@@ -1889,13 +2000,16 @@ LogicalResult UnitLowering::lowerDisable(semantic::SVDisableStatementOp op) {
         return failure();
       builder.setInsertionPoint(current->getTerminator());
       sim::SimControlNonlocalExitOp::create(
-          builder, location, builder.getI64IntegerAttr(targetID));
+          builder, location, builder.getI64IntegerAttr(targetID), Value{});
     } else {
       // A nonlocal exit discards this task activation. In particular it must
       // neither copy output/inout formals nor leave controls that the runtime
       // has already unwound through the target boundary.
+      if (hasVPIFrameInstrumentation())
+        sim::SimVPIFrameObservationEndOp::create(builder, location,
+                                                 getVPIObservedRefs());
       sim::SimControlNonlocalExitOp::create(
-          builder, location, builder.getI64IntegerAttr(targetID));
+          builder, location, builder.getI64IntegerAttr(targetID), Value{});
       sim::SimReturnOp::create(builder, location, ValueRange{});
     }
     setCurrent(continuation);

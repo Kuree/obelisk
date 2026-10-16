@@ -701,6 +701,14 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.inputCount <= 1 && site.outputCount == 0 &&
            (site.inputCount == 0 || bits(input(0), 64)) &&
            ((signature.flags >> 31) == 0 || site.inputCount == 0);
+  case OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE_SELECTED:
+    return signature.flags == 0 && site.inputCount == 3 &&
+           site.outputCount == 1 && twoStateBits(input(0), 64) &&
+           twoStateBits(input(1), 64) && twoStateBits(input(2), 64) &&
+           twoStateBits(output(0), 64) && input(0)->flags == 0 &&
+           input(1)->flags == 0 && input(2)->flags == 0 &&
+           output(0)->flags == 0 && input(0)->size == 8 &&
+           input(1)->size == 8 && input(2)->size == 8 && output(0)->size == 8;
   case OBELISK_RT_INTRINSIC_V1_CONTROL_ESCAPE_PENDING:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 1 && bits(output(0), 1);

@@ -102,6 +102,29 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   auto retainCallSite = [&](auto lowered) {
     if (auto site = sim::get<sim::metadata::VpiCallSite>(op))
       sim::set<sim::metadata::VpiCallSite>(lowered, site);
+    if (hasVPIFrameInstrumentation() &&
+        isa<sim::SimCallOp, sim::SimClassDirectCallOp,
+            sim::SimClassVirtualCallOp, sim::SimDPICallOp>(
+            lowered.getOperation())) {
+      SmallVector<Value> observed;
+      for (const VPIFrameScope &frame : vpiFrameScopes)
+        llvm::append_range(observed, frame.observedRefs);
+      if (!observed.empty()) {
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPointAfter(lowered);
+        SmallVector<Attribute> endings;
+        for (auto [depth, frame] : llvm::enumerate(vpiFrameScopes)) {
+          SmallVector<int64_t> targets;
+          for (const ControlScope &control : controlScopes)
+            if (control.vpiFrameDepth <= depth)
+              targets.push_back(control.targetID);
+          Attribute targetSet = builder.getDenseI64ArrayAttr(targets);
+          endings.append(frame.observedRefs.size(), targetSet);
+        }
+        sim::SimVPICallObservationOp::create(
+            builder, lowered.getLoc(), observed, builder.getArrayAttr(endings));
+      }
+    }
     return lowered;
   };
 

@@ -1264,6 +1264,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_CLOCKING_OUTPUT_TRACK = UINT32_C(0x0001024d),
   OBELISK_RT_INTRINSIC_V1_CLOCKING_OUTPUT_CURRENT = UINT32_C(0x0001024e),
   OBELISK_RT_INTRINSIC_V1_PROGRAM_OWNED = UINT32_C(0x0001024f),
+  OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE_SELECTED = UINT32_C(0x00010250),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -3453,6 +3454,9 @@ obelisk_rt_status obelisk_rt_v1_vpi_call_finish(obelisk_rt_context *context,
 obelisk_rt_status obelisk_rt_v1_vpi_frame_bind(obelisk_rt_context *context,
                                                uint64_t local_id,
                                                uint64_t automatic_reference);
+// A positive source statement ID must belong to the current lexical owner.
+// Zero explicitly marks the current statement unavailable; a later positive
+// checkpoint restores exact identity. This differs from pre-statement absence.
 obelisk_rt_status
 obelisk_rt_v1_vpi_frame_checkpoint(obelisk_rt_context *context,
                                    uint64_t statement_id);
@@ -4058,6 +4062,12 @@ obelisk_rt_status obelisk_rt_v1_control_disable(obelisk_rt_context *context,
                                                 uint64_t target_id,
                                                 uint64_t activation,
                                                 uint32_t all_activations);
+// Disable with the same scheduling semantics and return the exact outermost
+// affected activation in the current logical process. Zero means the current
+// process was unaffected. The returned token is a value, not a live control.
+obelisk_rt_status obelisk_rt_v1_control_disable_selected(
+    obelisk_rt_context *context, uint64_t target_id, uint64_t activation,
+    uint32_t all_activations, uint64_t *out_selected);
 // Consume the escape request produced when a disable in a task selected a
 // named block owned by an older task activation in the same logical process.
 uint32_t obelisk_rt_v1_control_escape_pending(obelisk_rt_context *context);

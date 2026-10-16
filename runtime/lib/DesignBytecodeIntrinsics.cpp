@@ -4527,6 +4527,15 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                                          signature.flags & ~(UINT32_C(1) << 31),
                                          activation, signature.flags >> 31);
   }
+  case OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE_SELECTED: {
+    auto target = scalar(0), activation = scalar(1), all = scalar(2);
+    if (!target || !activation || !all || *all > 1)
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t selected = 0;
+    auto status = obelisk_rt_v1_control_disable_selected(
+        context, *target, *activation, static_cast<uint32_t>(*all), &selected);
+    return status == OBELISK_RT_OK ? sentinel(0, selected) : status;
+  }
   case OBELISK_RT_INTRINSIC_V1_CONTROL_ESCAPE_PENDING:
     if (!context)
       return OBELISK_RT_INVALID_ARGUMENT;

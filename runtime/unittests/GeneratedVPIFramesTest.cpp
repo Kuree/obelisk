@@ -72,6 +72,19 @@ void inspectFrameABI(obelisk_rt_context *context, FrameProbe &probe,
     probe.thread = vpi_handle(vpiThread, probe.root);
     ASSERT_NE(probe.thread, nullptr);
     expectSameRelation(probe.thread, vpiFrame, probe.root);
+    // Before a source statement executes absence is quiet. An explicit clear
+    // records unavailable metadata, and a valid checkpoint restores identity.
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    ASSERT_EQ(obelisk_rt_v1_vpi_frame_checkpoint(context, 0), OBELISK_RT_OK);
+    EXPECT_EQ(vpi_handle(vpiStmt, probe.root), nullptr);
+    s_vpi_error_info unavailable{};
+    EXPECT_NE(vpi_chk_error(&unavailable), 0);
+    EXPECT_EQ(unavailable.level, vpiNotice);
+    EXPECT_EQ(obelisk_rt_v1_vpi_frame_checkpoint(context, 13),
+              OBELISK_RT_INVALID_FRAME);
+    EXPECT_EQ(vpi_handle(vpiStmt, probe.root), nullptr);
+    EXPECT_NE(vpi_chk_error(&unavailable), 0);
+    EXPECT_EQ(unavailable.level, vpiNotice);
     ASSERT_EQ(obelisk_rt_v1_vpi_frame_checkpoint(context, 11), OBELISK_RT_OK);
     probe.call = vpi_handle(vpiStmt, probe.root);
     ASSERT_NE(probe.call, nullptr);

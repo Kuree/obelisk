@@ -295,3 +295,66 @@ TEST(RuntimeDeferredAssertion, AssertionActionControlsAndLocking) {
 }
 
 } // namespace
+
+TEST(RuntimeControl, SelectedDisableIdentifiesRecursiveDynamicActivation) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  context->activeLogicalProcessToken = 41;
+  uint64_t outer = 0, inner = 0, child = 0, selected = UINT64_MAX;
+  ASSERT_EQ(obelisk_rt_v1_control_enter(context, 91, &outer), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_control_enter(context, 91, &inner), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_control_enter(context, 92, &child), OBELISK_RT_OK);
+  ASSERT_NE(outer, inner);
+  ASSERT_EQ(
+      obelisk_rt_v1_control_disable_selected(context, 91, 0, 0, &selected),
+      OBELISK_RT_OK);
+  EXPECT_EQ(selected, inner);
+  EXPECT_EQ(context->activeControls, std::vector<uint64_t>({outer}));
+  EXPECT_EQ(context->controlActivations.count(inner), 0u);
+  EXPECT_EQ(context->controlActivations.count(child), 0u);
+
+  ASSERT_EQ(obelisk_rt_v1_control_enter(context, 91, &inner), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_control_enter(context, 92, &child), OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_control_disable_selected(context, 91, 0, 1, &selected),
+      OBELISK_RT_OK);
+  EXPECT_EQ(selected, outer);
+  EXPECT_TRUE(context->activeControls.empty());
+  EXPECT_TRUE(context->controlActivations.empty());
+  ASSERT_EQ(
+      obelisk_rt_v1_control_disable_selected(context, 91, 0, 1, &selected),
+      OBELISK_RT_OK);
+  EXPECT_EQ(selected, 0u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeControl, SelectedDisableReturnsZeroWithoutCurrentEffect) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  context->activeLogicalProcessToken = 51;
+  uint64_t activation = 0, selected = UINT64_MAX;
+  ASSERT_EQ(obelisk_rt_v1_control_enter(context, 93, &activation),
+            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_control_disable_selected(context, 94, 0, 1, &selected),
+      OBELISK_RT_OK);
+  EXPECT_EQ(selected, 0u);
+  EXPECT_EQ(context->activeControls, std::vector<uint64_t>({activation}));
+  selected = UINT64_MAX;
+  EXPECT_EQ(obelisk_rt_v1_control_disable_selected(context, 94, activation, 0,
+                                                   &selected),
+            OBELISK_RT_INVALID_LIFECYCLE);
+  EXPECT_EQ(selected, 0u);
+  EXPECT_EQ(obelisk_rt_v1_control_disable_selected(context, 93, 0, 0, nullptr),
+            OBELISK_RT_INVALID_ARGUMENT);
+  ASSERT_EQ(obelisk_rt_v1_control_disable_selected(context, 93, activation, 0,
+                                                   &selected),
+            OBELISK_RT_OK);
+  EXPECT_EQ(selected, activation);
+  selected = UINT64_MAX;
+  EXPECT_EQ(
+      obelisk_rt_v1_control_disable_selected(nullptr, 93, 0, 1, &selected),
+      OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(selected, 0u);
+  obelisk_rt_v1_context_destroy(context);
+}
