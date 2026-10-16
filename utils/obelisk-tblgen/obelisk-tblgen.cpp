@@ -1890,8 +1890,62 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         "-*-===//\n\n";
   os << "#ifndef OBELISK_REFLECTION_VPIOBJECTMODEL_H_INC\n";
   os << "#define OBELISK_REFLECTION_VPIOBJECTMODEL_H_INC\n\n";
-  os << "#include <cstddef>\n#include <cstdint>\n\n";
+  os << "#include <cstddef>\n#include <cstdint>\n#include <string_view>\n\n";
   os << "namespace obelisk::reflection {\n\n";
+
+  auto operatorRecords = records.getAllDerivedDefinitions("VPISourceOperator");
+  SmallVector<const Record *> sourceOperators(operatorRecords.begin(),
+                                              operatorRecords.end());
+  llvm::sort(sourceOperators, [](const Record *left, const Record *right) {
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
+  });
+  DenseSet<int64_t> sourceOperatorValues;
+  DenseSet<std::pair<StringRef, int64_t>> sourceOperatorNames;
+  os << "struct VPISourceOperatorDescriptor {\n"
+        "  const char *sourceName;\n"
+        "  uint16_t value;\n"
+        "  uint8_t arity;\n"
+        "  const char *token;\n"
+        "  uint8_t precedence;\n"
+        "  bool rightAssociative;\n"
+        "};\n\n"
+        "inline constexpr VPISourceOperatorDescriptor vpiSourceOperators[] = "
+        "{\n";
+  for (const Record *operation : sourceOperators) {
+    auto name = operation->getValueAsString("sourceName");
+    auto value = operation->getValueAsInt("value");
+    auto arity = operation->getValueAsInt("arity");
+    auto precedence = operation->getValueAsInt("precedence");
+    if (name.empty() || value < 0 || value > UINT16_MAX ||
+        (arity != 1 && arity != 2) || precedence <= 0 ||
+        precedence > UINT8_MAX ||
+        operation->getValueAsString("token").empty() ||
+        !sourceOperatorValues.insert(value).second ||
+        !sourceOperatorNames.insert({name, arity}).second)
+      PrintFatalError(operation->getLoc(),
+                      "invalid or duplicate source operator");
+    os << formatv("  {{\"{0}\", {1}, {2}, \"{3}\", {4}, {5}},\n", name, value,
+                  arity, operation->getValueAsString("token"), precedence,
+                  operation->getValueAsBit("rightAssociative") ? "true"
+                                                               : "false");
+  }
+  os << "};\n\n"
+        "inline constexpr const VPISourceOperatorDescriptor "
+        "*findVPISourceOperator(\n"
+        "    uint32_t value) {\n"
+        "  for (const auto &operation : vpiSourceOperators)\n"
+        "    if (operation.value == value) return &operation;\n"
+        "  return nullptr;\n"
+        "}\n\n"
+        "inline constexpr const VPISourceOperatorDescriptor "
+        "*findVPISourceOperator(\n"
+        "    std::string_view sourceName, uint8_t arity) {\n"
+        "  for (const auto &operation : vpiSourceOperators)\n"
+        "    if (sourceName == operation.sourceName && arity == "
+        "operation.arity)\n"
+        "      return &operation;\n"
+        "  return nullptr;\n"
+        "}\n\n";
 
   auto familyRecords = records.getAllDerivedDefinitions("VPIObjectFamily");
   SmallVector<const Record *> families(familyRecords.begin(),

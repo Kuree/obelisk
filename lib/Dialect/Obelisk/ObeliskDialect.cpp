@@ -597,12 +597,88 @@ LogicalResult SVRandCaseStatementOp::verify() {
 LogicalResult SVSourceTypeParameterSymbolOp::verify() {
   return sourceparameter::verifyTypeParameter<
       SVGenericClassDefSymbolOp, SVSourceTypeDefaultOp,
-      SVSourceTypeReferenceDefaultOp, SVSourceUnsupportedDefaultOp>(*this);
+      SVSourceTypeReferenceDefaultOp, SVSourceUnsupportedDefaultOp,
+      SVSourceValueParameterSymbolOp>(*this);
+}
+
+LogicalResult SVSourceValueParameterSymbolOp::verify() {
+  return sourceparameter::verifyValueParameter<
+      SVGenericClassDefSymbolOp, SVSourceTypeParameterSymbolOp,
+      SVSourceValueDefaultOp, SVSourceUnsupportedDefaultOp>(*this);
+}
+
+LogicalResult SVSourceValueDefaultOp::verify() {
+  if (failed(sourceparameter::verifyUniqueOriginalDefault<
+             SVSourceValueDefaultOp, SVSourceTypeDefaultOp,
+             SVSourceTypeReferenceDefaultOp, SVSourceUnsupportedDefaultOp>(
+          *this)))
+    return failure();
+  if ((*this)->hasAttr("semantic_type"))
+    return emitOpError("unbound source default cannot carry an effective type");
+  if (!isa_and_nonnull<SVSourceValueParameterSymbolOp, SVParameterSymbolOp>(
+          (*this)->getParentOp()))
+    return emitOpError(
+        "original value default requires a value parameter owner");
+  if (sourceparameter::childCount(*this) != 1)
+    return emitOpError(
+        "original value default requires exactly one expression");
+  if (!isa<SVSourceUnaryExpressionOp, SVSourceBinaryExpressionOp,
+           SVSourceParameterReferenceOp, SVIntegerLiteralOp>(
+          getBody().front().front()))
+    return emitOpError(
+        "original value default requires a supported typed expression");
+  return success();
+}
+
+LogicalResult SVSourceParameterReferenceOp::verify() {
+  return sourceparameter::verifyValueExpression<
+      SVSourceValueDefaultOp, SVSourceUnaryExpressionOp,
+      SVSourceBinaryExpressionOp, SVSourceParameterReferenceOp,
+      SVIntegerLiteralOp>(*this, 0);
+}
+
+LogicalResult
+SVSourceParameterReferenceOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  return sourceparameter::verifyValueReference<SVSourceValueParameterSymbolOp,
+                                               SVParameterSymbolOp>(*this,
+                                                                    symbols);
+}
+
+LogicalResult SVSourceUnaryExpressionOp::verify() {
+  switch (getOperatorKind()) {
+  case SVUnaryOperator::Preincrement:
+  case SVUnaryOperator::Predecrement:
+  case SVUnaryOperator::Postincrement:
+  case SVUnaryOperator::Postdecrement:
+    return emitOpError("original default requires a pure unary operation");
+  default:
+    break;
+  }
+  return sourceparameter::verifyValueExpression<
+      SVSourceValueDefaultOp, SVSourceUnaryExpressionOp,
+      SVSourceBinaryExpressionOp, SVSourceParameterReferenceOp,
+      SVIntegerLiteralOp>(*this, 1);
+}
+
+LogicalResult SVSourceBinaryExpressionOp::verify() {
+  if (getOperatorKind() == SVBinaryOperator::LogicalEquivalence)
+    return emitOpError(
+        "original default operator has no VPI expression encoding");
+  return sourceparameter::verifyValueExpression<
+      SVSourceValueDefaultOp, SVSourceUnaryExpressionOp,
+      SVSourceBinaryExpressionOp, SVSourceParameterReferenceOp,
+      SVIntegerLiteralOp>(*this, 2);
 }
 
 LogicalResult SVSourceTypeDefaultOp::verify() {
-  if (failed(sourceparameter::verifyDefaultOwner<SVSourceTypeParameterSymbolOp>(
+  if (failed(sourceparameter::verifyUniqueOriginalDefault<
+             SVSourceValueDefaultOp, SVSourceTypeDefaultOp,
+             SVSourceTypeReferenceDefaultOp, SVSourceUnsupportedDefaultOp>(
           *this)))
+    return failure();
+  if (failed(
+          sourceparameter::verifyDefaultOwner<SVSourceTypeParameterSymbolOp,
+                                              SVTypeParameterSymbolOp>(*this)))
     return failure();
   bool unresolved = false;
   getSemanticType().walk([&](Type type) {
@@ -616,19 +692,35 @@ LogicalResult SVSourceTypeDefaultOp::verify() {
 }
 
 LogicalResult SVSourceTypeReferenceDefaultOp::verify() {
-  return sourceparameter::verifyDefaultOwner<SVSourceTypeParameterSymbolOp>(
-      *this);
+  if (failed(sourceparameter::verifyUniqueOriginalDefault<
+             SVSourceValueDefaultOp, SVSourceTypeDefaultOp,
+             SVSourceTypeReferenceDefaultOp, SVSourceUnsupportedDefaultOp>(
+          *this)))
+    return failure();
+  if ((*this)->hasAttr("semantic_type"))
+    return emitOpError("unbound source default cannot carry an effective type");
+  return sourceparameter::verifyDefaultOwner<SVSourceTypeParameterSymbolOp,
+                                             SVTypeParameterSymbolOp>(*this);
 }
 
 LogicalResult SVSourceTypeReferenceDefaultOp::verifySymbolUses(
     SymbolTableCollection &symbols) {
-  return sourceparameter::verifyTypeReference<SVSourceTypeParameterSymbolOp>(
-      *this, symbols);
+  return sourceparameter::verifyTypeReference<SVSourceTypeParameterSymbolOp,
+                                              SVTypeParameterSymbolOp>(*this,
+                                                                       symbols);
 }
 
 LogicalResult SVSourceUnsupportedDefaultOp::verify() {
-  if (failed(sourceparameter::verifyDefaultOwner<SVSourceTypeParameterSymbolOp>(
+  if (failed(sourceparameter::verifyUniqueOriginalDefault<
+             SVSourceValueDefaultOp, SVSourceTypeDefaultOp,
+             SVSourceTypeReferenceDefaultOp, SVSourceUnsupportedDefaultOp>(
           *this)))
+    return failure();
+  if ((*this)->hasAttr("semantic_type"))
+    return emitOpError("unbound source default cannot carry an effective type");
+  if (failed(sourceparameter::verifyDefaultOwner<
+             SVSourceTypeParameterSymbolOp, SVTypeParameterSymbolOp,
+             SVSourceValueParameterSymbolOp, SVParameterSymbolOp>(*this)))
     return failure();
   if (getSyntax().empty() || getReason().empty())
     return emitOpError(

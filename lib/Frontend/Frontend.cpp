@@ -5540,12 +5540,210 @@ private:
     assignment->right().visit(*this);
   }
 
-  // Import the lexical declaration before selecting any effective generic
-  // specialization. The invalid specialization supplies declaration identity
-  // and syntax only; asking it for a parameter type or value would substitute
-  // an error/effective type for the unresolved source declaration.
-  void importSourceTypeParameters(
-      const slang::ast::GenericClassDefSymbol &definition) {
+  using OriginalParameterMap =
+      llvm::DenseMap<const slang::ast::Symbol *, FlatSymbolRefAttr>;
+
+  OriginalParameterMap originalParameterMap(const slang::ast::Scope &scope) {
+    OriginalParameterMap parameters;
+    for (const auto &member : scope.members()) {
+      if (member.getParentScope() != &scope)
+        continue;
+      if (member.kind == slang::ast::SymbolKind::Parameter) {
+        parameters[&member] =
+            FlatSymbolRefAttr::get(getInternalSymbolName(member));
+      } else if (member.kind == slang::ast::SymbolKind::TypeParameter) {
+        auto reference = FlatSymbolRefAttr::get(getInternalSymbolName(member));
+        parameters[&member] = reference;
+        parameters[&member.as<slang::ast::TypeParameterSymbol>()
+                        .getTypeAlias()] = reference;
+      }
+    }
+    return parameters;
+  }
+
+  NamedAttrList originalSourceAttributes(slang::SourceRange range) {
+    NamedAttrList attrs;
+    attrs.set("node_id", builder.getI64IntegerAttr(nextNodeId++));
+    if (range.start().valid()) {
+      if (auto source = sourceRangeAttr(range))
+        attrs.set("source_range", *source);
+      if (auto original = sourceRangeAttr(range, true))
+        attrs.set("original_source_range", *original);
+      if (ArrayAttr stack = macroExpansionStack(range.start()); !stack.empty())
+        attrs.set("macro_expansion_stack", stack);
+    }
+    return attrs;
+  }
+
+  // Bind literal syntax only. References preserve their exact declaration;
+  // operators preserve their original operand tree without evaluating any
+  // generic parameter or replacing an overridden default with its initializer.
+  void importOriginalParameterDefault(
+      const slang::ast::ParameterSymbolBase &parameter,
+      const OriginalParameterMap &parameters) {
+    const auto &symbol = parameter.symbol;
+    const auto *scope = symbol.getParentScope();
+    if (!scope)
+      return;
+    const slang::syntax::SyntaxNode *syntax = parameter.defaultValSyntax;
+    if (!syntax && symbol.kind == slang::ast::SymbolKind::Parameter)
+      syntax = symbol.as<slang::ast::ParameterSymbol>()
+                   .getDeclaredType()
+                   ->getInitializerSyntax();
+    if (!syntax && symbol.kind == slang::ast::SymbolKind::TypeParameter &&
+        symbol.getSyntax())
+      if (const auto *declaration =
+              symbol.getSyntax()->as_if<slang::syntax::TypeAssignmentSyntax>();
+          declaration && declaration->assignment)
+        syntax = declaration->assignment->type;
+    if (!syntax)
+      return;
+    auto range = syntax->sourceRange();
+    auto attrs = originalSourceAttributes(range);
+    slang::ast::ASTContext context(*scope,
+                                   slang::ast::LookupLocation::before(symbol));
+    if (symbol.kind == slang::ast::SymbolKind::TypeParameter) {
+      if (const auto *named = syntax->as_if<slang::syntax::NamedTypeSyntax>();
+          named &&
+          named->name->kind == slang::syntax::SyntaxKind::IdentifierName) {
+        slang::ast::LookupResult lookup;
+        slang::ast::Lookup::name(*named->name, context,
+                                 slang::ast::LookupFlags::Type, lookup);
+        if (auto reference = parameters.lookup(lookup.found)) {
+          attrs.set("parameter", reference);
+          auto node = slangir::SourceTypeReferenceDefaultOp::create(
+              builder, sourceLocation(range.start()), TypeRange{}, ValueRange{},
+              attrs.getAttrs());
+          node.getBody().emplaceBlock();
+          return;
+        }
+      }
+      bool independent = false;
+      if (const auto *integer =
+              syntax->as_if<slang::syntax::IntegerTypeSyntax>())
+        independent = integer->dimensions.empty();
+      if (syntax->as_if<slang::syntax::KeywordTypeSyntax>())
+        independent = syntax->kind != slang::syntax::SyntaxKind::Untyped;
+      if (independent) {
+        const auto &type = slang::ast::Type::fromSyntax(
+            scope->getCompilation(),
+            syntax->as<slang::syntax::DataTypeSyntax>(), context, nullptr);
+        if (!type.isError()) {
+          attrs.set("semantic_type",
+                    TypeAttr::get(typeConverter.convert(type)));
+          auto node = slangir::SourceTypeDefaultOp::create(
+              builder, sourceLocation(range.start()), TypeRange{}, ValueRange{},
+              attrs.getAttrs());
+          node.getBody().emplaceBlock();
+          return;
+        }
+      }
+    } else {
+      using SyntaxKind = slang::syntax::SyntaxKind;
+      auto valueReference = [&](const slang::syntax::NameSyntax &name) {
+        slang::ast::LookupResult lookup;
+        slang::ast::Lookup::name(name, context, slang::ast::LookupFlags::None,
+                                 lookup);
+        return lookup.found &&
+                       lookup.found->kind == slang::ast::SymbolKind::Parameter
+                   ? parameters.lookup(lookup.found)
+                   : FlatSymbolRefAttr{};
+      };
+      auto supported = [&](auto &&self,
+                           const slang::syntax::SyntaxNode &node) -> bool {
+        if (auto *paren =
+                node.as_if<slang::syntax::ParenthesizedExpressionSyntax>())
+          return self(self, *paren->expression);
+        if (auto *unary =
+                node.as_if<slang::syntax::PrefixUnaryExpressionSyntax>())
+          return node.kind != SyntaxKind::UnaryPreincrementExpression &&
+                 node.kind != SyntaxKind::UnaryPredecrementExpression &&
+                 self(self, *unary->operand);
+        if (auto *binary = node.as_if<slang::syntax::BinaryExpressionSyntax>())
+          return !slang::syntax::SyntaxFacts::isAssignmentOperator(node.kind) &&
+                 node.kind != SyntaxKind::LogicalEquivalenceExpression &&
+                 self(self, *binary->left) && self(self, *binary->right);
+        if (node.kind == SyntaxKind::IdentifierName)
+          return bool(valueReference(node.as<slang::syntax::NameSyntax>()));
+        return node.kind == SyntaxKind::IntegerLiteralExpression ||
+               node.kind == SyntaxKind::IntegerVectorExpression;
+      };
+      if (supported(supported, *syntax)) {
+        auto root = slangir::SourceValueDefaultOp::create(
+            builder, sourceLocation(range.start()), TypeRange{}, ValueRange{},
+            attrs.getAttrs());
+        root.getBody().emplaceBlock();
+        OpBuilder::InsertionGuard rootGuard(builder);
+        builder.setInsertionPointToStart(&root.getBody().front());
+        auto emit = [&](auto &&self,
+                        const slang::syntax::SyntaxNode &node) -> void {
+          if (auto *paren =
+                  node.as_if<slang::syntax::ParenthesizedExpressionSyntax>()) {
+            self(self, *paren->expression);
+            return;
+          }
+          auto exprAttrs = originalSourceAttributes(node.sourceRange());
+          auto location = sourceLocation(node.sourceRange().start());
+          if (auto *unary =
+                  node.as_if<slang::syntax::PrefixUnaryExpressionSyntax>()) {
+            exprAttrs.set(
+                "operator_kind",
+                slangir::UnaryOperatorAttr::get(
+                    builder.getContext(),
+                    convertEnum(slang::ast::OpInfo::getUnary(node.kind))));
+            auto operation = slangir::SourceUnaryExpressionOp::create(
+                builder, location, TypeRange{}, ValueRange{},
+                exprAttrs.getAttrs());
+            operation.getBody().emplaceBlock();
+            OpBuilder::InsertionGuard guard(builder);
+            builder.setInsertionPointToStart(&operation.getBody().front());
+            self(self, *unary->operand);
+          } else if (auto *binary =
+                         node.as_if<slang::syntax::BinaryExpressionSyntax>()) {
+            exprAttrs.set(
+                "operator_kind",
+                slangir::BinaryOperatorAttr::get(
+                    builder.getContext(),
+                    convertEnum(slang::ast::OpInfo::getBinary(node.kind))));
+            auto operation = slangir::SourceBinaryExpressionOp::create(
+                builder, location, TypeRange{}, ValueRange{},
+                exprAttrs.getAttrs());
+            operation.getBody().emplaceBlock();
+            OpBuilder::InsertionGuard guard(builder);
+            builder.setInsertionPointToStart(&operation.getBody().front());
+            self(self, *binary->left);
+            self(self, *binary->right);
+          } else if (node.kind == SyntaxKind::IdentifierName) {
+            exprAttrs.set("parameter",
+                          valueReference(node.as<slang::syntax::NameSyntax>()));
+            auto operation = slangir::SourceParameterReferenceOp::create(
+                builder, location, TypeRange{}, ValueRange{},
+                exprAttrs.getAttrs());
+            operation.getBody().emplaceBlock();
+          } else {
+            const auto &literal = slang::ast::Expression::bind(
+                node.as<slang::syntax::ExpressionSyntax>(), context);
+            literal.visit(*this);
+          }
+        };
+        emit(emit, *syntax);
+        return;
+      }
+    }
+    attrs.set("syntax", builder.getStringAttr(syntax->toString()));
+    attrs.set("reason",
+              builder.getStringAttr("original parameter default requires an "
+                                    "unimplemented source form"));
+    auto node = slangir::SourceUnsupportedDefaultOp::create(
+        builder, sourceLocation(range.start()), TypeRange{}, ValueRange{},
+        attrs.getAttrs());
+    node.getBody().emplaceBlock();
+  }
+
+  // The invalid specialization supplies source declaration identity and syntax
+  // only. Never query its bound parameter type or value.
+  void
+  importSourceParameters(const slang::ast::GenericClassDefSymbol &definition) {
     if (const auto *scope = definition.getParentScope();
         scope && scope->asSymbol().kind == slang::ast::SymbolKind::Package &&
         scope->asSymbol().name == "std" &&
@@ -5556,113 +5754,38 @@ private:
     if (!invalidType.isClass())
       return;
     const auto &source = invalidType.as<slang::ast::ClassType>();
-    llvm::DenseMap<const slang::ast::Symbol *, FlatSymbolRefAttr> parameters;
-    SmallVector<const slang::ast::TypeParameterSymbol *> declarations;
+    auto parameters = originalParameterMap(source);
     for (const auto &member : source.members()) {
-      if (member.kind != slang::ast::SymbolKind::TypeParameter ||
-          member.getParentScope() != &source)
+      if (member.getParentScope() != &source ||
+          (member.kind != slang::ast::SymbolKind::Parameter &&
+           member.kind != slang::ast::SymbolKind::TypeParameter))
         continue;
-      const auto &parameter = member.as<slang::ast::TypeParameterSymbol>();
-      auto reference = FlatSymbolRefAttr::get(getInternalSymbolName(parameter));
-      parameters[&parameter] = reference;
-      parameters[&parameter.getTypeAlias()] = reference;
-      declarations.push_back(&parameter);
-    }
-    auto sourceAttributes = [&](slang::SourceRange range) {
-      NamedAttrList attrs;
-      attrs.set("node_id", builder.getI64IntegerAttr(nextNodeId++));
-      if (range.start().valid()) {
-        if (auto source = sourceRangeAttr(range))
-          attrs.set("source_range", *source);
-        if (auto original = sourceRangeAttr(range, true))
-          attrs.set("original_source_range", *original);
-        if (ArrayAttr stack = macroExpansionStack(range.start());
-            !stack.empty())
-          attrs.set("macro_expansion_stack", stack);
-      }
-      return attrs;
-    };
-    for (const auto *parameter : declarations) {
-      NamedAttrList attrs = sourceAttributes(getSourceRange(*parameter));
-      attrs.set("sym_name", getInternalSymbolName(*parameter));
-      attrs.set("name", builder.getStringAttr(parameter->name));
+      const slang::ast::ParameterSymbolBase &parameter =
+          member.kind == slang::ast::SymbolKind::Parameter
+              ? static_cast<const slang::ast::ParameterSymbolBase &>(
+                    member.as<slang::ast::ParameterSymbol>())
+              : member.as<slang::ast::TypeParameterSymbol>();
+      auto attrs = originalSourceAttributes(getSourceRange(member));
+      attrs.set("sym_name", getInternalSymbolName(member));
+      attrs.set("name", builder.getStringAttr(member.name));
       attrs.set("hierarchical_name",
                 builder.getStringAttr(getSymbolPath(definition) +
-                                      "::" + std::string(parameter->name)));
-      if (parameter->isLocalParam())
+                                      "::" + std::string(member.name)));
+      if (parameter.isLocalParam())
         attrs.set("is_local_param", builder.getUnitAttr());
-      auto declaration = slangir::SourceTypeParameterSymbolOp::create(
-          builder, sourceLocation(parameter->location), TypeRange{},
-          ValueRange{}, attrs.getAttrs());
-      declaration.getBody().emplaceBlock();
-
-      const slang::syntax::SyntaxNode *defaultSyntax =
-          parameter->defaultValSyntax;
-      if (!defaultSyntax && parameter->getSyntax())
-        if (const auto *syntax =
-                parameter->getSyntax()
-                    ->as_if<slang::syntax::TypeAssignmentSyntax>();
-            syntax && syntax->assignment)
-          defaultSyntax = syntax->assignment->type;
-      if (!defaultSyntax)
-        continue;
-      auto range = defaultSyntax->sourceRange();
-      NamedAttrList defaultAttrs = sourceAttributes(range);
+      Operation *declaration;
+      if (member.kind == slang::ast::SymbolKind::TypeParameter)
+        declaration = slangir::SourceTypeParameterSymbolOp::create(
+            builder, sourceLocation(member.location), TypeRange{}, ValueRange{},
+            attrs.getAttrs());
+      else
+        declaration = slangir::SourceValueParameterSymbolOp::create(
+            builder, sourceLocation(member.location), TypeRange{}, ValueRange{},
+            attrs.getAttrs());
+      declaration->getRegion(0).emplaceBlock();
       OpBuilder::InsertionGuard guard(builder);
-      builder.setInsertionPointToStart(&declaration.getBody().front());
-      slang::ast::ASTContext context(
-          source, slang::ast::LookupLocation::before(*parameter));
-      // A bare preceding parameter is resolved symbolically, without asking
-      // Slang for that parameter's invalid-specialization target type.
-      if (const auto *named =
-              defaultSyntax->as_if<slang::syntax::NamedTypeSyntax>();
-          named &&
-          named->name->kind == slang::syntax::SyntaxKind::IdentifierName) {
-        slang::ast::LookupResult lookup;
-        slang::ast::Lookup::name(*named->name, context,
-                                 slang::ast::LookupFlags::Type, lookup);
-        if (auto reference = parameters.lookup(lookup.found)) {
-          defaultAttrs.set("parameter", reference);
-          auto node = slangir::SourceTypeReferenceDefaultOp::create(
-              builder, sourceLocation(range.start()), TypeRange{}, ValueRange{},
-              defaultAttrs.getAttrs());
-          node.getBody().emplaceBlock();
-          continue;
-        }
-      }
-      // Primitive type syntax with no dimensions is independent of all class
-      // parameter bindings. Bind only this bounded exact form; dimensions,
-      // aliases, and composite dependent types stay explicitly unsupported.
-      bool independent = false;
-      if (const auto *integer =
-              defaultSyntax->as_if<slang::syntax::IntegerTypeSyntax>())
-        independent = integer->dimensions.empty();
-      if (defaultSyntax->as_if<slang::syntax::KeywordTypeSyntax>())
-        independent = defaultSyntax->kind != slang::syntax::SyntaxKind::Untyped;
-      if (independent) {
-        const auto &type = slang::ast::Type::fromSyntax(
-            source.getCompilation(),
-            defaultSyntax->as<slang::syntax::DataTypeSyntax>(), context,
-            nullptr);
-        if (!type.isError()) {
-          defaultAttrs.set("semantic_type",
-                           TypeAttr::get(typeConverter.convert(type)));
-          auto node = slangir::SourceTypeDefaultOp::create(
-              builder, sourceLocation(range.start()), TypeRange{}, ValueRange{},
-              defaultAttrs.getAttrs());
-          node.getBody().emplaceBlock();
-          continue;
-        }
-      }
-      defaultAttrs.set("syntax",
-                       builder.getStringAttr(defaultSyntax->toString()));
-      defaultAttrs.set(
-          "reason", builder.getStringAttr("original type default requires an "
-                                          "unimplemented dependent type form"));
-      auto node = slangir::SourceUnsupportedDefaultOp::create(
-          builder, sourceLocation(range.start()), TypeRange{}, ValueRange{},
-          defaultAttrs.getAttrs());
-      node.getBody().emplaceBlock();
+      builder.setInsertionPointToStart(&declaration->getRegion(0).front());
+      importOriginalParameterDefault(parameter, parameters);
     }
   }
 
@@ -5825,6 +5948,11 @@ private:
                              slangir::CoverageOptionOwnerKind::Cross);
       for (const slang::ast::Symbol &member : node.members())
         member.visit(*this);
+    } else if constexpr (std::same_as<T, slang::ast::ParameterSymbol> ||
+                         std::same_as<T, slang::ast::TypeParameterSymbol>) {
+      this->visitDefault(node);
+      if (const auto *scope = node.getParentScope())
+        importOriginalParameterDefault(node, originalParameterMap(*scope));
     } else if constexpr (std::same_as<T, slang::ast::GenericClassDefSymbol>) {
       // Slang stores specializations in a hash map. Importing that iteration
       // order directly makes semantic symbol and node IDs depend on allocator
@@ -5840,7 +5968,7 @@ private:
       llvm::sort(specializations, [](const auto &lhs, const auto &rhs) {
         return lhs.first < rhs.first;
       });
-      importSourceTypeParameters(node);
+      importSourceParameters(node);
       for (const auto &entry : specializations)
         entry.second->visit(*this);
     } else if constexpr (std::same_as<T, slang::ast::ClassType>) {

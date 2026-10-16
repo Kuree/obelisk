@@ -16,7 +16,7 @@ inline size_t childCount(mlir::Operation *op) {
 
 template <typename GenericClass, typename ConcreteDefault,
           typename ReferenceDefault, typename UnsupportedDefault,
-          typename Parameter>
+          typename OtherParameter, typename Parameter>
 mlir::LogicalResult verifyTypeParameter(Parameter op) {
   if (!mlir::isa_and_nonnull<GenericClass>(op->getParentOp()))
     return op.emitOpError(
@@ -29,8 +29,8 @@ mlir::LogicalResult verifyTypeParameter(Parameter op) {
   for (mlir::Operation &sibling : op->getParentOp()->getRegion(0).front()) {
     if (&sibling == op.getOperation())
       break;
-    if (auto other = mlir::dyn_cast<Parameter>(&sibling);
-        other && other.getName() == op.getName())
+    if (mlir::isa<Parameter, OtherParameter>(sibling) &&
+        sibling.getAttr("name") == op->getAttr("name"))
       return op.emitOpError(
           "duplicates a lexical type parameter declaration name");
   }
@@ -45,9 +45,22 @@ mlir::LogicalResult verifyTypeParameter(Parameter op) {
   return mlir::success();
 }
 
-template <typename Parameter, typename Default>
+template <typename... Defaults, typename Default>
+mlir::LogicalResult verifyUniqueOriginalDefault(Default op) {
+  auto *owner = op->getParentOp();
+  if (!owner || owner->getNumRegions() != 1 || owner->getRegion(0).empty())
+    return op.emitOpError("original default requires a declaration owner");
+  unsigned count = 0;
+  for (mlir::Operation &child : owner->getRegion(0).front())
+    count += mlir::isa<Defaults...>(child);
+  if (count != 1)
+    return op.emitOpError("declaration requires at most one original default");
+  return mlir::success();
+}
+
+template <typename... Parameters, typename Default>
 mlir::LogicalResult verifyDefaultOwner(Default op) {
-  if (!mlir::isa_and_nonnull<Parameter>(op->getParentOp()))
+  if (!mlir::isa_and_nonnull<Parameters...>(op->getParentOp()))
     return op.emitOpError(
         "original type default requires a source type parameter owner");
   if (childCount(op) != 0)
@@ -55,18 +68,86 @@ mlir::LogicalResult verifyDefaultOwner(Default op) {
   return mlir::success();
 }
 
-template <typename Parameter, typename Reference>
+template <typename... Parameters, typename Reference>
 mlir::LogicalResult verifyTypeReference(Reference op,
                                         mlir::SymbolTableCollection &symbols) {
-  auto owner = mlir::dyn_cast_or_null<Parameter>(op->getParentOp());
-  auto target = symbols.template lookupNearestSymbolFrom<Parameter>(
-      op, op.getParameterAttr());
-  if (!owner || !target || target->getParentOp() != owner->getParentOp())
+  auto *owner = op->getParentOp();
+  auto *target = symbols.lookupNearestSymbolFrom(op, op.getParameterAttr());
+  if (!mlir::isa_and_nonnull<Parameters...>(owner) ||
+      !mlir::isa_and_nonnull<Parameters...>(target) ||
+      target->getParentOp() != owner->getParentOp())
     return op.emitOpError("default reference must name a source type parameter "
                           "in the same generic class");
   if (target == owner || !target->isBeforeInBlock(owner))
     return op.emitOpError(
         "default reference must name a preceding source type parameter");
+  return mlir::success();
+}
+
+template <typename GenericClass, typename TypeParameter, typename ValueDefault,
+          typename UnsupportedDefault, typename Parameter>
+mlir::LogicalResult verifyValueParameter(Parameter op) {
+  if (!mlir::isa_and_nonnull<GenericClass>(op->getParentOp()))
+    return op.emitOpError(
+        "source value parameter requires a generic class owner");
+  if (op.getSemanticTypeAttr())
+    return op.emitOpError(
+        "source value parameter cannot carry an effective type");
+  if (op->hasAttr("constant_value"))
+    return op.emitOpError(
+        "source value parameter cannot carry an effective value");
+  if (!op.getName() || op.getName()->empty())
+    return op.emitOpError("source value parameter requires a declaration name");
+  for (mlir::Operation &sibling : op->getParentOp()->getRegion(0).front()) {
+    if (&sibling == op.getOperation())
+      break;
+    if (mlir::isa<Parameter, TypeParameter>(sibling) &&
+        sibling.getAttr("name") == op->getAttr("name"))
+      return op.emitOpError("duplicates a lexical parameter declaration name");
+  }
+  if (childCount(op) > 1 ||
+      (childCount(op) == 1 && !mlir::isa<ValueDefault, UnsupportedDefault>(
+                                  op.getBody().front().front())))
+    return op.emitOpError(
+        "source value parameter requires at most one original default");
+  return mlir::success();
+}
+
+template <typename Root, typename Unary, typename Binary, typename Reference,
+          typename Literal, typename Expression>
+mlir::LogicalResult verifyValueExpression(Expression op, unsigned operands) {
+  if (op->hasAttr("semantic_type"))
+    return op.emitOpError(
+        "unbound source expression cannot carry an effective type");
+  if (!mlir::isa_and_nonnull<Root, Unary, Binary>(op->getParentOp()))
+    return op.emitOpError(
+        "source expression requires an original value default owner");
+  if (childCount(op) != operands)
+    return op.emitOpError("source expression has an incorrect operand count");
+  if (!op.getBody().empty())
+    for (mlir::Operation &child : op.getBody().front())
+      if (!mlir::isa<Unary, Binary, Reference, Literal>(child))
+        return op.emitOpError(
+            "source expression operand must be a supported typed node");
+  return mlir::success();
+}
+
+template <typename SourceParameter, typename EffectiveParameter,
+          typename Reference>
+mlir::LogicalResult verifyValueReference(Reference op,
+                                         mlir::SymbolTableCollection &symbols) {
+  mlir::Operation *owner = op->getParentOp();
+  while (owner && !mlir::isa<SourceParameter, EffectiveParameter>(owner))
+    owner = owner->getParentOp();
+  auto *target = symbols.lookupNearestSymbolFrom(op, op.getParameterAttr());
+  if (!owner ||
+      !mlir::isa_and_nonnull<SourceParameter, EffectiveParameter>(target) ||
+      owner->getParentOp() != target->getParentOp())
+    return op.emitOpError("default reference must name a value parameter in "
+                          "the same declaration scope");
+  if (target == owner || !target->isBeforeInBlock(owner))
+    return op.emitOpError(
+        "default reference must name a preceding value parameter");
   return mlir::success();
 }
 

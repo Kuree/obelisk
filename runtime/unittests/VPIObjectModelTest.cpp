@@ -2112,6 +2112,13 @@ TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
         descriptor.property == vpiAlwaysType ||
         descriptor.property == vpiLocalParam)
       expected = PropertyRealization::FixedImage;
+    if ((descriptor.property == vpiName &&
+         descriptor.sourceType == vpiParameter) ||
+        (descriptor.property == vpiConstType &&
+         descriptor.sourceType == vpiConstant) ||
+        (descriptor.property == vpiOpType &&
+         descriptor.sourceType == vpiOperation))
+      expected = PropertyRealization::FixedImage;
     if ((descriptor.property == vpiTopModule ||
          descriptor.property == vpiCellInstance) &&
         descriptor.sourceType == vpiModule)
@@ -3612,6 +3619,24 @@ TEST(VPIObjectModel, RuntimeAndMetadataRelationsDoNotBecomeUniversal) {
   expectAbsent(0, vpiAttribute, Mode::Iterate);
   expectAbsent(vpiIterator, vpiUse, Mode::Iterate);
   EXPECT_NE(findVPITraversal(vpiIterator, vpiUse, Mode::Handle), nullptr);
+}
+
+TEST(VPIObjectModel,
+     OriginalSourceOperatorsPreserveLanguageSpellingAndGrouping) {
+  const auto *add = findVPISourceOperator("add", 2);
+  ASSERT_NE(add, nullptr);
+  EXPECT_EQ(add->value, vpiAddOp);
+  EXPECT_STREQ(add->token, "+");
+  EXPECT_EQ(findVPISourceOperator("add", 1), nullptr);
+  EXPECT_EQ(findVPISourceOperator("logical_equivalence", 2), nullptr);
+  const auto *power = findVPISourceOperator(vpiPowerOp);
+  const auto *implication = findVPISourceOperator(vpiImplyOp);
+  ASSERT_NE(power, nullptr);
+  ASSERT_NE(implication, nullptr);
+  EXPECT_FALSE(power->rightAssociative);
+  EXPECT_TRUE(implication->rightAssociative);
+  EXPECT_GT(power->precedence, add->precedence);
+  EXPECT_GT(add->precedence, implication->precedence);
 }
 
 } // namespace

@@ -261,6 +261,7 @@ add_executable(obelisk-design-database-dump-test EXCLUDE_FROM_ALL
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIAggregateMessagesTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIMailboxLayoutTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIEventBindingsTest.cpp"
+  "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPISourceValueDefaultsTest.cpp"
 )
 target_link_libraries(obelisk-design-database-dump-test PRIVATE
   ObeliskSimulationToBytecode

@@ -646,12 +646,19 @@ SmallVector<uint8_t> serializeDesignDatabase(
                               static_cast<uint32_t>(VPIObjectKind::ClassDefn);
       bool specializedOwner = anchor.getParentAttr() &&
           typespecsBySymbol.contains(anchor.getParentAttr().getValue());
+      bool sourceExpression =
+          anchor.getVpiKind() ==
+              static_cast<uint32_t>(VPIObjectKind::Constant) ||
+          anchor.getVpiKind() ==
+              static_cast<uint32_t>(VPIObjectKind::Operation);
       bool compact =
+          !sourceExpression &&
           hasVPIObjectRepresentation(anchor.getVpiKind(),
                                      VPIObjectRepresentation::StaticImage) &&
           (!findVPIValuePolicy(anchor.getVpiKind()) ||
            anchor.getImmutableValueAttr()) &&
-          !indexed && !hasSemanticShape && !semanticIdentity && !specializedOwner;
+          !indexed && !hasSemanticShape && !semanticIdentity &&
+          !specializedOwner;
       uint16_t staticFlags =
           anchor.getHasExplicitParameterRangeAttr()
               ? static_cast<uint16_t>(
@@ -661,6 +668,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
         staticFlags |= OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER;
       if (anchor.getUnavailableDefaultAttr())
         staticFlags |= OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT;
+      if (anchor.getUnresolvedValueParameterAttr())
+        staticFlags |= OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER;
       if (compact)
         staticObjects.push_back({*id, anchor.getEnclosingScopeId(),
                                  std::move(name), anchor.getVpiKind(),
@@ -669,7 +678,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
         objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
                            anchor.getVpiKind(), staticFlags, *id,
                            anchor.getEnclosingScopeId(), std::move(name),
-                           Type{}, 0, sourceFor(anchor), !specializedOwner, anchor});
+                           Type{}, 0, sourceFor(anchor),
+                           !specializedOwner && !sourceExpression, anchor});
     } else if (auto member = dyn_cast<sim::SimVPIClassMemberDeclOp>(operation)) {
       if (!includeStatements)
         continue;
@@ -1319,10 +1329,19 @@ SmallVector<uint8_t> serializeDesignDatabase(
     if (!tryPackRelationSource(sourceTable, sourceKind, iterate, packedSource))
       return sourceOperation->emitError(
           "preserved VPI relation source kind cannot be packed");
+    // Explicit operands are ordered occurrences. Repeated parameter uses
+    // share their declaration identity, but each position must survive in
+    // the expression (for example, both operands of P + P).
+    const bool sharedParameterOperand =
+        isa<sim::SimVPIRelationDeclOp>(sourceOperation) && iterate &&
+        sourceKind == static_cast<uint32_t>(VPIObjectKind::Operation) &&
+        selector == static_cast<uint32_t>(VPIRelationKind::OperandRel) &&
+        targetKind == static_cast<uint32_t>(VPIObjectKind::Parameter);
     if (!relationIdentities
              .insert(relationIdentity(sourceIndex, selector, packedSource,
                                       packedTarget))
-             .second)
+             .second &&
+        !sharedParameterOperand)
       return success();
     if (relations.size() == UINT32_MAX)
       return sourceOperation->emitError(
@@ -3777,6 +3796,13 @@ SmallVector<uint8_t> serializeDesignDatabase(
     auto addOperationProperties = [&](Operation *operation,
                                       uint32_t packedSource,
                                       uint32_t exactKind) -> LogicalResult {
+      if (auto anchor = dyn_cast<sim::SimVPIObjectAnchorOp>(operation);
+          anchor &&
+          exactKind == static_cast<uint32_t>(VPIObjectKind::Parameter) &&
+          !anchor.getDebugName().empty())
+        if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
+                                    anchor.getDebugNameAttr())))
+          return failure();
       if (auto member = dyn_cast<sim::SimVPIClassMemberDeclOp>(operation);
           member && (exactKind == static_cast<uint32_t>(VPIObjectKind::NamedEvent) ||
                      exactKind == static_cast<uint32_t>(VPIObjectKind::NamedEventArray)))

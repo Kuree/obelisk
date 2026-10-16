@@ -607,7 +607,9 @@ def StructuralArrayTypeProperty : VPIProperty<"vpiArrayType", 606,
 def StructuralRandTypeProperty : VPIProperty<"vpiRandType", 610,
   IntegerProperty, RandomizationTypeObjects, "37.17; 37.25">;
 def StructuralConstTypeProperty : VPIProperty<"vpiConstType", 40,
-  IntegerProperty, ConstantTypePropertyObjects, "37.28; 37.59">;
+  IntegerProperty, ConstantTypePropertyObjects, "37.28; 37.59",
+  StaticProperty, DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
+  DerivedProperty, VPIObjectSet<"SourceConstantProperties", [Constant]>>;
 def IndexedArrayMemberProperty : VPIProperty<"vpiArrayMember", 607,
   BooleanProperty, ArrayMemberObjects,
   "37.5; 37.6; 37.9; 37.16; 37.17; 37.27; 37.35; 37.85">;
@@ -774,7 +776,8 @@ def InterfaceTypePropertyObjects : VPIObjectSet<
   "InterfaceTypePropertyObjects", [VirtualInterfaceVar, InterfaceTypespec]>;
 
 def NameProperty : VPIProperty<"vpiName", 2, StringProperty,
-  NamedPropertyObjects, "37.4-37.85">;
+  NamedPropertyObjects, "37.4-37.85", StaticProperty, DeniedWhenProtected, 0,
+  NoPropertyObjects, NoPropertyObjects, DerivedProperty, ReadValueParameterObjects>;
 def FullNameProperty : VPIProperty<"vpiFullName", 3, StringProperty,
   FullNamePropertyObjects, "37.10-37.85">;
 def TopModuleProperty : VPIProperty<"vpiTopModule", 7, BooleanProperty,
@@ -900,7 +903,8 @@ def TchkTypeProperty : VPIProperty<"vpiTchkType", 38, IntegerProperty,
   TimingCheckObjects, "37.40", StaticProperty, DeniedWhenProtected, 1>;
 def OpTypeProperty : VPIProperty<"vpiOpType", 39, IntegerProperty,
   OperationPropertyObjects, "37.52; 37.54; 37.59; 37.64", StaticProperty,
-  DeniedWhenProtected, 1>;
+  DeniedWhenProtected, 1, NoPropertyObjects, NoPropertyObjects, DerivedProperty,
+  VPIObjectSet<"SourceOperationProperties", [Operation]>>;
 def BlockingProperty : VPIProperty<"vpiBlocking", 41, BooleanProperty,
   BlockingPropertyObjects, "37.62; 37.64">;
 def CaseTypeProperty : VPIProperty<"vpiCaseType", 42, IntegerProperty,
@@ -1105,7 +1109,8 @@ def IsFinalProperty : VPIProperty<"vpiIsFinal", 670, IntegerProperty,
 // image record. Runtime-created handles, executable processes, statements,
 // nets, and ordinary design storage use their dedicated representations.
 def StaticImageObjects : VPIObjectSet<"StaticImageObjects",
-  [Package, Parameter, TypeParameter, ClassDefn, Constraint, Modport, Task,
+  [Package, Parameter, TypeParameter, Constant, Operation,
+   ClassDefn, Constraint, Modport, Task,
    Function, ClockingBlock, GenScope, PropertyDecl,
    SequenceDecl, Gate, Switch, Udp, NamedEvent, ModuleArray, InterfaceArray,
    ProgramArray, GateArray, SwitchArray, UdpArray, NamedEventArray,
@@ -1571,3 +1576,53 @@ def IndexedInterfaceVar : VPIIndexedTypeResult<VariableElementAccess,
   InterfaceTypespec, VirtualInterfaceVar, "37.17">;
 
 include "VPIValueModel.td"
+
+// Exact pure source operators represented by immutable default-expression
+// anchors. The source enums stay authoritative; this table supplies the IEEE
+// VPI encoding and Table 11-2 precedence for verification and decompilation.
+class VPISourceOperator<string name_, int value_, int arity_, string token_,
+                        int precedence_, bit rightAssociative_ = 0> {
+  string sourceName = name_;
+  int value = value_;
+  int arity = arity_;
+  string token = token_;
+  int precedence = precedence_;
+  bit rightAssociative = rightAssociative_;
+}
+def SourceOperatorMinus : VPISourceOperator<"minus", 1, 1, "-", 14>;
+def SourceOperatorPlus : VPISourceOperator<"plus", 2, 1, "+", 14>;
+def SourceOperatorLogicalNot : VPISourceOperator<"logical_not", 3, 1, "!", 14>;
+def SourceOperatorBitwiseNot : VPISourceOperator<"bitwise_not", 4, 1, "~", 14>;
+def SourceOperatorBitwiseAnd : VPISourceOperator<"bitwise_and", 5, 1, "&", 14>;
+def SourceOperatorBitwiseNand : VPISourceOperator<"bitwise_nand", 6, 1, "~&", 14>;
+def SourceOperatorBitwiseOr : VPISourceOperator<"bitwise_or", 7, 1, "|", 14>;
+def SourceOperatorBitwiseNor : VPISourceOperator<"bitwise_nor", 8, 1, "~|", 14>;
+def SourceOperatorBitwiseXor : VPISourceOperator<"bitwise_xor", 9, 1, "^", 14>;
+def SourceOperatorBitwiseXnor : VPISourceOperator<"bitwise_xnor", 10, 1, "~^", 14>;
+def SourceOperatorSubtract : VPISourceOperator<"subtract", 11, 2, "-", 11>;
+def SourceOperatorDivide : VPISourceOperator<"divide", 12, 2, "/", 12>;
+def SourceOperatorMod : VPISourceOperator<"mod", 13, 2, "%", 12>;
+def SourceOperatorEquality : VPISourceOperator<"equality", 14, 2, "==", 8>;
+def SourceOperatorInequality : VPISourceOperator<"inequality", 15, 2, "!=", 8>;
+def SourceOperatorCaseEquality : VPISourceOperator<"case_equality", 16, 2, "===", 8>;
+def SourceOperatorCaseInequality : VPISourceOperator<"case_inequality", 17, 2, "!==", 8>;
+def SourceOperatorGreaterThan : VPISourceOperator<"greater_than", 18, 2, ">", 9>;
+def SourceOperatorGreaterThanEqual : VPISourceOperator<"greater_than_equal", 19, 2, ">=", 9>;
+def SourceOperatorLessThan : VPISourceOperator<"less_than", 20, 2, "<", 9>;
+def SourceOperatorLessThanEqual : VPISourceOperator<"less_than_equal", 21, 2, "<=", 9>;
+def SourceOperatorLogicalShiftLeft : VPISourceOperator<"logical_shift_left", 22, 2, "<<", 10>;
+def SourceOperatorLogicalShiftRight : VPISourceOperator<"logical_shift_right", 23, 2, ">>", 10>;
+def SourceOperatorAdd : VPISourceOperator<"add", 24, 2, "+", 11>;
+def SourceOperatorMultiply : VPISourceOperator<"multiply", 25, 2, "*", 12>;
+def SourceOperatorLogicalAnd : VPISourceOperator<"logical_and", 26, 2, "&&", 4>;
+def SourceOperatorLogicalOr : VPISourceOperator<"logical_or", 27, 2, "||", 3>;
+def SourceOperatorBinaryAnd : VPISourceOperator<"binary_and", 28, 2, "&", 7>;
+def SourceOperatorBinaryOr : VPISourceOperator<"binary_or", 29, 2, "|", 5>;
+def SourceOperatorBinaryXor : VPISourceOperator<"binary_xor", 30, 2, "^", 6>;
+def SourceOperatorBinaryXnor : VPISourceOperator<"binary_xnor", 31, 2, "~^", 6>;
+def SourceOperatorArithmeticShiftLeft : VPISourceOperator<"arithmetic_shift_left", 41, 2, "<<<", 10>;
+def SourceOperatorArithmeticShiftRight : VPISourceOperator<"arithmetic_shift_right", 42, 2, ">>>", 10>;
+def SourceOperatorPower : VPISourceOperator<"power", 43, 2, "**", 13>;
+def SourceOperatorLogicalImplication : VPISourceOperator<"logical_implication", 50, 2, "->", 1, 1>;
+def SourceOperatorWildcardEquality : VPISourceOperator<"wildcard_equality", 69, 2, "==?", 8>;
+def SourceOperatorWildcardInequality : VPISourceOperator<"wildcard_inequality", 70, 2, "!=?", 8>;

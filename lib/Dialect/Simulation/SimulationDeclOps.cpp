@@ -626,14 +626,31 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
                                "enclosing scope ID")) ||
       failed(verifyNonnegative(*this, getOwnerOrdinalAttr(), "owner ordinal")))
     return failure();
-  if (getHierarchicalName().empty())
-    return emitOpError("requires a nonempty source hierarchy name");
   const auto *kind = reflection::findVPIObjectKind(getVpiKind());
   if (getVpiKind() > UINT16_MAX || !kind ||
       kind->role != reflection::VPIObjectRole::Concrete)
     return emitOpError("VPI kind is not a concrete object");
   using Kind = reflection::VPIObjectKind;
   Kind anchorKind = static_cast<Kind>(getVpiKind());
+  const bool sourceExpression =
+      anchorKind == Kind::Constant || anchorKind == Kind::Operation;
+  if (sourceExpression) {
+    if (!getHierarchicalName().empty() || !getDebugName().empty() ||
+        !getParentAttr() || getBackingAttr())
+      return emitOpError(
+          "source expression requires unnamed immutable ownership");
+  } else if (getHierarchicalName().empty()) {
+    return emitOpError("requires a nonempty source hierarchy name");
+  }
+  if (anchorKind == Kind::Parameter)
+    if (auto properties = reflectionProperties(*this))
+      for (Attribute attribute : properties.getProperties()) {
+        auto property = cast<VPIPropertyAttr>(attribute);
+        if (property.getSelector().getValue().getZExtValue() == 2 &&
+            property.getValue() != getDebugNameAttr())
+          return emitOpError(
+              "parameter Name property must equal its exact declaration name");
+      }
   if (getClassMethodAttr() && anchorKind != Kind::Task &&
       anchorKind != Kind::Function)
     return emitOpError("class_method requires a task or function anchor");
@@ -681,6 +698,8 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
   case Kind::NamedEvent:
   case Kind::Parameter:
   case Kind::TypeParameter:
+  case Kind::Constant:
+  case Kind::Operation:
   case Kind::Assert:
   case Kind::Assume:
   case Kind::Cover:
@@ -739,6 +758,38 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
     return emitOpError("interconnect-net anchor requires a net backing");
   const bool hasVPIType = static_cast<bool>(getVpiTypeAttr());
   const bool hasImmutableValue = static_cast<bool>(getImmutableValueAttr());
+  if (getUnresolvedValueParameterAttr() &&
+      (anchorKind != Kind::Parameter || hasVPIType || hasImmutableValue ||
+       getBackingAttr() || !getParentAttr()))
+    return emitOpError("unresolved value parameter requires a lexical owner "
+                       "and no effective payload");
+  if (anchorKind == Kind::Constant && !hasImmutableValue)
+    return emitOpError("source constant requires an exact immutable value");
+  if (anchorKind == Kind::Operation && (hasVPIType || hasImmutableValue))
+    return emitOpError(
+        "unbound source expression cannot carry an effective payload");
+  if (anchorKind == Kind::Operation || anchorKind == Kind::Constant) {
+    VPIPropertySetAttr properties = reflectionProperties(*this);
+    IntegerAttr classification;
+    if (properties)
+      for (Attribute attribute : properties.getProperties()) {
+        auto property = cast<VPIPropertyAttr>(attribute);
+        if (property.getSelector().getValue().getZExtValue() ==
+            (anchorKind == Kind::Operation ? 39 : 40))
+          classification = dyn_cast<IntegerAttr>(property.getValue());
+      }
+    if (!classification || classification.getValue().isNegative())
+      return emitOpError("source expression requires an exact operator or "
+                         "constant classification");
+    uint64_t value = classification.getValue().getZExtValue();
+    if (anchorKind == Kind::Operation &&
+        (value > UINT32_MAX || !reflection::findVPISourceOperator(value)))
+      return emitOpError(
+          "source operation has an unsupported operator classification");
+    if (anchorKind == Kind::Constant && value != 7)
+      return emitOpError(
+          "source packed constant requires integer constant classification");
+  }
   if (getUnresolvedTypeParameterAttr() &&
       (anchorKind != Kind::TypeParameter || hasVPIType || hasImmutableValue ||
        getBackingAttr() || !getParentAttr()))
@@ -763,10 +814,33 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
     return emitOpError(
         "explicit parameter range marker requires immutable type and value");
   if (hasImmutableValue) {
-    if (anchorKind != Kind::Parameter)
+    if (anchorKind != Kind::Parameter && anchorKind != Kind::Constant)
       return emitOpError(
-          "immutable value is currently supported only on parameters");
+          "immutable value is supported only on parameters and constants");
     FrozenConstantAttr value = getImmutableValueAttr();
+    if (anchorKind == Kind::Constant) {
+      auto type = getVpiTypeAttr();
+      if (!type.getChildren().empty() ||
+          (type.getTypedefAliases() && !type.getTypedefAliases().empty()))
+        return emitOpError("source integer literal requires an unaliased "
+                           "scalar integral type");
+      switch (type.getKind()) {
+      case VPITypeKind::GenericIntegral:
+      case VPITypeKind::Bit:
+      case VPITypeKind::Logic:
+      case VPITypeKind::Reg:
+      case VPITypeKind::Byte:
+      case VPITypeKind::ShortInt:
+      case VPITypeKind::Int:
+      case VPITypeKind::LongInt:
+      case VPITypeKind::Integer:
+      case VPITypeKind::Time:
+        break;
+      default:
+        return emitOpError("source integer literal requires an unaliased "
+                           "scalar integral type");
+      }
+    }
     if (!getPackedScalarType(value.getType()))
       return emitOpError("immutable parameter requires a fixed packed value");
     if (value.getIsSigned() != getVpiTypeAttr().getIsSigned())
@@ -888,6 +962,9 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     using Kind = reflection::VPIObjectKind;
     Kind childKind = static_cast<Kind>(getVpiKind());
     Kind parentKind = static_cast<Kind>(getVPILexicalOwnerKind(owner));
+    if (getUnresolvedValueParameterAttr() && parentKind != Kind::ClassDefn)
+      return emitOpError("unresolved value parameter requires a lexical class "
+                         "definition owner");
     if (getUnresolvedTypeParameterAttr() && parentKind != Kind::ClassDefn)
       return emitOpError("unresolved type parameter requires a lexical class "
                          "definition owner");
@@ -939,6 +1016,10 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     };
     bool legal = false;
     switch (childKind) {
+    case Kind::Constant:
+    case Kind::Operation:
+      legal = parentKind == Kind::Parameter || parentKind == Kind::Operation;
+      break;
     case Kind::Module:
     case Kind::Interface:
     case Kind::Program:
@@ -4255,6 +4336,7 @@ LogicalResult SimDesignOp::verifyRegions() {
     uint64_t ordinal;
     uint32_t targetTag;
     uint64_t targetId;
+    bool sharedParameterOperand;
     SimVPIRelationDeclOp relation;
   };
   // Resolve aliases to the same inventory declaration before grouping. Stable
@@ -4421,6 +4503,14 @@ LogicalResult SimDesignOp::verifyRegions() {
          static_cast<uint32_t>(relation.getSelector()),
          static_cast<uint32_t>(relation.getMode()), relation.getOrdinal(),
          static_cast<uint32_t>(relation.getTarget().getKind()), targetId,
+         *sourceKind ==
+                 static_cast<uint32_t>(reflection::VPIObjectKind::Operation) &&
+             *targetKind ==
+                 static_cast<uint32_t>(reflection::VPIObjectKind::Parameter) &&
+             relation.getSelector() ==
+                 static_cast<uint32_t>(
+                     reflection::VPIRelationKind::OperandRel) &&
+             mode == reflection::VPITraversalMode::Iterate,
          relation});
   }
   llvm::sort(generalRelations,
@@ -4451,7 +4541,10 @@ LogicalResult SimDesignOp::verifyRegions() {
     llvm::DenseSet<uint64_t> targets;
     for (size_t index = begin; index != end; ++index) {
       GeneralRelation &entry = generalRelations[index];
-      if (!targets.insert(entry.targetIdentity).second)
+      // Repeated references such as P + P share the Parameter declaration,
+      // while owned expression occurrences must still have unique targets.
+      if (!targets.insert(entry.targetIdentity).second &&
+          !entry.sharedParameterOperand)
         return entry.relation.emitOpError(
             "duplicates a target in the same source, selector, and access "
             "mode");
@@ -4471,6 +4564,123 @@ LogicalResult SimDesignOp::verifyRegions() {
     }
     begin = end;
   }
+  // Original expressions contain owned Constant/Operation occurrences and
+  // shared terminal Parameter declarations (37.28 and 37.58). Parameter leaves
+  // retain declaration identity; their own Expr relation is not a child edge.
+  DenseMap<uint64_t, SmallVector<GeneralRelation *>> expressionIncoming,
+      expressionOutgoing;
+  for (GeneralRelation &relation : generalRelations) {
+    expressionOutgoing[relation.sourceIdentity].push_back(&relation);
+    expressionIncoming[relation.targetIdentity].push_back(&relation);
+  }
+  auto parameterRoot =
+      [&](SimVPIObjectAnchorOp anchor) -> SimVPIObjectAnchorOp {
+    SmallPtrSet<Operation *, 8> ancestry;
+    while (anchor &&
+           anchor.getVpiKind() !=
+               static_cast<uint32_t>(reflection::VPIObjectKind::Parameter)) {
+      if (!ancestry.insert(anchor).second || !anchor.getParentAttr())
+        return {};
+      anchor = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+          anchor, anchor.getParentAttr());
+    }
+    return anchor;
+  };
+  for (SimVPIObjectAnchorOp anchor : vpiAnchors) {
+    using Kind = reflection::VPIObjectKind;
+    Kind kind = static_cast<Kind>(anchor.getVpiKind());
+    bool expression = kind == Kind::Constant || kind == Kind::Operation;
+    if (!expression && kind != Kind::Parameter)
+      continue;
+    uint64_t identity = declarationIds.lookup(anchor);
+    auto root = parameterRoot(anchor);
+    if (!root)
+      return anchor.emitOpError(
+          "source expression requires an acyclic parameter default root");
+    if (expression) {
+      auto parent = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+          anchor, anchor.getParentAttr());
+      if (!parent)
+        return anchor.emitOpError("source expression requires an anchor owner");
+      bool operand =
+          parent.getVpiKind() == static_cast<uint32_t>(Kind::Operation);
+      uint32_t selector = static_cast<uint32_t>(
+          operand ? reflection::VPIRelationKind::OperandRel
+                  : reflection::VPIRelationKind::ExprRel);
+      uint32_t mode = static_cast<uint32_t>(operand ? VPIRelationMode::Iterate
+                                                    : VPIRelationMode::Handle);
+      auto incoming = expressionIncoming.lookup(identity);
+      if (incoming.size() != 1)
+        return anchor.emitOpError("source expression requires one owning "
+                                  "default or operand relation");
+      auto &edge = *incoming.front();
+      if (edge.sourceIdentity != declarationIds.lookup(parent) ||
+          edge.selector != selector || edge.mode != mode ||
+          (!operand && edge.ordinal != anchor.getOwnerOrdinal()))
+        return edge.relation.emitOpError(
+            "source expression relation disagrees with exact ownership");
+    }
+    unsigned operands = 0;
+    uint64_t ownedOrdinal = 0;
+    for (GeneralRelation *entry : expressionOutgoing.lookup(identity)) {
+      auto relation = entry->relation;
+      bool operand =
+          entry->selector ==
+          static_cast<uint32_t>(reflection::VPIRelationKind::OperandRel);
+      bool defaultExpr =
+          entry->selector ==
+          static_cast<uint32_t>(reflection::VPIRelationKind::ExprRel);
+      if (expression && !operand)
+        return relation.emitOpError(
+            "source operation permits only Operand relations");
+      if (!operand && !defaultExpr)
+        continue;
+      auto target =
+          relation.getTarget().getKind() == VPIObjectRefKind::Symbol
+              ? symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+                    relation, relation.getTarget().getSymbol())
+              : SimVPIObjectAnchorOp{};
+      if (!target)
+        return relation.emitOpError(
+            "original value expression requires an exact anchor target");
+      if (target.getVpiKind() == static_cast<uint32_t>(Kind::Parameter)) {
+        if (target.getParentAttr() != root.getParentAttr() ||
+            target.getOwnerOrdinal() >= root.getOwnerOrdinal() ||
+            target.getDebugName().empty())
+          return relation.emitOpError(
+              "source reference requires an exact preceding parameter in the "
+              "same declaration scope");
+      } else if ((target.getVpiKind() !=
+                      static_cast<uint32_t>(Kind::Constant) &&
+                  target.getVpiKind() !=
+                      static_cast<uint32_t>(Kind::Operation)) ||
+                 target.getParentAttr() !=
+                     FlatSymbolRefAttr::get(anchor.getSymNameAttr())) {
+        return relation.emitOpError(
+            "source operand requires an owned expression occurrence or "
+            "parameter declaration");
+      } else if (target.getOwnerOrdinal() != ownedOrdinal++) {
+        return relation.emitOpError(
+            "source expression ownership ordinals must follow owned operand "
+            "order");
+      }
+      operands += operand;
+    }
+    if (kind == Kind::Operation) {
+      uint32_t opcode = 0;
+      for (Attribute attribute : reflectionProperties(anchor).getProperties()) {
+        auto property = cast<VPIPropertyAttr>(attribute);
+        if (property.getSelector().getValue().getZExtValue() == 39)
+          opcode = static_cast<uint32_t>(
+              cast<IntegerAttr>(property.getValue()).getInt());
+      }
+      const auto *descriptor = reflection::findVPISourceOperator(opcode);
+      if (!descriptor || operands != descriptor->arity)
+        return anchor.emitOpError(
+            "source operation operand count does not match its operator");
+    }
+  }
+
   for (SimVPINetIdentityDeclOp identity : vpiNetIdentities) {
     auto found = identitySimNets.find(identity.getId());
     if (found == identitySimNets.end())
@@ -4680,11 +4890,12 @@ LogicalResult SimDesignOp::verifyRegions() {
     }
     }
   }
-  for (const auto &entry : anchorOrdinals)
+  for (const auto &entry : anchorOrdinals) {
     for (uint64_t ordinal = 0; ordinal != entry.second.size(); ++ordinal)
       if (!entry.second.contains(ordinal))
         return emitOpError(
             "VPI anchor ordinals must be dense under each lexical parent");
+  }
 
   for (SimVPIObjectAnchorOp anchor : vpiAnchors) {
     llvm::SmallPtrSet<Operation *, 8> path;

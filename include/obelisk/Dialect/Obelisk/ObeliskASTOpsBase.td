@@ -1063,6 +1063,50 @@ def SVSourceTypeParameterSymbolOp
   let hasVerifier = 1;
 }
 
+def SVSourceValueParameterSymbolOp
+    : ObeliskSymbolASTNodeOp<"sv.source.value_parameter", [],
+        (ins OptionalAttr<UnitAttr>:$is_local_param)> {
+  let summary = "lexical value parameter without an effective specialization";
+  let description = [{
+    Directly owned by a generic class definition. Its body contains at most
+    one original default node; no semantic_type or elaborated value is bound.
+  }];
+  let hasVerifier = 1;
+}
+
+def SVSourceValueDefaultOp
+    : ObeliskASTNodeOp<"sv.source.value_default"> {
+  let summary = "original value-parameter default expression";
+  let description = [{
+    Owns exactly one typed source expression, independently of the effective
+    parameter initializer and its overrides. Integer literal nodes retain their
+    self-determined semantic types; references and operators remain unbound.
+  }];
+  let hasVerifier = 1;
+}
+
+def SVSourceParameterReferenceOp
+    : ObeliskASTNodeOp<"sv.source.parameter_reference",
+        [DeclareOpInterfaceMethods<SymbolUserOpInterface>],
+        (ins FlatSymbolRefAttr:$parameter)> {
+  let summary = "exact preceding value parameter in an original default";
+  let hasVerifier = 1;
+}
+
+def SVSourceUnaryExpressionOp
+    : ObeliskASTNodeOp<"sv.source.unary_expression", [],
+        (ins ObeliskSVUnaryOperator:$operator_kind)> {
+  let summary = "unbound pure unary operation in an original default";
+  let hasVerifier = 1;
+}
+
+def SVSourceBinaryExpressionOp
+    : ObeliskASTNodeOp<"sv.source.binary_expression", [],
+        (ins ObeliskSVBinaryOperator:$operator_kind)> {
+  let summary = "unbound binary operation in an original default";
+  let hasVerifier = 1;
+}
+
 def SVSourceTypeDefaultOp
     : ObeliskASTNodeOp<"sv.source.type_default", [],
         (ins TypeAttr:$semantic_type)> {

@@ -1651,6 +1651,7 @@ bool validateDatabaseImpl(const Database &database) {
       stableIDs;
   constexpr uint32_t parameterSourceFlags =
       OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER |
+      OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER |
       OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT;
   auto validParameterSourceFlags = [](uint32_t kind, uint32_t caps) {
     using Kind = obelisk::reflection::VPIObjectKind;
@@ -1658,11 +1659,25 @@ bool validateDatabaseImpl(const Database &database) {
         (kind != static_cast<uint32_t>(Kind::TypeParameter) ||
          (caps & OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) != 0))
       return false;
+    if ((caps & OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0 &&
+        (kind != static_cast<uint32_t>(Kind::Parameter) ||
+         (caps & OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE) != 0))
+      return false;
     return (caps & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT) == 0 ||
            kind == static_cast<uint32_t>(Kind::Parameter) ||
            kind == static_cast<uint32_t>(Kind::TypeParameter);
   };
+  auto isSourceExpressionKind = [](uint32_t kind) {
+    using Kind = obelisk::reflection::VPIObjectKind;
+    return kind == static_cast<uint32_t>(Kind::Constant) ||
+           kind == static_cast<uint32_t>(Kind::Operation);
+  };
   std::unordered_set<uint32_t> unresolvedTypeParameters;
+  std::unordered_set<uint32_t> unresolvedValueParameters;
+  std::unordered_set<uint32_t> sourceExpressionObjects;
+  std::unordered_map<uint32_t, uint16_t> sourceExpressionOperators;
+  std::unordered_set<uint32_t> sourceExpressionConstants;
+  std::unordered_set<uint32_t> namedParameters;
   std::unordered_set<uint32_t> unavailableParameterDefaults;
   std::unordered_set<uint64_t> reached;
   std::vector<uint64_t> pending{database.root};
@@ -1733,8 +1748,10 @@ bool validateDatabaseImpl(const Database &database) {
         obelisk::reflection::vpiObjectSetContains(
             obelisk::reflection::VPIObjectSetID::ConcreteTypespecObjects,
             intrinsicKind);
+    bool sourceExpression = kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+                            isSourceExpressionKind(intrinsicKind);
     if (!getString(database, nameOffset, name) ||
-        (name.empty() && !unnamedTypespec))
+        (sourceExpression ? !name.empty() : name.empty() && !unnamedTypespec))
       return false;
     if (kind == OBELISK_RT_DESIGN_RECORD_SCOPE) {
       if (caps != OBELISK_RT_DESIGN_CAP_ITERATE ||
@@ -1948,6 +1965,34 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
       break;
     }
+    }
+    if (table == obelisk::reflection::TableKind::Object &&
+        recordKind(database.data + database.objects +
+                   uint64_t{sourceIndex} * kObjectSize) ==
+            OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT) {
+      using Kind = obelisk::reflection::VPIObjectKind;
+      if (exactKind == static_cast<uint32_t>(Kind::Operation) &&
+          selector == 39) {
+        if (!obelisk::reflection::findVPISourceOperator(
+                static_cast<uint32_t>(payload)))
+          return false;
+        sourceExpressionOperators.emplace(packedSource,
+                                          static_cast<uint16_t>(payload));
+      }
+      if (exactKind == static_cast<uint32_t>(Kind::Constant) &&
+          selector == 40) {
+        if (payload != 7)
+          return false;
+        sourceExpressionConstants.insert(packedSource);
+      }
+    }
+    if (exactKind == static_cast<uint32_t>(
+                         obelisk::reflection::VPIObjectKind::Parameter) &&
+        selector == 2) {
+      std::string_view name;
+      if (!getString(database, payload, name) || name.empty())
+        return false;
+      namedParameters.insert(packedSource);
     }
     if (selector == 74) {
       if (table == obelisk::reflection::TableKind::Statement)
@@ -2601,6 +2646,25 @@ bool validateDatabaseImpl(const Database &database) {
         index;
     if (unresolved)
       unresolvedTypeParameters.insert(packed);
+    if ((caps & OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0) {
+      if (objectSemanticRoots[index])
+        return false;
+      unresolvedValueParameters.insert(packed);
+    }
+    if (recordKind(object) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+        isSourceExpressionKind(recordVPIKind(object))) {
+      bool constant =
+          recordVPIKind(object) ==
+          static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Constant);
+      if (constant != objectSemanticRoots[index] || read32(object + 4) != 0 ||
+          (constant && sourceExpressionConstants.count(packed) == 0) ||
+          (recordVPIKind(object) ==
+               static_cast<uint32_t>(
+                   obelisk::reflection::VPIObjectKind::Operation) &&
+           sourceExpressionOperators.count(packed) == 0))
+        return false;
+      sourceExpressionObjects.insert(packed);
+    }
     if ((caps & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT) != 0)
       unavailableParameterDefaults.insert(packed);
   }
@@ -2626,6 +2690,15 @@ bool validateDatabaseImpl(const Database &database) {
         index;
     if (unresolved)
       unresolvedTypeParameters.insert(packed);
+    if ((caps & OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0) {
+      if (staticObjectSemanticRoots[index])
+        return false;
+      unresolvedValueParameters.insert(packed);
+    }
+    // Expression occurrences have an unnamed full record. Compact records
+    // denote named source declarations and cannot encode an expression tree.
+    if (isSourceExpressionKind(read16(object + 28)))
+      return false;
     if ((caps & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT) != 0)
       unavailableParameterDefaults.insert(packed);
   }
@@ -3505,9 +3578,11 @@ bool validateDatabaseImpl(const Database &database) {
     if (packedSource == UINT32_MAX ||
         (index != 0 && packedSource <= previousFrozenSource) ||
         !packedObjectReferenceOffset(database, packedSource, objectOffset) ||
-        objectReferenceVPIKind(database, objectOffset) !=
-            static_cast<uint32_t>(
-                obelisk::reflection::VPIObjectKind::Parameter) ||
+        (objectReferenceVPIKind(database, objectOffset) !=
+             static_cast<uint32_t>(
+                 obelisk::reflection::VPIObjectKind::Parameter) &&
+         sourceExpressionConstants.count(packedSource) == 0) ||
+        unresolvedValueParameters.count(packedSource) != 0 ||
         valueIndex >= database.frozenValueCount)
       return false;
     previousFrozenSource = packedSource;
@@ -3521,6 +3596,25 @@ bool validateDatabaseImpl(const Database &database) {
     const uint8_t *semantic = database.data + database.semanticTypes +
                               uint64_t{semanticRoot} * kSemanticTypeSize;
     uint32_t semanticFlags = read32(semantic);
+    if (sourceExpressionConstants.count(packedSource) != 0) {
+      if (read32(semantic + 8) != 0 || read32(semantic + 12) != UINT32_MAX)
+        return false;
+      switch (semanticFlags & UINT32_C(0xff)) {
+      case OBELISK_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL:
+      case OBELISK_RT_DESIGN_SEMANTIC_BIT:
+      case OBELISK_RT_DESIGN_SEMANTIC_LOGIC:
+      case OBELISK_RT_DESIGN_SEMANTIC_REG:
+      case OBELISK_RT_DESIGN_SEMANTIC_BYTE:
+      case OBELISK_RT_DESIGN_SEMANTIC_SHORT_INT:
+      case OBELISK_RT_DESIGN_SEMANTIC_INT:
+      case OBELISK_RT_DESIGN_SEMANTIC_LONG_INT:
+      case OBELISK_RT_DESIGN_SEMANTIC_INTEGER:
+      case OBELISK_RT_DESIGN_SEMANTIC_TIME:
+        break;
+      default:
+        return false;
+      }
+    }
     uint64_t semanticWidth = 0;
     if (!semanticBitWidth(database, semanticRoot, semanticWidth) ||
         semanticWidth != read64(record + 8) ||
@@ -3536,7 +3630,9 @@ bool validateDatabaseImpl(const Database &database) {
   for (uint32_t index = 0; index != database.staticObjectCount; ++index) {
     const uint8_t *object = database.data + database.staticObjects +
                             uint64_t{index} * kStaticObjectSize;
-    if (!obelisk::reflection::findVPIValuePolicy(read16(object + 28)))
+    if (!obelisk::reflection::findVPIValuePolicy(read16(object + 28)) ||
+        (read16(object + 30) &
+         OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0)
       continue;
     uint32_t packedSource = 0;
     VPIFrozenValue value{};
@@ -3544,6 +3640,28 @@ bool validateDatabaseImpl(const Database &database) {
             obelisk::reflection::TableKind::StaticObject, index,
             packedSource) ||
         !findFrozenValue(database, packedSource, value))
+      return false;
+  }
+  for (uint32_t index = 0; index != database.objectCount; ++index) {
+    const uint8_t *object =
+        database.data + database.objects + uint64_t{index} * kObjectSize;
+    if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+        recordVPIKind(object) !=
+            static_cast<uint32_t>(
+                obelisk::reflection::VPIObjectKind::Parameter) ||
+        (read32(object + 4) &
+         OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0)
+      continue;
+    uint32_t packed = 0;
+    VPIFrozenValue value{};
+    if (!obelisk::reflection::tryPackTableIndex(
+            obelisk::reflection::TableKind::Object, index, packed) ||
+        !findFrozenValue(database, packed, value))
+      return false;
+  }
+  for (uint32_t constant : sourceExpressionConstants) {
+    VPIFrozenValue value{};
+    if (!findFrozenValue(database, constant, value))
       return false;
   }
   std::vector<uint8_t> parentState(database.statementCount, 0);
@@ -4274,6 +4392,11 @@ bool validateDatabaseImpl(const Database &database) {
   std::unordered_set<uint64_t> staticLexicalParents;
   std::unordered_set<uint64_t> canonicalMethodObjects;
   std::unordered_map<uint32_t, uint64_t> unresolvedParameterParents;
+  std::unordered_map<uint32_t, uint32_t> expressionParents;
+  std::unordered_map<uint32_t, uint32_t> expressionOperandCounts;
+  std::vector<std::pair<uint32_t, uint32_t>> expressionReferences;
+  std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>>
+      parameterPositions;
   std::vector<uint32_t> firstStaticSuccessor(database.staticObjectCount,
                                              UINT32_MAX);
   std::vector<uint32_t> staticSuccessorCount(database.staticObjectCount, 0);
@@ -4518,10 +4641,54 @@ bool validateDatabaseImpl(const Database &database) {
                         obelisk::reflection::VPIRelationKind::ExprRel) &&
         unavailableParameterDefaults.count(sourceEndpoint) != 0)
       return false;
-    if (unresolvedTypeParameters.count(sourceEndpoint) != 0 && !iterate) {
+    if (iterate &&
+        selector == static_cast<uint32_t>(
+                        obelisk::reflection::VPIObjectKind::Parameter) &&
+        targetKind == static_cast<uint32_t>(
+                          obelisk::reflection::VPIObjectKind::Parameter)) {
+      if (!parameterPositions
+               .emplace(packedTarget, std::make_pair(sourceEndpoint, ordinal))
+               .second)
+        return false;
+    }
+    bool sourceExpression = sourceExpressionObjects.count(sourceEndpoint) != 0;
+    bool targetExpression = sourceExpressionObjects.count(packedTarget) != 0;
+    using Kind = obelisk::reflection::VPIObjectKind;
+    using Relation = obelisk::reflection::VPIRelationKind;
+    if (targetExpression) {
+      bool defaultRoot = !iterate &&
+                         selector == static_cast<uint32_t>(Relation::ExprRel) &&
+                         sourceKind == static_cast<uint32_t>(Kind::Parameter);
+      bool operand = iterate &&
+                     selector == static_cast<uint32_t>(Relation::OperandRel) &&
+                     sourceExpression &&
+                     sourceKind == static_cast<uint32_t>(Kind::Operation);
+      if ((!defaultRoot && !operand) ||
+          !expressionParents.emplace(packedTarget, sourceEndpoint).second)
+        return false;
+    }
+    bool parameterLeaf = targetKind == static_cast<uint32_t>(Kind::Parameter);
+    if (sourceExpression) {
+      if (!iterate || selector != static_cast<uint32_t>(Relation::OperandRel) ||
+          sourceKind != static_cast<uint32_t>(Kind::Operation) ||
+          (!targetExpression && !parameterLeaf))
+        return false;
+      ++expressionOperandCounts[sourceEndpoint];
+      if (parameterLeaf)
+        expressionReferences.emplace_back(sourceEndpoint, packedTarget);
+    } else if (!iterate &&
+               selector == static_cast<uint32_t>(Relation::ExprRel) &&
+               sourceKind == static_cast<uint32_t>(Kind::Parameter) &&
+               parameterLeaf) {
+      expressionReferences.emplace_back(sourceEndpoint, packedTarget);
+    }
+    if ((unresolvedTypeParameters.count(sourceEndpoint) != 0 ||
+         unresolvedValueParameters.count(sourceEndpoint) != 0) &&
+        !iterate) {
       if (selector == static_cast<uint32_t>(
                           obelisk::reflection::VPIObjectKind::Typespec) &&
-          packedTarget != sourceEndpoint)
+          (unresolvedValueParameters.count(sourceEndpoint) != 0 ||
+           packedTarget != sourceEndpoint))
         return false;
       if (selector == static_cast<uint32_t>(
                           obelisk::reflection::VPIRelationKind::ScopeRel)) {
@@ -4727,6 +4894,64 @@ bool validateDatabaseImpl(const Database &database) {
                             staticLexicalParents.count(parent->second) != 0;
                    }))
     return false;
+  if (!std::all_of(unresolvedValueParameters.begin(),
+                   unresolvedValueParameters.end(), [&](uint32_t parameter) {
+                     auto parent = unresolvedParameterParents.find(parameter);
+                     return parent != unresolvedParameterParents.end() &&
+                            staticLexicalChildren.count(parent->second) != 0 &&
+                            staticLexicalParents.count(parent->second) != 0;
+                   }))
+    return false;
+  // Each occurrence belongs to exactly one acyclic tree rooted in a precise
+  // parameter default. Cache roots while following parent links so shared
+  // suffixes are checked once, including maliciously deep images.
+  std::unordered_map<uint32_t, uint32_t> expressionRoots;
+  for (uint32_t expression : sourceExpressionObjects) {
+    std::vector<uint32_t> path;
+    std::unordered_set<uint32_t> visiting;
+    uint32_t cursor = expression;
+    uint32_t root = 0;
+    while (true) {
+      auto known = expressionRoots.find(cursor);
+      if (known != expressionRoots.end()) {
+        root = known->second;
+        break;
+      }
+      if (!visiting.insert(cursor).second)
+        return false;
+      path.push_back(cursor);
+      auto parent = expressionParents.find(cursor);
+      if (parent == expressionParents.end())
+        return false;
+      cursor = parent->second;
+      if (sourceExpressionObjects.count(cursor) == 0) {
+        if (parameterPositions.count(cursor) == 0)
+          return false;
+        root = cursor;
+        break;
+      }
+    }
+    for (uint32_t node : path)
+      expressionRoots.emplace(node, root);
+  }
+  for (const auto &[expression, operation] : sourceExpressionOperators) {
+    const auto *descriptor =
+        obelisk::reflection::findVPISourceOperator(operation);
+    if (!descriptor || expressionOperandCounts[expression] != descriptor->arity)
+      return false;
+  }
+  for (const auto &[source, reference] : expressionReferences) {
+    auto known = expressionRoots.find(source);
+    uint32_t root = known == expressionRoots.end() ? source : known->second;
+    auto declaration = parameterPositions.find(root);
+    auto target = parameterPositions.find(reference);
+    if (declaration == parameterPositions.end() ||
+        target == parameterPositions.end() ||
+        declaration->second.first != target->second.first ||
+        target->second.second >= declaration->second.second ||
+        namedParameters.count(reference) == 0)
+      return false;
+  }
   if (!std::all_of(classMemberParents.begin(), classMemberParents.end(),
                    [&](uint64_t member) {
                      return staticLexicalParents.count(member) != 0;

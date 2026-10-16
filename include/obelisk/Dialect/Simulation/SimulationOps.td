@@ -368,6 +368,10 @@ def SimVPIObjectAnchorOp : SimOp<"vpi_object.anchor", [
     is not a value and does not allocate immutable value storage. A lexical
     generic type parameter instead carries `unresolved_type_parameter` and no
     effective payload; its exact ClassDefn owner supplies source identity.
+    A lexical generic value parameter carries `unresolved_value_parameter` and
+    likewise has no effective type or value. Constant and Operation
+    anchors retain unnamed original-default expression occurrences, with exact
+    parameter/operator ownership and explicit generated expression relations.
     `unavailable_default` retains the original source text for a present default
     whose structure is unsupported. It is exclusive with an explicit Expr
     relation; absence of both denotes no source default.
@@ -393,7 +397,8 @@ def SimVPIObjectAnchorOp : SimOp<"vpi_object.anchor", [
                        OptionalAttr<UnitAttr>:$has_explicit_parameter_range,
                        OptionalAttr<FlatSymbolRefAttr>:$class_method,
                        OptionalAttr<UnitAttr>:$unresolved_type_parameter,
-                       OptionalAttr<StrAttr>:$unavailable_default);
+                       OptionalAttr<StrAttr>:$unavailable_default,
+                       OptionalAttr<UnitAttr>:$unresolved_value_parameter);
   let assemblyFormat = [{
     $sym_name `id` $inventory_id `type` $vpi_kind
     `in` $enclosing_scope_id (`parent` $parent^)?

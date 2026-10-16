@@ -1170,6 +1170,30 @@ bool refActualValueSource(__vpiHandle *handle,
   return true;
 }
 
+// An unresolved lexical declaration has an original default graph, but no
+// elaborated value or type. Do not turn absent metadata into a zero value.
+bool unresolvedValueParameter(uint32_t type,
+                              const obelisk_rt_design_info_v1 &info) {
+  return type == vpiParameter &&
+         (info.capabilities &
+          OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0;
+}
+
+bool rejectUnresolvedParameterQuery(__vpiHandle *handle) {
+  if (handle->form != VPIObjectForm::Design)
+    return false;
+  const uint32_t type = static_cast<uint32_t>(vpiTypeForHandle(handle));
+  obelisk_rt_design_info_v1 info{};
+  bool unresolved = false;
+  if (type == vpiParameter && infoFor(handle, info))
+    unresolved = unresolvedValueParameter(type, info);
+  if (unresolved)
+    setError(handle->owner,
+             "lexical generic parameter has no elaborated value or type",
+             vpiNotice);
+  return unresolved;
+}
+
 struct VPIValueSource {
   VPIObjectForm form = VPIObjectForm::Design;
   obelisk_rt_design_cursor_v1 cursor{};
@@ -1220,6 +1244,17 @@ bool valueSourceFor(
                                    &source.semanticCursor) == OBELISK_RT_OK;
   } else {
     source.hasSemanticCursor = semanticCursorFor(handle, source.semanticCursor);
+  }
+  if (unresolvedValueParameter(source.exactType, source.info)) {
+    setError(handle->owner,
+             "lexical generic parameter has no elaborated value or type",
+             vpiNotice);
+    return false;
+  }
+  if (source.exactType == vpiOperation && !source.hasSemanticCursor) {
+    setError(handle->owner, "original expression has no elaborated result type",
+             vpiNotice);
+    return false;
   }
   return true;
 }
@@ -5826,6 +5861,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       obelisk_rt_cached_vpi_type(handle->owner->context, handle->cursor,
                                  &sourceType) != OBELISK_RT_OK)
     return nullptr;
+  if (type == vpiTypespec && rejectUnresolvedParameterQuery(handle))
+    return nullptr;
   if (type == vpiExpr && handle->form == VPIObjectForm::Design &&
       (sourceType == vpiParameter || sourceType == vpiTypeParameter)) {
     obelisk_rt_design_info_v1 info{};
@@ -7052,6 +7089,33 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
              vpiNotice);
     return vpiUndefined;
   }
+  if ((property == vpiSize || property == vpiSigned ||
+       property == vpiConstType || property == vpiScalar ||
+       property == vpiVector || property == vpiArray || property == vpiPacked ||
+       property == vpiArrayType || property == vpiIsMemory) &&
+      rejectUnresolvedParameterQuery(handle))
+    return vpiUndefined;
+  if (property == vpiSize && handle->form == VPIObjectForm::Design &&
+      vpiTypeForHandle(handle) == vpiOperation) {
+    obelisk_rt_design_info_v1 info{};
+    if (!infoFor(handle, info))
+      return vpiUndefined;
+    if (info.kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+        !info.type_offset && !info.bit_width) {
+      setError(handle->owner,
+               "original expression has no elaborated result type", vpiNotice);
+      return vpiUndefined;
+    }
+  }
+  // Synthetic constants own their representation independently of immutable
+  // declaration records. Exact-kind image properties apply only to Design
+  // occurrences; range/index constants and copied messages remain synthetic.
+  if (property == vpiConstType) {
+    if (handle->form == VPIObjectForm::SnapshotValue)
+      return handle->snapshot->constType;
+    if (handle->form == VPIObjectForm::IntegralConstant)
+      return vpiIntConst;
+  }
   if (propertyDescriptor->realization ==
           obelisk::reflection::VPIPropertyRealization::FixedImage ||
       propertyDescriptor->realization ==
@@ -7222,8 +7286,9 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     obelisk_rt_design_cursor_v1 semanticCursor{};
     bool usesSemanticSignedness =
         handle->form != VPIObjectForm::Design || objectType == vpiIODecl ||
-        objectType == vpiRefObj || objectType == vpiParameter ||
-        objectType == vpiSpecParam || isTypespecVPIKind(objectType);
+        objectType == vpiRefObj || objectType == vpiConstant ||
+        objectType == vpiParameter || objectType == vpiSpecParam ||
+        isTypespecVPIKind(objectType);
     if (usesSemanticSignedness && semanticCursorFor(handle, semanticCursor)) {
       obelisk_rt_design_semantic_type_info_v1 semantic{};
       if (obelisk_rt_cached_design_semantic_type_info(
@@ -7685,6 +7750,148 @@ static bool decompileSnapshot(__vpiHandle *handle,
   return true;
 }
 
+// Emit a validated source-expression tree without recursion or reevaluation.
+// The original parameter default and the effective parameter value are
+// separate objects; decompilation follows only the original occurrence tree.
+bool decompileSourceExpression(__vpiHandle *handle, std::string &result) {
+  using obelisk::reflection::findVPISourceOperator;
+  struct Pending {
+    obelisk_rt_design_cursor_v1 cursor{};
+    uint32_t type = 0;
+    uint8_t parentPrecedence = 0;
+    bool parenthesizeEqual = false;
+    std::string token;
+  };
+  auto *context = handle->owner->context;
+  auto invalid = [&] {
+    setError(handle->owner, "invalid original VPI expression metadata",
+             vpiInternal);
+    return false;
+  };
+  OBELISK_RT_TRY {
+    std::string text;
+    bool escapedIdentifier = false;
+    auto append = [&](std::string_view token) {
+      if (escapedIdentifier && !token.empty()) {
+        if (token.front() != ' ')
+          text += ' ';
+        escapedIdentifier = false;
+      }
+      text += token;
+    };
+    auto token = [](std::string spelling) {
+      Pending item;
+      item.token = std::move(spelling);
+      return item;
+    };
+    std::vector<Pending> pending{
+        {handle->cursor, static_cast<uint32_t>(vpiTypeForHandle(handle))}};
+    while (!pending.empty()) {
+      Pending item = std::move(pending.back());
+      pending.pop_back();
+      if (!item.type) {
+        append(item.token);
+        continue;
+      }
+      if (item.type == vpiParameter) {
+        VPIFixedPropertyValue nameProperty{};
+        if (obelisk_rt_cached_vpi_fixed_property(context, item.cursor, vpiName,
+                                                 &nameProperty) !=
+                OBELISK_RT_OK ||
+            !nameProperty.stringSize || nameProperty.stringSize > SIZE_MAX)
+          return invalid();
+        std::string_view name(
+            reinterpret_cast<const char *>(nameProperty.stringData),
+            nameProperty.stringSize);
+        // Escaping every declared identifier also handles escaped keywords
+        // without duplicating the language's keyword table in the runtime.
+        append("\\");
+        append(name);
+        escapedIdentifier = true;
+        continue;
+      }
+      if (item.type == vpiConstant) {
+        VPIFrozenValue value{};
+        obelisk_rt_design_cursor_v1 semantic{};
+        obelisk_rt_design_semantic_type_info_v1 info{};
+        if (obelisk_rt_cached_vpi_frozen_value(context, item.cursor, &value) !=
+                OBELISK_RT_OK ||
+            (value.kindAndFlags & obelisk::reflection::frozenValueKindMask) !=
+                static_cast<uint32_t>(
+                    obelisk::reflection::FrozenValueKind::Packed) ||
+            !value.bitWidth ||
+            obelisk_rt_cached_design_semantic_root(
+                context, item.cursor, &semantic) != OBELISK_RT_OK ||
+            obelisk_rt_cached_design_semantic_type_info(context, semantic,
+                                                        &info) != OBELISK_RT_OK)
+          return invalid();
+        const uint64_t bytes = (value.bitWidth - 1) / 8 + 1;
+        if (bytes > UINT64_MAX / 2 || value.payloadSize != bytes * 2)
+          return invalid();
+        append(std::to_string(value.bitWidth));
+        append((info.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) ? "'sb" : "'b");
+        for (uint64_t bit = value.bitWidth; bit != 0;) {
+          --bit;
+          const bool v = (value.payload[bit / 8] >> (bit % 8)) & 1;
+          const bool u = (value.payload[bytes + bit / 8] >> (bit % 8)) & 1;
+          text += u ? (v ? 'z' : 'x') : (v ? '1' : '0');
+        }
+        continue;
+      }
+      if (item.type != vpiOperation)
+        return invalid();
+      VPIFixedPropertyValue property{};
+      if (obelisk_rt_cached_vpi_fixed_property(context, item.cursor, vpiOpType,
+                                               &property) != OBELISK_RT_OK)
+        return invalid();
+      const auto *operation = findVPISourceOperator(property.payload);
+      VPIRelationRange operands{};
+      if (!operation ||
+          obelisk_rt_cached_vpi_relation_range(context, item.cursor, vpiOperand,
+                                               true,
+                                               &operands) != OBELISK_RT_OK ||
+          operands.count != operation->arity)
+        return invalid();
+      const bool parentheses =
+          operation->precedence < item.parentPrecedence ||
+          (operation->precedence == item.parentPrecedence &&
+           item.parenthesizeEqual);
+      if (parentheses) {
+        append("(");
+        pending.push_back(token(")"));
+      }
+      for (unsigned ordinal = operation->arity; ordinal != 0;) {
+        --ordinal;
+        Pending child;
+        bool statement = false;
+        if (obelisk_rt_cached_vpi_relation_target(
+                context, operands.first + ordinal, &child.cursor, &child.type,
+                &statement) != OBELISK_RT_OK ||
+            statement)
+          return invalid();
+        child.parentPrecedence = operation->precedence;
+        child.parenthesizeEqual = operation->arity == 2 &&
+                                  (ordinal == 0 ? operation->rightAssociative
+                                                : !operation->rightAssociative);
+        pending.push_back(std::move(child));
+        if (ordinal != 0)
+          pending.push_back(token(std::string(" ") + operation->token + " "));
+      }
+      if (operation->arity == 1)
+        append(std::string(operation->token) + " ");
+    }
+    if (escapedIdentifier)
+      text += ' ';
+    result = std::move(text);
+    return true;
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(handle->owner, "could not decompile original VPI expression",
+             vpiSystem);
+    return false;
+  }
+}
+
 extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
                                                      vpiHandle opaque) {
   VPICallScope vpiCallScope;
@@ -7782,6 +7989,29 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
       return nullptr;
     }
   }
+  // Older declaration images derive vpiName from their hierarchy. New
+  // parameter declarations retain the exact identifier, including separators
+  // inside escaped names, in the ordinary fixed-property table.
+  VPIFixedPropertyValue parameterName{};
+  const bool parameter = handle->form == VPIObjectForm::Design &&
+                         vpiTypeForHandle(handle) == vpiParameter;
+  const bool hasParameterName =
+      parameter && (property == vpiName || property == vpiDecompile) &&
+      obelisk_rt_cached_vpi_fixed_property(handle->owner->context,
+                                           handle->cursor, vpiName,
+                                           &parameterName) == OBELISK_RT_OK;
+  if (property == vpiName && hasParameterName) {
+    OBELISK_RT_TRY {
+      scratch.assign(reinterpret_cast<const char *>(parameterName.stringData),
+                     static_cast<size_t>(parameterName.stringSize));
+      return scratch.data();
+    }
+    OBELISK_RT_CATCH_ALL {
+      setError(handle->owner, "VPI property string buffer is out of memory",
+               vpiSystem);
+      return nullptr;
+    }
+  }
   if (propertyDescriptor &&
       (propertyDescriptor->realization ==
            obelisk::reflection::VPIPropertyRealization::FixedImage ||
@@ -7836,6 +8066,19 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     }
   }
   if (property == vpiDecompile) {
+    if (hasParameterName)
+      return decompileSourceExpression(handle, scratch) ? scratch.data()
+                                                        : nullptr;
+    const auto type = vpiTypeForHandle(handle);
+    if (handle->form == VPIObjectForm::Design &&
+        (type == vpiConstant || type == vpiOperation)) {
+      obelisk_rt_design_info_v1 info{};
+      if (!infoFor(handle, info))
+        return nullptr;
+      if (info.kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT)
+        return decompileSourceExpression(handle, scratch) ? scratch.data()
+                                                          : nullptr;
+    }
     if (!nameFor(handle, scratch) || scratch.empty())
       return nullptr;
     obelisk_rt_design_cursor_v1 parent{};

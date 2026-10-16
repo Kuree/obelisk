@@ -9,6 +9,13 @@ endclass
 class overridden_default #(type T = int, type U = T[3:0]);
 endclass
 
+class unused_value_generic #(int P, int Q = P + 2);
+endclass
+
+class overridden_value_default #(int P = 1, int Q = $clog2(P), int R = '1);
+endclass
+
 module generic_source_parameter_import;
   overridden_default #(real, int) value;
+  overridden_value_default #(9, 4, 3) value_defaults;
 endmodule

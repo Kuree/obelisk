@@ -1680,6 +1680,8 @@ enum {
   // A present original parameter default has no supported expression graph.
   // Distinct from an absent default; a vpiExpr relation cannot coexist.
   OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT = UINT32_C(1) << 9,
+  // Lexical generic value declaration: no specialization has supplied a value.
+  OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER = 1u << 10,
   // Definition-backed vpiIODecl views use these record-kind-specific bits
   // for the exact IEEE direction, including vpiRef and undefined.
   OBELISK_RT_DESIGN_CAP_IO_DIRECTION_SHIFT = 8,
