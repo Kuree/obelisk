@@ -2247,6 +2247,9 @@ TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
         descriptor.property == vpiLocalParam ||
         descriptor.property == vpiQualifier)
       expected = PropertyRealization::FixedImage;
+    if (descriptor.sourceType == vpiPrimTerm &&
+        descriptor.property == vpiDirection)
+      expected = PropertyRealization::FixedImage;
     if (descriptor.property == vpiConnByName &&
         descriptor.sourceType == vpiParamAssign)
       expected = PropertyRealization::FixedImage;

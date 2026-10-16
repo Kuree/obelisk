@@ -10924,6 +10924,41 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     }
     return property == vpiTimeUnit ? scope->timeUnit : scope->timePrecision;
   }
+  if (property == vpiTermIndex) {
+    if (!propertyFor(handle, property))
+      return vpiUndefined;
+    auto *context = handle->owner->context;
+    VPIRelationRange owner{}, terminals{};
+    obelisk_rt_design_cursor_v1 primitive{};
+    uint32_t kind = 0;
+    bool statement = false;
+    if (obelisk_rt_cached_vpi_relation_range(context, handle->cursor,
+                                             vpiPrimitive, false,
+                                             &owner) == OBELISK_RT_OK &&
+        owner.count == 1 &&
+        obelisk_rt_cached_vpi_relation_target(context, owner.first, &primitive,
+                                              &kind,
+                                              &statement) == OBELISK_RT_OK &&
+        !statement &&
+        obelisk_rt_cached_vpi_relation_range(context, primitive, vpiPrimTerm,
+                                             true,
+                                             &terminals) == OBELISK_RT_OK) {
+      // The validated relation group is dense and is the terminal source order.
+      // Reuse that ordinal instead of serializing one fixed fact per terminal.
+      for (uint32_t index = 0; index != terminals.count; ++index) {
+        obelisk_rt_design_cursor_v1 terminal{};
+        if (obelisk_rt_cached_vpi_relation_target(
+                context, terminals.first + index, &terminal, &kind,
+                &statement) != OBELISK_RT_OK)
+          break;
+        if (!statement && terminal.offset == handle->cursor.offset)
+          return static_cast<PLI_INT32>(index);
+      }
+    }
+    setError(handle->owner, "primitive terminal source order is unavailable",
+             vpiNotice);
+    return vpiUndefined;
+  }
   if (property == vpiDirection || property == vpiPortIndex ||
       property == vpiPortType || property == vpiScalar ||
       property == vpiVector) {

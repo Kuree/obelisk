@@ -775,11 +775,13 @@ SmallVector<uint8_t> serializeDesignDatabase(
               static_cast<uint32_t>(VPIObjectKind::Constant) ||
           anchor.getVpiKind() ==
               static_cast<uint32_t>(VPIObjectKind::Operation);
+      bool primitiveTerminal =
+          anchor.getVpiKind() == static_cast<uint32_t>(VPIObjectKind::PrimTerm);
       bool compact =
           !sourceExpression &&
           hasVPIObjectRepresentation(anchor.getVpiKind(),
                                      VPIObjectRepresentation::StaticImage) &&
-          (!findVPIValuePolicy(anchor.getVpiKind()) ||
+          (primitiveTerminal || !findVPIValuePolicy(anchor.getVpiKind()) ||
            anchor.getImmutableValueAttr()) &&
           !indexed && !hasSemanticShape && !semanticIdentity &&
           !specializedOwner;
@@ -799,11 +801,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
                                  std::move(name), anchor.getVpiKind(),
                                  staticFlags, sourceFor(anchor), anchor});
       else
-        objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
-                           anchor.getVpiKind(), staticFlags, *id,
-                           anchor.getEnclosingScopeId(), std::move(name),
-                           Type{}, 0, sourceFor(anchor),
-                           !specializedOwner && !sourceExpression, anchor});
+        objects.push_back(
+            {OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, anchor.getVpiKind(),
+             staticFlags, *id, anchor.getEnclosingScopeId(), std::move(name),
+             Type{}, 0, sourceFor(anchor),
+             !specializedOwner && !sourceExpression && !primitiveTerminal,
+             anchor});
     } else if (auto member =
                    dyn_cast<sim::SimVPIClassMemberDeclOp>(operation)) {
       if (!includeStatements)
@@ -1139,7 +1142,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   SmallVector<StaticObjectRecord> uniqueStaticObjects;
   uniqueStaticObjects.reserve(staticObjects.size());
   for (StaticObjectRecord &object : staticObjects) {
-    if (staticNameCounts.lookup(object.name) == 1) {
+    if (object.name.empty() || staticNameCounts.lookup(object.name) == 1) {
       uniqueStaticObjects.push_back(std::move(object));
       continue;
     }
@@ -2455,6 +2458,14 @@ SmallVector<uint8_t> serializeDesignDatabase(
       }
       ImageObjectRef source = lexicalOwnerRef(parent);
       ImageObjectRef target = anchorRefs.lookup(anchor);
+      if (target.vpiKind == static_cast<uint32_t>(VPIObjectKind::PrimTerm)) {
+        if (failed(addRelation(
+                anchor, target.table, target.index, target.vpiKind,
+                static_cast<uint32_t>(VPIRelationKind::PrimitiveRel),
+                VPITraversalMode::Handle, source.table, source.index,
+                source.vpiKind)))
+          return {};
+      }
       if (target.vpiKind == static_cast<uint32_t>(VPIObjectKind::Modport)) {
         uint32_t packed = 0;
         if (source.table != TableKind::Scope ||
@@ -5253,7 +5264,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       intern(object.source.file);
   }
   for (const StaticObjectRecord &object : staticObjects) {
-    intern(object.name);
+    if (!object.name.empty())
+      intern(object.name);
     if (!object.source.file.empty())
       intern(object.source.file);
   }
@@ -5585,7 +5597,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
         object.source.file.empty()
             ? 0
             : static_cast<uint32_t>(intern(object.source.file)));
-    writer.setName(static_cast<uint32_t>(intern(object.name)));
+    writer.setName(
+        object.name.empty() ? 0 : static_cast<uint32_t>(intern(object.name)));
     writer.setSourceLine(static_cast<uint32_t>(object.source.lineColumn >> 32));
     writer.setSourceColumn(static_cast<uint32_t>(object.source.lineColumn));
     writer.setVPIKind(static_cast<uint16_t>(object.vpiKind));
@@ -6272,9 +6285,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
                        stringOffset + intern(object.name),
                        objectOffset + index * ObjectLayout.size, object.name});
   for (auto [index, object] : llvm::enumerate(staticObjects))
-    names.push_back(
-        {stableHash(object.name), stringOffset + intern(object.name),
-         staticObjectOffset + index * StaticObjectLayout.size, object.name});
+    if (!object.name.empty())
+      names.push_back(
+          {stableHash(object.name), stringOffset + intern(object.name),
+           staticObjectOffset + index * StaticObjectLayout.size, object.name});
   llvm::sort(names, [](const Index &left, const Index &right) {
     return std::tie(left.hash, left.text) < std::tie(right.hash, right.text);
   });

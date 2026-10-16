@@ -949,6 +949,20 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
                     name == "rtranif1";
     return isSwitch ? VPIKind::Switch : VPIKind::Gate;
   };
+  auto primitiveTerminalDirection =
+      [](semantic::SVPrimitiveInstanceSymbolOp primitive, size_t index,
+         Operation *terminal) {
+        auto name = primitive->getAttrOfType<StringAttr>("primitive_name");
+        StringRef spelling = name ? name.getValue() : StringRef{};
+        bool bidirectional = spelling == "tran" || spelling == "rtran" ||
+                             spelling == "tranif0" || spelling == "tranif1" ||
+                             spelling == "rtranif0" || spelling == "rtranif1";
+        if (bidirectional && index < 2)
+          return uint32_t{3}; // vpiInout
+        return isa<semantic::SVAssignmentExpressionOp>(terminal)
+                   ? uint32_t{2}
+                   : uint32_t{1}; // vpiOutput / vpiInput
+      };
   auto instanceLeafKind = [&](Operation *leaf) -> std::optional<VPIKind> {
     if (auto primitive =
             dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(leaf)) {
@@ -1880,9 +1894,10 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     UnitAttr hasExplicitParameterRange;
     if (isa<semantic::SVPrimitiveInstanceSymbolOp>(source)) {
       SmallVector<Operation *> terminals = getChildren(source);
-      uint64_t count = llvm::count_if(terminals, [](Operation *terminal) {
-        return !isa<semantic::SVAssignmentExpressionOp>(terminal);
-      });
+      auto primitive = cast<semantic::SVPrimitiveInstanceSymbolOp>(source);
+      uint64_t count = 0;
+      for (auto [index, terminal] : llvm::enumerate(terminals))
+        count += primitiveTerminalDirection(primitive, index, terminal) == 1;
       primitiveInputCount = builder.getI64IntegerAttr(count);
     }
     if (isa<semantic::SVParameterSymbolOp,
@@ -5438,6 +5453,96 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
       });
       addReverse(*rhs, selectorValue(reflection::VPIRelationKind::UseRel),
                  plan);
+    }
+  }
+  // A terminal is an occurrence, even when two terminals name the same net.
+  // Preserve the source order and the assignment wrapper's lvalue identity;
+  // selected and compound expressions require their own occurrence graph.
+  for (Operation *source : anchorSources) {
+    auto primitive = dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(source);
+    if (!primitive)
+      continue;
+    auto parent = anchorDeclarations.lookup(source);
+    if (!parent)
+      continue;
+    auto primitiveModule = moduleInstanceScope(parent.getEnclosingScopeId());
+    auto terminalSources = getChildren(source);
+    for (auto [index, terminalSource] : llvm::enumerate(terminalSources)) {
+      uint32_t direction =
+          primitiveTerminalDirection(primitive, index, terminalSource);
+      Operation *expression = terminalSource;
+      if (isa<semantic::SVAssignmentExpressionOp>(terminalSource)) {
+        auto children = getChildren(terminalSource);
+        if (children.empty())
+          continue;
+        expression = children.front();
+      }
+      std::string symbol =
+          "__obelisk_vpi_terminal_" + std::to_string(nextSyntheticInventoryId);
+      auto terminal = sim::SimVPIObjectAnchorOp::create(
+          builder, getSemanticLocation(terminalSource),
+          builder.getStringAttr(symbol), nextSyntheticInventoryId++,
+          static_cast<uint32_t>(VPIKind::PrimTerm),
+          parent.getEnclosingScopeId(),
+          FlatSymbolRefAttr::get(parent.getSymNameAttr()), index,
+          builder.getStringAttr(""), builder.getStringAttr(""), UnitAttr{},
+          sim::VPIObjectBackingAttr{}, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
+          DenseI64ArrayAttr{}, DenseI64ArrayAttr{}, IntegerAttr{},
+          sim::VPITypeSemanticsAttr{}, sim::FrozenConstantAttr{}, UnitAttr{},
+          FlatSymbolRefAttr{}, UnitAttr{}, StringAttr{}, UnitAttr{});
+      SmallVector<Attribute> properties;
+      for (auto [selector, value] :
+           {std::pair<uint32_t, uint32_t>{20, direction}})
+        properties.push_back(sim::VPIPropertyAttr::get(
+            builder.getContext(), builder.getI32IntegerAttr(selector),
+            builder.getI32IntegerAttr(value)));
+      terminal->setAttr(
+          "vpi_properties",
+          sim::VPIPropertySetAttr::get(builder.getContext(),
+                                       builder.getArrayAttr(properties)));
+      auto terminalRef = sim::VPIObjectRefAttr::get(
+          builder.getContext(), sim::VPIObjectRefKind::Symbol, {},
+          FlatSymbolRefAttr::get(terminal.getSymNameAttr()));
+      auto endpoint = directEndpoint(expression);
+      if (!endpoint)
+        continue;
+      sim::SimVPIRelationDeclOp::create(
+          builder, getSemanticLocation(terminalSource), terminalRef,
+          selectorValue(reflection::VPIRelationKind::ExprRel),
+          sim::VPIRelationMode::Handle, 0, endpoint->reference);
+      auto reverse = [&](const DirectEndpoint &spelling, uint32_t selector) {
+        const auto *edge = reflection::findVPITraversal(
+            spelling.vpiKind, selector, reflection::VPITraversalMode::Iterate);
+        if (edge &&
+            reflection::vpiObjectSetContains(
+                edge->targets, static_cast<uint32_t>(VPIKind::PrimTerm)))
+          reverseRelations.push_back({spelling.reference, selector, terminalRef,
+                                      getSemanticLocation(terminalSource)});
+      };
+      forPhysicalNetSpelling(*endpoint, [&](const DirectEndpoint &spelling) {
+        auto width = sim::getPackedWidth(spelling.type);
+        if (spelling.descriptor->kind == DescriptorInfo::Kind::Net &&
+            (!width || *width != 1))
+          return; // 37.16: terminal connectivity is scalar/bit-select only.
+        reverse(spelling, static_cast<uint32_t>(VPIKind::PrimTerm));
+        bool local = primitiveModule &&
+                     moduleInstanceScope(spelling.scopeId) == primitiveModule;
+        if (direction != 1) {
+          reverse(spelling,
+                  selectorValue(reflection::VPIRelationKind::DriverRel));
+          if (local && spelling.descriptor->kind == DescriptorInfo::Kind::Net)
+            reverse(spelling,
+                    selectorValue(reflection::VPIRelationKind::LocalDriverRel));
+        }
+        if (direction != 2) {
+          reverse(spelling,
+                  selectorValue(reflection::VPIRelationKind::LoadRel));
+          if (local && spelling.descriptor->kind == DescriptorInfo::Kind::Net)
+            reverse(spelling,
+                    selectorValue(reflection::VPIRelationKind::LocalLoadRel));
+        }
+      });
+      reverse(*endpoint, selectorValue(reflection::VPIRelationKind::UseRel));
     }
   }
   llvm::sort(reverseRelations, [](const ReverseRelation &left,

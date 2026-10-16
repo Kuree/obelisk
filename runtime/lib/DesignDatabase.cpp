@@ -3061,6 +3061,9 @@ bool validateDatabaseImpl(const Database &database) {
   std::unordered_map<uint32_t, uint32_t> unresolvedAliasOwners,
       unresolvedAliasScopes, unresolvedAliasTargets;
   std::unordered_set<uint32_t> unresolvedValueParameters;
+  std::unordered_set<uint32_t> primitiveTerminals;
+  std::unordered_map<uint32_t, uint32_t> terminalDirections;
+  std::unordered_map<uint32_t, uint32_t> terminalOwners, terminalPrimitives;
   std::unordered_set<uint32_t> sourceExpressionObjects;
   std::unordered_map<uint32_t, uint16_t> sourceExpressionOperators;
   std::unordered_set<uint32_t> sourceExpressionConstants;
@@ -3144,8 +3147,11 @@ bool validateDatabaseImpl(const Database &database) {
           (caps &
            (OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT |
             OBELISK_RT_DESIGN_CAP_EXPLICIT_CLASS_PARAMETER_ASSIGNMENT))));
+    bool primitiveTerminal =
+        kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+        intrinsicKind == static_cast<uint32_t>(VPIKind::PrimTerm);
     if (!getString(database, nameOffset, name) ||
-        (sourceExpression
+        (sourceExpression || primitiveTerminal
              ? !name.empty()
              : name.empty() && !unnamedTypespec && !unnamedInheritance))
       return false;
@@ -3400,6 +3406,13 @@ bool validateDatabaseImpl(const Database &database) {
         fixedNames.emplace(packedSource, value);
       break;
     }
+    }
+    if (exactKind == static_cast<uint32_t>(
+                         obelisk::reflection::VPIObjectKind::PrimTerm) &&
+        selector == 20) {
+      if (payload < 1 || payload > 3)
+        return false;
+      terminalDirections.emplace(packedSource, static_cast<uint32_t>(payload));
     }
     if (table == obelisk::reflection::TableKind::Object &&
         recordKind(database.data + database.objects +
@@ -4149,6 +4162,15 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
       unresolvedValueParameters.insert(packed);
     }
+    if (recordVPIKind(object) ==
+        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::PrimTerm)) {
+      if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+          caps || objectSemanticRoots[index] || read64(object + 48) ||
+          read64(object + 56) || read64(object + 64) || read64(object + 72) ||
+          read64(object + 80) || !terminalDirections.count(packed))
+        return false;
+      primitiveTerminals.insert(packed);
+    }
     if (recordKind(object) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
         isSourceExpressionKind(recordVPIKind(object))) {
       bool constant =
@@ -4196,6 +4218,13 @@ bool validateDatabaseImpl(const Database &database) {
       if (staticObjectSemanticRoots[index])
         return false;
       unresolvedValueParameters.insert(packed);
+    }
+    if (read16(object + 28) ==
+        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::PrimTerm)) {
+      if (caps || staticObjectSemanticRoots[index] || read32(object + 16) ||
+          !terminalDirections.count(packed))
+        return false;
+      primitiveTerminals.insert(packed);
     }
     // Expression occurrences have an unnamed full record. Compact records
     // denote named source declarations and cannot encode an expression tree.
@@ -5453,7 +5482,10 @@ bool validateDatabaseImpl(const Database &database) {
   for (uint32_t index = 0; index != database.staticObjectCount; ++index) {
     const uint8_t *object = database.data + database.staticObjects +
                             uint64_t{index} * kStaticObjectSize;
-    if (!obelisk::reflection::findVPIValuePolicy(read16(object + 28)) ||
+    if (read16(object + 28) ==
+            static_cast<uint32_t>(
+                obelisk::reflection::VPIObjectKind::PrimTerm) ||
+        !obelisk::reflection::findVPIValuePolicy(read16(object + 28)) ||
         (read16(object + 30) &
          OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0)
       continue;
@@ -6858,6 +6890,39 @@ bool validateDatabaseImpl(const Database &database) {
                .second)
         return false;
     }
+    auto primitiveKind = [](uint32_t kind) {
+      using K = obelisk::reflection::VPIObjectKind;
+      return kind == static_cast<uint32_t>(K::Gate) ||
+             kind == static_cast<uint32_t>(K::Switch) ||
+             kind == static_cast<uint32_t>(K::Udp);
+    };
+    if (iterate && primitiveKind(sourceKind) &&
+        selector == static_cast<uint32_t>(
+                        obelisk::reflection::VPIObjectKind::PrimTerm)) {
+      if (!primitiveTerminals.count(packedTarget) ||
+          sourceTable != obelisk::reflection::TableKind::Object ||
+          recordKind(sourceRecord) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+          read64(sourceRecord + 16) !=
+              (targetTable == obelisk::reflection::TableKind::StaticObject
+                   ? database.scopes + uint64_t{read32(target + 8)} * kScopeSize
+                   : read64(target + 16)) ||
+          ordinal > INT32_MAX ||
+          !terminalOwners.emplace(packedTarget, sourceEndpoint).second)
+        return false;
+    }
+    if (!iterate && primitiveTerminals.count(sourceEndpoint) &&
+        selector == static_cast<uint32_t>(
+                        obelisk::reflection::VPIRelationKind::PrimitiveRel)) {
+      if (!primitiveKind(targetKind) ||
+          targetTable != obelisk::reflection::TableKind::Object ||
+          recordKind(target) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+          (sourceTable == obelisk::reflection::TableKind::StaticObject
+               ? database.scopes +
+                     uint64_t{read32(sourceRecord + 8)} * kScopeSize
+               : read64(sourceRecord + 16)) != read64(target + 16) ||
+          !terminalPrimitives.emplace(sourceEndpoint, packedTarget).second)
+        return false;
+    }
     bool sourceExpression = sourceExpressionObjects.count(sourceEndpoint) != 0;
     bool targetExpression = sourceExpressionObjects.count(packedTarget) != 0;
     using Kind = obelisk::reflection::VPIObjectKind;
@@ -7193,6 +7258,21 @@ bool validateDatabaseImpl(const Database &database) {
           scope->second != owner->second)
         return false;
     }
+  }
+  std::unordered_map<uint32_t, uint64_t> terminalInputCounts;
+  for (uint32_t terminal : primitiveTerminals) {
+    auto owner = terminalOwners.find(terminal);
+    auto reverse = terminalPrimitives.find(terminal);
+    if (owner == terminalOwners.end() || reverse == terminalPrimitives.end() ||
+        owner->second != reverse->second)
+      return false;
+    terminalInputCounts[owner->second] += terminalDirections.at(terminal) == 1;
+  }
+  for (auto [owner, count] : terminalInputCounts) {
+    uint64_t offset = 0;
+    if (!packedObjectReferenceOffset(database, owner, offset) ||
+        read64(database.data + offset + 56) != count)
+      return false;
   }
   // Rootless typedefs retain a distinct identity and terminate at an unresolved
   // parameter of the same lexical class. Memoized iterative walks reject cycles

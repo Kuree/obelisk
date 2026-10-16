@@ -734,6 +734,34 @@ SimVPIRelationDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
              << endpoint << " VPI symbol " << reference.getSymbol()
              << " must name an object anchor, typespec, or nettype";
   }
+  if (getSource().getKind() == VPIObjectRefKind::Symbol &&
+      getTarget().getKind() == VPIObjectRefKind::Symbol) {
+    auto source = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+        *this, getSource().getSymbol());
+    auto target = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+        *this, getTarget().getSymbol());
+    using Kind = reflection::VPIObjectKind;
+    if (source &&
+        source.getVpiKind() == static_cast<uint32_t>(Kind::PrimTerm) &&
+        getSelector() ==
+            static_cast<uint32_t>(reflection::VPIRelationKind::PrimitiveRel) &&
+        (getMode() != VPIRelationMode::Handle || !target ||
+         source.getParentAttr() != getTarget().getSymbol()))
+      return emitOpError(
+          "primitive terminal relation must name its exact owner");
+    if (target &&
+        target.getVpiKind() == static_cast<uint32_t>(Kind::PrimTerm) &&
+        source &&
+        (source.getVpiKind() == static_cast<uint32_t>(Kind::Gate) ||
+         source.getVpiKind() == static_cast<uint32_t>(Kind::Switch) ||
+         source.getVpiKind() == static_cast<uint32_t>(Kind::Udp)) &&
+        getSelector() == static_cast<uint32_t>(Kind::PrimTerm) &&
+        (getMode() != VPIRelationMode::Iterate ||
+         target.getParentAttr() != getSource().getSymbol() ||
+         getOrdinal() != target.getOwnerOrdinal()))
+      return emitOpError(
+          "primitive terminal inventory must preserve exact owner and index");
+  }
   if (getSelector() ==
           static_cast<uint32_t>(reflection::VPIRelationKind::ExprRel) &&
       getMode() == VPIRelationMode::Handle &&
@@ -795,11 +823,11 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
   Kind anchorKind = static_cast<Kind>(getVpiKind());
   const bool sourceExpression =
       anchorKind == Kind::Constant || anchorKind == Kind::Operation;
-  if (sourceExpression) {
+  if (sourceExpression || anchorKind == Kind::PrimTerm) {
     if (!getHierarchicalName().empty() || !getDebugName().empty() ||
         !getParentAttr() || getBackingAttr())
-      return emitOpError(
-          "source expression requires unnamed immutable ownership");
+      return emitOpError("source expression or primitive terminal requires "
+                         "unnamed immutable ownership");
   } else if (getHierarchicalName().empty()) {
     return emitOpError("requires a nonempty source hierarchy name");
   }
@@ -857,6 +885,7 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
   case Kind::Gate:
   case Kind::Switch:
   case Kind::Udp:
+  case Kind::PrimTerm:
   case Kind::NamedEvent:
   case Kind::Parameter:
   case Kind::TypeParameter:
@@ -930,6 +959,22 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
        getBackingAttr() || !getParentAttr()))
     return emitOpError("unresolved value parameter requires a lexical owner "
                        "and no effective payload");
+  if (anchorKind == Kind::PrimTerm) {
+    if (hasVPIType || hasImmutableValue || getOwnerOrdinal() > INT32_MAX)
+      return emitOpError(
+          "primitive terminal requires no payload and an encodable index");
+    IntegerAttr direction;
+    if (auto properties = reflectionProperties(*this))
+      for (Attribute attribute : properties.getProperties()) {
+        auto property = cast<VPIPropertyAttr>(attribute);
+        uint64_t selector = property.getSelector().getValue().getZExtValue();
+        if (selector == 20)
+          direction = dyn_cast<IntegerAttr>(property.getValue());
+      }
+    if (!direction || direction.getInt() < 1 || direction.getInt() > 3)
+      return emitOpError("primitive terminal requires exact input/output/inout "
+                         "direction and owner index");
+  }
   if (anchorKind == Kind::Constant && !hasImmutableValue)
     return emitOpError("source constant requires an exact immutable value");
   if (anchorKind == Kind::Operation && (hasVPIType || hasImmutableValue))
@@ -1134,7 +1179,8 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     using Kind = reflection::VPIObjectKind;
     Kind childKind = static_cast<Kind>(getVpiKind());
     Kind parentKind = static_cast<Kind>(getVPILexicalOwnerKind(owner));
-    if ((childKind == Kind::Constant || childKind == Kind::Operation) &&
+    if ((childKind == Kind::Constant || childKind == Kind::Operation ||
+         childKind == Kind::PrimTerm) &&
         getEnclosingScopeId() != getVPILexicalOwnerScope(owner))
       return emitOpError("source expression scope must match its exact owner");
     if (getUnresolvedValueParameterAttr() && parentKind != Kind::ClassDefn)
@@ -1250,6 +1296,10 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     case Kind::GenScope:
       legal = isDesignScope(parentKind) || parentKind == Kind::GenScope ||
               parentKind == Kind::GenScopeArray;
+      break;
+    case Kind::PrimTerm:
+      legal = parentKind == Kind::Gate || parentKind == Kind::Switch ||
+              parentKind == Kind::Udp;
       break;
     case Kind::Gate:
       legal = parentKind == Kind::GateArray || isDeclarationScope(parentKind);
@@ -5998,6 +6048,30 @@ LogicalResult SimDesignOp::verifyRegions() {
     }
     }
   }
+  llvm::DenseMap<Operation *, uint64_t> terminalInputCounts;
+  for (auto terminal : vpiAnchors) {
+    if (terminal.getVpiKind() !=
+        static_cast<uint32_t>(reflection::VPIObjectKind::PrimTerm))
+      continue;
+    auto primitive = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+        terminal, terminal.getParentAttr());
+    if (!primitive)
+      continue; // The symbol verifier diagnoses the missing owner.
+    auto properties = reflectionProperties(terminal);
+    if (!properties)
+      continue;
+    auto &count = terminalInputCounts[primitive];
+    for (Attribute attribute : properties.getProperties()) {
+      auto property = cast<VPIPropertyAttr>(attribute);
+      if (property.getSelector().getInt() == 20 &&
+          cast<IntegerAttr>(property.getValue()).getInt() == 1)
+        ++count;
+    }
+  }
+  for (auto [owner, count] : terminalInputCounts)
+    if (cast<SimVPIObjectAnchorOp>(owner).getPrimitiveInputCount() != count)
+      return owner->emitOpError(
+          "primitive input count must match its terminal directions");
   for (const auto &entry : anchorOrdinals) {
     for (uint64_t ordinal = 0; ordinal != entry.second.size(); ++ordinal)
       if (!entry.second.contains(ordinal))

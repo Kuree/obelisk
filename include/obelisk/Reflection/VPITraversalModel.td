@@ -480,7 +480,9 @@ def VectorProperty : VPIProperty<"vpiVector", 18, BooleanProperty,
   VectorPropertyObjects, "37.14; 37.16; 37.17; 37.25">;
 def PortDirectionProperty : VPIProperty<"vpiDirection", 20, IntegerProperty,
   DirectionPropertyObjects,
-  "37.13; 37.14; 37.35; 37.39; 37.48; 37.51; 37.53">;
+  "37.13; 37.14; 37.35; 37.39; 37.48; 37.51; 37.53",
+  StaticProperty, DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
+  DerivedProperty, VPIObjectSet<"PrimitiveTerminalDirectionObjects", [PrimTerm]>>;
 def PortIndexProperty : VPIProperty<"vpiPortIndex", 29, IntegerProperty,
   PortIndexPropertyObjects, "37.14">;
 def PortTypeProperty : VPIProperty<"vpiPortType", 611, IntegerProperty,
@@ -1236,7 +1238,7 @@ def StaticImageObjects
            ClassDefn, Extends, Constraint, Modport, Task, FuncCall, TaskCall,
            MethodFuncCall, MethodTaskCall, SysFuncCall, SysTaskCall, Function,
            ClockingBlock, GenScope, PropertyDecl, SequenceDecl, Gate, Switch,
-           Udp, NamedEvent, ModuleArray, InterfaceArray, ProgramArray,
+           Udp, PrimTerm, NamedEvent, ModuleArray, InterfaceArray, ProgramArray,
            GateArray, SwitchArray, UdpArray, NamedEventArray, GenScopeArray,
            InterconnectArray, LongIntTypespec, ShortRealTypespec, ByteTypespec,
            ShortIntTypespec, IntTypespec, ClassTypespec, StringTypespec,
