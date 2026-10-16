@@ -14607,6 +14607,111 @@ obelisk_rt_status obelisk_rt_cached_vpi_selected_use_candidates(
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
 }
 
+obelisk_rt_status obelisk_rt_cached_vpi_net_connection_candidates(
+    const obelisk_rt_context *context, bool drivers,
+    std::vector<VPINetConnectionCandidate> &candidates) noexcept {
+  candidates.clear();
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const auto *database = cachedDatabase(context);
+  if (!database)
+    return OBELISK_RT_INVALID_DESIGN;
+  using Kind = obelisk::reflection::VPIObjectKind;
+  using Rel = obelisk::reflection::VPIRelationKind;
+  OBELISK_RT_TRY {
+    auto relation = [&](obelisk_rt_design_cursor_v1 owner, uint32_t selector,
+                        obelisk_rt_design_cursor_v1 &target, uint32_t &kind) {
+      VPIRelationRange range{};
+      auto status =
+          designVPIRelationRange(*database, owner, selector, false, &range);
+      if (status != OBELISK_RT_OK)
+        return status;
+      bool statement = false;
+      if (range.count != 1 ||
+          designVPIRelationTarget(*database, range.first, &target, &kind,
+                                  &statement) != OBELISK_RT_OK)
+        return OBELISK_RT_INVALID_DESIGN;
+      return OBELISK_RT_OK;
+    };
+    auto add = [&](uint64_t offset, uint32_t kind, uint64_t scope) {
+      VPINetConnectionCandidate candidate;
+      candidate.owner = {offset};
+      candidate.ownerKind = kind;
+      if (kind == uint32_t(Kind::PrimTerm)) {
+        VPIFixedPropertyValue direction{};
+        if (designVPIFixedProperty(*database, candidate.owner, 20,
+                                   &direction) != OBELISK_RT_OK)
+          return OBELISK_RT_INVALID_DESIGN;
+        if (direction.payload != 3 && direction.payload != (drivers ? 2u : 1u))
+          return OBELISK_RT_OK;
+      }
+      uint32_t selector = kind == uint32_t(Kind::ContAssign)
+                              ? uint32_t(drivers ? Rel::LhsRel : Rel::RhsRel)
+                              : uint32_t(Rel::ExprRel);
+      auto status = relation(candidate.owner, selector, candidate.expression,
+                             candidate.expressionKind);
+      if (status == OBELISK_RT_EOF)
+        return OBELISK_RT_OK;
+      if (status != OBELISK_RT_OK)
+        return status;
+      if (kind == uint32_t(Kind::ContAssign)) {
+        status = relation(candidate.owner,
+                          uint32_t(drivers ? Rel::RhsRel : Rel::LhsRel),
+                          candidate.peer, candidate.peerKind);
+        if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF)
+          return status;
+      }
+      while (isScopeOffset(*database, scope)) {
+        auto scopeKind = recordVPIKind(database->data + scope);
+        if (scopeKind == uint32_t(Kind::Module)) {
+          candidate.module = {scope};
+          break;
+        }
+        if (scopeKind == uint32_t(Kind::Interface) ||
+            scopeKind == uint32_t(Kind::Program))
+          break;
+        scope = read64(database->data + scope + 16);
+      }
+      candidates.push_back(candidate);
+      return OBELISK_RT_OK;
+    };
+    for (uint64_t index = 0; index != database->statementCount; ++index) {
+      uint64_t offset = database->statements + index * kStatementSize;
+      const uint8_t *row = database->data + offset;
+      if (read16(row + 36) == uint32_t(Kind::ContAssign)) {
+        auto status =
+            add(offset, uint32_t(Kind::ContAssign),
+                database->scopes + uint64_t{read32(row + 12)} * kScopeSize);
+        if (status != OBELISK_RT_OK)
+          return status;
+      }
+    }
+    for (uint64_t index = 0; index != database->objectCount; ++index) {
+      uint64_t offset = database->objects + index * kObjectSize;
+      const uint8_t *row = database->data + offset;
+      if (recordVPIKind(row) == uint32_t(Kind::PrimTerm)) {
+        auto status = add(offset, uint32_t(Kind::PrimTerm), read64(row + 16));
+        if (status != OBELISK_RT_OK)
+          return status;
+      }
+    }
+    for (uint64_t index = 0; index != database->staticObjectCount; ++index) {
+      uint64_t offset = database->staticObjects + index * kStaticObjectSize;
+      const uint8_t *row = database->data + offset;
+      if (read16(row + 28) == uint32_t(Kind::PrimTerm)) {
+        auto status =
+            add(offset, uint32_t(Kind::PrimTerm),
+                database->scopes + uint64_t{read32(row + 8)} * kScopeSize);
+        if (status != OBELISK_RT_OK)
+          return status;
+      }
+    }
+    return candidates.empty() ? OBELISK_RT_EOF : OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+}
+
 obelisk_rt_status obelisk_rt_cached_vpi_expression_operand_identifier(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     uint32_t index, const uint8_t **outData, uint64_t *outSize) noexcept {

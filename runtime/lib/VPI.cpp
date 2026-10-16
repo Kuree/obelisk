@@ -79,7 +79,8 @@ enum class VPIObjectForm : uint8_t {
   ClassObject,
   Thread,
   Frame,
-  SnapshotValue
+  SnapshotValue,
+  ContAssignBit
 };
 
 enum class VPISemanticIteratorKind : uint8_t {
@@ -169,6 +170,13 @@ struct VPISelectionStep {
   std::shared_ptr<const VPIAssociativeSelection> associativeKey;
 };
 
+struct VPIConnectionTarget {
+  obelisk_rt_design_cursor_v1 cursor{};
+  uint32_t kind = 0;
+  bool statement = false;
+  uint64_t assignmentOffset = UINT64_MAX;
+};
+
 struct VPIInterModPathEndpoint {
   VPIObjectForm form = VPIObjectForm::Design;
   obelisk_rt_design_cursor_v1 cursor{};
@@ -230,6 +238,9 @@ struct __vpiHandle {
   // indices directly and never populate this vector.
   std::vector<obelisk_rt_design_cursor_v1> items;
   std::vector<VPIInterModPathEndpoint> interModPathEndpoints;
+  std::vector<VPIConnectionTarget> connectionItems;
+  bool connectionIterator = false;
+  uint64_t assignmentOffset = 0;
   std::vector<uint64_t> timeQueueItems;
   std::vector<uint64_t> threadItems;
   std::vector<VPIFrameLocalBinding> localItems;
@@ -1548,6 +1559,11 @@ bool valueSourceFor(
     __vpiHandle *handle,
     const obelisk::reflection::VPIValuePolicyDescriptor &queryPolicy,
     VPIValueSource &source) {
+  if (handle->form == VPIObjectForm::ContAssignBit) {
+    setError(handle->owner, "assignment bit has no retained contribution value",
+             vpiNotice);
+    return false;
+  }
   source = {};
   source.form = handle->form;
   source.cursor = handle->cursor;
@@ -6544,6 +6560,244 @@ obelisk_rt_status selectedUseRanges(__vpiHandle *handle,
   return ranges.empty() ? OBELISK_RT_EOF : OBELISK_RT_OK;
 }
 
+// 37.16d18/d19: derive connectivity from exact retained source roles and
+// snapshot the selected simulation span at iterator construction.
+obelisk_rt_status
+selectedNetConnections(__vpiHandle *handle, uint32_t selector,
+                       std::vector<VPIConnectionTarget> &targets) {
+  const bool drivers = selector == vpiDriver || selector == vpiLocalDriver;
+  const bool local = selector == vpiLocalDriver || selector == vpiLocalLoad;
+  auto *context = handle->owner->context;
+  const auto *policy = valuePolicyFor(handle);
+  VPIValueSource source{};
+  VPISelectedSpan query{};
+  if (!policy || !valueSourceFor(handle, *policy, source))
+    return OBELISK_RT_INVALID_HANDLE;
+  auto status =
+      selectedObjectSpan(handle, source, source.info.bit_width, false, query);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (query.info.kind != OBELISK_RT_DESIGN_RECORD_NET)
+    return OBELISK_RT_EOF;
+  obelisk_rt_design_info_v1 declaration{};
+  if (obelisk_rt_cached_design_info(context, query.cursor, &declaration) !=
+      OBELISK_RT_OK)
+    return OBELISK_RT_INVALID_DESIGN;
+  const bool bitQuery = source.exactType == vpiNetBit;
+  VPIFixedPropertyValue netType{};
+  if (drivers && bitQuery &&
+      obelisk_rt_cached_vpi_fixed_property(context, query.cursor, vpiNetType,
+                                           &netType) == OBELISK_RT_OK &&
+      (netType.payload == vpiNettypeNet ||
+       netType.payload == vpiNettypeNetSelect))
+    return OBELISK_RT_EOF;
+  uint64_t queryOffset = 0;
+  if (obelisk_rt_design_state_offset(context, query.cursor, query.offset,
+                                     &queryOffset) != OBELISK_RT_OK)
+    return OBELISK_RT_INVALID_DESIGN;
+  obelisk_rt_design_cursor_v1 queryModule = query.cursor;
+  if (local) {
+    uint32_t kind = 0;
+    for (;;) {
+      if (obelisk_rt_cached_vpi_type(context, queryModule, &kind) !=
+          OBELISK_RT_OK)
+        return OBELISK_RT_INVALID_DESIGN;
+      if (kind == vpiModule)
+        break;
+      if (kind == vpiInterface || kind == vpiProgram ||
+          obelisk_rt_cached_design_parent(context, queryModule, &queryModule) !=
+              OBELISK_RT_OK) {
+        queryModule = {};
+        break;
+      }
+    }
+  }
+  const auto *edge = obelisk::reflection::findVPITraversal(
+      source.exactType, selector,
+      obelisk::reflection::VPITraversalMode::Iterate);
+  if (!edge)
+    return OBELISK_RT_EOF;
+  auto append = [&](VPIConnectionTarget target) {
+    if (!obelisk::reflection::vpiObjectSetContains(edge->targets, target.kind))
+      return;
+    if (std::none_of(targets.begin(), targets.end(), [&](const auto &other) {
+          return target.cursor.offset == other.cursor.offset &&
+                 target.kind == other.kind &&
+                 target.assignmentOffset == other.assignmentOffset;
+        }))
+      targets.push_back(target);
+  };
+  // Interface/program local connectivity keeps its existing exact physical
+  // rows. Do not merge their instances through an enclosing module.
+  if (local && !queryModule.offset) {
+    VPIRelationRange physical{};
+    status = obelisk_rt_cached_vpi_relation_range(context, query.cursor,
+                                                  selector, true, &physical);
+    if (status != OBELISK_RT_OK)
+      return status;
+    for (uint64_t index = 0; index != physical.count; ++index) {
+      VPIConnectionTarget target;
+      if (obelisk_rt_cached_vpi_relation_target(
+              context, physical.first + index, &target.cursor, &target.kind,
+              &target.statement) != OBELISK_RT_OK)
+        return OBELISK_RT_INVALID_DESIGN;
+      append(target);
+    }
+    return targets.empty() ? OBELISK_RT_EOF : OBELISK_RT_OK;
+  }
+  std::vector<VPINetConnectionCandidate> candidates;
+  status = obelisk_rt_cached_vpi_net_connection_candidates(context, drivers,
+                                                           candidates);
+  if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF)
+    return status;
+  std::unordered_set<uint64_t> derivedOwners;
+  for (const auto &candidate : candidates) {
+    if (local && candidate.module.offset != queryModule.offset)
+      continue;
+    __vpiHandle expression;
+    expression.owner = handle->owner;
+    expression.cursor = candidate.expression;
+    expression.exactVpiType = candidate.expressionKind;
+    inheritExpressionContext(expression, *handle);
+    const auto *expressionPolicy = valuePolicyFor(&expression);
+    VPIValueSource actual{};
+    VPISelectedSpan span{};
+    // This first mapping covers direct declarations and pure selections.
+    // Arithmetic and concatenation require their own transport proof.
+    if (candidate.expressionKind != vpiNet &&
+        candidate.expressionKind != vpiBitNet &&
+        candidate.expressionKind != vpiNetBit &&
+        candidate.expressionKind != vpiPartSelect &&
+        candidate.expressionKind != vpiIndexedPartSelect)
+      continue;
+    // Ignore unrelated declarations before evaluating any live index. A
+    // selection elsewhere in the design need not have a readable index in
+    // this activation. This structural pass does not infer a selected span.
+    auto backing = candidate.expression;
+    for (;;) {
+      VPIExpressionInfo recipe{};
+      if (obelisk_rt_cached_vpi_expression(context, backing, &recipe) !=
+          OBELISK_RT_OK)
+        break;
+      if (recipe.kind != vpiPartSelect && recipe.kind != vpiIndexedPartSelect &&
+          !obelisk::reflection::isVPIBitSelection(recipe.kind)) {
+        backing = {};
+        break;
+      }
+      uint32_t kind = 0;
+      if (obelisk_rt_cached_vpi_expression_operand(
+              context, backing, 0, &backing, &kind) != OBELISK_RT_OK)
+        return OBELISK_RT_INVALID_DESIGN;
+    }
+    obelisk_rt_design_info_v1 backingInfo{};
+    uint64_t backingOffset = 0;
+    if (!backing.offset ||
+        obelisk_rt_cached_design_info(context, backing, &backingInfo) !=
+            OBELISK_RT_OK ||
+        backingInfo.kind != OBELISK_RT_DESIGN_RECORD_NET)
+      continue;
+    if (obelisk_rt_design_state_offset(context, backing, 0, &backingOffset) !=
+        OBELISK_RT_OK)
+      return OBELISK_RT_INVALID_DESIGN;
+    if (backingOffset >= queryOffset + query.width ||
+        queryOffset >= backingOffset + backingInfo.bit_width)
+      continue;
+    if (!expressionPolicy ||
+        !valueSourceFor(&expression, *expressionPolicy, actual))
+      return OBELISK_RT_INVALID_HANDLE;
+    status = selectedObjectSpan(&expression, actual, actual.info.bit_width,
+                                false, span);
+    if (status == OBELISK_RT_EOF)
+      continue;
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (span.info.kind != OBELISK_RT_DESIGN_RECORD_NET)
+      continue;
+    uint64_t first = 0;
+    if (obelisk_rt_design_state_offset(context, span.cursor, span.offset,
+                                       &first) != OBELISK_RT_OK)
+      return OBELISK_RT_INVALID_DESIGN;
+    if (first >= queryOffset + query.width || queryOffset >= first + span.width)
+      continue;
+    derivedOwners.insert(candidate.owner.offset);
+    if (!bitQuery && query.width > 1 &&
+        (candidate.expressionKind == vpiPartSelect ||
+         candidate.expressionKind == vpiIndexedPartSelect) &&
+        (first != queryOffset || span.width != query.width)) {
+      append(
+          {candidate.expression, candidate.expressionKind, false, UINT64_MAX});
+      continue;
+    }
+    if (candidate.ownerKind == vpiPrimTerm) {
+      // This bounded terminal mapping requires a scalar selected span.
+      if (span.width == 1)
+        append({candidate.owner, vpiPrimTerm, false, UINT64_MAX});
+      continue;
+    }
+    if (bitQuery) {
+      // Rhs truncation/sign-extension or nonlinear transport is not an exact
+      // bit map. A same-width Lhs proves the assignment offset directly.
+      if (!drivers) {
+        switch (candidate.peerKind) {
+        case vpiNet:
+        case vpiBitNet:
+        case vpiNetBit:
+        case vpiReg:
+        case vpiBitVar:
+        case vpiRegBit:
+        case vpiIntegerVar:
+        case vpiIntVar:
+        case vpiShortIntVar:
+        case vpiLongIntVar:
+        case vpiByteVar:
+        case vpiTimeVar:
+        case vpiPartSelect:
+        case vpiIndexedPartSelect:
+          break;
+        default:
+          continue;
+        }
+        __vpiHandle peer;
+        peer.owner = handle->owner;
+        peer.cursor = candidate.peer;
+        peer.exactVpiType = candidate.peerKind;
+        inheritExpressionContext(peer, *handle);
+        const auto *peerPolicy = valuePolicyFor(&peer);
+        VPIValueSource peerSource{};
+        if (!candidate.peer.offset || !peerPolicy ||
+            !valueSourceFor(&peer, *peerPolicy, peerSource) ||
+            peerSource.info.bit_width != span.width)
+          continue;
+      }
+      append({candidate.owner, vpiContAssignBit, true, queryOffset - first});
+    } else {
+      append({candidate.owner, vpiContAssign, true, UINT64_MAX});
+    }
+  }
+  // Preserve other retained connection families. Direct assignments and
+  // terminals above are re-derived, including collapsed backing aliases.
+  VPIRelationRange physical{};
+  status = obelisk_rt_cached_vpi_relation_range(context, query.cursor, selector,
+                                                true, &physical);
+  if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF)
+    return status;
+  if (status == OBELISK_RT_OK)
+    for (uint64_t index = 0; index != physical.count; ++index) {
+      VPIConnectionTarget target;
+      if (obelisk_rt_cached_vpi_relation_target(
+              context, physical.first + index, &target.cursor, &target.kind,
+              &target.statement) != OBELISK_RT_OK)
+        return OBELISK_RT_INVALID_DESIGN;
+      if ((target.kind == vpiContAssign || target.kind == vpiPrimTerm) &&
+          (bitQuery || derivedOwners.count(target.cursor.offset)))
+        continue;
+      // Other whole-vector relations have no selected-bit transport proof.
+      if (!bitQuery || declaration.bit_width == 1)
+        append(target);
+    }
+  return targets.empty() ? OBELISK_RT_EOF : OBELISK_RT_OK;
+}
+
 bool preparePrimitiveValue(__vpiHandle *handle, VPIValueSource &source) {
   auto *context = handle->owner->context;
   auto unavailable = [&]() {
@@ -9533,6 +9787,11 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       obelisk_rt_cached_vpi_type(handle->owner->context, handle->cursor,
                                  &sourceType) != OBELISK_RT_OK)
     return nullptr;
+  if (handle->form == VPIObjectForm::ContAssignBit) {
+    if (type == vpiParent)
+      return makeRelatedHandle(handle, handle->cursor, vpiContAssign, true);
+    return nullptr;
+  }
   if ((type == vpiLeftRange || type == vpiRightRange) &&
       (handle->liveInterfaceRange ||
        ((handle->form == VPIObjectForm::Design ||
@@ -10514,6 +10773,34 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       return nullptr;
     }
   }
+  if (reference &&
+      (sourceType == vpiNet || sourceType == vpiBitNet ||
+       sourceType == vpiNetBit) &&
+      (type == vpiDriver || type == vpiLocalDriver || type == vpiLoad ||
+       type == vpiLocalLoad)) {
+    OBELISK_RT_TRY {
+      auto iterator = std::make_unique<__vpiHandle>();
+      auto status = selectedNetConnections(referenceHandle, type,
+                                           iterator->connectionItems);
+      if (status == OBELISK_RT_EOF)
+        return nullptr;
+      if (status != OBELISK_RT_OK) {
+        setError(state, "could not resolve selected net connections",
+                 status == OBELISK_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
+        return nullptr;
+      }
+      iterator->owner = state;
+      iterator->kind = VPIHandleKind::Iterator;
+      iterator->iteratorType = type;
+      iterator->connectionIterator = true;
+      copyUseRecipe(*iterator, *referenceHandle);
+      return keepHandle(state, std::move(iterator));
+    }
+    OBELISK_RT_CATCH_ALL {
+      setError(state, "could not allocate net connection iterator", vpiSystem);
+      return nullptr;
+    }
+  }
   if (reference && type == vpiUse &&
       (sourceDesign ||
        (referenceHandle->form == VPIObjectForm::Indexed &&
@@ -11025,6 +11312,22 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
     return makeFrameLocalHandle(state, iterator->frameActivation,
                                 iterator->localItems[iterator->next++]);
   }
+  if (iterator->connectionIterator) {
+    if (iterator->next == iterator->connectionItems.size()) {
+      iterator->owner->handles.erase(iterator->token);
+      return nullptr;
+    }
+    const auto &target = iterator->connectionItems[iterator->next++];
+    auto result = makeHandle(iterator->owner, target.cursor, target.kind,
+                             target.statement);
+    if (auto *object = findHandle(result)) {
+      if (target.assignmentOffset != UINT64_MAX) {
+        object->form = VPIObjectForm::ContAssignBit;
+        object->assignmentOffset = target.assignmentOffset;
+      }
+    }
+    return result;
+  }
   if (iterator->relationIterator) {
     VPIState *state = iterator->owner;
     const uintptr_t iteratorToken = iterator->token;
@@ -11213,6 +11516,15 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     setError(handle->owner, "property is not a 32-bit integer VPI property",
              vpiNotice);
     return vpiUndefined;
+  }
+  if (handle->form == VPIObjectForm::ContAssignBit) {
+    if (property == vpiOffset) {
+      if (handle->assignmentOffset <= INT32_MAX)
+        return static_cast<PLI_INT32>(handle->assignmentOffset);
+      setError(handle->owner,
+               "assignment offset exceeds the integer query range", vpiNotice);
+      return vpiUndefined;
+    }
   }
   uint32_t inheritanceCaps = sourceInheritanceCapabilities(handle);
   if (property == vpiClassType &&
@@ -13761,6 +14073,11 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_compare_objects(vpiHandle first,
     setError(left->owner, "VPI handle kind does not denote an object");
     return 0;
   }
+  if (left->form == VPIObjectForm::ContAssignBit ||
+      right->form == VPIObjectForm::ContAssignBit)
+    return left->owner == right->owner && left->form == right->form &&
+           left->cursor.offset == right->cursor.offset &&
+           left->assignmentOffset == right->assignmentOffset;
   if (left->form == VPIObjectForm::SnapshotValue ||
       right->form == VPIObjectForm::SnapshotValue)
     return left->form == right->form &&

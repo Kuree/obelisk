@@ -460,3 +460,14 @@ occurrence and report a notice for the unresolved base type. Lexical class types
 do not expose specialization member inventories. Their parameter iteration
 reuses the exact defining class declarations, including body localparams,
 preserving declaration scope, original defaults, and ParamAssign Lhs identity.
+
+Selected net Driver/Load queries derive whole-declaration and pure-selection
+connections from retained continuous-assignment and scalar primitive-terminal
+expressions. Whole vector queries return exact partial-select occurrences; net
+bit queries return assignment-bit identities only for proved assignment offsets.
+Derived local queries use the net declaration's nearest module instance,
+including aliases of the same physical backing. Interface/program local queries
+preserve their existing physical relations. Iteration snapshots dynamic
+selections without adding database records. Address/index loads, general
+arithmetic/concatenation transport, selected port connectivity, and
+assignment-bit contribution values remain followups.

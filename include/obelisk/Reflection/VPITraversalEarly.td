@@ -416,14 +416,35 @@ def VPIEarlyInterconnectParent : VPITraversalEdge<
   VPIEarlyInterconnectArrayElementTargets, ParentRel, HandleMode,
   VPIEarlyNets, NoOrder, "37.16", 0,
   AutomaticIndexedContainer>;
-def VPIEarlyNetDrivers : VPITraversalEdge<NetObjects, DriverRel, IterateMode,
-  VPIEarlyNetDriverTargets, NoOrder, "37.16; 37.46">;
-def VPIEarlyNetLoads : VPITraversalEdge<NetObjects, LoadRel, IterateMode,
-  VPIEarlyLoads, NoOrder, "37.16; 37.46">;
-def VPIEarlyNetLocalDrivers : VPITraversalEdge<NetObjects, LocalDriverRel,
-  IterateMode, VPIEarlyNetDriverTargets, NoOrder, "37.16">;
-def VPIEarlyNetLocalLoads : VPITraversalEdge<NetObjects, LocalLoadRel,
-  IterateMode, VPIEarlyLoads, NoOrder, "37.16">;
+// 37.16 detail 18 supplements the driver/load diagram: a partial vector
+// connection is returned as its exact selection occurrence. The bounded
+// retained source proof currently covers ordinary logic and bit vectors.
+def VPIEarlyPartialConnectionSources : VPIObjectSet<
+  "EarlyPartialConnectionSources", [Net, BitNet]>;
+def VPIEarlyOtherNetConnectionSources : VPIObjectSet<
+  "EarlyOtherNetConnectionSources", [], [NetFamily], [Net, BitNet]>;
+def VPIEarlyPartialDriverTargets : VPIObjectSet<
+  "EarlyPartialDriverTargets", [Port, Force, DelayTerm, ContAssign,
+    ContAssignBit, PrimTerm, PartSelect, IndexedPartSelect]>;
+def VPIEarlyPartialLoadTargets : VPIObjectSet<
+  "EarlyPartialLoadTargets", [DelayTerm, AssignStmt, Force, ContAssign,
+    ContAssignBit, PrimTerm, Port, PartSelect, IndexedPartSelect]>;
+def VPIEarlyNetDrivers : VPITraversalEdge<VPIEarlyOtherNetConnectionSources,
+  DriverRel, IterateMode, VPIEarlyNetDriverTargets, NoOrder, "37.16; 37.46">;
+def VPIEarlyNetLoads : VPITraversalEdge<VPIEarlyOtherNetConnectionSources,
+  LoadRel, IterateMode, VPIEarlyLoads, NoOrder, "37.16; 37.46">;
+def VPIEarlyNetLocalDrivers : VPITraversalEdge<VPIEarlyOtherNetConnectionSources,
+  LocalDriverRel, IterateMode, VPIEarlyNetDriverTargets, NoOrder, "37.16">;
+def VPIEarlyNetLocalLoads : VPITraversalEdge<VPIEarlyOtherNetConnectionSources,
+  LocalLoadRel, IterateMode, VPIEarlyLoads, NoOrder, "37.16">;
+def VPIEarlyPartialNetDrivers : VPITraversalEdge<VPIEarlyPartialConnectionSources,
+  DriverRel, IterateMode, VPIEarlyPartialDriverTargets, NoOrder, "37.16; 37.46">;
+def VPIEarlyPartialNetLoads : VPITraversalEdge<VPIEarlyPartialConnectionSources,
+  LoadRel, IterateMode, VPIEarlyPartialLoadTargets, NoOrder, "37.16; 37.46">;
+def VPIEarlyPartialNetLocalDrivers : VPITraversalEdge<VPIEarlyPartialConnectionSources,
+  LocalDriverRel, IterateMode, VPIEarlyPartialDriverTargets, NoOrder, "37.16">;
+def VPIEarlyPartialNetLocalLoads : VPITraversalEdge<VPIEarlyPartialConnectionSources,
+  LocalLoadRel, IterateMode, VPIEarlyPartialLoadTargets, NoOrder, "37.16">;
 def VPIEarlyNetPrimTerms : VPITraversalEdge<NetObjects, PrimTerm, IterateMode,
   PrimTermObjects, NoOrder, "37.16">;
 def VPIEarlyNetContAssigns : VPITraversalEdge<NetObjects, ContAssign,

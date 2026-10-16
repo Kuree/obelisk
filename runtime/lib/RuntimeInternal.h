@@ -1934,6 +1934,17 @@ obelisk_rt_status obelisk_rt_cached_vpi_selected_use_candidates(
     const obelisk_rt_context *, obelisk_rt_design_cursor_v1,
     uint32_t selectedKind, std::vector<VPISelectedUseCandidate> &) noexcept;
 
+// Existing source connections, enumerated only for cold Driver/Load queries.
+// The role expression may be a shared recipe or an ordinary declaration. Peer
+// is the opposite assignment side, used only for independently proved bit maps.
+struct VPINetConnectionCandidate {
+  obelisk_rt_design_cursor_v1 owner{}, expression{}, peer{}, module{};
+  uint32_t ownerKind = 0, expressionKind = 0, peerKind = 0;
+};
+obelisk_rt_status obelisk_rt_cached_vpi_net_connection_candidates(
+    const obelisk_rt_context *, bool drivers,
+    std::vector<VPINetConnectionCandidate> &) noexcept;
+
 struct VPIFrozenValue {
   uint32_t kindAndFlags = 0;
   uint64_t bitWidth = 0;
