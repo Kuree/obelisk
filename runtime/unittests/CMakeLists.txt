@@ -95,6 +95,7 @@ set_target_properties(ObeliskRuntimeTests PROPERTIES
 )
 
 add_executable(ObeliskProcessRuntimeTests
+  DPIExportReentryTest.cpp
   ProcessTest.cpp
   TableProcessTest.cpp
 )

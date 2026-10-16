@@ -5934,6 +5934,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
     obelisk_rt_execution_tier tier = selected->tier;
     const ScheduledProcess &scheduled =
         context->scheduledProcesses[selectedIndex];
+    const uint64_t selectedToken = scheduled.token;
     bool requireBytecode =
         context->execution && (context->execution->flags &
                                OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;
@@ -5966,7 +5967,15 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
     bool killRequested = false;
     auto clearActiveProcess = [&](bool dpiDisabled) {
       ContextMutexLock lock(context);
+      // A nested DPI export can finish other processes and compact the
+      // schedule while this process is executing. Recover its current index
+      // from the stable token before restoring controls or applying its action.
+      auto indexed = context->scheduledProcessIndices.find(selectedToken);
+      selectedIndex = indexed != context->scheduledProcessIndices.end()
+                          ? indexed->second
+                          : SIZE_MAX;
       if (selectedIndex < context->scheduledProcesses.size() &&
+          context->scheduledProcesses[selectedIndex].token == selectedToken &&
           context->scheduledProcesses[selectedIndex].instance == selected) {
         context->scheduledProcesses[selectedIndex].controls =
             std::move(context->activeControls);
