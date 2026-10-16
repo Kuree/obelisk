@@ -710,7 +710,8 @@ class ObeliskForLoopStatementASTNodeOp<string mnemonic>
     : ObeliskASTNodeOp<mnemonic, [], (ins
         I64Attr:$initializer_count,
         BoolAttr:$has_condition,
-        I64Attr:$step_count
+        I64Attr:$step_count,
+        DefaultValuedAttr<BoolAttr, "false">:$has_local_variables
       )> {
   let hasVerifier = 1;
 }
@@ -727,8 +728,11 @@ class ObeliskBlockStatementASTNodeOp<string mnemonic>
         DefaultValuedAttr<ObeliskSVStatementBlockKind,
           "::obelisk::ir::SVStatementBlockKind::Sequential">:$block_kind,
         OptionalAttr<SymbolRefAttr>:$block_symbol,
-        OptionalAttr<StrAttr>:$block_path
-      )>;
+        OptionalAttr<StrAttr>:$block_path,
+        OptionalAttr<UnitAttr>:$is_implicit_loop_scope
+      )> {
+  let hasVerifier = 1;
+}
 
 class ObeliskDisableStatementASTNodeOp<string mnemonic>
     : ObeliskASTNodeOp<mnemonic, [], (ins

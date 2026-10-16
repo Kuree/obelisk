@@ -5618,10 +5618,24 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     for (auto declaration : design.getOps<sim::SimVPITypespecDeclOp>())
       materializedAliases.insert(
           FlatSymbolRefAttr::get(declaration.getSymNameAttr()));
+    // A process's block symbols are siblings of its executable declaration.
+    // Resolve actual declaration statements instead of requiring the variable
+    // symbol itself to be physically nested in the code-unit operation.
+    llvm::DenseSet<Operation *> proceduralDeclarations;
+    SymbolTableCollection declarationSymbols;
+    semanticRoot->walk([&](semantic::SVVariableDeclStatementOp declaration) {
+      if (!isNestedInCodeUnit(declaration))
+        return;
+      if (auto variable = dyn_cast_or_null<semantic::SVVariableSymbolOp>(
+              declarationSymbols.lookupSymbolIn(
+                  module, declaration.getReferencedSymbolAttr())))
+        proceduralDeclarations.insert(variable);
+    });
     semanticRoot->walk([&](Operation *source) {
       if (!isa<semantic::SVVariableSymbolOp,
                semantic::SVFormalArgumentSymbolOp>(source) ||
-          !isNestedInCodeUnit(source))
+          (!isNestedInCodeUnit(source) &&
+           !proceduralDeclarations.contains(source)))
         return;
       auto type = source->getAttrOfType<TypeAttr>("semantic_type");
       if (!type)

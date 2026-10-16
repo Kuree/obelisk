@@ -4355,6 +4355,19 @@ private:
                   slangir::StatementBlockKindAttr::get(
                       builder.getContext(), convertEnum(node.blockKind)));
       if (node.blockSymbol) {
+        if (const auto *syntax = node.blockSymbol->getSyntax()) {
+          bool loopScope =
+              syntax->kind == slang::syntax::SyntaxKind::ForeachLoopStatement;
+          if (syntax->kind == slang::syntax::SyntaxKind::ForLoopStatement) {
+            const auto &loop =
+                syntax->template as<slang::syntax::ForLoopStatementSyntax>();
+            loopScope = !loop.initializers.empty() &&
+                        loop.initializers[0]->kind ==
+                            slang::syntax::SyntaxKind::ForVariableDeclaration;
+          }
+          if (loopScope)
+            SET_OP_ATTR(IsImplicitLoopScope, builder.getUnitAttr());
+        }
         setSymbolReference(attrs, *node.blockSymbol,
                            Op::getBlockSymbolAttrName(operationName),
                            Op::getBlockPathAttrName(operationName));
@@ -5090,6 +5103,8 @@ private:
       SET_OP_ATTR(ConditionPatternFlags,
                   builder.getDenseI64ArrayAttr(patternFlags));
     } else if constexpr (std::same_as<T, slang::ast::ForLoopStatement>) {
+      SET_OP_ATTR(HasLocalVariables,
+                  builder.getBoolAttr(!node.loopVars.empty()));
       SET_OP_ATTR(InitializerCount,
                   builder.getI64IntegerAttr(node.initializers.size()));
       SET_OP_ATTR(HasCondition, builder.getBoolAttr(node.stopExpr != nullptr));

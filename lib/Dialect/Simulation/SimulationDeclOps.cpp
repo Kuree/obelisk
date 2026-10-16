@@ -529,9 +529,16 @@ LogicalResult SimStatementDeclOp::verify() {
   bool requiresScope =
       named || getVpiKind() == static_cast<uint16_t>(
                                    reflection::VPIObjectKind::ForeachStmt);
-  if (named != getName().has_value() || (getName() && getName()->empty()))
-    return emitOpError(named ? "named block requires a nonempty name"
-                             : "only named begin/fork may carry a name");
+  bool loopScope =
+      getIsScope() &&
+      (getVpiKind() == static_cast<uint32_t>(reflection::VPIObjectKind::For) ||
+       getVpiKind() ==
+           static_cast<uint32_t>(reflection::VPIObjectKind::ForeachStmt));
+  if ((named && !getName()) ||
+      (getName() && ((!named && !loopScope) || getName()->empty())))
+    return emitOpError(
+        named ? "named block requires a nonempty name"
+              : "only named begin/fork or loop scopes may carry a name");
   bool mayBeScope =
       (kind->families &
        reflection::vpiFamilyMask(reflection::VPIObjectFamily::Scope)) != 0;

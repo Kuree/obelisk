@@ -494,6 +494,18 @@ bool UnitLowering::enterVPIStatementFrame(Operation *statement) {
   auto id = sim::get<sim::metadata::VpiStatementId>(statement);
   if (!id)
     return false;
+  // A declaration loop's implicit source wrapper owns the activation so its
+  // variables are bound before initialization. The loop shares its identity.
+  if (isa<semantic::SVForLoopStatementOp, semantic::SVForeachLoopStatementOp>(
+          statement)) {
+    Operation *parent = statement->getParentOp();
+    if (isa_and_nonnull<semantic::SVStatementListOp>(parent))
+      parent = parent->getParentOp();
+    if (auto block = dyn_cast_or_null<semantic::SVBlockStatementOp>(parent);
+        block && block.getIsImplicitLoopScope() &&
+        sim::get<sim::metadata::VpiStatementId>(block) == id)
+      return false;
+  }
   auto metadata = loweringInputs.getVPIStatement(
       function->getParentOfType<sim::SimDesignOp>(),
       id.getValue().getZExtValue());

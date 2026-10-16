@@ -10433,6 +10433,17 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
                ? static_cast<PLI_INT32>(value)
                : vpiUndefined;
   }
+  if (property == vpiLocalVarDecls && handle->statement) {
+    bool isScope = false;
+    if (obelisk_rt_cached_vpi_statement_is_scope(handle->owner->context,
+                                                 handle->cursor,
+                                                 &isScope) != OBELISK_RT_OK) {
+      setError(handle->owner, "for statement scope lookup failed", vpiInternal);
+      return vpiUndefined;
+    }
+    // IEEE 1800-2023 37.12 detail2 makes these the same immutable fact.
+    return isScope;
+  }
   // Allocation provenance belongs to the handle rather than its exact kind:
   // an indexed variable has the lifetime of the object it selects.
   if (property == vpiAllocScheme)

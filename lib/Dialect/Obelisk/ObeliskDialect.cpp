@@ -1,6 +1,7 @@
 //===- ObeliskDialect.cpp - Obelisk semantic dialect ---------------------===//
 
 #include "obelisk/Dialect/ForeachLoopMetadata.h"
+#include "obelisk/Dialect/ImplicitLoopScope.h"
 #include "obelisk/Dialect/Obelisk/ObeliskOps.h"
 #include "obelisk/Dialect/SourceClassMetadata.h"
 #include "obelisk/Dialect/SourceParameterMetadata.h"
@@ -511,6 +512,9 @@ LogicalResult SVStreamingConcatenationExpressionOp::verify() {
 }
 
 LogicalResult SVForLoopStatementOp::verify() {
+  if (getHasLocalVariables() && getInitializerCount() != 0)
+    return emitOpError("local loop declarations and expression initializers "
+                       "are mutually exclusive");
   if (getInitializerCountAttr().getValue().isNegative())
     return emitOpError("initializer_count must be nonnegative");
   if (getStepCountAttr().getValue().isNegative())
@@ -526,6 +530,12 @@ LogicalResult SVForLoopStatementOp::verify() {
   if (astBodySize(*this) != expected)
     return emitOpError("malformed for-loop child inventory");
   return success();
+}
+
+LogicalResult SVBlockStatementOp::verify() {
+  return loop_scope::verify<SVForLoopStatementOp, SVForeachLoopStatementOp,
+                            SVStatementListOp, SVVariableDeclStatementOp>(
+      *this);
 }
 
 LogicalResult SVForeachLoopStatementOp::verify() {

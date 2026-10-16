@@ -5589,7 +5589,14 @@ bool validateDatabaseImpl(const Database &database) {
       return false;
     bool named = kind && (std::string_view(kind->apiName) == "vpiNamedBegin" ||
                           std::string_view(kind->apiName) == "vpiNamedFork");
-    if (named != (name != 0))
+    bool loopScope =
+        isScope &&
+        (vpiKind ==
+             static_cast<uint16_t>(obelisk::reflection::VPIObjectKind::For) ||
+         vpiKind == static_cast<uint16_t>(
+                        obelisk::reflection::VPIObjectKind::ForeachStmt));
+    if ((named && name == 0) ||
+        (name != 0 && ((!named && !loopScope) || text.empty())))
       return false;
   }
   std::unordered_set<uint32_t> callObjects;

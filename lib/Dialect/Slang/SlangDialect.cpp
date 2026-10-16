@@ -1,6 +1,7 @@
 //===- SlangDialect.cpp - Elaborated slang semantic AST dialect ----------===//
 
 #include "obelisk/Dialect/ForeachLoopMetadata.h"
+#include "obelisk/Dialect/ImplicitLoopScope.h"
 #include "obelisk/Dialect/Slang/SlangOps.h"
 #include "obelisk/Dialect/SourceClassMetadata.h"
 #include "obelisk/Dialect/SourceParameterMetadata.h"
@@ -441,6 +442,9 @@ LogicalResult StreamingConcatenationExpressionOp::verify() {
 }
 
 LogicalResult ForLoopStatementOp::verify() {
+  if (getHasLocalVariables() && getInitializerCount() != 0)
+    return emitOpError("local loop declarations and expression initializers "
+                       "are mutually exclusive");
   if (getInitializerCountAttr().getValue().isNegative())
     return emitOpError("initializer_count must be nonnegative");
   if (getStepCountAttr().getValue().isNegative())
@@ -456,6 +460,11 @@ LogicalResult ForLoopStatementOp::verify() {
   if (astBodySize(*this) != expected)
     return emitOpError("malformed for-loop child inventory");
   return success();
+}
+
+LogicalResult BlockStatementOp::verify() {
+  return loop_scope::verify<ForLoopStatementOp, ForeachLoopStatementOp,
+                            StatementListOp, VariableDeclStatementOp>(*this);
 }
 
 LogicalResult ForeachLoopStatementOp::verify() {

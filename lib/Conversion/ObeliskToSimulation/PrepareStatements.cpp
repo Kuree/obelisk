@@ -32,6 +32,7 @@ struct Shape {
   SmallVector<Child> children;
   bool isScope = false;
   SmallVector<Attribute> properties;
+  Operation *loopAlias = nullptr;
 };
 
 static void addIntegerProperty(Shape &shape, Operation *source,
@@ -125,6 +126,26 @@ statementShape(Operation *source,
     return shape;
   }
   if (auto block = dyn_cast<semantic::SVBlockStatementOp>(source)) {
+    if (block.getIsImplicitLoopScope()) {
+      if (children.size() == 1 &&
+          isa<semantic::SVStatementListOp>(children.front()))
+        children = getChildren(children.front());
+      auto result = statementShape(children.back(), semanticSymbols);
+      if (!result)
+        return std::nullopt;
+      SymbolTableCollection symbols;
+      auto module = block->getParentOfType<ModuleOp>();
+      auto *declaration =
+          module ? symbols.lookupSymbolIn(module, block.getBlockSymbolAttr())
+                 : nullptr;
+      if (!declaration)
+        return std::nullopt;
+      if (auto name = declaration->getAttrOfType<StringAttr>("name");
+          name && !name.empty())
+        result->name = name;
+      result->loopAlias = children.back();
+      return result;
+    }
     bool sequential =
         block.getBlockKind() == semantic::SVStatementBlockKind::Sequential;
     shape.kind = sequential ? Kind::Begin : Kind::Fork;
@@ -239,6 +260,7 @@ statementShape(Operation *source,
   }
   if (auto statement = dyn_cast<semantic::SVForLoopStatementOp>(source)) {
     shape.kind = Kind::For;
+    shape.isScope = statement.getHasLocalVariables();
     size_t next = 0;
     for (uint64_t i = 0; i < statement.getInitializerCount(); ++i)
       shape.children.push_back({children[next++], Relation::ForInitStmtRel});
@@ -609,6 +631,9 @@ LogicalResult materializeProceduralStatements(
           selector, ordinal, modes, id);
       if (!work.grouping)
         sim::set<sim::metadata::VpiStatementId>(work.source,
+                                                builder.getI64IntegerAttr(id));
+      if (shape->loopAlias)
+        sim::set<sim::metadata::VpiStatementId>(shape->loopAlias,
                                                 builder.getI64IntegerAttr(id));
       if (procedure &&
           work.owner.category == sim::VPIStatementSourceKind::CodeUnit)

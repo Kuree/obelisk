@@ -198,6 +198,7 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
   bool invalid = false;
   PreparedCaptures result;
   PreparedUnits analysisUnits = units;
+  SymbolTableCollection sourceSymbols;
   llvm::DenseMap<Operation *, Operation *> constructorSources;
   llvm::DenseMap<Operation *, SmallVector<Operation *>> propertyInitializers;
   llvm::StringMap<semantic::SVClassTypeOp> classesBySymbol;
@@ -456,12 +457,10 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       if (!isa<semantic::SVVariableDeclStatementOp>(nested) &&
           isFixedForeachCollectionUse(nested))
         return;
-      Operation *referencedSymbol = nullptr;
-      if (reference) {
-        auto symbol = semanticSymbols.find(reference.getLeafReference());
-        if (symbol != semanticSymbols.end())
-          referencedSymbol = symbol->second;
-      }
+      Operation *referencedSymbol =
+          reference ? sourceSymbols.lookupSymbolIn(
+                          unit.source->getParentOfType<ModuleOp>(), reference)
+                    : nullptr;
       // Function formals are already represented by public argument bindings.
       // Static tasks retain their descriptor capture because overlapping
       // activations copy each formal into shared task storage. Production
