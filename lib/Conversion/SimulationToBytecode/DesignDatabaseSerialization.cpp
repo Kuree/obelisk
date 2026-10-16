@@ -276,6 +276,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint32_t source, flags;
   };
   SmallVector<CodeUnitScopeBindingRecord> codeUnitScopeBindings;
+  SmallVector<CodeUnitScopeBindingRecord> initializerBindings;
   SmallVector<sim::SimVPIClassCallDispatchOp> classCallDispatchDeclarations;
   struct CallDispatchBindingRecord {
     uint64_t callID, codeUnitID, receiverClassID, slot, signatureID;
@@ -2278,62 +2279,6 @@ SmallVector<uint8_t> serializeDesignDatabase(
       return {};
   }
 
-  for (auto [ordinal, call] : llvm::enumerate(callDeclarations)) {
-    const auto binding = callSiteBindings[ordinal];
-    TableKind sourceTable = unpackTableIndexKind(binding.object);
-    uint32_t sourceIndex = unpackTableIndex(binding.object);
-    const uint32_t callKind = call.getVpiKind();
-    // The nearest retained scope owns the occurrence; enclosing expressions
-    // and composite statements do not become false lexical scopes.
-    TableKind scopeTable = TableKind::Scope;
-    uint32_t scopeIndex = scopeIndices.lookup(call.getScopeId());
-    uint32_t scopeKind = sim::vpiKindForScope(scopes[scopeIndex]);
-    for (auto enclosing = call.getEnclosingStatementId(); enclosing;) {
-      uint32_t index = statementIndices.lookup(*enclosing);
-      auto statement = statements[index].declaration;
-      if (statement.getIsScope()) {
-        scopeTable = TableKind::Statement;
-        scopeIndex = index;
-        scopeKind = statement.getVpiKind();
-        break;
-      }
-      enclosing = statement.getParentId();
-    }
-    if (scopeTable == TableKind::Scope) {
-      auto source = codeUnitSourceRefs.find(call.getCodeUnitId());
-      ImageObjectRef ownerRef =
-          source != codeUnitSourceRefs.end()
-              ? source->second
-              : ImageObjectRef{TableKind::Object, binding.owner,
-                               objects[binding.owner].vpiKind};
-      const auto *owner = findVPIObjectKind(ownerRef.vpiKind);
-      if (owner && (owner->families & vpiFamilyMask(VPIObjectFamily::Scope))) {
-        scopeTable = ownerRef.table;
-        scopeIndex = ownerRef.index;
-        scopeKind = ownerRef.vpiKind;
-      }
-    }
-    if (findVPITraversal(callKind,
-                         static_cast<uint32_t>(VPIRelationKind::ScopeRel),
-                         VPITraversalMode::Handle) &&
-        failed(addRelation(call, sourceTable, sourceIndex, callKind,
-                           static_cast<uint32_t>(VPIRelationKind::ScopeRel),
-                           VPITraversalMode::Handle, scopeTable, scopeIndex,
-                           scopeKind)))
-      return {};
-    if (auto calleeID = call.getCalleeCodeUnitId()) {
-      uint32_t callee = codeUnitObjectIndices.lookup(*calleeID);
-      auto mapped = codeUnitSourceRefs.find(*calleeID);
-      ImageObjectRef target = mapped != codeUnitSourceRefs.end()
-                                  ? mapped->second
-                                  : ImageObjectRef{TableKind::Object, callee,
-                                                   objects[callee].vpiKind};
-      if (failed(addRelation(call, sourceTable, sourceIndex, callKind,
-                             target.vpiKind, VPITraversalMode::Handle,
-                             target.table, target.index, target.vpiKind)))
-        return {};
-    }
-  }
 
   if (includeStatements) {
     auto lookupLexicalOwner = [&](FlatSymbolRefAttr symbol) -> Operation * {
@@ -3420,6 +3365,119 @@ SmallVector<uint8_t> serializeDesignDatabase(
            static_cast<uint16_t>(relation.getSelector()), sourceKindAndTable});
     }
   }
+  DenseMap<uint64_t, ImageObjectRef> initializerScopes;
+  if (includeStatements) {
+    DenseMap<uint32_t, ImageObjectRef> sourceScopes;
+    for (const RelationRecord &relation : relations) {
+      if (relation.iterate ||
+          relation.selector != static_cast<uint32_t>(VPIRelationKind::ScopeRel))
+        continue;
+      uint32_t source = 0;
+      if (!tryPackTableIndex(relation.sourceTable, relation.sourceIndex,
+                             source))
+        return {};
+      auto table = unpackTableIndexKind(relation.targetIndexAndTable);
+      auto index = unpackTableIndex(relation.targetIndexAndTable);
+      uint32_t kind =
+          table == TableKind::Scope ? sim::vpiKindForScope(scopes[index])
+          : table == TableKind::Statement
+              ? statements[index].declaration.getVpiKind()
+          : table == TableKind::StaticObject ? staticObjects[index].vpiKind
+                                             : objects[index].vpiKind;
+      sourceScopes.try_emplace(source, ImageObjectRef{table, index, kind});
+    }
+    DenseMap<uint64_t, ImageObjectRef> initializerSources = storageRefs;
+    for (sim::SimVPIClassMemberDeclOp member : classMembers)
+      if (auto storage = member.getStaticStorage();
+          storage && typespecsBySymbol.contains(member.getOwner()))
+        initializerSources[*storage] = classMemberRefs.lookup(member);
+    for (auto [storage, anchor] : eventArrayStorage)
+      initializerSources[cast<sim::SimStorageDeclOp>(storage).getId()] =
+          anchorRefs.lookup(anchor);
+    for (auto binding :
+         design.getBody().front().getOps<sim::SimVPIInitializerBindingOp>()) {
+      auto source = initializerSources.find(binding.getStorageId());
+      uint32_t packed = 0;
+      if (source == initializerSources.end() ||
+          !tryPackTableIndex(source->second.table, source->second.index,
+                             packed) ||
+          !sourceScopes.contains(packed)) {
+        binding.emitOpError(
+            "initializer source variable or lexical scope was not serialized");
+        return {};
+      }
+      initializerBindings.push_back({binding.getCodeUnitId(), packed, 0});
+      initializerScopes.try_emplace(binding.getCodeUnitId(),
+                                    sourceScopes.lookup(packed));
+    }
+    llvm::sort(initializerBindings, [](auto left, auto right) {
+      return left.codeUnitID < right.codeUnitID;
+    });
+  }
+
+  for (auto [ordinal, call] : llvm::enumerate(callDeclarations)) {
+    const auto binding = callSiteBindings[ordinal];
+    TableKind sourceTable = unpackTableIndexKind(binding.object);
+    uint32_t sourceIndex = unpackTableIndex(binding.object);
+    const uint32_t callKind = call.getVpiKind();
+    // The nearest retained scope owns the occurrence; enclosing expressions
+    // and composite statements do not become false lexical scopes.
+    TableKind scopeTable = TableKind::Scope;
+    uint32_t scopeIndex = scopeIndices.lookup(call.getScopeId());
+    uint32_t scopeKind = sim::vpiKindForScope(scopes[scopeIndex]);
+    for (auto enclosing = call.getEnclosingStatementId(); enclosing;) {
+      uint32_t index = statementIndices.lookup(*enclosing);
+      auto statement = statements[index].declaration;
+      if (statement.getIsScope()) {
+        scopeTable = TableKind::Statement;
+        scopeIndex = index;
+        scopeKind = statement.getVpiKind();
+        break;
+      }
+      enclosing = statement.getParentId();
+    }
+    if (scopeTable == TableKind::Scope) {
+      auto source = codeUnitSourceRefs.find(call.getCodeUnitId());
+      ImageObjectRef ownerRef =
+          source != codeUnitSourceRefs.end()
+              ? source->second
+              : ImageObjectRef{TableKind::Object, binding.owner,
+                               objects[binding.owner].vpiKind};
+      const auto *owner = findVPIObjectKind(ownerRef.vpiKind);
+      if (owner && (owner->families & vpiFamilyMask(VPIObjectFamily::Scope))) {
+        scopeTable = ownerRef.table;
+        scopeIndex = ownerRef.index;
+        scopeKind = ownerRef.vpiKind;
+      }
+    }
+    if (auto initializer = initializerScopes.find(call.getCodeUnitId());
+        initializer != initializerScopes.end()) {
+      scopeTable = initializer->second.table;
+      scopeIndex = initializer->second.index;
+      scopeKind = initializer->second.vpiKind;
+    }
+    if (findVPITraversal(callKind,
+                         static_cast<uint32_t>(VPIRelationKind::ScopeRel),
+                         VPITraversalMode::Handle) &&
+        failed(addRelation(call, sourceTable, sourceIndex, callKind,
+                           static_cast<uint32_t>(VPIRelationKind::ScopeRel),
+                           VPITraversalMode::Handle, scopeTable, scopeIndex,
+                           scopeKind)))
+      return {};
+    if (auto calleeID = call.getCalleeCodeUnitId()) {
+      uint32_t callee = codeUnitObjectIndices.lookup(*calleeID);
+      auto mapped = codeUnitSourceRefs.find(*calleeID);
+      ImageObjectRef target = mapped != codeUnitSourceRefs.end()
+                                  ? mapped->second
+                                  : ImageObjectRef{TableKind::Object, callee,
+                                                   objects[callee].vpiKind};
+      if (failed(addRelation(call, sourceTable, sourceIndex, callKind,
+                             target.vpiKind, VPITraversalMode::Handle,
+                             target.table, target.index, target.vpiKind)))
+        return {};
+    }
+  }
+
   // Explicit graph edges cannot replace or extend a slice owned by another
   // inventory producer. In particular, typespec owners, aliases, and lexical
   // anchors synthesize relations that are not all tagged automatic in the LRM
@@ -5242,9 +5300,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
   uint64_t codeUnitScopeBindingOffset =
       callableSignatureBindingOffset +
       callableSignatureBindings.size() * CallableSignatureBindingLayout.size;
-  uint64_t relationIndexOffset =
+  uint64_t initializerBindingOffset =
       codeUnitScopeBindingOffset +
       codeUnitScopeBindings.size() * CodeUnitScopeBindingLayout.size;
+  uint64_t relationIndexOffset =
+      initializerBindingOffset +
+      initializerBindings.size() * InitializerBindingLayout.size;
   uint64_t relationIndexDimensionOffset =
       relationIndexOffset + relationIndices.size() * RelationIndexLayout.size;
   uint64_t relationIndexKeyOffset =
@@ -5597,6 +5658,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setCallableSignatureBindingCount(callableSignatureBindings.size());
     writer.setCodeUnitScopeBindingOffset(codeUnitScopeBindingOffset);
     writer.setCodeUnitScopeBindingCount(codeUnitScopeBindings.size());
+    writer.setInitializerBindingOffset(initializerBindingOffset);
+    writer.setInitializerBindingCount(initializerBindings.size());
     writer.setRelationIndexOffset(relationIndexOffset);
     writer.setRelationIndexCount(relationIndices.size());
     writer.setRelationIndexDimensionOffset(relationIndexDimensionOffset);
@@ -5757,6 +5820,13 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setOwnerCodeUnitIndex(binding.owner);
     writer.setScopeIndexAndTable(binding.scope);
     writer.setOrdinal(binding.ordinal);
+  }
+  for (auto [index, binding] : llvm::enumerate(initializerBindings)) {
+    InitializerBindingWriter writer(output.data() + initializerBindingOffset +
+                                    index * InitializerBindingLayout.size);
+    writer.setCodeUnitID(binding.codeUnitID);
+    writer.setSourceIndexAndTable(binding.source);
+    writer.setReserved(0);
   }
   for (auto [index, binding] : llvm::enumerate(codeUnitScopeBindings)) {
     CodeUnitScopeBindingWriter writer(output.data() +

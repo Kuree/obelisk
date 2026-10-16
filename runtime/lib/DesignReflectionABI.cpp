@@ -78,7 +78,7 @@ static_assert(field::StaticObjectSourceLine == 20);
 static_assert(field::StaticObjectSourceColumn == 24);
 static_assert(field::StaticObjectVPIKind == 28);
 static_assert(field::StaticObjectFlags == 30);
-static_assert(SemanticDirectoryLayout.size == 736);
+static_assert(SemanticDirectoryLayout.size == 752);
 static_assert(FrameLocalBindingLayout.size == 24);
 static_assert(InterfaceCallableLayout.size == 24);
 static_assert(InterfaceInstanceLayout.size == 8);
@@ -241,3 +241,5 @@ constexpr bool recordKindPackingIsStable() {
                                    packed);
 }
 static_assert(recordKindPackingIsStable());
+
+static_assert(obelisk::reflection::InitializerBindingLayout.size == 16);

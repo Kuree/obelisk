@@ -573,6 +573,17 @@ SimVPICodeUnitScopeBindingOp::verifySymbolUses(SymbolTableCollection &symbols) {
   return success();
 }
 
+LogicalResult SimVPIInitializerBindingOp::verify() {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("requires a simulation.design owner");
+  if (failed(verifyNonnegative(*this, getCodeUnitIdAttr(), "code-unit ID")) ||
+      failed(verifyNonnegative(*this, getStorageIdAttr(), "storage ID")))
+    return failure();
+  if (!getCodeUnitId())
+    return emitOpError("code-unit ID must be positive");
+  return success();
+}
+
 LogicalResult SimVPICallDeclOp::verify() {
   if (!isa<SimDesignOp>((*this)->getParentOp()))
     return emitOpError("requires a simulation.design owner");
@@ -3612,6 +3623,7 @@ LogicalResult SimDesignOp::verifyRegions() {
   SmallVector<SimStatementSiteDeclOp> statementSites;
   SmallVector<SimVPIThreadOriginBindingOp> threadOrigins;
   SmallVector<SimVPICodeUnitScopeBindingOp> codeUnitScopes;
+  SmallVector<SimVPIInitializerBindingOp> initializerBindings;
   SmallVector<SimVPICallDeclOp> vpiCalls;
   SmallVector<SimVPILocalDeclOp> vpiLocals;
   llvm::DenseSet<uint64_t> vpiLocalIds;
@@ -3692,6 +3704,8 @@ LogicalResult SimDesignOp::verifyRegions() {
                .second)
         return dispatch.emitOpError(
             "duplicates a class call dispatch contract");
+    } else if (auto binding = dyn_cast<SimVPIInitializerBindingOp>(op)) {
+      initializerBindings.push_back(binding);
     } else if (auto binding = dyn_cast<SimVPICodeUnitScopeBindingOp>(op)) {
       codeUnitScopes.push_back(binding);
     } else if (auto binding = dyn_cast<SimVPIThreadOriginBindingOp>(op)) {
@@ -4707,12 +4721,35 @@ LogicalResult SimDesignOp::verifyRegions() {
           "duplicates a code-unit or source scope binding");
   }
 
+  llvm::DenseSet<uint64_t> initializerUnits, initializedStorages;
+  for (SimVPIInitializerBindingOp binding : initializerBindings) {
+    auto unit = codeUnits.lookup(binding.getCodeUnitId());
+    auto storage = storagesById.lookup(binding.getStorageId());
+    if (!unit || !unit.getInternal() ||
+        unit.getCodeUnitKind() != EntryKind::Function ||
+        boundCodeUnitScopes.contains(binding.getCodeUnitId()))
+      return binding.emitOpError("initializer requires an internal function "
+                                 "without a callable source scope");
+    if (!storage || storage.getLifetime() == Lifetime::Automatic ||
+        storage.getScopeId() != unit.getScopeId())
+      return binding.emitOpError(
+          "initializer requires static storage in its exact physical scope");
+    if (!initializerUnits.insert(binding.getCodeUnitId()).second ||
+        !initializedStorages.insert(binding.getStorageId()).second)
+      return binding.emitOpError(
+          "duplicates an initializer or source storage binding");
+  }
+
   llvm::DenseSet<uint64_t> callStatementAliases;
   for (SimVPICallDeclOp call : vpiCalls) {
     auto owner = codeUnits.lookup(call.getCodeUnitId());
     if (!owner || owner.getScopeId() != call.getScopeId())
       return call.emitOpError(
           "owner must name a code unit in its physical scope");
+    if (initializerUnits.contains(call.getCodeUnitId()) &&
+        (call.getStatementId() || call.getEnclosingStatementId()))
+      return call.emitOpError("a nonprocedural initializer call cannot name a "
+                              "procedural statement");
     auto checkStatement = [&](uint64_t id) -> SimStatementDeclOp {
       auto statement = statements.lookup(id);
       return statement && statement.getCodeUnitId() &&

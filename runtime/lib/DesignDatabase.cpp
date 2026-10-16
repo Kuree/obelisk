@@ -75,6 +75,8 @@ constexpr uint64_t kCallableSignatureBindingSize =
     obelisk::reflection::CallableSignatureBindingLayout.size;
 constexpr uint64_t kCodeUnitScopeBindingSize =
     obelisk::reflection::CodeUnitScopeBindingLayout.size;
+constexpr uint64_t kInitializerBindingSize =
+    obelisk::reflection::InitializerBindingLayout.size;
 
 constexpr uint64_t kEventBindingSize =
     obelisk::reflection::EventBindingLayout.size;
@@ -309,6 +311,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
   uint64_t callableSignatureBindingOffset = 0,
            callableSignatureBindingCount = 0;
   uint64_t codeUnitScopeBindingOffset = 0, codeUnitScopeBindingCount = 0;
+  uint64_t initializerBindingOffset = 0, initializerBindingCount = 0;
 
   uint64_t relationIndexOffset = 0, relationIndexCount = 0;
   uint64_t relationIndexDimensionOffset = 0, relationIndexDimensionCount = 0;
@@ -443,6 +446,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     codeUnitScopeBindingOffset = reader.getCodeUnitScopeBindingOffset();
     callableSignatureBindingCount = reader.getCallableSignatureBindingCount();
     codeUnitScopeBindingCount = reader.getCodeUnitScopeBindingCount();
+    initializerBindingOffset = reader.getInitializerBindingOffset();
+    initializerBindingCount = reader.getInitializerBindingCount();
   }
   database = {data,
               execution->design_database_size,
@@ -512,6 +517,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               callableSignatureBindingCount,
               codeUnitScopeBindingOffset,
               codeUnitScopeBindingCount,
+              initializerBindingOffset,
+              initializerBindingCount,
 
               relationIndexOffset,
               relationIndexCount,
@@ -622,6 +629,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
          database.callableSignatureBindingCount, kCallableSignatureBindingSize},
         {database.codeUnitScopeBindings, database.codeUnitScopeBindingCount,
          kCodeUnitScopeBindingSize},
+        {database.initializerBindings, database.initializerBindingCount,
+         kInitializerBindingSize},
 
         {database.relationIndices, database.relationIndexCount,
          kRelationIndexSize},
@@ -713,6 +722,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         database.interfaceCallBindingCount != 0 ||
         database.callableSignatureBindingCount != 0 ||
         database.codeUnitScopeBindingCount != 0 ||
+        database.initializerBindingCount != 0 ||
 
         database.relationIndexCount != 0 ||
         database.relationIndexDimensionCount != 0 ||
@@ -809,6 +819,9 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
                   kCallableSignatureBindingSize, database.size) ||
       !validRange(database.codeUnitScopeBindings,
                   database.codeUnitScopeBindingCount, kCodeUnitScopeBindingSize,
+                  database.size) ||
+      !validRange(database.initializerBindings,
+                  database.initializerBindingCount, kInitializerBindingSize,
                   database.size) ||
 
       !validRange(database.relationIndices, database.relationIndexCount,
@@ -918,6 +931,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        database.callableSignatureBindings < kHeaderSize) ||
       (database.codeUnitScopeBindingCount != 0 &&
        database.codeUnitScopeBindings < kHeaderSize) ||
+      (database.initializerBindingCount != 0 &&
+       database.initializerBindings < kHeaderSize) ||
 
       (database.semanticRootBindingCount != 0 &&
        database.semanticRootBindings < kHeaderSize) ||
@@ -1008,6 +1023,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       database.interfaceCallBindingCount > UINT32_MAX ||
       database.callableSignatureBindingCount > UINT32_MAX ||
       database.codeUnitScopeBindingCount > UINT32_MAX ||
+      database.initializerBindingCount > UINT32_MAX ||
 
       database.relationIndexCount > UINT32_MAX ||
       database.relationIndexDimensionCount > UINT32_MAX ||
@@ -1262,6 +1278,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        database.callableSignatureBindingCount, kCallableSignatureBindingSize},
       {database.codeUnitScopeBindings, database.codeUnitScopeBindingCount,
        kCodeUnitScopeBindingSize},
+      {database.initializerBindings, database.initializerBindingCount,
+       kInitializerBindingSize},
 
       {database.relationIndices, database.relationIndexCount,
        kRelationIndexSize},
@@ -2250,6 +2268,127 @@ bool findCallableSource(const Database &database, uint32_t codeUnitObjectIndex,
     return false;
   packedSource = row.getSourceIndexAndTable();
   return packedObjectReferenceOffset(database, packedSource, sourceOffset);
+}
+
+bool findInitializerSource(const Database &database, uint64_t codeUnitID,
+                           uint32_t &source) {
+  using namespace obelisk::reflection;
+  uint64_t low = 0, high = database.initializerBindingCount;
+  while (low < high) {
+    uint64_t middle = low + (high - low) / 2;
+    InitializerBindingView row(database.data + database.initializerBindings +
+                               middle * kInitializerBindingSize);
+    if (row.getCodeUnitID() < codeUnitID)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == database.initializerBindingCount)
+    return false;
+  InitializerBindingView row(database.data + database.initializerBindings +
+                             low * kInitializerBindingSize);
+  if (row.getCodeUnitID() != codeUnitID)
+    return false;
+  source = row.getSourceIndexAndTable();
+  return true;
+}
+
+uint32_t initializerSourceScope(const Database &database, uint32_t source) {
+  using namespace obelisk::reflection;
+  auto table = unpackTableIndexKind(source);
+  auto index = unpackTableIndex(source);
+  auto selector = static_cast<uint32_t>(VPIRelationKind::ScopeRel);
+  uint64_t position =
+      lowerBoundRelation(database, table, index, selector, false);
+  if (position == database.relationCount)
+    return UINT32_MAX;
+  auto relation = relationAt(database, position);
+  return relationMatches(relation, table, index, selector, false)
+             ? relation.getTargetIndexAndTable()
+             : UINT32_MAX;
+}
+
+bool validateInitializers(const Database &database) {
+  if (!database.initializerBindingCount)
+    return true;
+  using namespace obelisk::reflection;
+  std::unordered_map<uint64_t, uint32_t> units;
+  for (uint32_t index = 0; index != database.objectCount; ++index) {
+    const uint8_t *object =
+        database.data + database.objects + uint64_t{index} * kObjectSize;
+    if (recordKind(object) == OBELISK_RT_DESIGN_RECORD_FUNCTION ||
+        recordKind(object) == OBELISK_RT_DESIGN_RECORD_PROCESS)
+      if (!units.emplace(read64(object + 8), index).second)
+        return false;
+  }
+  // Public class members and event arrays replace their physical backing.
+  std::unordered_map<uint32_t, uint32_t> canonicalStorage;
+  std::unordered_set<uint32_t> replacedStorage;
+  for (uint64_t index = 0; index != database.classMemberBindingCount; ++index) {
+    ClassMemberBindingView row(database.data + database.classMemberBindings +
+                               index * kClassMemberBindingSize);
+    if (!(row.getFlags() & 1) || (row.getFlags() & 2) ||
+        row.getStorageIndexAndTable() == UINT32_MAX)
+      continue;
+    uint64_t owner = 0;
+    if (!packedObjectReferenceOffset(database, row.getOwnerIndexAndTable(),
+                                     owner))
+      return false;
+    if (objectReferenceVPIKind(database, owner) ==
+        static_cast<uint32_t>(VPIObjectKind::ClassTypespec))
+      canonicalStorage.emplace(row.getMemberIndexAndTable(),
+                               row.getStorageIndexAndTable());
+    replacedStorage.insert(row.getStorageIndexAndTable());
+  }
+  for (uint64_t index = 0; index != database.eventArrayStorageBindingCount;
+       ++index) {
+    EventArrayStorageBindingView row(database.data +
+                                     database.eventArrayStorageBindings +
+                                     index * kEventArrayStorageBindingSize);
+    uint32_t storage = 0;
+    if (!tryPackTableIndex(TableKind::Object, row.getStorageIndex(), storage))
+      return false;
+    canonicalStorage.emplace(row.getArrayIndexAndTable(), storage);
+    replacedStorage.insert(storage);
+  }
+  uint64_t previous = 0;
+  std::unordered_set<uint32_t> sources;
+  for (uint64_t index = 0; index != database.initializerBindingCount; ++index) {
+    InitializerBindingView row(database.data + database.initializerBindings +
+                               index * kInitializerBindingSize);
+    auto unitIndex = units.find(row.getCodeUnitID());
+    uint32_t source = row.getSourceIndexAndTable();
+    uint64_t offset = 0;
+    if (!row.getCodeUnitID() || row.getCodeUnitID() > INT64_MAX ||
+        (index && row.getCodeUnitID() <= previous) || row.getReserved() ||
+        unitIndex == units.end() || !sources.insert(source).second ||
+        replacedStorage.count(source) ||
+        !packedObjectReferenceOffset(database, source, offset) ||
+        initializerSourceScope(database, source) == UINT32_MAX)
+      return false;
+    uint32_t callableSource = 0;
+    uint64_t callableOffset = 0;
+    if (findCallableSource(database, unitIndex->second, callableSource,
+                           callableOffset))
+      return false;
+    const uint8_t *unit = database.data + database.objects +
+                          uint64_t{unitIndex->second} * kObjectSize;
+    if (recordKind(unit) != OBELISK_RT_DESIGN_RECORD_FUNCTION ||
+        recordVPIKind(unit) ||
+        !(read32(unit + 4) & OBELISK_RT_DESIGN_CAP_INTERNAL))
+      return false;
+    if (auto canonical = canonicalStorage.find(source);
+        canonical != canonicalStorage.end())
+      if (!packedObjectReferenceOffset(database, canonical->second, offset))
+        return false;
+    if (isStaticObjectOffset(database, offset) ||
+        recordKind(database.data + offset) !=
+            OBELISK_RT_DESIGN_RECORD_STORAGE ||
+        read64(database.data + offset + 16) != read64(unit + 16))
+      return false;
+    previous = row.getCodeUnitID();
+  }
+  return true;
 }
 
 bool validateCodeUnitScopes(
@@ -5440,6 +5579,11 @@ bool validateDatabaseImpl(const Database &database) {
           kind != static_cast<uint32_t>(Kind::FuncCall) &&
           kind != static_cast<uint32_t>(Kind::TaskCall))
         return false;
+      uint32_t initializer = 0;
+      if (findInitializerSource(database, read64(codeUnit + 8), initializer) &&
+          obelisk::reflection::unpackTableIndexKind(packed) ==
+              TableKind::Statement)
+        return false;
       callOwners.emplace(packed, owner);
       previous = id;
     }
@@ -6511,37 +6655,43 @@ bool validateDatabaseImpl(const Database &database) {
       if (callOwner != callOwners.end()) {
         const uint8_t *owner = database.data + database.objects +
                                uint64_t{callOwner->second} * kObjectSize;
-        switch (targetTable) {
-        case obelisk::reflection::TableKind::Statement:
-          if (read32(target + 8) != callOwner->second ||
-              !(read16(target + 38) & OBELISK_RT_DESIGN_STATEMENT_SCOPE))
+        uint32_t initializer = 0;
+        if (findInitializerSource(database, read64(owner + 8), initializer)) {
+          if (initializerSourceScope(database, initializer) != packedTarget)
             return false;
-          break;
-        case obelisk::reflection::TableKind::Object:
-        case obelisk::reflection::TableKind::StaticObject: {
-          uint32_t source = 0;
-          uint64_t sourceOffset = 0;
-          if (!findCallableSource(database, callOwner->second, source,
-                                  sourceOffset) ||
-              source != packedTarget)
-            return false;
-          break;
-        }
-        case obelisk::reflection::TableKind::Scope: {
-          const auto *ownerKind =
-              obelisk::reflection::findVPIObjectKind(recordVPIKind(owner));
-          uint32_t source = 0;
-          uint64_t sourceOffset = 0;
-          if (findCallableSource(database, callOwner->second, source,
-                                 sourceOffset) ||
-              read64(owner + 16) != uint64_t(target - database.data) ||
-              (ownerKind && (ownerKind->families &
-                             obelisk::reflection::vpiFamilyMask(
-                                 obelisk::reflection::VPIObjectFamily::Scope))))
-            return false;
-          break;
-        }
-        }
+        } else
+          switch (targetTable) {
+          case obelisk::reflection::TableKind::Statement:
+            if (read32(target + 8) != callOwner->second ||
+                !(read16(target + 38) & OBELISK_RT_DESIGN_STATEMENT_SCOPE))
+              return false;
+            break;
+          case obelisk::reflection::TableKind::Object:
+          case obelisk::reflection::TableKind::StaticObject: {
+            uint32_t source = 0;
+            uint64_t sourceOffset = 0;
+            if (!findCallableSource(database, callOwner->second, source,
+                                    sourceOffset) ||
+                source != packedTarget)
+              return false;
+            break;
+          }
+          case obelisk::reflection::TableKind::Scope: {
+            const auto *ownerKind =
+                obelisk::reflection::findVPIObjectKind(recordVPIKind(owner));
+            uint32_t source = 0;
+            uint64_t sourceOffset = 0;
+            if (findCallableSource(database, callOwner->second, source,
+                                   sourceOffset) ||
+                read64(owner + 16) != uint64_t(target - database.data) ||
+                (ownerKind &&
+                 (ownerKind->families &
+                  obelisk::reflection::vpiFamilyMask(
+                      obelisk::reflection::VPIObjectFamily::Scope))))
+              return false;
+            break;
+          }
+          }
         callScopes.insert(sourceEndpoint);
       }
     }
@@ -7462,6 +7612,7 @@ bool validateDatabaseImpl(const Database &database) {
   }
   return validateClassCallDispatch(database) &&
          validateCodeUnitScopes(database, fixedNames) &&
+         validateInitializers(database) &&
          validateInterfaceCallDispatch(database, fixedNames) &&
          validateLexicalInheritance(database, fixedNames);
 }
@@ -7618,9 +7769,11 @@ bool sameDatabase(const Database &left, const Database &right) noexcept {
          left.interfaceCallBindingCount == right.interfaceCallBindingCount &&
          left.callableSignatureBindings == right.callableSignatureBindings &&
          left.codeUnitScopeBindings == right.codeUnitScopeBindings &&
+         left.initializerBindings == right.initializerBindings &&
          left.callableSignatureBindingCount ==
              right.callableSignatureBindingCount &&
          left.codeUnitScopeBindingCount == right.codeUnitScopeBindingCount &&
+         left.initializerBindingCount == right.initializerBindingCount &&
 
          left.relationIndices == right.relationIndices &&
          left.relationIndexCount == right.relationIndexCount &&
@@ -9522,6 +9675,23 @@ obelisk_rt_cached_vpi_statement(const obelisk_rt_context *context,
                                  uint64_t{owner} * kObjectSize + 8);
   outCursor->offset = offset;
   return OBELISK_RT_OK;
+}
+
+obelisk_rt_status obelisk_rt_cached_vpi_initializer(
+    const obelisk_rt_context *context, uint64_t codeUnitID,
+    obelisk_rt_design_cursor_v1 *outSource) noexcept {
+  if (!outSource)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outSource = {};
+  const Database *database = cachedDatabase(context);
+  if (!database)
+    return OBELISK_RT_INVALID_HANDLE;
+  uint32_t source = 0;
+  if (!findInitializerSource(*database, codeUnitID, source))
+    return OBELISK_RT_EOF;
+  return packedObjectReferenceOffset(*database, source, outSource->offset)
+             ? OBELISK_RT_OK
+             : OBELISK_RT_INVALID_DESIGN;
 }
 
 obelisk_rt_status

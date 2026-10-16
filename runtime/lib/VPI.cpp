@@ -7423,8 +7423,6 @@ extern "C" OBELISK_VPI_EXPORT obelisk_rt_status obelisk_rt_v1_vpi_frame_enter(
     if (status != OBELISK_RT_OK)
       return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
   } else {
-    if (!parent)
-      return OBELISK_RT_INVALID_FRAME;
     uint64_t owner = UINT64_MAX;
     obelisk_rt_design_cursor_v1 checked{};
     bool callIsStatement = false;
@@ -7435,7 +7433,12 @@ extern "C" OBELISK_VPI_EXPORT obelisk_rt_status obelisk_rt_v1_vpi_frame_enter(
                                                    &owner);
     if (status != OBELISK_RT_OK)
       return status;
-    if (owner != state->frames.at(parent).lexicalCodeUnit ||
+    obelisk_rt_design_cursor_v1 initialized{};
+    const bool initializer = originKind == OBELISK_RT_VPI_FRAME_CALL &&
+                             obelisk_rt_cached_vpi_initializer(
+                                 context, owner, &initialized) == OBELISK_RT_OK;
+    if ((!initializer &&
+         (!parent || owner != state->frames.at(parent).lexicalCodeUnit)) ||
         (originKind == OBELISK_RT_VPI_FRAME_STATEMENT_SCOPE &&
          (owner != lexicalCodeUnit ||
           codeUnitID != state->frames.at(parent).codeUnit)))
@@ -7548,8 +7551,6 @@ extern "C" OBELISK_VPI_EXPORT obelisk_rt_status obelisk_rt_v1_vpi_call_prepare(
     return OBELISK_RT_OK;
   uint64_t process = sourceThread(state, context->activeLogicalProcessToken);
   uint64_t parent = topFrame(state, process);
-  if (!parent)
-    return OBELISK_RT_INVALID_FRAME;
   obelisk_rt_design_cursor_v1 source{};
   uint64_t owner = 0;
   bool statement = false;
@@ -7557,7 +7558,11 @@ extern "C" OBELISK_VPI_EXPORT obelisk_rt_status obelisk_rt_v1_vpi_call_prepare(
       obelisk_rt_cached_vpi_call(context, callID, &source, &owner, &statement);
   if (status != OBELISK_RT_OK)
     return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
-  if (owner != state->frames.at(parent).lexicalCodeUnit)
+  obelisk_rt_design_cursor_v1 initialized{};
+  const bool initializer = obelisk_rt_cached_vpi_initializer(
+                               context, owner, &initialized) == OBELISK_RT_OK;
+  if (!initializer &&
+      (!parent || owner != state->frames.at(parent).lexicalCodeUnit))
     return OBELISK_RT_INVALID_FRAME;
   status = obelisk_rt_cached_vpi_frame_origin(
       context, OBELISK_RT_VPI_FRAME_CALL, callID, &source, &statement);
@@ -8019,7 +8024,7 @@ extern "C" OBELISK_VPI_EXPORT obelisk_rt_status obelisk_rt_v1_vpi_frame_leave(
       sourceThread(state, context->activeLogicalProcessToken);
   if (!activation || topFrame(state, process) != activation)
     return OBELISK_RT_INVALID_FRAME;
-  // A synchronous resolution call may have no procedural parent. Its normal
+  // A resolution or initializer call may have no procedural parent. Its normal
   // return must retain the completed ticket until the generated caller reaches
   // call_finish; abrupt process unwinding still discards every pending call.
   if (state->frameStacks.at(process).size() == 1) {

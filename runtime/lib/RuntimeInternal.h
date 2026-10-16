@@ -1758,6 +1758,8 @@ struct DesignDatabaseCache {
   uint64_t callableSignatureBindingCount = 0;
   uint64_t codeUnitScopeBindings = 0;
   uint64_t codeUnitScopeBindingCount = 0;
+  uint64_t initializerBindings = 0;
+  uint64_t initializerBindingCount = 0;
 
   uint64_t relationIndices = 0;
   uint64_t relationIndexCount = 0;
@@ -3927,6 +3929,10 @@ obelisk_rt_status obelisk_rt_cached_vpi_frame_locals(
     const obelisk_rt_context *context, uint64_t lexicalCodeUnitID,
     obelisk_rt_design_cursor_v1 scope,
     std::vector<VPIFrameLocalBinding> &outBindings) noexcept;
+
+obelisk_rt_status obelisk_rt_cached_vpi_initializer(
+    const obelisk_rt_context *context, uint64_t codeUnitID,
+    obelisk_rt_design_cursor_v1 *outSource) noexcept;
 
 obelisk_rt_status
 obelisk_rt_cached_vpi_call(const obelisk_rt_context *context, uint64_t callID,

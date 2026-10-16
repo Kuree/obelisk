@@ -747,7 +747,12 @@ def SemanticDirectoryCodeUnitScopeBindingOffset
 def SemanticDirectoryCodeUnitScopeBindingCount
     : ReflectionField<"CodeUnitScopeBindingCount", 728, U64LE>;
 
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 736,
+def SemanticDirectoryInitializerBindingOffset
+    : ReflectionField<"InitializerBindingOffset", 736, U64LE>;
+def SemanticDirectoryInitializerBindingCount
+    : ReflectionField<"InitializerBindingCount", 744, U64LE>;
+
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 752,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -836,7 +841,9 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 736,
    SemanticDirectoryCallableSignatureBindingOffset,
    SemanticDirectoryCallableSignatureBindingCount,
    SemanticDirectoryCodeUnitScopeBindingOffset,
-   SemanticDirectoryCodeUnitScopeBindingCount]>;
+   SemanticDirectoryCodeUnitScopeBindingCount,
+   SemanticDirectoryInitializerBindingOffset,
+   SemanticDirectoryInitializerBindingCount]>;
 
 // Exact compatible implementations derived from typed class dispatch. Rows
 // are sorted by (CallID, CodeUnitID); every row in one call group carries the
@@ -954,6 +961,14 @@ def CodeUnitScopeBindingFlags : ReflectionField<"Flags", 12, U32LE>;
 def CodeUnitScopeBinding : ReflectionLayout<"CodeUnitScopeBinding", 16,
   [CodeUnitScopeBindingCodeUnitID, CodeUnitScopeBindingSource,
    CodeUnitScopeBindingFlags]>;
+
+// Exact source variable whose nonprocedural initializer owns this helper.
+def InitializerBindingCodeUnitID : ReflectionField<"CodeUnitID", 0, U64LE>;
+def InitializerBindingSource : ReflectionField<"SourceIndexAndTable", 8, U32LE>;
+def InitializerBindingReserved : ReflectionField<"Reserved", 12, U32LE>;
+def InitializerBinding : ReflectionLayout<"InitializerBinding", 16,
+  [InitializerBindingCodeUnitID, InitializerBindingSource,
+   InitializerBindingReserved]>;
 
 def CallSiteBindingID : ReflectionField<"ID", 0, U64LE>;
 def CallSiteBindingObject : ReflectionField<"ObjectIndexAndTable", 8, U32LE>;

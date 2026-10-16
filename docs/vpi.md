@@ -135,7 +135,10 @@ native, and AOT scheduler paths restore the saved caller frame depth. A checked
 prepare/consume/finish protocol carries the exact source call through nested
 synchronous and suspending calls, including native and AOT task handoffs.
 Resolution-function activations use the exact net or net-array origin and verify
-its retained nettype resolution function. Imported DPI tasks retain their public
+its retained nettype resolution function. Calls in static initializers retain their source variable and lexical scope;
+the runtime permits their exact call-origin frames without an initializer
+helper frame. Existing procedural parents remain intact when present.
+Imported DPI tasks retain their public
 task identity while entering through their physical synchronous function ABI.
 Synchronous DPI exports use their exact public callable scope as the activation
 origin, preserve the importing frame as parent, and restore its frame depth on

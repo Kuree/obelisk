@@ -318,6 +318,20 @@ def SimVPIFrameBindOp : SimOp<"vpi.frame.bind", [
   let assemblyFormat = "$context `,` $reference `to` $declaration attr-dict `:` type($reference)";
 }
 
+def SimVPIInitializerBindingOp : SimOp<"vpi_initializer_binding",
+    [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+  let summary = "exact static source storage initialized by an internal helper";
+  let description = [{
+    Binds a nonprocedural initializer's executable identity to existing static
+    source storage. The helper introduces no procedural scope or frame. Calls
+    retain their helper owner and derive their lexical scope from the source
+    variable, including the canonical class property for static class storage.
+  }];
+  let arguments = (ins I64Attr:$code_unit_id, I64Attr:$storage_id);
+  let assemblyFormat = "$code_unit_id `storage` $storage_id attr-dict";
+  let hasVerifier = 1;
+}
+
 def SimVPICallDeclOp : SimOp<"vpi_call.decl", [
     Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
   ]> {
