@@ -3976,6 +3976,8 @@ obelisk_rt_status
 obelisk_rt_vpi_export_begin(obelisk_rt_context *context,
                             const obelisk_rt_export_descriptor_v1 *descriptor,
                             uint64_t *outToken);
+obelisk_rt_status obelisk_rt_vpi_export_task_enter(obelisk_rt_context *context,
+                                                   uint64_t executor);
 obelisk_rt_status obelisk_rt_vpi_export_end(obelisk_rt_context *context,
                                             uint64_t token);
 obelisk_rt_status

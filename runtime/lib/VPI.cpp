@@ -341,9 +341,14 @@ struct VPIFrameCall {
 };
 
 struct VPIExportDispatch {
-  uint64_t token, codeUnit, scope, process, frameDepth;
+  uint64_t token, codeUnit, scope, process, frameDepth, hostExecutor;
   bool isTask;
   uint64_t ticket = 0;
+  uint64_t executor = 0;
+};
+
+struct VPIExportExecutor {
+  uint64_t source, baseDepth, exportToken;
 };
 
 struct VPIState {
@@ -369,6 +374,11 @@ struct VPIState {
   uint64_t nextCallTicket = 1;
   uint64_t nextExportToken = 1;
   std::vector<VPIExportDispatch> exports;
+  std::unordered_map<uint64_t, VPIExportExecutor> exportExecutors;
+  // Scalar ancestry survives the dispatch: a forked child may outlive its
+  // internal export executor. These IDs neither root objects nor extend the
+  // source thread's lifetime.
+  std::unordered_map<uint64_t, uint64_t> threadSources;
   uint64_t frameGeneration = 0;
   uint64_t lastPrunedFrameGeneration = 0;
   // Code-unit metadata is immutable. Resolve each distinct executable owner
@@ -504,7 +514,16 @@ void pruneDynamicHandles(VPIState *state) {
 
 // IEEE 37.3.7-37.3.8: a thread ends with its execution, unlike the process
 // class object whose scheduler tombstone remains a valid process reference.
+// Exported tasks use a distinct scheduler executor to preserve the host C
+// stack. VPI exposes the source thread that entered that DPI call chain.
+uint64_t sourceThread(VPIState *state, uint64_t executor) {
+  ContextMutexLock lock(state->context);
+  auto found = state->threadSources.find(executor);
+  return found == state->threadSources.end() ? executor : found->second;
+}
+
 bool threadIsLive(VPIState *state, uint64_t logicalProcess) {
+  logicalProcess = sourceThread(state, logicalProcess);
   obelisk_rt_process_state status{};
   return obelisk_rt_v1_process_status(state->context, logicalProcess,
                                       &status) == OBELISK_RT_OK &&
@@ -536,6 +555,7 @@ void pruneThreadHandles(VPIState *state) {
 }
 
 uint64_t topFrame(VPIState *state, uint64_t logicalProcess) {
+  logicalProcess = sourceThread(state, logicalProcess);
   auto stack = state->frameStacks.find(logicalProcess);
   return stack == state->frameStacks.end() || stack->second.empty()
              ? 0
@@ -663,6 +683,7 @@ vpiHandle keepHandle(VPIState *state, std::unique_ptr<__vpiHandle> handle) {
 }
 
 vpiHandle makeThreadHandle(VPIState *state, uint64_t logicalProcess) {
+  logicalProcess = sourceThread(state, logicalProcess);
   if (!threadIsLive(state, logicalProcess))
     return nullptr;
   OBELISK_RT_TRY {
@@ -4147,6 +4168,14 @@ vpiHandle makeThreadIterator(__vpiHandle *source, PLI_INT32 selector,
     iterator->kind = VPIHandleKind::Iterator;
     iterator->iteratorType = selector;
     iterator->threadIterator = true;
+    {
+      ContextMutexLock lock(source->owner->context);
+      for (uint64_t &process : processes)
+        process = sourceThread(source->owner, process);
+      std::sort(processes.begin(), processes.end());
+      processes.erase(std::unique(processes.begin(), processes.end()),
+                      processes.end());
+    }
     iterator->threadItems = std::move(processes);
     copyUseRecipe(*iterator, *source);
     return keepHandle(source->owner, std::move(iterator));
@@ -4166,18 +4195,25 @@ vpiHandle threadChildren(__vpiHandle *source) {
       ContextMutexLock lock(context);
       const uint64_t parent = source->logicalProcess;
       for (const auto &process : context->scheduledProcesses)
-        if (process.instance && process.parent == parent) {
+        if (process.instance &&
+            sourceThread(source->owner, process.parent) == parent) {
           const uint64_t token =
               OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | process.token;
-          if (threadIsLive(source->owner, token))
+          if (sourceThread(source->owner, token) != parent &&
+              threadIsLive(source->owner, token))
             children.push_back(token);
         }
       for (const auto &task : context->scheduledDesignTasks)
-        if (!task.terminated && task.parent == parent &&
+        if (!task.terminated &&
+            sourceThread(source->owner, task.parent) == parent &&
+            sourceThread(source->owner, task.id) != parent &&
             threadIsLive(source->owner, task.id))
           children.push_back(task.id);
       if (context->activeLogicalProcessToken &&
-          context->activeLogicalProcessParent == parent &&
+          sourceThread(source->owner, context->activeLogicalProcessParent) ==
+              parent &&
+          sourceThread(source->owner, context->activeLogicalProcessToken) !=
+              parent &&
           threadIsLive(source->owner, context->activeLogicalProcessToken))
         children.push_back(context->activeLogicalProcessToken);
     }
@@ -7356,7 +7392,8 @@ extern "C" OBELISK_VPI_EXPORT obelisk_rt_status obelisk_rt_v1_vpi_frame_enter(
                                               &origin, &originIsStatement);
   if (status != OBELISK_RT_OK)
     return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
-  const uint64_t process = context->activeLogicalProcessToken;
+  const uint64_t process =
+      sourceThread(state, context->activeLogicalProcessToken);
   const uint64_t parent = topFrame(state, process);
   if (originKind == OBELISK_RT_VPI_FRAME_CODE_UNIT_SCOPE) {
     if (parent || originID != codeUnitID)
@@ -7504,7 +7541,7 @@ extern "C" OBELISK_VPI_EXPORT obelisk_rt_status obelisk_rt_v1_vpi_call_prepare(
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state)
     return OBELISK_RT_OK;
-  uint64_t process = context->activeLogicalProcessToken;
+  uint64_t process = sourceThread(state, context->activeLogicalProcessToken);
   uint64_t parent = topFrame(state, process);
   if (!parent)
     return OBELISK_RT_INVALID_FRAME;
@@ -7541,7 +7578,8 @@ obelisk_rt_v1_vpi_resolution_prepare(obelisk_rt_context *context,
       obelisk_rt_cached_vpi_net_resolution(context, netID, &net, &function);
   if (status != OBELISK_RT_OK)
     return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
-  const uint64_t process = context->activeLogicalProcessToken;
+  const uint64_t process =
+      sourceThread(state, context->activeLogicalProcessToken);
   return prepareVPIFrameCall(state, process, topFrame(state, process),
                              OBELISK_RT_VPI_FRAME_NET_RESOLUTION, netID,
                              outTicket);
@@ -7561,7 +7599,8 @@ obelisk_rt_vpi_export_begin(obelisk_rt_context *context,
     return OBELISK_RT_OK;
   if (!state->nextExportToken)
     return OBELISK_RT_OUT_OF_RESOURCES;
-  const uint64_t process = context->activeLogicalProcessToken;
+  const uint64_t process =
+      sourceThread(state, context->activeLogicalProcessToken);
   uint64_t depth = 0;
   auto stack = state->frameStacks.find(process);
   if (stack != state->frameStacks.end())
@@ -7569,8 +7608,47 @@ obelisk_rt_vpi_export_begin(obelisk_rt_context *context,
   OBELISK_RT_TRY {
     state->exports.push_back(
         {state->nextExportToken, descriptor->code_unit_id, descriptor->scope_id,
-         process, depth, bool(descriptor->flags & OBELISK_RT_EXPORT_TASK)});
+         process, depth, context->activeLogicalProcessToken,
+         bool(descriptor->flags & OBELISK_RT_EXPORT_TASK)});
     *outToken = state->nextExportToken++;
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
+}
+
+obelisk_rt_status obelisk_rt_vpi_export_task_enter(obelisk_rt_context *context,
+                                                   uint64_t executor) {
+  if (!context || !executor)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextMutexLock lock(context);
+  auto *state = static_cast<VPIState *>(context->vpiState);
+  if (!state || state->exports.empty() || !state->exports.back().ticket)
+    return OBELISK_RT_OK;
+  auto &dispatch = state->exports.back();
+  if (!dispatch.isTask || dispatch.executor || !dispatch.process ||
+      dispatch.hostExecutor != context->activeLogicalProcessToken ||
+      executor == dispatch.process || state->threadSources.count(executor))
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  auto calls = state->frameCalls.find(dispatch.process);
+  if (calls == state->frameCalls.end() || calls->second.empty() ||
+      calls->second.back().ticket != dispatch.ticket ||
+      calls->second.back().phase != VPIFrameCallPhase::Prepared)
+    return OBELISK_RT_INVALID_FRAME;
+  uint64_t unit = 0;
+  auto status = obelisk_rt_logical_process_origin(context, executor, &unit);
+  if (status != OBELISK_RT_OK || unit != dispatch.codeUnit)
+    return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
+  OBELISK_RT_TRY {
+    state->exportExecutors.emplace(
+        executor, VPIExportExecutor{dispatch.process, dispatch.frameDepth,
+                                    dispatch.token});
+    OBELISK_RT_TRY { state->threadSources.emplace(executor, dispatch.process); }
+    OBELISK_RT_CATCH_ALL {
+      state->exportExecutors.erase(executor);
+      OBELISK_RT_RETHROW;
+    }
+    dispatch.executor = executor;
     return OBELISK_RT_OK;
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
@@ -7589,6 +7667,8 @@ obelisk_rt_status obelisk_rt_vpi_export_end(obelisk_rt_context *context,
     return OBELISK_RT_INVALID_FRAME;
   auto dispatch = state->exports.back();
   state->exports.pop_back();
+  if (dispatch.executor)
+    state->exportExecutors.erase(dispatch.executor);
   // Uninstrumented exports leave no frame state. An instrumented bridge that
   // exits exceptionally must not strand a callee or an unconsumed ticket.
   if (!dispatch.ticket)
@@ -7631,13 +7711,11 @@ obelisk_rt_v1_vpi_export_prepare(obelisk_rt_context *context,
   auto &dispatch = state->exports.back();
   if (dispatch.codeUnit != codeUnitID)
     return OBELISK_RT_INVALID_ARGUMENT;
-  if (dispatch.process != context->activeLogicalProcessToken || dispatch.ticket)
+  if (dispatch.hostExecutor != context->activeLogicalProcessToken ||
+      dispatch.ticket)
     return OBELISK_RT_INVALID_LIFECYCLE;
-  // Task exports require a separate executor-to-source thread handoff.
-  if (dispatch.isTask)
-    return OBELISK_RT_TIER_UNAVAILABLE;
-  auto status = obelisk_rt_cached_vpi_export_target(context, codeUnitID,
-                                                    dispatch.scope, false);
+  auto status = obelisk_rt_cached_vpi_export_target(
+      context, codeUnitID, dispatch.scope, dispatch.isTask);
   if (status != OBELISK_RT_OK)
     return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
   status = prepareVPIFrameCall(
@@ -7658,7 +7736,7 @@ obelisk_rt_status obelisk_rt_vpi_pending_call(obelisk_rt_context *context,
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state)
     return OBELISK_RT_OK;
-  uint64_t process = context->activeLogicalProcessToken;
+  uint64_t process = sourceThread(state, context->activeLogicalProcessToken);
   auto calls = state->frameCalls.find(process);
   if (calls == state->frameCalls.end() || calls->second.empty() ||
       calls->second.back().phase != VPIFrameCallPhase::Prepared)
@@ -7682,7 +7760,7 @@ obelisk_rt_v1_vpi_frame_enter_prepared(obelisk_rt_context *context,
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state)
     return OBELISK_RT_OK;
-  uint64_t process = context->activeLogicalProcessToken;
+  uint64_t process = sourceThread(state, context->activeLogicalProcessToken);
   auto calls = state->frameCalls.find(process);
   if (calls == state->frameCalls.end() || calls->second.empty())
     return OBELISK_RT_INVALID_FRAME;
@@ -7722,7 +7800,10 @@ obelisk_rt_v1_vpi_frame_enter_prepared(obelisk_rt_context *context,
                                        : transport;
   if (physicalTask != bool(isTask))
     return OBELISK_RT_INVALID_LIFECYCLE;
-  if (isTask) {
+  if (isTask && call.originKind == OBELISK_RT_VPI_FRAME_DPI_EXPORT) {
+    if (state->exports.back().executor != context->activeLogicalProcessToken)
+      return OBELISK_RT_INVALID_FRAME;
+  } else if (isTask) {
     uint64_t actualCall = 0;
     auto status = obelisk_rt_vpi_activation_callsite(context, &actualCall);
     if (status != OBELISK_RT_OK)
@@ -7747,7 +7828,7 @@ obelisk_rt_v1_vpi_call_finish(obelisk_rt_context *context, uint64_t ticket) {
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state)
     return ticket ? OBELISK_RT_INVALID_FRAME : OBELISK_RT_OK;
-  uint64_t process = context->activeLogicalProcessToken;
+  uint64_t process = sourceThread(state, context->activeLogicalProcessToken);
   auto calls = state->frameCalls.find(process);
   if (!ticket || calls == state->frameCalls.end())
     return OBELISK_RT_INVALID_FRAME;
@@ -7844,14 +7925,22 @@ obelisk_rt_vpi_frame_unwind_process(obelisk_rt_context *context,
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state)
     return OBELISK_RT_OK;
+  auto alias = state->exportExecutors.find(logicalProcess);
+  const bool exported = alias != state->exportExecutors.end();
+  if (exported) {
+    depth = std::max(depth, alias->second.baseDepth);
+    logicalProcess = alias->second.source;
+  }
   auto stack = state->frameStacks.find(logicalProcess);
   if (stack == state->frameStacks.end()) {
-    if (!depth)
+    if (!depth && !exported)
       state->frameCalls.erase(logicalProcess);
-    return depth ? OBELISK_RT_INVALID_FRAME : OBELISK_RT_OK;
+    // The importing source may already have been disabled while the export
+    // executor was queued. Never reconstruct its exited prefix.
+    return depth && !exported ? OBELISK_RT_INVALID_FRAME : OBELISK_RT_OK;
   }
   if (depth > stack->second.size())
-    return OBELISK_RT_INVALID_FRAME;
+    return exported ? OBELISK_RT_OK : OBELISK_RT_INVALID_FRAME;
   bool changed = depth != stack->second.size();
   while (stack->second.size() > depth) {
     state->frames.erase(stack->second.back());
@@ -7859,7 +7948,7 @@ obelisk_rt_vpi_frame_unwind_process(obelisk_rt_context *context,
   }
   if (stack->second.empty())
     state->frameStacks.erase(stack);
-  if (!depth) {
+  if (!depth && !exported) {
     state->frameCalls.erase(logicalProcess);
   } else if (auto calls = state->frameCalls.find(logicalProcess);
              calls != state->frameCalls.end()) {
@@ -7895,6 +7984,7 @@ obelisk_rt_status obelisk_rt_vpi_frame_depth_process(
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state)
     return OBELISK_RT_OK;
+  logicalProcess = sourceThread(state, logicalProcess);
   auto stack = state->frameStacks.find(logicalProcess);
   if (stack != state->frameStacks.end())
     *outDepth = stack->second.size();
@@ -7920,7 +8010,8 @@ extern "C" OBELISK_VPI_EXPORT obelisk_rt_status obelisk_rt_v1_vpi_frame_leave(
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state)
     return activation ? OBELISK_RT_INVALID_FRAME : OBELISK_RT_OK;
-  const uint64_t process = context->activeLogicalProcessToken;
+  const uint64_t process =
+      sourceThread(state, context->activeLogicalProcessToken);
   if (!activation || topFrame(state, process) != activation)
     return OBELISK_RT_INVALID_FRAME;
   // A synchronous resolution call may have no procedural parent. Its normal
@@ -9942,7 +10033,8 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   if (property == vpiAllocScheme)
     return handle->allocationScheme;
   if (property == vpiActive && handle->form == VPIObjectForm::Thread)
-    return obelisk_rt_v1_process_current(handle->owner->context) ==
+    return sourceThread(handle->owner, obelisk_rt_v1_process_current(
+                                           handle->owner->context)) ==
            handle->logicalProcess;
   if (property == vpiActive && handle->form == VPIObjectForm::Frame) {
     ContextMutexLock lock(handle->owner->context);

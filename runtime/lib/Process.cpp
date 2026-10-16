@@ -6424,6 +6424,9 @@ obelisk_rt_run_dpi_export_task_logical(obelisk_rt_context *context,
                                        uint64_t logical) noexcept {
   if (!context || logical == 0)
     return OBELISK_RT_INVALID_ARGUMENT;
+  auto frameStatus = obelisk_rt_vpi_export_task_enter(context, logical);
+  if (frameStatus != OBELISK_RT_OK)
+    return frameStatus;
   // Re-entry originates while the importing logical process is executing C.
   // Detach that host activation temporarily, leaving its canonical frame and
   // C stack intact while the exported task advances in its selected tier.
