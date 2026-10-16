@@ -250,6 +250,10 @@ UnitLowering::UnitLowering(sim::SimFuncOp function,
     }
   if (!bindings)
     return;
+  for (Attribute attr : bindings)
+    if (auto local = dyn_cast<sim::LocalBindingAttr>(attr))
+      if (local.getVpiLocal())
+        vpiLocalDeclarations[local.getPath().getValue()] = local.getVpiLocal();
   llvm::StringSet<> explicitlyInitializedLocals;
   function.walk([&](semantic::SVVariableDeclStatementOp declaration) {
     if (!getChildren(declaration).empty())
@@ -297,6 +301,7 @@ UnitLowering::UnitLowering(sim::SimFuncOp function,
             sim::RefType::get(function.getContext(), value.getType()), value);
         values[path] = local;
         lvalues[path] = local;
+        bindVPILocal(argument.getVpiLocal(), local, function.getLoc());
         if (argument.getCopyOut())
           copyOutPaths.push_back(path.str());
         if (!argument.getCopyIn())
@@ -376,6 +381,10 @@ UnitLowering::UnitLowering(sim::SimFuncOp function,
     }
     StringRef path = localBinding.getPath().getValue();
     Type type = localBinding.getType();
+    bool declarationAllocated =
+        localBinding.getAutomatic() ||
+        (hasVPIFrameInstrumentation() && localBinding.getVpiLocal() &&
+         !localBinding.getIsReturn());
     // The declaration expression replaces the default value before an
     // explicitly initialized local becomes visible. In particular, 6.17
     // says `event alias = source` aliases `source`; creating another event as
@@ -386,7 +395,7 @@ UnitLowering::UnitLowering(sim::SimFuncOp function,
     Value initial =
         isa<sim::EventType>(type) &&
                 (explicitlyInitializedLocals.contains(path) ||
-                 (localBinding.getAutomatic() && !localBinding.getIsReturn()))
+                 (declarationAllocated && !localBinding.getIsReturn()))
             ? sim::SimEventNullOp::create(builder, function.getLoc(), type)
                   .getResult()
             : createDefaultValue(builder, function.getLoc(), type);
@@ -400,7 +409,10 @@ UnitLowering::UnitLowering(sim::SimFuncOp function,
     bool isReturn = localBinding.getIsReturn();
     if (isReturn)
       returnPath = path.str();
-    if (localBinding.getAutomatic()) {
+    // With reflection enabled, a source automatic must be allocated after
+    // its exact lexical scope has entered, even when ordinary function
+    // lowering would otherwise keep it as an entry-block promotable cell.
+    if (declarationAllocated) {
       automaticLocals.insert(path);
       // Pattern variables have statement-execution lifetime rather than
       // function-activation lifetime. Their references are allocated by
@@ -416,6 +428,7 @@ UnitLowering::UnitLowering(sim::SimFuncOp function,
             sim::RefType::get(function.getContext(), type), initial);
         values[path] = local;
         lvalues[path] = local;
+        bindVPILocal(localBinding.getVpiLocal(), local, function.getLoc());
       }
       continue;
     }
@@ -424,7 +437,18 @@ UnitLowering::UnitLowering(sim::SimFuncOp function,
         sim::RefType::get(function.getContext(), type), initial);
     values[path] = local;
     lvalues[path] = local;
+    bindVPILocal(localBinding.getVpiLocal(), local, function.getLoc());
   }
+}
+
+void UnitLowering::bindVPILocal(FlatSymbolRefAttr declaration, Value reference,
+                                Location location) {
+  if (!declaration || !hasVPIFrameInstrumentation())
+    return;
+  sim::SimVPIFrameBindOp::create(builder, location,
+                                 function.getBody().front().getArgument(0),
+                                 reference, declaration);
+  registerVPIObservedRef(reference);
 }
 
 bool UnitLowering::hasVPIFrameInstrumentation() const {

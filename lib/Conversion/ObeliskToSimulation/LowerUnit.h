@@ -774,6 +774,8 @@ private:
   /// Records a read through a constant `net.extract` view of `net`.
   void recordNetViewSensitivity(::mlir::Value view, ::mlir::Value net);
   void recordImplicitEventActivationLocal(::mlir::Value reference);
+  void bindVPILocal(::mlir::FlatSymbolRefAttr declaration,
+                    ::mlir::Value reference, ::mlir::Location location);
   /// Records a read of every source property of `object`'s class and its
   /// bases, which a method called on it may read.
   void recordObjectPropertyReads(::mlir::Value object,
@@ -1076,6 +1078,7 @@ private:
   ::llvm::DenseMap<uint64_t, std::array<::mlir::Value, 2>> strengthNodeLvalues;
   ::llvm::StringMap<::mlir::Value> localDefaults;
   ::llvm::StringSet<> automaticLocals;
+  ::llvm::StringMap<::mlir::FlatSymbolRefAttr> vpiLocalDeclarations;
   ::llvm::StringMap<::mlir::Value> copyOutDestinations;
   ::llvm::StringMap<::mlir::Value> iteratorIndices;
   bool virtualInterfaceInventoryReady = false;

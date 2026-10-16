@@ -853,6 +853,7 @@ UnitLowering::lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op) {
         builder, location,
         sim::RefType::get(function.getContext(), initial.getType()), initial);
     recordImplicitEventActivationLocal(destination);
+    bindVPILocal(vpiLocalDeclarations.lookup(path), destination, location);
     // An automatic declaration executes on each entry to this statement.
     // Keep that reset explicit so SSA promotion does not mistake the
     // allocator's default value for a once-per-function initialization when
@@ -1169,7 +1170,10 @@ UnitLowering::outlineForkBranch(
       // the child allocates it at the declaration. Capturing a parent
       // reference here would incorrectly share storage between activations.
       if (auto local = dyn_cast<sim::LocalBindingAttr>(attribute);
-          local && local.getAutomatic() && branchDeclarations.contains(path)) {
+          local &&
+          (local.getAutomatic() ||
+           (hasVPIFrameInstrumentation() && local.getVpiLocal())) &&
+          branchDeclarations.contains(path)) {
         if (capturedPaths.insert(path).second)
           bindings.push_back(attribute);
         continue;
