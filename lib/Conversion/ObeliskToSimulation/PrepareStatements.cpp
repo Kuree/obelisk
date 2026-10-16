@@ -629,7 +629,10 @@ LogicalResult materializeProceduralStatements(
       sim::SimVPIStatementRelationDeclOp::create(
           builder, location, work.owner.category, work.owner.id, sourceKind,
           selector, ordinal, modes, id);
-      if (!work.grouping)
+      // A repeated timing wrapper retains a distinct EventControl whose source
+      // is the exact event timing node. CaseItem instead shares its source
+      // with its statement body and cannot use that body's identity slot.
+      if (!work.grouping || shape->kind == Kind::EventControl)
         sim::set<sim::metadata::VpiStatementId>(work.source,
                                                 builder.getI64IntegerAttr(id));
       if (shape->loopAlias)

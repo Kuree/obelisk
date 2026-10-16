@@ -182,6 +182,20 @@ LogicalResult materializeProceduralExpressionRelations(
         targets.push_back(sourceRef);
       };
       auto children = getChildren(source);
+      if (statement.getVpiKind() ==
+          static_cast<uint32_t>(reflection::VPIObjectKind::EventControl)) {
+        Operation *control = source;
+        if (isa<semantic::SVTimedStatementOp>(source) && children.size() == 2)
+          control = children.front();
+        if (auto signal = dyn_cast<semantic::SVSignalEventControlOp>(control);
+            signal && signal.getEdgeKind() == semantic::EdgeKind::Change &&
+            !signal.getHasIff()) {
+          auto operands = getChildren(signal);
+          if (operands.size() == 1)
+            emit(Relation::ConditionRel, operands.front());
+        }
+        return WalkResult::advance();
+      }
       if (isa<semantic::SVExpressionStatementOp>(source) &&
           children.size() == 1 &&
           isa<semantic::SVAssignmentExpressionOp>(children.front())) {
