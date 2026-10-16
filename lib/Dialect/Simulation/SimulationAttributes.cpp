@@ -153,9 +153,10 @@ VPIObjectBackingAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
   case VPIObjectBackingKind::Scope:
   case VPIObjectBackingKind::CodeUnit:
   case VPIObjectBackingKind::Net:
+  case VPIObjectBackingKind::Storage:
     if (!id || symbol)
-      return emitError()
-             << "VPI scope/code-unit/net backing requires only a numeric ID";
+      return emitError() << "VPI scope/code-unit/net/storage backing requires "
+                            "only a numeric ID";
     if (!id.getType().isSignlessInteger(64))
       return emitError() << "VPI backing ID must be a signless i64";
     if (id.getValue().isNegative())

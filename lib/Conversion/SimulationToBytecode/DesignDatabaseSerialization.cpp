@@ -1234,7 +1234,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
   DenseMap<Operation *, uint32_t> definitionIndices, definitionMemberIndices,
       definitionSpecializationIndices;
   DenseMap<uint64_t, uint32_t> canonicalStorageTargetIndices,
-      canonicalNetTargetIndices, physicalNetObjectIndices;
+      canonicalNetTargetIndices, physicalNetObjectIndices,
+      physicalStorageObjectIndices;
   for (auto [index, scope] : llvm::enumerate(scopes))
     scopeIndices[scope.getId()] = static_cast<uint32_t>(index);
 
@@ -1468,6 +1469,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       codeUnitObjectIndices[object.id] = static_cast<uint32_t>(index);
     if (isa_and_present<sim::SimNetDeclOp>(object.identity))
       physicalNetObjectIndices[object.id] = static_cast<uint32_t>(index);
+    if (isa_and_present<sim::SimStorageDeclOp>(object.identity))
+      physicalStorageObjectIndices[object.id] = static_cast<uint32_t>(index);
     if (includeStatements && object.kind == OBELISK_RT_DESIGN_RECORD_STORAGE &&
         wholeStoragePortSources.contains(object.id))
       canonicalStorageTargetIndices.try_emplace(object.id,
@@ -1675,6 +1678,21 @@ SmallVector<uint8_t> serializeDesignDatabase(
         uint32_t index = scopeIndices.lookup(id);
         anchorRefs[anchor] = {TableKind::Scope, index,
                               sim::vpiKindForScope(scopes[index])};
+        continue;
+      }
+      if (backing.getKind() == sim::VPIObjectBackingKind::Storage) {
+        uint64_t id = backing.getId().getValue().getZExtValue();
+        auto found = physicalStorageObjectIndices.find(id);
+        if (found == physicalStorageObjectIndices.end()) {
+          anchor.emitOpError("backing event storage was not serialized");
+          return {};
+        }
+        uint32_t index = found->second;
+        anchorRefs[anchor] = {TableKind::Object, index, objects[index].vpiKind};
+        // The event cell itself remains the public storage object. Only its
+        // lexical relations come from the exact source anchor; no private
+        // backing marker or second runtime identity is introduced.
+        lexicallyAnchoredObjectIndices.insert(index);
         continue;
       }
       if (backing.getKind() == sim::VPIObjectBackingKind::Net) {

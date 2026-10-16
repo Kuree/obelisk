@@ -903,6 +903,11 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
         return emitOpError(
             "code-unit backing requires a task or function anchor");
       break;
+    case VPIObjectBackingKind::Storage:
+      if (anchorKind != Kind::NamedEvent)
+        return emitOpError(
+            "storage backing requires a scalar named-event anchor");
+      break;
     case VPIObjectBackingKind::Net:
       if (anchorKind != Kind::InterconnectNet)
         return emitOpError("net backing requires an interconnect-net anchor");
@@ -5338,6 +5343,8 @@ LogicalResult SimDesignOp::verifyRegions() {
       return scopes.lookup(id);
     case VPIObjectBackingKind::CodeUnit:
       return codeUnits.lookup(id);
+    case VPIObjectBackingKind::Storage:
+      return storagesById.lookup(id);
     case VPIObjectBackingKind::Net:
       return nets.lookup(id);
     case VPIObjectBackingKind::Class:
@@ -5920,6 +5927,27 @@ LogicalResult SimDesignOp::verifyRegions() {
       break;
     case VPIObjectBackingKind::Class:
       break;
+    case VPIObjectBackingKind::Storage: {
+      auto storage =
+          storagesById.lookup(backing.getId().getValue().getZExtValue());
+      if (!storage)
+        return anchor.emitOpError("references an unknown backing storage ID");
+      if (!isa<EventType>(storage.getType()) || !storage.getVpiTypeAttr() ||
+          storage.getVpiTypeAttr().getKind() != VPITypeKind::Event)
+        return anchor.emitOpError("backing named event requires exact event "
+                                  "storage and VPI semantics");
+      if (storage.getLifetime() == Lifetime::Automatic)
+        return anchor.emitOpError(
+            "backing named event requires static storage");
+      if (storage.getScopeId() != anchor.getEnclosingScopeId())
+        return anchor.emitOpError(
+            "backing storage scope must equal the anchor's enclosing scope");
+      if (!storage.getHierarchicalName() ||
+          *storage.getHierarchicalName() != anchor.getHierarchicalName())
+        return anchor.emitOpError(
+            "backing storage hierarchy must equal the anchor hierarchy");
+      break;
+    }
     case VPIObjectBackingKind::Net: {
       uint64_t id = backing.getId().getValue().getZExtValue();
       auto found = nets.find(id);

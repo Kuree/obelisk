@@ -4305,12 +4305,19 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
       FlatSymbolRefAttr anchor = anchorSymbols.lookup(source);
       auto descriptor = descriptors.find(getHierarchyName(source));
       if (!anchor || !scalarNamedEvents.contains(source) ||
-          descriptor == descriptors.end() ||
-          descriptor->second.kind != DescriptorInfo::Kind::Event)
+          descriptor == descriptors.end())
         continue;
-      sim::SimVPIEventBindingOp::create(
-          builder, getSemanticLocation(source), anchor,
-          builder.getI64IntegerAttr(descriptor->second.id));
+      if (descriptor->second.kind == DescriptorInfo::Kind::Storage) {
+        anchorDeclarations.lookup(source).setBackingAttr(
+            sim::VPIObjectBackingAttr::get(
+                builder.getContext(), sim::VPIObjectBackingKind::Storage,
+                builder.getI64IntegerAttr(descriptor->second.id),
+                FlatSymbolRefAttr{}));
+      } else if (descriptor->second.kind == DescriptorInfo::Kind::Event) {
+        sim::SimVPIEventBindingOp::create(
+            builder, getSemanticLocation(source), anchor,
+            builder.getI64IntegerAttr(descriptor->second.id));
+      }
     }
   }
 

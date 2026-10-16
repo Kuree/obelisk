@@ -178,6 +178,22 @@ TEST(GeneratedDesignDatabase, EventBindings) {
   auto secondEvent = named("top.second");
   auto unboundEvent = named("top.unbound");
   auto alias = named("top.alias");
+  auto moduleScope = named("top");
+  auto aliasScope = keep(vpi_handle(vpiScope, alias));
+  EXPECT_EQ(vpi_compare_objects(aliasScope, moduleScope), 1);
+  auto eventInventory = vpi_iterate(vpiNamedEvent, moduleScope);
+  ASSERT_NE(eventInventory, nullptr);
+  unsigned aliasOccurrences = 0;
+  while (auto child = vpi_scan(eventInventory)) {
+    keep(child);
+    aliasOccurrences += vpi_compare_objects(child, alias) == 1;
+  }
+  EXPECT_EQ(aliasOccurrences, 1u);
+  uint64_t fixedEventID = 0;
+  EXPECT_EQ(
+      obelisk_rt_cached_vpi_event_binding(runtime, aliasStorage, &fixedEventID),
+      OBELISK_RT_EOF);
+
   auto variable = named("top.obj");
   auto receiver = keep(vpi_handle(vpiClassObj, variable));
   auto canonical = keep(vpi_handle(vpiClassTypespec, variable));

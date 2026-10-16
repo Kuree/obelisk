@@ -24,6 +24,9 @@ module attributes {
         ordinal 1 hierarchy "top.second" debug "second"
     simulation.vpi_object.anchor @unbound id 7 type 34 in 1 parent @top
         ordinal 2 hierarchy "top.unbound" debug "unbound"
+    simulation.vpi_object.anchor @alias id 9 type 34 in 1 parent @top
+        ordinal 4 hierarchy "top.alias" debug "alias" {
+      backing = #simulation.vpi_backing<kind = storage, id = 1 : i64>}
     simulation.vpi_event_binding @first id 0
     simulation.vpi_event_binding @second id 7
     simulation.class.decl @node id 1 {
