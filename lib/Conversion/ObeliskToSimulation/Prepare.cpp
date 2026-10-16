@@ -9235,8 +9235,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       *preparedUnits, descriptors, semanticSymbols, classSources);
   if (failed(preparedCaptures))
     return abort();
-  if (failed(materializeProceduralLocals(design, *preparedUnits,
-                                         *preparedCaptures, builder)))
+  if (failed(materializeProceduralLocals(
+          design, *preparedUnits, *preparedCaptures, descriptors, builder)))
     return abort();
   auto &unitCaptures = preparedCaptures->descriptors;
   auto &unitReadCaptures = preparedCaptures->readDescriptors;

@@ -5440,24 +5440,18 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
         builder, relation.location, relation.source, relation.selector,
         sim::VPIRelationMode::Iterate, ordinal++, relation.target);
   }
-  // Freeze automatic declarations with the same typedef remapping as static
-  // inventory. Preparation later knows their exact procedural code-unit and
-  // statement-scope owners; no display-name reconstruction is needed there.
+  // Freeze procedural declarations with the same typedef remapping as
+  // static inventory. Their exact callable/statement scopes are assigned
+  // after statement inventory; no display-name reconstruction is needed.
   if (preserveVPIMethodBindings) {
     llvm::DenseSet<Attribute> materializedAliases = pendingTypespecSymbols;
     for (auto declaration : design.getOps<sim::SimVPITypespecDeclOp>())
       materializedAliases.insert(
           FlatSymbolRefAttr::get(declaration.getSymNameAttr()));
     semanticRoot->walk([&](Operation *source) {
-      bool automatic = false;
-      if (auto variable = dyn_cast<semantic::SVVariableSymbolOp>(source))
-        automatic =
-            variable.getLifetime() == semantic::SVVariableLifetime::Automatic &&
-            !isStaticReturnVariable(source);
-      else if (auto formal =
-                   dyn_cast<semantic::SVFormalArgumentSymbolOp>(source))
-        automatic = !isStaticFormal(formal);
-      if (!automatic || !isNestedInCodeUnit(source))
+      if (!isa<semantic::SVVariableSymbolOp,
+               semantic::SVFormalArgumentSymbolOp>(source) ||
+          !isNestedInCodeUnit(source))
         return;
       auto type = source->getAttrOfType<TypeAttr>("semantic_type");
       if (!type)

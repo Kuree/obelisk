@@ -2178,8 +2178,8 @@ LogicalResult NativePipelineAnalysis::materialize() {
               sim::SimVPIEventBindingOp, sim::SimVPIThreadOriginBindingOp,
               sim::SimVPICallDeclOp, sim::SimVPICodeUnitScopeBindingOp,
               sim::SimVPIInitializerBindingOp, sim::SimVPIClassCallDispatchOp,
-              sim::SimVPILocalDeclOp, sim::SimVPICallableDeclOp,
-              sim::SimVPIInterfaceMemberDeclOp,
+              sim::SimVPILocalDeclOp, sim::SimVPIStaticLocalBindingOp,
+              sim::SimVPICallableDeclOp, sim::SimVPIInterfaceMemberDeclOp,
               sim::SimVPIInterfaceInstanceBindingOp,
               sim::SimVPIInterfaceCallDispatchOp, sim::SimClassFieldDeclOp,
               schedule::NativeMethodOp, sim::SimRandomConstraintTemplateOp>(

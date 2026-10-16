@@ -5263,17 +5263,34 @@ bool validateDatabaseImpl(const Database &database) {
     }
     boundClassFields.insert(member);
   }
-  // Private class-static and event-array storage has one public declaration
-  // identity. The marker excludes it from physical scope discovery and is
-  // valid only when a checked binding proves that ownership.
+  // Private delegated storage has a separate public identity. Ordinary
+  // procedural static variables retain their storage identity, but their
+  // exact lexical scope must be proved by the relations below.
+  std::unordered_set<uint32_t> proceduralStaticStorage;
+  std::unordered_map<uint32_t, uint32_t> proceduralStaticOwners,
+      proceduralStaticScopes;
   for (uint32_t index = 0; index != database.objectCount; ++index) {
     uint64_t offset = database.objects + uint64_t{index} * kObjectSize;
     const uint8_t *object = database.data + offset;
-    if (recordKind(object) == OBELISK_RT_DESIGN_RECORD_STORAGE &&
-        (((read32(object + 4) & OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0) !=
-         (classBackingStorage.count(offset) != 0 ||
-          eventBackingStorage.count(offset) != 0)))
+    if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_STORAGE)
+      continue;
+    bool marked =
+        (read32(object + 4) & OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0;
+    bool delegated =
+        classBackingStorage.count(offset) || eventBackingStorage.count(offset);
+    if (delegated && !marked)
       return false;
+    if (marked && !delegated) {
+      uint32_t packed = 0;
+      if ((read32(object + 4) & OBELISK_RT_DESIGN_CAP_INTERNAL) ||
+          !obelisk::reflection::vpiObjectSetContains(
+              obelisk::reflection::VPIObjectSetID::DataVariableObjects,
+              recordVPIKind(object)) ||
+          !obelisk::reflection::tryPackTableIndex(
+              obelisk::reflection::TableKind::Object, index, packed))
+        return false;
+      proceduralStaticStorage.insert(packed);
+    }
   }
   // Variable kinds newly admitted to the immutable table are class
   // declarations, never synthetic executable storage. Existing source-only
@@ -6712,6 +6729,53 @@ bool validateDatabaseImpl(const Database &database) {
         (lexicalForward ||
          selector == static_cast<uint32_t>(
                          obelisk::reflection::VPIRelationKind::VariablesRel)) &&
+        proceduralStaticStorage.count(packedTarget)) {
+      auto [owner, inserted] =
+          proceduralStaticOwners.emplace(packedTarget, sourceEndpoint);
+      if (!inserted && owner->second != sourceEndpoint)
+        return false;
+    }
+    if (!iterate && proceduralStaticStorage.count(sourceEndpoint) &&
+        selector == static_cast<uint32_t>(
+                        obelisk::reflection::VPIRelationKind::ScopeRel)) {
+      uint64_t physicalScope = 0;
+      if (targetTable == obelisk::reflection::TableKind::Statement) {
+        if (!(read16(target + 38) & OBELISK_RT_DESIGN_STATEMENT_SCOPE) ||
+            read32(target + 8) >= database.objectCount)
+          return false;
+        const uint8_t *unit = database.data + database.objects +
+                              uint64_t{read32(target + 8)} * kObjectSize;
+        if ((recordKind(unit) != OBELISK_RT_DESIGN_RECORD_PROCESS &&
+             recordKind(unit) != OBELISK_RT_DESIGN_RECORD_FUNCTION) ||
+            (read32(unit + 4) & OBELISK_RT_DESIGN_CAP_INTERNAL))
+          return false;
+        physicalScope =
+            database.scopes + uint64_t{read32(target + 12)} * kScopeSize;
+      } else if (targetTable == obelisk::reflection::TableKind::Object &&
+                 (recordKind(target) == OBELISK_RT_DESIGN_RECORD_PROCESS ||
+                  recordKind(target) == OBELISK_RT_DESIGN_RECORD_FUNCTION) &&
+                 (targetKind == static_cast<uint32_t>(
+                                    obelisk::reflection::VPIObjectKind::Task) ||
+                  targetKind ==
+                      static_cast<uint32_t>(
+                          obelisk::reflection::VPIObjectKind::Function))) {
+        physicalScope = read64(target + 16);
+      } else {
+        return false;
+      }
+      auto name = fixedNames.find(sourceEndpoint);
+      if ((targetTable == obelisk::reflection::TableKind::Object &&
+           (read32(target + 4) & OBELISK_RT_DESIGN_CAP_INTERNAL)) ||
+          read64(sourceRecord + 16) != physicalScope ||
+          name == fixedNames.end() || name->second.empty() ||
+          !localNames[packedTarget].insert(name->second).second ||
+          !proceduralStaticScopes.emplace(sourceEndpoint, packedTarget).second)
+        return false;
+    }
+    if (iterate &&
+        (lexicalForward ||
+         selector == static_cast<uint32_t>(
+                         obelisk::reflection::VPIRelationKind::VariablesRel)) &&
         frameLocals.count(packedTarget)) {
       if (frameLocalOwners.at(packedTarget) != sourceEndpoint)
         return false;
@@ -7078,6 +7142,13 @@ bool validateDatabaseImpl(const Database &database) {
                             staticLexicalParents.count(parent->second) != 0;
                    }))
     return false;
+  for (uint32_t storage : proceduralStaticStorage) {
+    auto owner = proceduralStaticOwners.find(storage);
+    auto scope = proceduralStaticScopes.find(storage);
+    if (owner == proceduralStaticOwners.end() ||
+        scope == proceduralStaticScopes.end() || owner->second != scope->second)
+      return false;
+  }
   for (uint32_t local : frameLocals) {
     if (!frameLocalForward.count(local) || boundClassFields.count(local) ||
         boundEvents.count(local) || eventArrayStorage.count(local))

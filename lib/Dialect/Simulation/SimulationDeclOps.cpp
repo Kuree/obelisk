@@ -584,6 +584,22 @@ LogicalResult SimVPIInitializerBindingOp::verify() {
   return success();
 }
 
+LogicalResult SimVPIStaticLocalBindingOp::verify() {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("requires a simulation.design owner");
+  if (failed(verifyNonnegative(*this, getStorageIdAttr(), "storage ID")) ||
+      failed(verifyNonnegative(*this, getCodeUnitIdAttr(), "code-unit ID")) ||
+      failed(verifyNonnegative(*this, getOrdinalAttr(), "source ordinal")))
+    return failure();
+  if (!getCodeUnitId())
+    return emitOpError("code-unit ID must be positive");
+  if (auto statement = getStatementScopeIdAttr();
+      statement &&
+      (statement.getValue().isNegative() || statement.getValue().isZero()))
+    return emitOpError("statement scope ID must be positive");
+  return success();
+}
+
 LogicalResult SimVPICallDeclOp::verify() {
   if (!isa<SimDesignOp>((*this)->getParentOp()))
     return emitOpError("requires a simulation.design owner");
@@ -3693,6 +3709,7 @@ LogicalResult SimDesignOp::verifyRegions() {
   SmallVector<SimVPIInitializerBindingOp> initializerBindings;
   SmallVector<SimVPICallDeclOp> vpiCalls;
   SmallVector<SimVPILocalDeclOp> vpiLocals;
+  SmallVector<SimVPIStaticLocalBindingOp> staticLocals;
   llvm::DenseSet<uint64_t> vpiLocalIds;
   llvm::DenseMap<Attribute, SimVPIClassCallDispatchOp> vpiClassDispatchCalls;
   SmallVector<SimVPIStatementRelationDeclOp> statementRelations;
@@ -3762,6 +3779,8 @@ LogicalResult SimDesignOp::verifyRegions() {
               addId(local.getIdAttr(), vpiLocalIds, "VPI local declaration")))
         return failure();
       vpiLocals.push_back(local);
+    } else if (auto binding = dyn_cast<SimVPIStaticLocalBindingOp>(op)) {
+      staticLocals.push_back(binding);
     } else if (auto call = dyn_cast<SimVPICallDeclOp>(op)) {
       if (failed(addId(call.getIdAttr(), vpiCallIds, "VPI call-site")))
         return failure();
@@ -4693,7 +4712,7 @@ LogicalResult SimDesignOp::verifyRegions() {
       static_cast<uint32_t>(reflection::VPIRelationKind::OriginRel),
       reflection::VPITraversalMode::Handle);
   llvm::DenseMap<std::pair<uint64_t, uint64_t>, SmallVector<uint32_t>>
-      localOrdinals;
+      localOrdinals, sourceLocalOrdinals;
   llvm::DenseSet<std::pair<Operation *, Attribute>> localNames;
   for (SimVPILocalDeclOp local : vpiLocals) {
     auto owner = codeUnits.lookup(local.getCodeUnitId());
@@ -4721,6 +4740,62 @@ LogicalResult SimDesignOp::verifyRegions() {
     localOrdinals[{local.getCodeUnitId(),
                    local.getStatementScopeId().value_or(0)}]
         .push_back(local.getOrdinal());
+    if (auto ordinal = local.getSourceOrdinalAttr();
+        ordinal && ordinal.getValue().isNegative())
+      return local.emitOpError("source ordinal must be nonnegative");
+    sourceLocalOrdinals[{local.getCodeUnitId(),
+                         local.getStatementScopeId().value_or(0)}]
+        .push_back(local.getSourceOrdinal().value_or(local.getOrdinal()));
+  }
+  llvm::DenseSet<uint64_t> staticLocalStorage;
+  for (auto binding : staticLocals) {
+    auto storage = storagesById.lookup(binding.getStorageId());
+    auto owner = codeUnits.lookup(binding.getCodeUnitId());
+    if (!storage || storage.getLifetime() == Lifetime::Automatic || !owner ||
+        owner.getInternal() || storage.getScopeId() != owner.getScopeId())
+      return binding.emitOpError("requires static storage in the exact source "
+                                 "code unit's physical scope");
+    if (sim::has<metadata::VpiIdentityDelegated>(storage) ||
+        llvm::any_of(classMembers, [&](auto member) {
+          return member.getStaticStorage() == binding.getStorageId();
+        }))
+      return binding.emitOpError(
+          "delegated storage retains its canonical owner");
+    if (!storage.getVpiTypeAttr() ||
+        !reflection::vpiObjectSetContains(
+            reflection::VPIObjectSetID::DataVariableObjects,
+            vpiKindForStorage(storage.getVpiTypeAttr())))
+      return binding.emitOpError("requires a reflected data variable");
+    Operation *scope = owner;
+    if (auto id = binding.getStatementScopeId()) {
+      auto statement = statements.lookup(*id);
+      if (!statement || !statement.getIsScope() ||
+          statement.getCodeUnitId() != binding.getCodeUnitId())
+        return binding.emitOpError(
+            "statement scope must belong to the exact lexical code unit");
+      scope = statement;
+    } else if (owner.getCodeUnitKind() != EntryKind::Task &&
+               owner.getCodeUnitKind() != EntryKind::Function) {
+      return binding.emitOpError("static local without a statement scope "
+                                 "requires a task or function owner");
+    }
+    if (!staticLocalStorage.insert(binding.getStorageId()).second)
+      return binding.emitOpError("duplicates a static local storage binding");
+    auto name = storage.getDebugNameAttr();
+    if (!name || name.getValue().empty() || name.getValue().contains('\0') ||
+        !localNames.insert({scope, name}).second)
+      return binding.emitOpError("requires a unique exact declaration name");
+    sourceLocalOrdinals[{binding.getCodeUnitId(),
+                         binding.getStatementScopeId().value_or(0)}]
+        .push_back(binding.getOrdinal());
+  }
+  for (auto &entry : sourceLocalOrdinals) {
+    llvm::sort(entry.second);
+    for (auto [index, ordinal] : llvm::enumerate(entry.second))
+      if (index != ordinal)
+        return emitOpError(
+            "procedural source declaration ordinals must be dense "
+            "and unique within each scope");
   }
   for (auto &entry : localOrdinals) {
     llvm::sort(entry.second);

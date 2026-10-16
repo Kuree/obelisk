@@ -14,13 +14,17 @@
 using namespace mlir;
 
 namespace obelisk::simlowering {
-LogicalResult materializeProceduralLocals(sim::SimDesignOp design,
-                                          const PreparedUnits &units,
-                                          const PreparedCaptures &captures,
-                                          OpBuilder &builder) {
+LogicalResult
+materializeProceduralLocals(sim::SimDesignOp design, const PreparedUnits &units,
+                            const PreparedCaptures &captures,
+                            llvm::StringMap<DescriptorInfo> &descriptors,
+                            OpBuilder &builder) {
   llvm::DenseMap<uint64_t, sim::SimStatementDeclOp> statements;
   for (auto statement : design.getOps<sim::SimStatementDeclOp>())
     statements[statement.getId()] = statement;
+  llvm::DenseMap<uint64_t, sim::SimStorageDeclOp> storages;
+  for (auto storage : design.getOps<sim::SimStorageDeclOp>())
+    storages[storage.getId()] = storage;
   SymbolTableCollection sourceSymbols;
   auto module = design->getParentOfType<ModuleOp>();
   uint64_t nextID = 1;
@@ -50,6 +54,10 @@ LogicalResult materializeProceduralLocals(sim::SimDesignOp design,
           add(child, {});
       auto routine = cast<semantic::SVSubroutineSymbolOp>(unit.source);
       if (auto path = routine.getReturnVariablePath()) {
+        for (Operation *child : getChildren(unit.source))
+          if (isa<semantic::SVVariableSymbolOp>(child) &&
+              getHierarchyName(child) == *path)
+            add(child, {});
         auto found = captures.locals.find(unit.source);
         if (found != captures.locals.end())
           for (const PreparedLocal &local : found->second)
@@ -91,7 +99,7 @@ LogicalResult materializeProceduralLocals(sim::SimDesignOp design,
         add(source, lexicalScope);
       return WalkResult::advance();
     });
-    llvm::DenseMap<uint64_t, uint64_t> ordinals;
+    llvm::DenseMap<uint64_t, uint64_t> ordinals, sourceOrdinals;
     for (Candidate candidate : candidates) {
       auto semantic =
           sim::get<sim::metadata::VpiDeclaredType>(candidate.source);
@@ -121,6 +129,47 @@ LogicalResult materializeProceduralLocals(sim::SimDesignOp design,
       auto type = getNormalizedSemanticType(candidate.source);
       if (failed(type))
         return failure();
+      uint64_t scope =
+          candidate.scope ? candidate.scope.getValue().getZExtValue() : 0;
+      auto persistent = descriptors.find(getHierarchyName(candidate.source));
+      if (persistent != descriptors.end()) {
+        auto variable =
+            dyn_cast<semantic::SVVariableSymbolOp>(candidate.source);
+        bool staticSource =
+            isStaticFormal(candidate.source) ||
+            (variable &&
+             variable.getLifetime() == semantic::SVVariableLifetime::Static);
+        if (auto routine =
+                dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source);
+            variable && variable.getIsCompilerGenerated() && routine &&
+            routine.getDefaultLifetime() ==
+                semantic::SVVariableLifetime::Static)
+          staticSource |= routine.getReturnVariablePath() ==
+                          getHierarchyName(candidate.source);
+        if (!staticSource)
+          continue;
+        // Existing static storage is the declaration identity. Events and
+        // delegated inventories retain their own canonical source bindings.
+        if (!isContextResolvableStorage(persistent->second))
+          continue;
+        auto storage = storages.lookup(persistent->second.id);
+        if (!storage ||
+            sim::has<sim::metadata::VpiIdentityDelegated>(storage) ||
+            !reflection::vpiObjectSetContains(
+                reflection::VPIObjectSetID::DataVariableObjects,
+                sim::vpiKindForStorage(semantic)))
+          continue;
+        storage.setVpiTypeAttr(semantic);
+        persistent->second.vpiType = semantic;
+        if (auto identity = candidate.source->getAttrOfType<IntegerAttr>(
+                vpiSourceTypeIdentityAttrName))
+          sim::set<sim::metadata::VpiSourceTypeIdentity>(storage, identity);
+        sim::SimVPIStaticLocalBindingOp::create(
+            builder, getSemanticLocation(candidate.source), storage.getIdAttr(),
+            owner.getIdAttr(), candidate.scope,
+            builder.getI32IntegerAttr(sourceOrdinals[scope]++));
+        continue;
+      }
       const uint32_t kind = sim::vpiKindForClassMember(semantic);
       const auto *edge = reflection::findVPITraversal(
           static_cast<uint32_t>(reflection::VPIObjectKind::Frame),
@@ -128,8 +177,6 @@ LogicalResult materializeProceduralLocals(sim::SimDesignOp design,
           reflection::VPITraversalMode::Iterate);
       if (!edge || !reflection::vpiObjectSetContains(edge->targets, kind))
         continue;
-      uint64_t scope =
-          candidate.scope ? candidate.scope.getValue().getZExtValue() : 0;
       std::string symbol = "__obelisk_vpi_local_" + std::to_string(nextID);
       auto declaration = sim::SimVPILocalDeclOp::create(
           builder, getSemanticLocation(candidate.source),
@@ -138,7 +185,8 @@ LogicalResult materializeProceduralLocals(sim::SimDesignOp design,
           builder.getI32IntegerAttr(ordinals[scope]++),
           builder.getStringAttr(getHierarchyName(candidate.source)),
           builder.getStringAttr(getDebugName(candidate.source)),
-          TypeAttr::get(*type), semantic);
+          TypeAttr::get(*type), semantic,
+          builder.getI32IntegerAttr(sourceOrdinals[scope]++));
       sim::set<sim::metadata::VpiLocal>(
           candidate.source,
           FlatSymbolRefAttr::get(declaration.getSymNameAttr()));

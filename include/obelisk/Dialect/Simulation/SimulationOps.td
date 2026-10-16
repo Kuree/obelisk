@@ -292,10 +292,30 @@ def SimVPILocalDeclOp : SimOp<"vpi_local.decl", [
                        OptionalAttr<I64Attr>:$statement_scope_id,
                        I32Attr:$ordinal, StrAttr:$hierarchical_name,
                        StrAttr:$debug_name, TypeAttr:$value_type,
-                       SimVPITypeSemanticsAttr:$vpi_type);
+                       SimVPITypeSemanticsAttr:$vpi_type,
+                       OptionalAttr<I32Attr>:$source_ordinal);
   let assemblyFormat = [{$sym_name `id` $id `in` $code_unit_id `scope`
     $scope_id (`within` $statement_scope_id^)? `ordinal` $ordinal
     `hierarchy` $hierarchical_name `debug` $debug_name `:` $value_type attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimVPIStaticLocalBindingOp : SimOp<"vpi_static_local.bind",
+    [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+  let summary = "exact procedural scope of existing static variable storage";
+  let description = [{
+    Refines an existing static storage declaration's source owner without
+    introducing another variable identity. The owner is a task/function or
+    the nearest retained scope statement of the exact lexical code unit.
+    The ordinal is source declaration order across automatic and static
+    declarations; automatic declarations retain their separate dense frame
+    inventory ordinal and carry source_ordinal when the orders differ.
+    Delegated class and named-event identities use their own owner bindings.
+  }];
+  let arguments = (ins I64Attr:$storage_id, I64Attr:$code_unit_id,
+                       OptionalAttr<I64Attr>:$statement_scope_id,
+                       I32Attr:$ordinal);
+  let assemblyFormat = "$storage_id `in` $code_unit_id (`within` $statement_scope_id^)? `ordinal` $ordinal attr-dict";
   let hasVerifier = 1;
 }
 

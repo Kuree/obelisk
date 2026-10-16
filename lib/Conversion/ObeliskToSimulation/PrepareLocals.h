@@ -7,6 +7,7 @@ namespace obelisk::simlowering {
 mlir::LogicalResult
 materializeProceduralLocals(sim::SimDesignOp design, const PreparedUnits &units,
                             const PreparedCaptures &captures,
+                            llvm::StringMap<DescriptorInfo> &descriptors,
                             mlir::OpBuilder &builder);
 } // namespace obelisk::simlowering
 #endif
