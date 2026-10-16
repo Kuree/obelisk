@@ -46,3 +46,8 @@ add_mlir_library(ObeliskAnalysisTestPasses
 target_include_directories(ObeliskAnalysisTestPasses PRIVATE
   "${PROJECT_SOURCE_DIR}/runtime/include"
 )
+
+include(${PROJECT_SOURCE_DIR}/cmake/ObeliskPrecompiledHeaders.cmake)
+obelisk_precompile_headers(ObeliskAnalysisTestPasses
+  "${PROJECT_SOURCE_DIR}/include/obelisk/Dialect/Simulation/SimulationOps.h"
+  <mlir/Pass/Pass.h>)

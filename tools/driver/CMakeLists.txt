@@ -134,12 +134,17 @@ function(obelisk_configure_driver target)
   mlir_check_all_link_libraries(${target})
 endfunction()
 
+# obelisk and obelisk-test-driver differ only in main(). Compile the shared
+# driver sources once and link the same objects into both executables.
+add_library(obelisk-driver-objects OBJECT ${OBELISK_DRIVER_COMMON_SOURCES})
+obelisk_configure_driver(obelisk-driver-objects)
+
 add_llvm_executable(obelisk
   PARTIAL_SOURCES_INTENDED
   Main.cpp
-  ${OBELISK_DRIVER_COMMON_SOURCES}
 )
 obelisk_configure_driver(obelisk)
+target_link_libraries(obelisk PRIVATE obelisk-driver-objects)
 
 if(EMSCRIPTEN)
   # compiler-worker.js loads the compiler as a reusable factory and invokes it
@@ -174,7 +179,7 @@ if(OBELISK_INCLUDE_TESTS)
   add_llvm_executable(obelisk-test-driver EXCLUDE_FROM_ALL
     PARTIAL_SOURCES_INTENDED
     ${PROJECT_SOURCE_DIR}/test/Support/DriverTestMain.cpp
-    ${OBELISK_DRIVER_COMMON_SOURCES}
   )
   obelisk_configure_driver(obelisk-test-driver)
+  target_link_libraries(obelisk-test-driver PRIVATE obelisk-driver-objects)
 endif()

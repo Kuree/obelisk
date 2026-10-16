@@ -72,6 +72,15 @@ cmake -S . -B build -G Ninja \
   -DOBELISK_LLVM_PREBUILT_URL=file:///archives/LLVM-22.1.6-Linux-X64.tar.xz
 ```
 
+The SDK also supplies the host toolchain. Configuring a new build directory
+fetches it before `project()` and compiles Obelisk with its `clang`, which takes
+about half the time GCC does per translation unit, and links the host tools
+with its `ld.lld`, which links the 1.5 GB debug compiler executables about
+seven times faster than GNU ld. A compiler named by `CMAKE_CXX_COMPILER`,
+`CC`/`CXX`, or a toolchain file is kept, as is the compiler an existing build
+directory was configured with. `-DOBELISK_USE_SDK_CLANG=OFF` and
+`-DOBELISK_USE_SDK_LLD=OFF` restore the system defaults.
+
 The selected SDK includes `llvm-tblgen`, `mlir-tblgen`, and the LLVM and MLIR
 CMake exports. The official archive does not ship the `FileCheck` or `not`
 test executables, so Obelisk builds small compatible drivers against the

@@ -1,10 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(obelisk
-  VERSION 0.1.0
-  DESCRIPTION "An AOT SystemVerilog simulator targeting IEEE 1800 conformance and real UVM"
-  LANGUAGES C CXX)
-
 include(FetchContent)
 
 # FetchContent's base directory contains configured object files in addition to
@@ -66,23 +61,30 @@ set(OBELISK_OP_SHARD_COUNT "4" CACHE STRING
 # The official archive is downloaded and extracted below CMAKE_BINARY_DIR. A
 # local file:// URL provides a fully offline path while keeping the extracted
 # distribution owned by the build tree.
+#
+# This happens before project() because the SDK's clang is the default host
+# compiler, and project() is where CMake selects it.
 #===------------------------------------------------------------------------===
 set(OBELISK_LLVM_VERSION "22.1.6")
 
+# CMAKE_HOST_SYSTEM_PROCESSOR is only set by project().
+cmake_host_system_information(RESULT _obelisk_host_processor
+  QUERY OS_PLATFORM)
+
 if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND
-   CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+   _obelisk_host_processor MATCHES "^(x86_64|amd64|AMD64)$")
   set(_obelisk_llvm_archive_name
       "LLVM-${OBELISK_LLVM_VERSION}-Linux-X64.tar.xz")
   set(_obelisk_llvm_archive_sha256
       "c5ac8ef89ca39d30cb32e9b83772f995dd891c685ebc188d593c943a64d5f8b5")
 elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND
-       CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+       _obelisk_host_processor MATCHES "^(aarch64|arm64|ARM64)$")
   set(_obelisk_llvm_archive_name
       "LLVM-${OBELISK_LLVM_VERSION}-Linux-ARM64.tar.xz")
   set(_obelisk_llvm_archive_sha256
       "b67817634e8e1c2632dfc056af14d61b94f8e6502f4e557560eea227aa22ce37")
 elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin" AND
-       CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+       _obelisk_host_processor MATCHES "^(aarch64|arm64|ARM64)$")
   set(_obelisk_llvm_archive_name
       "LLVM-${OBELISK_LLVM_VERSION}-macOS-ARM64.tar.xz")
   set(_obelisk_llvm_archive_sha256
@@ -101,7 +103,7 @@ set(OBELISK_LLVM_PREBUILT_SHA256 "${_obelisk_llvm_archive_sha256}"
 if(NOT OBELISK_LLVM_PREBUILT_URL OR NOT OBELISK_LLVM_PREBUILT_SHA256)
   message(FATAL_ERROR
     "No official LLVM + MLIR v${OBELISK_LLVM_VERSION} archive is known for "
-    "${CMAKE_HOST_SYSTEM_NAME}/${CMAKE_HOST_SYSTEM_PROCESSOR}; set "
+    "${CMAKE_HOST_SYSTEM_NAME}/${_obelisk_host_processor}; set "
     "OBELISK_LLVM_PREBUILT_URL and OBELISK_LLVM_PREBUILT_SHA256")
 endif()
 
@@ -176,6 +178,52 @@ if(NOT EXISTS "${OBELISK_LLVM_DIST_DIR}/lib/cmake/llvm/LLVMConfig.cmake" OR
     "contain both LLVM and MLIR CMake packages")
 endif()
 
+# Compile with the SDK's clang unless a compiler was chosen with
+# CMAKE_<LANG>_COMPILER, CC/CXX or a toolchain file. GCC takes about twice as
+# long per translation unit on this code base. An existing build directory
+# keeps the compiler it was first configured with, since CMake caches it.
+option(OBELISK_USE_SDK_CLANG
+  "Compile with the prebuilt LLVM distribution's clang unless a compiler is chosen"
+  ON)
+set(_obelisk_sdk_clang "${OBELISK_LLVM_DIST_DIR}/bin/clang")
+if(OBELISK_USE_SDK_CLANG AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND
+   NOT CMAKE_TOOLCHAIN_FILE AND
+   NOT DEFINED CMAKE_C_COMPILER AND NOT DEFINED CMAKE_CXX_COMPILER AND
+   NOT DEFINED ENV{CC} AND NOT DEFINED ENV{CXX} AND
+   EXISTS "${_obelisk_sdk_clang}++")
+  # The SDK's clang compiles against the host's libstdc++ and links with the
+  # host's C library, so make sure it can build a C++ program here first.
+  set(_obelisk_probe_dir "${CMAKE_BINARY_DIR}/CMakeFiles/ObeliskSDKClangProbe")
+  file(MAKE_DIRECTORY "${_obelisk_probe_dir}")
+  file(WRITE "${_obelisk_probe_dir}/probe.cpp"
+    "#include <string>\n"
+    "int main() { return static_cast<int>(std::string(\"a\").size()) - 1; }\n")
+  execute_process(
+    COMMAND "${_obelisk_sdk_clang}++" "${_obelisk_probe_dir}/probe.cpp"
+      -o "${_obelisk_probe_dir}/probe"
+    RESULT_VARIABLE _obelisk_probe_result
+    OUTPUT_QUIET
+    ERROR_VARIABLE _obelisk_probe_error)
+  if(_obelisk_probe_result EQUAL 0)
+    set(CMAKE_C_COMPILER "${_obelisk_sdk_clang}" CACHE FILEPATH "C compiler")
+    set(CMAKE_CXX_COMPILER "${_obelisk_sdk_clang}++" CACHE FILEPATH
+      "C++ compiler")
+  else()
+    message(STATUS
+      "The SDK's clang cannot build against this host's C++ library; using "
+      "the default compiler instead:\n${_obelisk_probe_error}")
+  endif()
+  unset(_obelisk_probe_dir)
+  unset(_obelisk_probe_result)
+  unset(_obelisk_probe_error)
+endif()
+unset(_obelisk_sdk_clang)
+
+project(obelisk
+  VERSION 0.1.0
+  DESCRIPTION "An AOT SystemVerilog simulator targeting IEEE 1800 conformance and real UVM"
+  LANGUAGES C CXX)
+
 set(MLIR_DIR "${OBELISK_LLVM_DIST_DIR}/lib/cmake/mlir")
 set(LLVM_DIR "${OBELISK_LLVM_DIST_DIR}/lib/cmake/llvm")
 
@@ -210,6 +258,39 @@ include(TableGen)
 include(AddLLVM)
 include(AddMLIR)
 include(HandleLLVMOptions)
+
+# The compiler tools statically link LLVM, MLIR, slang and Z3 with debug info
+# into 1.3-1.5 GB executables. GNU ld takes ~15 s for each, longer than a
+# one-file library edit takes to compile; the SDK's lld takes ~2 s. An explicit
+# LLVM_USE_LINKER, handled by HandleLLVMOptions above, takes precedence.
+option(OBELISK_USE_SDK_LLD
+  "Link host executables with the prebuilt LLVM distribution's lld" ON)
+if(OBELISK_USE_SDK_LLD AND NOT LLVM_USE_LINKER AND NOT EMSCRIPTEN AND
+   CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+   EXISTS "${OBELISK_LLVM_TOOLS_DIR}/ld.lld")
+  set(_obelisk_lld_flags "")
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # GCC's -fuse-ld=lld runs the first ld.lld on its program search path. -B
+    # prepends a directory holding only the SDK's ld.lld, so GCC still finds
+    # its own assembler and collect2.
+    set(_obelisk_lld_dir "${CMAKE_BINARY_DIR}/host-linker")
+    file(MAKE_DIRECTORY "${_obelisk_lld_dir}")
+    file(CREATE_LINK "${OBELISK_LLVM_TOOLS_DIR}/ld.lld"
+      "${_obelisk_lld_dir}/ld.lld" SYMBOLIC)
+    set(_obelisk_lld_flags "-fuse-ld=lld -B${_obelisk_lld_dir}/")
+  elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(_obelisk_lld_flags "--ld-path=${OBELISK_LLVM_TOOLS_DIR}/ld.lld")
+  endif()
+  if(_obelisk_lld_flags)
+    foreach(flags CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS
+                  CMAKE_MODULE_LINKER_FLAGS)
+      string(APPEND ${flags} " ${_obelisk_lld_flags}")
+    endforeach()
+    message(STATUS "Host linker: ${OBELISK_LLVM_TOOLS_DIR}/ld.lld")
+  endif()
+  unset(_obelisk_lld_flags)
+  unset(_obelisk_lld_dir)
+endif()
 
 if(EMSCRIPTEN)
   # wasm32, not wasm64. No Safari release implements the Memory64 proposal,

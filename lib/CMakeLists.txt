@@ -21,4 +21,11 @@ obelisk_precompile_headers(ObeliskSimulationToLLVMCoroutine
   "${_simulation_ops}"
   <mlir/Dialect/LLVMIR/LLVMDialect.h>
   <mlir/Transforms/DialectConversion.h>)
+obelisk_precompile_headers(ObeliskSimulationToSchedule "${_simulation_ops}")
+obelisk_precompile_headers(ObeliskSimulationToScheduleNative
+  "${_simulation_ops}" <mlir/Dialect/LLVMIR/LLVMDialect.h>)
+obelisk_precompile_headers(ObeliskScheduleTransforms
+  "${_simulation_ops}" <mlir/Pass/Pass.h>)
+obelisk_precompile_headers(ObeliskScheduleNativeTransforms
+  "${_simulation_ops}" <mlir/Dialect/LLVMIR/LLVMDialect.h> <mlir/Pass/Pass.h>)
 unset(_simulation_ops)
