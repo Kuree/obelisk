@@ -3,6 +3,7 @@
 
 #include "PrepareLocals.h"
 #include "Detail.h"
+#include "mlir/IR/AttrTypeSubElements.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
 #include "obelisk/Dialect/Simulation/SimulationVPI.h"
@@ -94,6 +95,29 @@ LogicalResult materializeProceduralLocals(sim::SimDesignOp design,
     for (Candidate candidate : candidates) {
       auto semantic =
           sim::get<sim::metadata::VpiDeclaredType>(candidate.source);
+      bool complete = true;
+      AttrTypeWalker typeReferences;
+      typeReferences.addWalk([&](sim::VPITypeSemanticsAttr current) {
+        if (auto aliases = current.getTypedefAliases())
+          for (Attribute alias : aliases)
+            complete &=
+                bool(sourceSymbols
+                         .lookupNearestSymbolFrom<sim::SimVPITypespecDeclOp>(
+                             design, cast<SymbolRefAttr>(alias)));
+        if (current.getKind() == sim::VPITypeKind::Enum &&
+            !current.getTypedefAliases()) {
+          auto identity = candidate.source->getAttrOfType<IntegerAttr>(
+              vpiSourceTypeIdentityAttrName);
+          bool found = false;
+          if (identity)
+            for (auto declaration : design.getOps<sim::SimVPITypespecDeclOp>())
+              found |= declaration.getSourceTypeIdentityAttr() == identity;
+          complete &= found;
+        }
+      });
+      typeReferences.walk(semantic);
+      if (!complete)
+        continue;
       auto type = getNormalizedSemanticType(candidate.source);
       if (failed(type))
         return failure();

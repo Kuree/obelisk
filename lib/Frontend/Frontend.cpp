@@ -4354,10 +4354,15 @@ private:
       SET_OP_ATTR(BlockKind,
                   slangir::StatementBlockKindAttr::get(
                       builder.getContext(), convertEnum(node.blockKind)));
-      if (node.blockSymbol && !node.blockSymbol->name.empty())
+      if (node.blockSymbol) {
         setSymbolReference(attrs, *node.blockSymbol,
                            Op::getBlockSymbolAttrName(operationName),
                            Op::getBlockPathAttrName(operationName));
+        // Unnamed declaration scopes still have exact symbol identity. They
+        // do not acquire the named control target carried by block_path.
+        if (node.blockSymbol->name.empty())
+          attrs.erase(Op::getBlockPathAttrName(operationName));
+      }
     } else if constexpr (std::same_as<T, slang::ast::DisableStatement>) {
       const slang::ast::Symbol *targetSymbol = node.target.getSymbolReference();
       if (targetSymbol)
@@ -6359,6 +6364,16 @@ private:
 
   template <typename Op, typename Node> void importNode(const Node &node) {
     using BareNode = std::remove_cvref_t<Node>;
+    if constexpr (std::same_as<BareNode, slang::ast::TransparentMemberSymbol>) {
+      // Enum members are injected into the surrounding lexical scope through
+      // transparent wrappers. Import the real declaration there, preserving its
+      // exact type identity and value instead of an empty wrapper.
+      if (const auto *value =
+              node.wrapped.template as_if<slang::ast::EnumValueSymbol>()) {
+        importNode<slangir::EnumValueSymbolOp>(*value);
+        return;
+      }
+    }
     if constexpr (std::derived_from<Node, slang::ast::Symbol>) {
       if (emittedSymbolPaths.contains(&node))
         return;

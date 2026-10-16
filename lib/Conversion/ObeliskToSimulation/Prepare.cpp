@@ -2667,11 +2667,12 @@ void ObeliskSimPreparePass::runOnOperation() {
   if (invalid)
     return abort();
 
+  PreparedProceduralTypes proceduralTypes;
   FailureOr<llvm::StringMap<DescriptorInfo>> preparedDescriptors =
-      materializeDesignDescriptors(module, design, semanticRoot, *portAliases,
-                                   *scopes, *classes, designPrecisionFs,
-                                   preserveVPIMethodBindings,
-                                   preserveVPIBoxBindings, builder);
+      materializeDesignDescriptors(
+          module, design, semanticRoot, *portAliases, *scopes, *classes,
+          designPrecisionFs, preserveVPIMethodBindings, preserveVPIBoxBindings,
+          proceduralTypes, builder);
   if (failed(preparedDescriptors))
     return abort();
   llvm::StringMap<DescriptorInfo> &descriptors = *preparedDescriptors;
@@ -4593,6 +4594,9 @@ void ObeliskSimPreparePass::runOnOperation() {
     return abort();
   if (failed(materializeProceduralStatements(
           design, *preparedUnits, semanticSymbols, builder)))
+    return abort();
+  if (failed(
+          materializeProceduralTypes(module, design, proceduralTypes, builder)))
     return abort();
   if (failed(materializeProceduralCalls(design, *preparedUnits, semanticSymbols,
                                         builder)))

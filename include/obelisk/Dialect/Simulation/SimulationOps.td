@@ -685,7 +685,8 @@ def SimVPITypespecDeclOp : SimOp<"vpi_typespec.decl", [
   let description = [{
     Preserves a source typespec as a resolvable symbol after semantic IR is
     erased. For typedefs and anonymous enums, `owner` is the exact source VPI
-    anchor and, unlike `scope_id`, does not collapse lexical package,
+    anchor, or `statement_scope_id` names the exact procedural statement scope.
+    Exactly one owner is present. Unlike `scope_id`, neither collapses lexical package,
     compilation-unit, class, subroutine, property, or sequence scopes. An
     interface typespec uses its enclosing persistent anchor as an image
     namespace because IEEE 1800 exposes it through `vpiTypespec`, not an owner
@@ -701,16 +702,18 @@ def SimVPITypespecDeclOp : SimOp<"vpi_typespec.decl", [
     executable type conversion or scheduling.
   }];
   let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
-                       I64Attr:$scope_id, FlatSymbolRefAttr:$owner,
+                       I64Attr:$scope_id, OptionalAttr<FlatSymbolRefAttr>:$owner,
                        StrAttr:$hierarchical_name,
                        StrAttr:$debug_name,
                        SimVPITypeSemanticsAttr:$target_type,
                        DefaultValuedAttr<SimVPITypespecOrigin,
                          "::obelisk::sim::VPITypespecOrigin::Typedef">:$origin,
                        OptionalAttr<I64Attr>:$source_type_identity,
-                       OptionalAttr<TypeAttr>:$message_type);
+                       OptionalAttr<TypeAttr>:$message_type,
+                       OptionalAttr<I64Attr>:$statement_scope_id);
   let assemblyFormat = [{
-    $sym_name `id` $id `in` $scope_id `owner` $owner
+    $sym_name `id` $id `in` $scope_id (`owner` $owner^)?
+    (`within` $statement_scope_id^)?
     `hierarchy` $hierarchical_name
     `debug` $debug_name attr-dict
   }];
@@ -809,13 +812,15 @@ def SimVPIEnumConstDeclOp : SimOp<"vpi_enum_const.decl", [
     Preserves one enum member in declaration order after semantic IR is
     erased. `enum_typespec` is an exact symbol relation to the owning enum
     typespec, so escaped names and identically named compilation-unit enums
-    cannot collide. `value` retains the source four-state constant spelling
-    for later reflection-image encoding. This declaration never participates
-    in execution or scheduling.
+    cannot collide. `value` retains the source four-state constant spelling;
+    `immutable_value` retains its typed packed planes for value queries. Legacy
+    declarations without a typed value retain metadata only. This declaration
+    never participates in execution or scheduling.
   }];
   let arguments = (ins I64Attr:$id, I64Attr:$ordinal,
                        FlatSymbolRefAttr:$enum_typespec,
-                       StrAttr:$name, StrAttr:$value);
+                       StrAttr:$name, StrAttr:$value,
+                       OptionalAttr<SimFrozenConstantAttr>:$immutable_value);
   let assemblyFormat = [{
     $id `enum` $enum_typespec `ordinal` $ordinal
     `name` $name `value` $value attr-dict

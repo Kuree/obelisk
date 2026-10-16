@@ -1566,6 +1566,11 @@ bool valueSourceFor(
              vpiNotice);
     return false;
   }
+  if (source.exactType == vpiEnumConst && source.info.bit_width == 0) {
+    setError(handle->owner, "enum constant has no retained typed value",
+             vpiNotice);
+    return false;
+  }
   if (source.exactType == vpiOperation && !source.hasSemanticCursor) {
     setError(handle->owner, "original expression has no elaborated result type",
              vpiNotice);

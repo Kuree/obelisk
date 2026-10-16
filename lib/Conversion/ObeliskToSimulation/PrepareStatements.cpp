@@ -1,6 +1,9 @@
 //===- PrepareStatements.cpp - Procedural statement inventory -----------===//
 
 #include "PrepareStatements.h"
+#include "PrepareTopology.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/SymbolTable.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include <algorithm>
@@ -85,11 +88,12 @@ statementShape(Operation *source,
         block.getBlockKind() == semantic::SVStatementBlockKind::Sequential;
     shape.kind = sequential ? Kind::Begin : Kind::Fork;
     if (auto symbol = block.getBlockSymbolAttr()) {
-      // Preparation has validated every elaborated path component. Semantic
-      // scopes are isolated, so resolve the exact frozen symbol identity.
-      auto found = semanticSymbols.find(symbol.getLeafReference());
+      // Distinct unnamed blocks may reuse the same leaf spelling. Resolve the
+      // exact source symbol path in its module namespace.
+      SymbolTableCollection symbols;
+      auto module = block->getParentOfType<ModuleOp>();
       Operation *declaration =
-          found == semanticSymbols.end() ? nullptr : found->second;
+          module ? symbols.lookupSymbolIn(module, symbol) : nullptr;
       auto name = declaration ? declaration->getAttrOfType<StringAttr>("name")
                               : StringAttr{};
       if (!declaration)
@@ -556,6 +560,88 @@ LogicalResult materializeProceduralStatements(
                             child.grouping, child.body});
     }
   }
+  return success();
+}
+
+LogicalResult materializeProceduralTypes(ModuleOp module,
+                                         sim::SimDesignOp design,
+                                         const PreparedProceduralTypes &types,
+                                         OpBuilder &builder) {
+  llvm::DenseMap<uint64_t, sim::SimStatementDeclOp> statements;
+  for (auto statement : design.getOps<sim::SimStatementDeclOp>())
+    statements[statement.getId()] = statement;
+  llvm::DenseMap<Operation *, sim::SimStatementDeclOp> scopes;
+  SymbolTableCollection symbols;
+  bool invalid = false;
+  module.walk([&](semantic::SVBlockStatementOp block) {
+    auto reference = block.getBlockSymbolAttr();
+    auto identity = sim::get<sim::metadata::VpiStatementId>(block);
+    if (!reference || !identity)
+      return;
+    auto statement = statements.lookup(identity.getValue().getZExtValue());
+    if (!statement || !statement.getIsScope().value_or(false))
+      return;
+    auto *source = symbols.lookupSymbolIn(module, reference);
+    if (!isa_and_nonnull<semantic::SVStatementBlockSymbolOp>(source)) {
+      block.emitError("procedural type owner has no exact source block symbol");
+      invalid = true;
+      return;
+    }
+    auto [entry, inserted] = scopes.try_emplace(source, statement);
+    if (!inserted && entry->second != statement) {
+      block.emitError("source block has multiple procedural scope identities");
+      invalid = true;
+    }
+  });
+  if (invalid)
+    return failure();
+  OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPointToEnd(&design.getBody().front());
+  llvm::DenseSet<Attribute> emitted;
+  for (const auto &plan : types.typespecs) {
+    auto owner = scopes.lookup(plan.block);
+    // Unsupported statement ancestors have no immutable scope. Preserve no
+    // outward substitute; locals using this type remain unavailable too.
+    if (!owner)
+      continue;
+    if (owner.getScopeId() != plan.scope)
+      return plan.source->emitError(
+          "procedural typespec scope differs from its exact statement owner");
+    sim::SimVPITypespecDeclOp::create(
+        builder, getSemanticLocation(plan.source), plan.symbol.getValue(),
+        plan.id, plan.scope, FlatSymbolRefAttr{}, plan.hierarchy, plan.name,
+        plan.type, plan.origin, plan.sourceIdentity, TypeAttr{},
+        owner.getIdAttr());
+    emitted.insert(plan.symbol);
+  }
+  for (const auto &plan : types.constants) {
+    if (!emitted.contains(plan.typespec))
+      continue;
+    sim::SimVPIEnumConstDeclOp::create(
+        builder, getSemanticLocation(plan.source), plan.id, plan.ordinal,
+        plan.typespec.getValue(), plan.name, plan.value, plan.immutableValue);
+  }
+  // Deferred declarations under unsupported statement owners may be omitted.
+  // Their symbols remain distinct, while the retained image inventories must
+  // have dense numeric IDs. No executable metadata refers to these numeric IDs.
+  SmallVector<Operation *> retainedTypes;
+  for (Operation &op : design.getBody().front())
+    if (isa<sim::SimVPITypespecDeclOp, sim::SimVPIUnresolvedTypeAliasDeclOp,
+            sim::SimVPILexicalClassTypespecDeclOp>(op))
+      retainedTypes.push_back(&op);
+  llvm::sort(retainedTypes, [](Operation *a, Operation *b) {
+    return a->getAttrOfType<IntegerAttr>("id").getInt() <
+           b->getAttrOfType<IntegerAttr>("id").getInt();
+  });
+  for (auto [id, op] : llvm::enumerate(retainedTypes))
+    op->setAttr("id", builder.getI64IntegerAttr(id));
+  SmallVector<sim::SimVPIEnumConstDeclOp> retainedConstants;
+  for (auto constant : design.getOps<sim::SimVPIEnumConstDeclOp>())
+    retainedConstants.push_back(constant);
+  llvm::sort(retainedConstants,
+             [](auto a, auto b) { return a.getId() < b.getId(); });
+  for (auto [id, constant] : llvm::enumerate(retainedConstants))
+    constant.setIdAttr(builder.getI64IntegerAttr(id));
   return success();
 }
 

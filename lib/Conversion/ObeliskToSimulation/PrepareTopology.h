@@ -87,6 +87,39 @@ bool isStaticFormal(mlir::Operation *operation);
 /// Whether an operation is nested inside an executable semantic code unit.
 bool isNestedInCodeUnit(mlir::Operation *operation);
 
+/// Frozen type declarations whose exact statement owner is assigned after
+/// procedural statement inventory. These are source plans, not runtime types.
+struct PreparedProceduralTypes {
+  struct Typespec {
+    mlir::Operation *source;
+    mlir::Operation *block;
+    mlir::FlatSymbolRefAttr symbol;
+    uint64_t id;
+    uint64_t scope;
+    std::string hierarchy;
+    std::string name;
+    sim::VPITypeSemanticsAttr type;
+    sim::VPITypespecOrigin origin;
+    mlir::IntegerAttr sourceIdentity;
+  };
+  struct EnumConstant {
+    mlir::Operation *source;
+    uint64_t id;
+    uint64_t ordinal;
+    mlir::FlatSymbolRefAttr typespec;
+    std::string name;
+    std::string value;
+    sim::FrozenConstantAttr immutableValue;
+  };
+  mlir::SmallVector<Typespec> typespecs;
+  mlir::SmallVector<EnumConstant> constants;
+};
+
+mlir::LogicalResult
+materializeProceduralTypes(mlir::ModuleOp module, sim::SimDesignOp design,
+                           const PreparedProceduralTypes &types,
+                           mlir::OpBuilder &builder);
+
 /// Materialize design storage/net/event descriptors and resolve all aliases.
 mlir::FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     mlir::ModuleOp module, sim::SimDesignOp design,
@@ -94,7 +127,7 @@ mlir::FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     const PreparedScopeDeclarations &scopes,
     const PreparedClassDeclarations &classes, uint64_t designPrecisionFs,
     bool preserveVPIMethodBindings, bool preserveVPIBoxBindings,
-    mlir::OpBuilder &builder);
+    PreparedProceduralTypes &proceduralTypes, mlir::OpBuilder &builder);
 
 } // namespace obelisk::simlowering
 

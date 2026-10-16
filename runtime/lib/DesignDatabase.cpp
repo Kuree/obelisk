@@ -5136,6 +5136,7 @@ bool validateDatabaseImpl(const Database &database) {
   if (nextFrozenPayload != database.frozenValuePayloadSize)
     return false;
   uint32_t previousFrozenSource = 0;
+  std::unordered_set<uint32_t> frozenEnumConstants;
   for (uint64_t index = 0; index != database.frozenValueBindingCount; ++index) {
     const uint8_t *binding = database.data + database.frozenValueBindings +
                              index * kFrozenValueBindingSize;
@@ -5148,6 +5149,9 @@ bool validateDatabaseImpl(const Database &database) {
         (objectReferenceVPIKind(database, objectOffset) !=
              static_cast<uint32_t>(
                  obelisk::reflection::VPIObjectKind::Parameter) &&
+         objectReferenceVPIKind(database, objectOffset) !=
+             static_cast<uint32_t>(
+                 obelisk::reflection::VPIObjectKind::EnumConst) &&
          sourceExpressionConstants.count(packedSource) == 0) ||
         unresolvedValueParameters.count(packedSource) != 0 ||
         valueIndex >= database.frozenValueCount)
@@ -5163,6 +5167,14 @@ bool validateDatabaseImpl(const Database &database) {
     const uint8_t *semantic = database.data + database.semanticTypes +
                               uint64_t{semanticRoot} * kSemanticTypeSize;
     uint32_t semanticFlags = read32(semantic);
+    bool isEnum =
+        objectReferenceVPIKind(database, objectOffset) ==
+        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::EnumConst);
+    if (isEnum) {
+      if ((semanticFlags & UINT32_C(0xff)) != OBELISK_RT_DESIGN_SEMANTIC_ENUM)
+        return false;
+      frozenEnumConstants.insert(packedSource);
+    }
     if (sourceExpressionConstants.count(packedSource) != 0) {
       if (read32(semantic + 8) != 0 || read32(semantic + 12) != UINT32_MAX)
         return false;
@@ -5183,7 +5195,9 @@ bool validateDatabaseImpl(const Database &database) {
       }
     }
     uint64_t semanticWidth = 0;
-    if (!semanticBitWidth(database, semanticRoot, semanticWidth) ||
+    if ((isEnum ? semanticPackedBitWidth(database, semanticRoot,
+                                         &semanticWidth) != OBELISK_RT_OK
+                : !semanticBitWidth(database, semanticRoot, semanticWidth)) ||
         semanticWidth != read64(record + 8) ||
         ((semanticFlags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0) !=
             ((kindAndFlags & obelisk::reflection::frozenValueSigned) != 0) ||
@@ -6097,6 +6111,11 @@ bool validateDatabaseImpl(const Database &database) {
   std::unordered_set<uint64_t> staticLexicalChildren;
   std::unordered_set<uint64_t> staticLexicalParents;
   std::unordered_set<uint64_t> canonicalMethodObjects;
+  std::unordered_set<uint64_t> statementTypedefObjects;
+  std::unordered_map<uint64_t, uint32_t> typedefOwners;
+  std::unordered_set<uint64_t> multipleTypedefOwners;
+  std::unordered_map<uint32_t, uint32_t> frozenEnumOwners;
+  std::unordered_map<uint32_t, uint32_t> frozenEnumInventories;
   std::unordered_map<uint32_t, uint64_t> unresolvedParameterParents;
   std::unordered_map<uint32_t, uint32_t> expressionParents;
   std::unordered_map<uint32_t, uint32_t> expressionOperandCounts;
@@ -6287,10 +6306,58 @@ bool validateDatabaseImpl(const Database &database) {
     if (iterate &&
         selector == static_cast<uint32_t>(
                         obelisk::reflection::VPIRelationKind::TypedefRel)) {
+      const uint64_t targetOffset =
+          static_cast<uint64_t>(target - database.data);
+      uint32_t packedOwner = 0;
+      if (!obelisk::reflection::tryPackTableIndex(sourceTable, sourceIndex,
+                                                  packedOwner))
+        return false;
+      auto [owner, inserted] = typedefOwners.emplace(targetOffset, packedOwner);
+      if (!inserted && owner->second != packedOwner)
+        multipleTypedefOwners.insert(targetOffset);
+      if (sourceTable == obelisk::reflection::TableKind::Statement) {
+        if (!(read16(sourceRecord + 38) & OBELISK_RT_DESIGN_STATEMENT_SCOPE) ||
+            read32(sourceRecord + 8) == UINT32_MAX ||
+            targetTable != obelisk::reflection::TableKind::Object ||
+            recordKind(target) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+            !(read32(target + 4) & OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) ||
+            read64(target + 16) !=
+                database.scopes +
+                    uint64_t{read32(sourceRecord + 12)} * kScopeSize)
+          return false;
+        statementTypedefObjects.insert(
+            static_cast<uint64_t>(target - database.data));
+      }
       uint32_t packedTarget = 0;
       if (obelisk::reflection::tryPackTableIndex(targetTable, targetIndex,
                                                  packedTarget) &&
           canonicalBuiltinObjects.count(packedTarget))
+        return false;
+    }
+    uint32_t sourceReference = 0;
+    if (!obelisk::reflection::tryPackTableIndex(sourceTable, sourceIndex,
+                                                sourceReference))
+      return false;
+    if (!iterate &&
+        sourceKind == static_cast<uint32_t>(
+                          obelisk::reflection::VPIObjectKind::EnumConst) &&
+        selector == static_cast<uint32_t>(
+                        obelisk::reflection::VPIObjectKind::EnumTypespec) &&
+        frozenEnumConstants.count(sourceReference)) {
+      uint32_t sourceRoot = 0, targetRoot = 0;
+      if (!findSemanticRootBinding(database, sourceReference, sourceRoot) ||
+          !findSemanticRootBinding(database, packedTarget, targetRoot) ||
+          sourceRoot != targetRoot ||
+          !frozenEnumOwners.emplace(sourceReference, packedTarget).second)
+        return false;
+    }
+    if (iterate &&
+        sourceKind == static_cast<uint32_t>(
+                          obelisk::reflection::VPIObjectKind::EnumTypespec) &&
+        selector == static_cast<uint32_t>(
+                        obelisk::reflection::VPIObjectKind::EnumConst) &&
+        frozenEnumConstants.count(packedTarget)) {
+      if (!frozenEnumInventories.emplace(packedTarget, sourceReference).second)
         return false;
     }
     if (targetTable == obelisk::reflection::TableKind::StaticObject) {
@@ -7305,6 +7372,12 @@ bool validateDatabaseImpl(const Database &database) {
         relation.getTargetIndexAndTable());
     return true;
   };
+  for (uint64_t target : statementTypedefObjects)
+    if (multipleTypedefOwners.count(target))
+      return false;
+  if (frozenEnumOwners.size() != frozenEnumConstants.size() ||
+      frozenEnumInventories != frozenEnumOwners)
+    return false;
   // Whole-source ports require an exact generated vpiLowConn relation.
   // Same-name ports are the only objects intentionally omitted from name
   // lookup; explicitly renamed whole ports remain ordinary indexed records.
@@ -7341,11 +7414,14 @@ bool validateDatabaseImpl(const Database &database) {
     // exclusively through generated VPI relations (for example anonymous
     // typespecs and interface-type variants). A statically allocated class
     // field is indexed by its member declaration; its validated backing
-    // storage must not create a second name-index identity.
+    // storage must not create a second name-index identity. Statement-owned
+    // typedefs likewise use their exact lexical scope; unnamed blocks may
+    // share their enclosing function's display hierarchy.
     if ((caps & OBELISK_RT_DESIGN_CAP_INTERNAL) != 0 ||
         classBackingStorage.count(offset) != 0 ||
         eventBackingStorage.count(offset) != 0 ||
         canonicalMethodObjects.count(offset) != 0 ||
+        statementTypedefObjects.count(offset) != 0 ||
         (recordKind(port) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
          (caps & OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) == 0))
       continue;

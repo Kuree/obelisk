@@ -898,15 +898,14 @@ bool isNestedInCodeUnit(Operation *op) {
   return false;
 }
 
-FailureOr<llvm::StringMap<DescriptorInfo>>
-materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
-                             semantic::SVRootSymbolOp semanticRoot,
-                             const PreparedPortAliases &portAliases,
-                             const PreparedScopeDeclarations &scopes,
-                             const PreparedClassDeclarations &classes,
-                             uint64_t designPrecisionFs,
-                             bool preserveVPIMethodBindings,
-                             bool preserveVPIBoxBindings, OpBuilder &builder) {
+FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
+    ModuleOp module, sim::SimDesignOp design,
+    semantic::SVRootSymbolOp semanticRoot,
+    const PreparedPortAliases &portAliases,
+    const PreparedScopeDeclarations &scopes,
+    const PreparedClassDeclarations &classes, uint64_t designPrecisionFs,
+    bool preserveVPIMethodBindings, bool preserveVPIBoxBindings,
+    PreparedProceduralTypes &proceduralTypes, OpBuilder &builder) {
   OpBuilder::InsertionGuard insertionGuard(builder);
   builder.setInsertionPointToEnd(&design.getBody().front());
   llvm::StringMap<DescriptorInfo> descriptors;
@@ -2237,6 +2236,15 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     }
     return {};
   };
+  auto proceduralOwnerFor = [&](Operation *member) -> Operation * {
+    if (ownerAnchorFor(member))
+      return nullptr;
+    for (Operation *cursor = member; cursor; cursor = cursor->getParentOp())
+      if (isa<semantic::SVStatementBlockSymbolOp>(cursor))
+        return cursor;
+    return nullptr;
+  };
+  llvm::DenseSet<Attribute> pendingTypespecSymbols;
   semanticRoot->walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (isCompileTimeOnlyInstanceMember(op))
       return;
@@ -2667,6 +2675,9 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           {builder.getStringAttr("source-type"), identity});
     Attribute owner = ownerAnchorFor(operation);
     if (!owner)
+      if (Operation *block = proceduralOwnerFor(operation))
+        owner = getSemanticSymbolReference(block, true);
+    if (!owner)
       owner = builder.getUnitAttr();
     return builder.getArrayAttr(
         {builder.getStringAttr("lexical-owner"), owner,
@@ -2693,19 +2704,28 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
       continue;
     }
     FlatSymbolRefAttr owner = ownerAnchorFor(alias);
-    if (!owner)
+    Operation *block = owner ? nullptr : proceduralOwnerFor(alias);
+    if (!owner && !block)
       continue;
     auto sourceTypeIdentity =
         alias->getAttrOfType<IntegerAttr>(vpiSourceTypeIdentityAttrName);
-    sim::SimVPITypespecDeclOp declaration = sim::SimVPITypespecDeclOp::create(
-        builder, getSemanticLocation(alias),
-        aliasSymbols.lookup(alias).getValue(), nextTypespecId++,
-        scopes.lookup(alias), owner.getValue(), hierarchy, debug, *target,
-        sim::VPITypespecOrigin::Typedef, sourceTypeIdentity, TypeAttr{});
+    FlatSymbolRefAttr symbol = aliasSymbols.lookup(alias);
+    if (block) {
+      proceduralTypes.typespecs.push_back(
+          {alias, block, symbol, nextTypespecId++, scopes.lookup(alias),
+           hierarchy.str(), debug.str(), *target,
+           sim::VPITypespecOrigin::Typedef, sourceTypeIdentity});
+      pendingTypespecSymbols.insert(symbol);
+    } else {
+      sim::SimVPITypespecDeclOp::create(
+          builder, getSemanticLocation(alias), symbol.getValue(),
+          nextTypespecId++, scopes.lookup(alias), owner, hierarchy, debug,
+          *target, sim::VPITypespecOrigin::Typedef, sourceTypeIdentity,
+          TypeAttr{}, IntegerAttr{});
+    }
     if (target->getKind() == sim::VPITypeKind::Enum)
-      enumTypespecsByIdentity.try_emplace(
-          getEnumIdentity(alias, *target),
-          FlatSymbolRefAttr::get(declaration.getSymNameAttr()));
+      enumTypespecsByIdentity.try_emplace(getEnumIdentity(alias, *target),
+                                          symbol);
   }
 
   auto classPropertyFacts = [&](Operation *source, uint32_t kind) {
@@ -2840,9 +2860,9 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
             target.getChildRandTypes(), builder.getArrayAttr(aliases));
         auto declaration = sim::SimVPITypespecDeclOp::create(
             builder, getSemanticLocation(source), name, nextTypespecId++,
-            scopes.lookup(source), owner.getValue(), getHierarchyName(source),
+            scopes.lookup(source), owner, getHierarchyName(source),
             getDebugName(source), target, sim::VPITypespecOrigin::Typedef,
-            IntegerAttr{}, TypeAttr{});
+            IntegerAttr{}, TypeAttr{}, IntegerAttr{});
         (void)declaration;
         lexicalDeclaredTypes[source] = target;
       } else {
@@ -2927,9 +2947,9 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         "__obelisk_vpi_builtin_class_" + std::to_string(nextTypespecId);
     auto declaration = sim::SimVPITypespecDeclOp::create(
         builder, getSemanticLocation(source), symbolName, nextTypespecId++,
-        scopes.lookup(source), owner.getValue(), getHierarchyName(source),
+        scopes.lookup(source), owner, getHierarchyName(source),
         getDebugName(source), canonical, sim::VPITypespecOrigin::BuiltinClass,
-        IntegerAttr{}, TypeAttr{});
+        IntegerAttr{}, TypeAttr{}, IntegerAttr{});
     if (canonical.getKind() == sim::VPITypeKind::Mailbox) {
       // Reuse the exact layout already normalized for the retained source
       // specialization. The semantic root deliberately strips typedef aliases;
@@ -3022,9 +3042,10 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     sim::SimVPITypespecDeclOp::create(
         builder, getSemanticLocation(classType),
         classTypespecSymbols.lookup(classType).getValue(), nextTypespecId++,
-        scopes.lookup(classType), owner.getValue(), getHierarchyName(classType),
+        scopes.lookup(classType), owner, getHierarchyName(classType),
         getDebugName(classType), *target,
-        sim::VPITypespecOrigin::ClassSpecialization, IntegerAttr{}, TypeAttr{});
+        sim::VPITypespecOrigin::ClassSpecialization, IntegerAttr{}, TypeAttr{},
+        IntegerAttr{});
   }
   // Nonparameterized declarations still have separate lexical and resolved
   // member views. The executable method belongs to the canonical view so its
@@ -3202,9 +3223,9 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
               "__obelisk_vpi_source_default_" + std::to_string(nextTypespecId);
           auto typespec = sim::SimVPITypespecDeclOp::create(
               builder, getSemanticLocation(concrete), symbolName,
-              nextTypespecId++, owner.getEnclosingScopeId(),
-              ownerRef.getValue(), "", "", *semantic,
-              sim::VPITypespecOrigin::SourceDefault, IntegerAttr{}, TypeAttr{});
+              nextTypespecId++, owner.getEnclosingScopeId(), ownerRef, "", "",
+              *semantic, sim::VPITypespecOrigin::SourceDefault, IntegerAttr{},
+              TypeAttr{}, IntegerAttr{});
           target = FlatSymbolRefAttr::get(typespec.getSymNameAttr());
         } else if (auto value =
                        dyn_cast<semantic::SVSourceValueDefaultOp>(child)) {
@@ -3577,8 +3598,9 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     sim::SimVPITypespecDeclOp::create(
         builder, getSemanticLocation(entry.representative),
         symbolName.getValue(), nextTypespecId++,
-        scopes.lookup(entry.representative), owner.getValue(), identity, debug,
-        *target, sim::VPITypespecOrigin::Interface, IntegerAttr{}, TypeAttr{});
+        scopes.lookup(entry.representative), owner, identity, debug, *target,
+        sim::VPITypespecOrigin::Interface, IntegerAttr{}, TypeAttr{},
+        IntegerAttr{});
   }
 
   // Materialize a standalone enum typespec when no typedef declaration names
@@ -3589,15 +3611,14 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     sim::VPITypeSemanticsAttr type;
     Attribute identity;
     FlatSymbolRefAttr owner;
+    Operation *block;
     StringAttr constant;
   };
   SmallVector<EnumValueInventory> enumValues;
   module.walk([&](semantic::SVEnumValueSymbolOp enumValue) {
-    // Statement-backed lexical ownership is materialized in the next chunk.
-    // Until then, omit the whole local enum inventory rather than emitting a
-    // dangling constant or collapsing its vpiTypedef ownership outward.
     FlatSymbolRefAttr owner = ownerAnchorFor(enumValue);
-    if (!owner)
+    Operation *block = owner ? nullptr : proceduralOwnerFor(enumValue);
+    if (!owner && !block)
       return;
     auto semanticType = enumValue->getAttrOfType<TypeAttr>("semantic_type");
     auto constant = enumValue->getAttrOfType<StringAttr>("constant_value");
@@ -3630,7 +3651,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     if (!enumTypespecsByIdentity.count(identity) &&
         !enumValue->getAttrOfType<IntegerAttr>(vpiSourceTypeIdentityAttrName))
       return;
-    enumValues.push_back({enumValue, *target, identity, owner, constant});
+    enumValues.push_back(
+        {enumValue, *target, identity, owner, block, constant});
   });
 
   llvm::DenseMap<Attribute, size_t> anonymousEnumRepresentatives;
@@ -3668,11 +3690,19 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         "__obelisk_vpi_enum_typespec_" + std::to_string(nextTypespecId);
     FlatSymbolRefAttr symbol =
         FlatSymbolRefAttr::get(builder.getContext(), symbolName);
-    sim::SimVPITypespecDeclOp::create(
-        builder, getSemanticLocation(enumValue), symbolName, nextTypespecId++,
-        scopes.lookup(enumValue), inventory.owner.getValue(), hierarchy, name,
-        target, sim::VPITypespecOrigin::AnonymousEnum, sourceTypeIdentity,
-        TypeAttr{});
+    if (inventory.block) {
+      proceduralTypes.typespecs.push_back(
+          {enumValue, inventory.block, symbol, nextTypespecId++,
+           scopes.lookup(enumValue), hierarchy.str(), name.str(), target,
+           sim::VPITypespecOrigin::AnonymousEnum, sourceTypeIdentity});
+      pendingTypespecSymbols.insert(symbol);
+    } else {
+      sim::SimVPITypespecDeclOp::create(
+          builder, getSemanticLocation(enumValue), symbolName, nextTypespecId++,
+          scopes.lookup(enumValue), inventory.owner, hierarchy, name, target,
+          sim::VPITypespecOrigin::AnonymousEnum, sourceTypeIdentity, TypeAttr{},
+          IntegerAttr{});
+    }
     enumTypespecsByIdentity[identity] = symbol;
   }
 
@@ -3689,10 +3719,21 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
       invalid = true;
       continue;
     }
-    sim::SimVPIEnumConstDeclOp::create(
-        builder, getSemanticLocation(enumValue), nextEnumConstId++,
-        nextEnumOrdinal[inventory.identity]++, typespec.getValue(), name,
-        inventory.constant.getValue());
+    auto frozen = freezeSemanticConstant(enumValue);
+    if (failed(frozen)) {
+      invalid = true;
+      continue;
+    }
+    if (pendingTypespecSymbols.contains(typespec)) {
+      proceduralTypes.constants.push_back(
+          {enumValue, nextEnumConstId++, nextEnumOrdinal[inventory.identity]++,
+           typespec, name.str(), inventory.constant.getValue().str(), *frozen});
+    } else {
+      sim::SimVPIEnumConstDeclOp::create(
+          builder, getSemanticLocation(enumValue), nextEnumConstId++,
+          nextEnumOrdinal[inventory.identity]++, typespec.getValue(), name,
+          inventory.constant.getValue(), *frozen);
+    }
   }
 
   auto retainVPITypeForPersistentOwner =
@@ -5349,7 +5390,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   // inventory. Preparation later knows their exact procedural code-unit and
   // statement-scope owners; no display-name reconstruction is needed there.
   if (preserveVPIMethodBindings) {
-    llvm::DenseSet<Attribute> materializedAliases;
+    llvm::DenseSet<Attribute> materializedAliases = pendingTypespecSymbols;
     for (auto declaration : design.getOps<sim::SimVPITypespecDeclOp>())
       materializedAliases.insert(
           FlatSymbolRefAttr::get(declaration.getSymNameAttr()));
@@ -5386,8 +5427,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
                           getEnumIdentity(source, current)) != 0;
       });
       aliases.walk(*converted);
-      // Block-local typedef/enum ownership is retained by the procedural type
-      // inventory follow-up. Do not substitute an outer owner or erase aliases.
+      // Block-owned types are frozen here and assigned their exact statement
+      // owner after statement inventory. No alias layer is erased.
       if (complete)
         sim::set<sim::metadata::VpiDeclaredType>(source, *converted);
     });

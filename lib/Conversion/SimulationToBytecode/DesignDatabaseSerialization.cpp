@@ -892,7 +892,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
           {OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, *vpiKind, caps, *id,
            typespec.getScopeId(), typespec.getHierarchicalName().str(), Type{},
            0, sourceFor(typespec),
-           typespec.getOrigin() == sim::VPITypespecOrigin::Typedef, typespec});
+           typespec.getOrigin() == sim::VPITypespecOrigin::Typedef &&
+               !typespec.getStatementScopeIdAttr(),
+           typespec});
     } else if (auto enumConstant =
                    dyn_cast<sim::SimVPIEnumConstDeclOp>(operation)) {
       if (!includeStatements)
@@ -913,7 +915,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
                          static_cast<uint16_t>(VPIObjectKind::EnumConst), 0,
                          *id, owner->second.getScopeId(), std::move(name),
-                         Type{}, 0, sourceFor(enumConstant), true,
+                         Type{}, 0, sourceFor(enumConstant),
+                         !owner->second.getStatementScopeIdAttr(),
                          enumConstant});
     } else if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
       if (!isReflectableType(storage.getType()) &&
@@ -2581,12 +2584,25 @@ SmallVector<uint8_t> serializeDesignDatabase(
 
     DenseMap<Operation *, uint32_t> classSpecializationOrdinals;
     for (sim::SimVPITypespecDeclOp typespec : typespecs) {
-      Operation *owner = lookupLexicalOwner(typespec.getOwnerAttr());
+      Operation *owner = nullptr;
+      ImageObjectRef ownerRef;
+      if (auto statementID = typespec.getStatementScopeId()) {
+        auto found = statementIndices.find(*statementID);
+        if (found != statementIndices.end()) {
+          auto statement = statements[found->second].declaration;
+          owner = statement;
+          ownerRef = {TableKind::Statement, found->second,
+                      statement.getVpiKind()};
+        }
+      } else {
+        owner = lookupLexicalOwner(typespec.getOwnerAttr());
+        if (owner)
+          ownerRef = lexicalOwnerRef(owner);
+      }
       if (!owner) {
         typespec.emitOpError("VPI typespec owner was not preserved");
         return {};
       }
-      ImageObjectRef ownerRef = lexicalOwnerRef(owner);
       ImageObjectRef typespecRef = typespecRefs.lookup(typespec);
       if (typespec.getOrigin() == sim::VPITypespecOrigin::ClassSpecialization) {
         uint32_t ordinal = classSpecializationOrdinals[owner]++;
@@ -4021,7 +4037,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
         return semantic;
       return semanticArrayShape(anchor);
     }
-    if (auto typespec = dyn_cast<sim::SimVPITypespecDeclOp>(identity)) {
+    auto typespec = dyn_cast<sim::SimVPITypespecDeclOp>(identity);
+    if (auto constant = dyn_cast<sim::SimVPIEnumConstDeclOp>(identity))
+      if (constant.getImmutableValueAttr())
+        typespec =
+            typespecsBySymbol.lookup(constant.getEnumTypespecAttr().getValue());
+    if (typespec) {
       sim::VPITypeSemanticsAttr semantic = typespec.getTargetType();
       ArrayAttr aliases = semantic.getTypedefAliases();
       if (!aliases || aliases.empty())
@@ -4456,25 +4477,41 @@ SmallVector<uint8_t> serializeDesignDatabase(
       }
     };
     llvm::StringMap<uint32_t> frozenValueIndices;
-    for (sim::SimVPIObjectAnchorOp anchor : anchors) {
-      sim::FrozenConstantAttr frozen = anchor.getImmutableValueAttr();
-      if (!frozen)
-        continue;
-      auto reference = anchorRefs.find(anchor);
-      if (reference == anchorRefs.end()) {
-        anchor.emitOpError("immutable VPI value source was not serialized");
-        return {};
+    SmallVector<
+        std::tuple<Operation *, sim::FrozenConstantAttr, ImageObjectRef>>
+        immutableSources;
+    for (sim::SimVPIObjectAnchorOp anchor : anchors)
+      if (auto frozen = anchor.getImmutableValueAttr()) {
+        auto reference = anchorRefs.find(anchor);
+        if (reference == anchorRefs.end()) {
+          anchor.emitOpError("immutable VPI value source was not serialized");
+          return {};
+        }
+        immutableSources.emplace_back(anchor, frozen, reference->second);
       }
+    for (sim::SimVPIEnumConstDeclOp constant : enumConstants)
+      if (auto frozen = constant.getImmutableValueAttr()) {
+        auto index = objectIndices.find(constant);
+        if (index == objectIndices.end()) {
+          constant.emitOpError(
+              "immutable enum value source was not serialized");
+          return {};
+        }
+        immutableSources.emplace_back(
+            constant, frozen,
+            ImageObjectRef{TableKind::Object, index->second,
+                           static_cast<uint32_t>(VPIObjectKind::EnumConst)});
+      }
+    for (auto [source, frozen, reference] : immutableSources) {
       uint32_t packedSource = 0;
-      if (!tryPackTableIndex(reference->second.table, reference->second.index,
-                             packedSource)) {
-        anchor.emitOpError("immutable VPI value source cannot be packed");
+      if (!tryPackTableIndex(reference.table, reference.index, packedSource)) {
+        source->emitOpError("immutable VPI value source cannot be packed");
         return {};
       }
       auto planes = dyn_cast<ArrayAttr>(frozen.getValue());
       std::optional<unsigned> width = sim::getPackedWidth(frozen.getType());
       if (!planes || planes.size() != 2 || !width || *width == 0) {
-        anchor.emitOpError("immutable VPI value is not a fixed packed value");
+        source->emitOpError("immutable VPI value is not a fixed packed value");
         return {};
       }
       const llvm::APInt &value = cast<IntegerAttr>(planes[0]).getValue();
@@ -4482,7 +4519,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       uint64_t planeBytes = (uint64_t{*width} + 7) / 8;
       if (planeBytes > UINT64_MAX / 2 ||
           frozenValuePayload.size() > UINT64_MAX - planeBytes * 2) {
-        anchor.emitOpError("immutable VPI value payload exceeds image limits");
+        source->emitOpError("immutable VPI value payload exceeds image limits");
         return {};
       }
       uint32_t kindAndFlags =
@@ -4739,6 +4776,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
           sim::isVPIVisibleCodeUnit(unit))
         if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
                                     unit.getDebugNameAttr())))
+          return failure();
+      if (auto constant = dyn_cast<sim::SimVPIEnumConstDeclOp>(operation))
+        if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
+                                    constant.getNameAttr())))
+          return failure();
+      if (auto typespec = dyn_cast<sim::SimVPITypespecDeclOp>(operation);
+          typespec && typespec.getOrigin() == sim::VPITypespecOrigin::Typedef)
+        if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
+                                    typespec.getDebugNameAttr())))
           return failure();
       if (auto type =
               dyn_cast<sim::SimVPILexicalClassTypespecDeclOp>(operation))

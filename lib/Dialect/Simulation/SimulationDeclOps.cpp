@@ -1522,6 +1522,18 @@ LogicalResult SimVPIUnresolvedTypeAliasDeclOp::verifySymbolUses(
 }
 
 LogicalResult SimVPITypespecDeclOp::verify() {
+  if (bool(getOwnerAttr()) == bool(getStatementScopeIdAttr()))
+    return emitOpError(
+        "requires exactly one symbolic or statement-scope owner");
+  if (getStatementScopeIdAttr()) {
+    if (failed(verifyNonnegative(*this, getStatementScopeIdAttr(),
+                                 "statement-scope ID")))
+      return failure();
+    if (getOrigin() != VPITypespecOrigin::Typedef &&
+        getOrigin() != VPITypespecOrigin::AnonymousEnum)
+      return emitOpError("statement-scope ownership is only valid for typedef "
+                         "and anonymous enum typespecs");
+  }
   if (failed(verifyNonnegative(*this, getIdAttr(), "typespec ID")) ||
       failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")) ||
       (getSourceTypeIdentityAttr() &&
@@ -1802,8 +1814,8 @@ LogicalResult SimVPIEnumConstDeclOp::verify() {
   if (failed(verifyNonnegative(*this, getIdAttr(), "enum-constant ID")) ||
       failed(verifyNonnegative(*this, getOrdinalAttr(), "enum ordinal")))
     return failure();
-  if (getName().empty() || getValue().empty())
-    return emitOpError("requires a nonempty name and constant value");
+  if (getName().empty() || getName().contains('\0') || getValue().empty())
+    return emitOpError("requires a nonempty NUL-free name and constant value");
   return verifyFixedReflection(
       *this, static_cast<uint16_t>(reflection::VPIObjectKind::EnumConst),
       reflectionProperties(*this), reflectionDefinitionLoc(*this));
@@ -1816,11 +1828,39 @@ SimVPIEnumConstDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
           *this, getEnumTypespecAttr());
   if (!target || target.getTargetType().getKind() != VPITypeKind::Enum)
     return emitOpError("references an unknown or non-enum typespec");
+  if (auto value = getImmutableValueAttr()) {
+    if (!getPackedScalarType(value.getType()) ||
+        value.getIsSigned() != target.getTargetType().getIsSigned())
+      return emitOpError(
+          "immutable enum value must match its packed enum base");
+    if (failed(verifyVPITypeSemantics([&] { return emitOpError(); },
+                                      value.getType(), target.getTargetType())))
+      return failure();
+  }
   return success();
 }
 
 LogicalResult
 SimVPITypespecDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (getStatementScopeIdAttr()) {
+    auto design = (*this)->getParentOfType<SimDesignOp>();
+    if (!design)
+      return emitOpError("statement owner requires a simulation.design");
+    for (auto statement : design.getOps<SimStatementDeclOp>()) {
+      if (statement.getId() != *getStatementScopeId())
+        continue;
+      if (!statement.getCodeUnitId() || !statement.getIsScope().value_or(false))
+        return emitOpError("owner must name a procedural statement scope");
+      if (statement.getScopeId() != getScopeId())
+        return emitOpError("scope ID does not match the statement owner");
+      if (getOrigin() == VPITypespecOrigin::Typedef &&
+          !reflection::findVPITraversal(statement.getVpiKind(), 725,
+                                        reflection::VPITraversalMode::Iterate))
+        return emitOpError("owner kind does not support vpiTypedef traversal");
+      return success();
+    }
+    return emitOpError("references an unknown statement-scope owner");
+  }
   Operation *owner = lookupVPILexicalOwner(*this, getOwnerAttr(), symbolTable);
   if (!owner)
     return emitOpError("typespec must be owned by a VPI anchor");
@@ -4337,8 +4377,14 @@ LogicalResult SimDesignOp::verifyRegions() {
   llvm::DenseSet<std::pair<Attribute, Attribute>> typedefNames;
   for (SimVPITypespecDeclOp typespec : typespecs)
     if (typespec.getOrigin() == VPITypespecOrigin::Typedef)
-      typedefNames.insert(
-          {typespec.getOwnerAttr(), typespec.getDebugNameAttr()});
+      if (!typedefNames
+               .insert({typespec.getOwnerAttr()
+                            ? Attribute(typespec.getOwnerAttr())
+                            : Attribute(typespec.getStatementScopeIdAttr()),
+                        typespec.getDebugNameAttr()})
+               .second)
+        return typespec.emitOpError(
+            "duplicates a typedef name in its lexical owner");
   for (SimVPIUnresolvedTypeAliasDeclOp alias : unresolvedAliases)
     if (!typedefNames.insert({alias.getOwnerAttr(), alias.getDebugNameAttr()})
              .second)

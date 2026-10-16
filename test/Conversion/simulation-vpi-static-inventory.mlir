@@ -249,6 +249,7 @@ module attributes {
 // SPARSE-NEXT: fixed_property source_table=0 source=1 selector=9 kind=3 value=top_def
 // SPARSE: fixed_property source_table=0 source=1 selector=600 kind=0 value=true
 // SPARSE-NEXT: fixed_property source_table=1 source={{[0-9]+}} selector=2 kind=3 value=method
+// SPARSE-NEXT: fixed_property source_table=1 source={{[0-9]+}} selector=2 kind=3 value=alias_t
 // SPARSE-NEXT: fixed_property source_table=1 source={{[0-9]+}} selector=624 kind=1 value=1
 // SPARSE-NEXT: fixed_property source_table=1 source={{[0-9]+}} selector=624 kind=1 value=2
 // SPARSE-NEXT: fixed_property source_table=1 source={{[0-9]+}} selector=624 kind=1 value=3
@@ -261,6 +262,9 @@ module attributes {
 // SPARSE-NEXT: fixed_property source_table=1 source=[[SPARSE_NET]] selector=43 kind=0 value=true
 // SPARSE: fixed_property source_table=1 source=[[SPARSE_ZERO_NET:[0-9]+]] selector=22 kind=1 value=1
 // SPARSE-NEXT: fixed_property source_table=1 source=[[SPARSE_ZERO_NET]] selector=27 kind=1 value=0
+// SPARSE-NEXT: fixed_property source_table=1 source={{[0-9]+}} selector=2 kind=3 value=record_t
+// SPARSE-NEXT: fixed_property source_table=1 source={{[0-9]+}} selector=2 kind=3 value=IDLE
+// SPARSE-NEXT: fixed_property source_table=1 source={{[0-9]+}} selector=2 kind=3 value=RUN
 // SPARSE-NEXT: relation
 // The generated relation image exposes lexical ownership, declaration-order
 // typedefs, the immediate typedef alias, interface instance links, enum
