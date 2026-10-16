@@ -337,7 +337,8 @@ TEST(GeneratedDesignDatabase, SourceIntegralOperators) {
     expressions[name] = get(vpiRhs, statement);
   }
   ASSERT_EQ(owners.size(), 8u);
-  EXPECT_EQ(expressions.at("unsupported_cast"), nullptr);
+  ASSERT_NE(expressions.at("sized_cast"), nullptr);
+  EXPECT_EQ(vpi_get(vpiOpType, expressions.at("sized_cast")), vpiCastOp);
   auto put = [&](const char *name, uint32_t value, uint32_t unknown = 0) {
     std::string path = std::string("top.") + name;
     auto object = named(path.c_str());
@@ -362,6 +363,7 @@ TEST(GeneratedDesignDatabase, SourceIntegralOperators) {
   put("b", 10);
   put("negative", 250);
   put("condition", 0, 255);
+  EXPECT_EQ(bits("sized_cast"), "11111010");
   EXPECT_EQ(bits("sum"), "00000100");
   EXPECT_EQ(bits("widened"), "0000001000001000");
   EXPECT_EQ(bits("unsigned_context"), "1111111100000111");
@@ -389,8 +391,8 @@ TEST(GeneratedDesignDatabase, SourceIntegralOperators) {
     EXPECT_EQ(vpi_compare_objects(get(vpiRhs, owners.at(name)), expression), 1);
   }
   auto uses = children(vpiUse, named("top.a"));
-  const char *expected[] = {"sum",    "widened",  "less",
-                            "choice", "inverted", "quotient"};
+  const char *expected[] = {"sum",      "widened",  "less",      "choice",
+                            "inverted", "quotient", "sized_cast"};
   ASSERT_EQ(uses.size(), std::size(expected));
   for (auto name : expected)
     EXPECT_EQ(std::count_if(uses.begin(), uses.end(),

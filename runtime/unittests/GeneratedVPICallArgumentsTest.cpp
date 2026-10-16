@@ -53,7 +53,7 @@ TEST(GeneratedDesignDatabase, CallArguments) {
   const auto &image = encoded->designDatabase;
   HeaderView header(image.data());
   SemanticDirectoryView directory(image.data() + header.getReserved());
-  ASSERT_EQ(directory.getExpressionRootBindingCount(), 10u);
+  ASSERT_EQ(directory.getExpressionRootBindingCount(), 12u);
   auto rejects = [&](auto mutate) {
     auto bytes = image;
     mutate(bytes);
@@ -135,7 +135,8 @@ TEST(GeneratedDesignDatabase, CallArguments) {
   while (auto use = keep(vpi_scan(uses))) {
     ++useCount;
     int line = vpi_get(vpiLineNo, use);
-    EXPECT_TRUE(line == 101 || line == 102 || line == 108 || line == 203);
+    EXPECT_TRUE(line == 101 || line == 102 || line == 104 || line == 108 ||
+                line == 203);
     if (line == 203) {
       EXPECT_EQ(vpi_get(vpiType, use), vpiFuncCall);
       ASSERT_TRUE(calls.emplace(line, use).second);
@@ -144,7 +145,7 @@ TEST(GeneratedDesignDatabase, CallArguments) {
       EXPECT_EQ(vpi_compare_objects(use, calls.at(line)), 1);
     }
   }
-  EXPECT_EQ(useCount, 4u);
+  EXPECT_EQ(useCount, 5u);
   ASSERT_TRUE(calls.count(203));
   auto arguments = [&](vpiHandle call) {
     std::vector<vpiHandle> result;
@@ -185,7 +186,13 @@ TEST(GeneratedDesignDatabase, CallArguments) {
     s_vpi_error_info error{};
     EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
   }
-  for (int line : {103, 104, 105, 106, 107})
+  auto castArguments = arguments(calls.at(104));
+  ASSERT_EQ(castArguments.size(), 2u);
+  EXPECT_EQ(vpi_compare_objects(castArguments[0], a), 1);
+  EXPECT_EQ(vpi_get(vpiOpType, castArguments[1]), vpiCastOp);
+  EXPECT_EQ(value(castArguments[1]), 4);
+  EXPECT_NE(keep(vpi_handle(vpiTypespec, castArguments[1])), nullptr);
+  for (int line : {103, 105, 106, 107})
     EXPECT_TRUE(arguments(calls.at(line)).empty());
   auto direct = arguments(calls.at(108));
   ASSERT_EQ(direct.size(), 1u);

@@ -60,6 +60,8 @@ inline Logic evaluate(uint32_t code, VPIIntegralExpressionShape result,
   using Rule = reflection::VPIIntegralOperatorRule;
   Rule rule = reflection::integralOperatorRule(code);
   uint32_t width = static_cast<uint32_t>(result.width);
+  if (rule == Rule::Cast)
+    return resized(values[0], width, shapes[0].isSigned, result.fourState);
   auto operand = [&](size_t index) {
     return resized(values[index], width, result.isSigned, result.fourState);
   };

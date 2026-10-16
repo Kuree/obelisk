@@ -4796,8 +4796,8 @@ bool validateDatabaseImpl(const Database &database) {
       using Kind = obelisk::reflection::VPIObjectKind;
       if (exactKind == static_cast<uint32_t>(Kind::Operation) &&
           selector == 39) {
-        if (!obelisk::reflection::findVPISourceOperator(
-                static_cast<uint32_t>(payload)))
+        if (payload == 67 || !obelisk::reflection::findVPISourceOperator(
+                                 static_cast<uint32_t>(payload)))
           return false;
         sourceExpressionOperators.emplace(packedSource,
                                           static_cast<uint16_t>(payload));

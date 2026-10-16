@@ -25,6 +25,10 @@ findVPISourceOnlyOperator(uint32_t operation) {
 }
 inline constexpr bool validVPISourceOnlyArity(uint32_t operation,
                                               uint32_t operands) {
+  // 37.59 detail 5 requires an exact target Typespec for every cast. An
+  // unbound source-only recipe cannot provide that relation.
+  if (operation == 67)
+    return false;
   if (auto descriptor = findVPISourceOperator(operation))
     return operands == descriptor->arity;
   switch (operation) {
@@ -61,7 +65,8 @@ enum class VPIIntegralOperatorRule {
   Comparison,
   Reduction,
   Logical,
-  Conditional
+  Conditional,
+  Cast
 };
 
 inline constexpr VPIIntegralOperatorRule integralOperatorRule(uint32_t code) {
@@ -112,6 +117,8 @@ inline constexpr VPIIntegralOperatorRule integralOperatorRule(uint32_t code) {
     return Rule::Logical;
   case 32:
     return Rule::Conditional;
+  case 67:
+    return Rule::Cast;
   default:
     return Rule::Unsupported;
   }
@@ -140,6 +147,13 @@ validVPIIntegralOperator(uint32_t code, VPIIntegralExpressionShape result,
       return false;
     state |= operands[index].fourState;
   }
+  // 6.24.1: casting is assignment into the target type. Context-sensitive
+  // arithmetic is evaluated at max(natural width, target width), retaining
+  // the operand's signing and state domain until the final conversion.
+  // The cast itself is self-determined with respect to its parent.
+  if (rule == Rule::Cast)
+    return !hasIntegralOperatorContext(operands[0].operation) ||
+           operands[0].width >= result.width;
   if (code == 12 || code == 13 || code == 43)
     state = true; // Division by zero and integral negative powers can yield X.
   if (code == 16 || code == 17)

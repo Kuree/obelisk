@@ -1122,7 +1122,8 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
                          "constant classification");
     uint64_t value = classification.getValue().getZExtValue();
     if (anchorKind == Kind::Operation &&
-        (value > UINT32_MAX || !reflection::findVPISourceOperator(value)))
+        (value > UINT32_MAX || value == 67 ||
+         !reflection::findVPISourceOperator(value)))
       return emitOpError(
           "source operation has an unsupported operator classification");
     if (anchorKind == Kind::Constant && value != 7)

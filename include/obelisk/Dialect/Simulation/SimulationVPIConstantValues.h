@@ -56,6 +56,9 @@ inline std::optional<VPIConstantValue> evaluateVPIIntegralConstant(
       return std::nullopt;
   const unsigned width = result.width;
   const Rule rule = reflection::integralOperatorRule(code);
+  if (rule == Rule::Cast)
+    return resizeVPIConstant(values[0], width, shapes[0].isSigned,
+                             result.fourState);
   auto boolean = [&](unsigned truth) -> VPIConstantValue {
     return {APInt(1, truth == 1), APInt(1, truth == 2 && result.fourState)};
   };

@@ -12413,7 +12413,108 @@ bool decompileRetainedExpression(__vpiHandle *handle, std::string &result) {
                          item.parenthesizeEqual));
       if (parenthesize)
         ordered.push_back(token("("));
-      if (operation) {
+      if (operation && expression.code == vpiCastOp) {
+        // A cast's Typespec is already retained by its semantic root. Render
+        // a proven equivalent integral type without inventing an alias name
+        // from hierarchy (6.24.1, 37.59 details 3 and 5).
+        auto typeInfo = [&](obelisk_rt_design_cursor_v1 cursor,
+                            obelisk_rt_design_semantic_type_info_v1 &info) {
+          obelisk_rt_design_cursor_v1 semantic{};
+          return obelisk_rt_cached_design_semantic_root(
+                     context, cursor, &semantic) == OBELISK_RT_OK &&
+                 obelisk_rt_cached_design_semantic_type_info(
+                     context, semantic, &info) == OBELISK_RT_OK &&
+                 obelisk_rt_cached_design_semantic_bit_width(
+                     context, semantic, &info.bit_width) == OBELISK_RT_OK;
+        };
+        obelisk_rt_design_semantic_type_info_v1 target{}, operand{};
+        if (children.size() != 1 || !typeInfo(item.cursor, target) ||
+            !typeInfo(children[0].cursor, operand))
+          return false;
+        const bool sign = target.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED;
+        const bool state = target.flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE;
+        const char *keyword = nullptr;
+        uint32_t width = 0;
+        bool keywordState = false;
+        switch (target.kind) {
+        case OBELISK_RT_DESIGN_SEMANTIC_BIT:
+          keyword = "bit";
+          width = 1;
+          break;
+        case OBELISK_RT_DESIGN_SEMANTIC_LOGIC:
+        case OBELISK_RT_DESIGN_SEMANTIC_REG:
+          keyword = "logic";
+          width = 1;
+          keywordState = true;
+          break;
+        case OBELISK_RT_DESIGN_SEMANTIC_BYTE:
+          keyword = "byte";
+          width = 8;
+          break;
+        case OBELISK_RT_DESIGN_SEMANTIC_SHORT_INT:
+          keyword = "shortint";
+          width = 16;
+          break;
+        case OBELISK_RT_DESIGN_SEMANTIC_INT:
+          keyword = "int";
+          width = 32;
+          break;
+        case OBELISK_RT_DESIGN_SEMANTIC_LONG_INT:
+          keyword = "longint";
+          width = 64;
+          break;
+        case OBELISK_RT_DESIGN_SEMANTIC_INTEGER:
+          keyword = "integer";
+          width = 32;
+          keywordState = true;
+          break;
+        case OBELISK_RT_DESIGN_SEMANTIC_TIME:
+          keyword = "time";
+          width = 64;
+          keywordState = true;
+          break;
+        }
+        std::string castType;
+        if (keyword && target.bit_width == width && state == keywordState)
+          castType = keyword;
+        else {
+          // Size casts preserve the operand's state domain. Restrict this
+          // normalization to plain integral vectors: nominal aggregate/enum
+          // types require their exact source type spelling.
+          auto scalar = target;
+          obelisk_rt_design_cursor_v1 scalarCursor{};
+          if (obelisk_rt_cached_design_semantic_root(
+                  context, item.cursor, &scalarCursor) != OBELISK_RT_OK)
+            return false;
+          while (scalar.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY &&
+                 scalar.edge_count == 1) {
+            obelisk_rt_design_semantic_type_edge_v1 edge{};
+            if (obelisk_rt_cached_design_semantic_type_edge(
+                    context, scalarCursor, 0, &edge) != OBELISK_RT_OK ||
+                edge.role != OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT ||
+                obelisk_rt_cached_design_semantic_type_info(
+                    context, edge.child, &scalar) != OBELISK_RT_OK)
+              return false;
+            scalarCursor = edge.child;
+          }
+          bool integral =
+              (scalar.kind >= OBELISK_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL &&
+               scalar.kind <= OBELISK_RT_DESIGN_SEMANTIC_INTEGER) ||
+              scalar.kind == OBELISK_RT_DESIGN_SEMANTIC_TIME;
+          if (!integral || !target.bit_width ||
+              state !=
+                  bool(operand.flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE)) {
+            setError(handle->owner, "exact cast target spelling is unavailable",
+                     vpiNotice);
+            return false;
+          }
+          castType = std::to_string(target.bit_width);
+        }
+        ordered.push_back(token(std::string(sign ? "signed'(" : "unsigned'(") +
+                                castType + "'("));
+        ordered.push_back(std::move(children[0]));
+        ordered.push_back(token("))"));
+      } else if (operation) {
         if (operation->arity == 1)
           ordered.push_back(token(std::string(operation->token) + " "));
         for (size_t index = 0; index != children.size(); ++index) {

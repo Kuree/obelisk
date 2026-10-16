@@ -1819,5 +1819,6 @@ def SourceOperatorArithmeticShiftLeft : VPISourceOperator<"arithmetic_shift_left
 def SourceOperatorArithmeticShiftRight : VPISourceOperator<"arithmetic_shift_right", 42, 2, ">>>", 10>;
 def SourceOperatorPower : VPISourceOperator<"power", 43, 2, "**", 13>;
 def SourceOperatorLogicalImplication : VPISourceOperator<"logical_implication", 50, 2, "->", 1, 1>;
+def SourceOperatorCast : VPISourceOperator<"cast", 67, 1, "'", 15>;
 def SourceOperatorWildcardEquality : VPISourceOperator<"wildcard_equality", 69, 2, "==?", 8>;
 def SourceOperatorWildcardInequality : VPISourceOperator<"wildcard_inequality", 70, 2, "!=?", 8>;

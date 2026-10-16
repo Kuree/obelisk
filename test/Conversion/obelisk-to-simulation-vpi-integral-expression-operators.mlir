@@ -23,7 +23,7 @@ obelisk.sv.symbol.root @root attributes {node_id = 80 : i64, name = "$root", hie
       obelisk.sv.symbol.variable @choice attributes {node_id = 42 : i64, name = "choice", hierarchical_name = "top.choice", lifetime = 1 : i32, semantic_type = !f8} {}
       obelisk.sv.symbol.variable @inverted attributes {node_id = 43 : i64, name = "inverted", hierarchical_name = "top.inverted", lifetime = 1 : i32, semantic_type = !u8} {}
       obelisk.sv.symbol.variable @quotient attributes {node_id = 44 : i64, name = "quotient", hierarchical_name = "top.quotient", lifetime = 1 : i32, semantic_type = !f8} {}
-      obelisk.sv.symbol.variable @unsupported_cast attributes {node_id = 45 : i64, name = "unsupported_cast", hierarchical_name = "top.unsupported_cast", lifetime = 1 : i32, semantic_type = !u8} {}
+      obelisk.sv.symbol.variable @sized_cast attributes {node_id = 45 : i64, name = "sized_cast", hierarchical_name = "top.sized_cast", lifetime = 1 : i32, semantic_type = !u8} {}
       obelisk.sv.symbol.procedural_block @init_sum attributes {node_id = 49 : i64, hierarchical_name = "top", procedure_kind = 0 : i32} {
         obelisk.sv.statement.expression_statement attributes {node_id = 48 : i64} {
           obelisk.sv.expression.assignment attributes {node_id = 47 : i64, assignment_kind = 0 : i32, semantic_type = !u8} {
@@ -120,10 +120,10 @@ obelisk.sv.symbol.root @root attributes {node_id = 80 : i64, name = "$root", hie
           }
         }
       }
-      obelisk.sv.symbol.procedural_block @init_unsupported_cast attributes {node_id = 77 : i64, hierarchical_name = "top", procedure_kind = 0 : i32} {
+      obelisk.sv.symbol.procedural_block @init_sized_cast attributes {node_id = 77 : i64, hierarchical_name = "top", procedure_kind = 0 : i32} {
         obelisk.sv.statement.expression_statement attributes {node_id = 76 : i64} {
           obelisk.sv.expression.assignment attributes {node_id = 75 : i64, assignment_kind = 0 : i32, semantic_type = !u8} {
-            obelisk.sv.expression.named_value attributes {node_id = 74 : i64, referenced_symbol = @root::@top::@body::@unsupported_cast, referenced_path = "top.unsupported_cast", semantic_type = !u8} {}
+            obelisk.sv.expression.named_value attributes {node_id = 74 : i64, referenced_symbol = @root::@top::@body::@sized_cast, referenced_path = "top.sized_cast", semantic_type = !u8} {}
             obelisk.sv.expression.conversion attributes {node_id = 33 : i64, is_implicit = false, semantic_type = !u8} {
               obelisk.sv.expression.named_value attributes {node_id = 32 : i64, referenced_symbol = @root::@top::@body::@a, referenced_path = "top.a", semantic_type = !u8} {}
             }

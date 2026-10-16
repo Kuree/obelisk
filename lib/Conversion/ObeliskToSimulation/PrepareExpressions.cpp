@@ -212,8 +212,8 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
     // Bound implicit integral conversions apply the surrounding context; they
     // are not explicit source cast occurrences. Exact child operations already
     // carry Slang's propagated type, while declaration leaves retain their
-    // declared type and are resized by the operator. Keep explicit casts and
-    // unsupported unsized X/Z filling unavailable.
+    // declared type and are resized by the operator. Unsized X/Z filling
+    // remains unavailable until its context can be represented exactly.
     for (;;) {
       auto children = getChildren(source);
       if (auto signal = dyn_cast<semantic::SVSignalEventControlOp>(source);
@@ -332,6 +332,15 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
         return unsupported();
       kind = uint32_t(Kind::Operation);
       code = operation->value;
+    } else if (isa<semantic::SVConversionExpressionOp>(source)) {
+      auto implicit = source->getAttrOfType<BoolAttr>("is_implicit");
+      auto constant = source->getAttrOfType<BoolAttr>("is_const_cast");
+      children = getChildren(source);
+      if (!implicit || implicit.getValue() ||
+          (constant && constant.getValue()) || children.size() != 1)
+        return unsupported();
+      kind = uint32_t(Kind::Operation);
+      code = 67; // vpiCastOp: the semantic root is its exact target Typespec.
     } else if (isa<semantic::SVConcatenationExpressionOp>(source)) {
       kind = uint32_t(Kind::Operation);
       code = 33;
@@ -394,8 +403,14 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
       if (!sourceType || !integral(sourceType.getValue()))
         return unsupported();
       auto normalized = getNormalizedSemanticType(source);
-      auto semantic = makeVPITypeSemantics(
-          sourceType.getValue(), getSemanticLocation(source), {}, source);
+      auto declared = sim::get<sim::metadata::VpiDeclaredType>(source);
+      if (code == 67 && source->hasAttr(vpiTypedefLayersAttrName) && !declared)
+        return unsupported();
+      FailureOr<sim::VPITypeSemanticsAttr> semantic =
+          declared
+              ? declared
+              : makeVPITypeSemantics(sourceType.getValue(),
+                                     getSemanticLocation(source), {}, source);
       if (failed(normalized) || failed(semantic))
         return failure();
       if (!sim::getPackedScalarType(*normalized) ||

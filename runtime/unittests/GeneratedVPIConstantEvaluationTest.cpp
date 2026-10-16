@@ -129,3 +129,66 @@ TEST(VPIConstantEvaluation, IntegralCornerCases) {
   check(43, {2, 255}, {0, 0}, 0, 0);
   check(43, {0, 255}, {0, 0}, 0, 255);
 }
+
+TEST(VPIConstantEvaluation, IntegralCasts) {
+  using namespace obelisk;
+  using Shape = reflection::VPIIntegralExpressionShape;
+  using llvm::APInt;
+  // Independent bit-string oracles cover crossing limb boundaries, truncation,
+  // source-signed extension, and X/Z replacement when entering a 2-state type.
+  auto check = [&](std::string input, bool sourceSign, bool targetSign,
+                   bool targetState, std::string expected) {
+    unsigned inputWidth = input.size(), outputWidth = expected.size();
+    APInt value(inputWidth, 0), unknown(inputWidth, 0);
+    for (unsigned index = 0; index != inputWidth; ++index) {
+      char bit = input[inputWidth - index - 1];
+      if (bit == '1' || bit == 'z')
+        value.setBit(index);
+      if (bit == 'x' || bit == 'z')
+        unknown.setBit(index);
+    }
+    Shape result{outputWidth, targetSign, targetState, 67};
+    std::array<Shape, 3> shapes{{{inputWidth, sourceSign, true, 0}, {}, {}}};
+    sim::VPIConstantValue inputValue{value, unknown};
+    auto constant = sim::evaluateVPIIntegralConstant(
+        67, result, llvm::ArrayRef<sim::VPIConstantValue>(inputValue),
+        llvm::ArrayRef<Shape>(shapes.data(), 1));
+    ASSERT_TRUE(constant);
+    std::array<designbytecode::Logic, 3> values;
+    values[0].width = inputWidth;
+    values[0].fourState = true;
+    values[0].value.assign(value.getNumWords(), 0);
+    values[0].unknown.assign(unknown.getNumWords(), 0);
+    for (unsigned word = 0; word != value.getNumWords(); ++word) {
+      values[0].value[word] = value.getRawData()[word];
+      values[0].unknown[word] = unknown.getRawData()[word];
+    }
+    auto runtime = vpiexpression::evaluate(67, result, values, shapes);
+    std::string compilerBits, runtimeBits;
+    for (unsigned bit = outputWidth; bit-- != 0;) {
+      bool v = constant->value[bit], u = constant->unknown[bit];
+      compilerBits += u ? (v ? 'z' : 'x') : (v ? '1' : '0');
+      v = designbytecode::bit(runtime.value, bit);
+      u = designbytecode::bit(runtime.unknown, bit);
+      runtimeBits += u ? (v ? 'z' : 'x') : (v ? '1' : '0');
+    }
+    EXPECT_EQ(compilerBits, expected);
+    EXPECT_EQ(runtimeBits, expected);
+  };
+  check("11111010", false, true, false, "0000000011111010");
+  check("11111010", true, false, false, "1111111111111010");
+  check("11111010", true, false, true, std::string(122, '1') + "11111010");
+  check(std::string(120, '1') + "0101010101", false, true, false, "01010101");
+  check("x10z01x1", true, true, false, "0000000001000101");
+  check("z10x01z1", true, false, true, std::string(57, 'z') + "z10x01z1");
+  check("z10x01z1", false, true, false, std::string(122, '0') + "01000101");
+  Shape child{8, false, true, 24};
+  EXPECT_FALSE(reflection::validVPIIntegralOperator(67, {32, true, false, 67},
+                                                    &child, 1));
+  child.width = 32;
+  EXPECT_TRUE(reflection::validVPIIntegralOperator(67, {32, true, false, 67},
+                                                   &child, 1));
+  EXPECT_TRUE(reflection::validVPIIntegralOperator(67, {8, true, false, 67},
+                                                   &child, 1));
+  EXPECT_FALSE(reflection::validVPISourceOnlyArity(67, 1));
+}

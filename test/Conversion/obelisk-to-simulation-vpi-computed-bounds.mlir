@@ -22,7 +22,7 @@ module attributes {llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8", llv
         obelisk.sv.symbol.variable @indexed attributes {node_id = 5 : i64, hierarchical_name = "top.indexed", name = "indexed", lifetime = 1 : i32, semantic_type = !nibble} {}
         obelisk.sv.symbol.variable @repeat attributes {node_id = 6 : i64, hierarchical_name = "top.repeat", name = "repeat", lifetime = 1 : i32, semantic_type = !byte} {}
         obelisk.sv.symbol.variable @wide attributes {node_id = 7 : i64, hierarchical_name = "top.wide", name = "wide", lifetime = 1 : i32, semantic_type = !nibble} {}
-        obelisk.sv.symbol.variable @unsupported attributes {node_id = 8 : i64, hierarchical_name = "top.unsupported", name = "unsupported", lifetime = 1 : i32, semantic_type = !nibble} {}
+        obelisk.sv.symbol.variable @cast_bound attributes {node_id = 8 : i64, hierarchical_name = "top.cast_bound", name = "cast_bound", lifetime = 1 : i32, semantic_type = !nibble} {}
         obelisk.sv.symbol.procedural_block @init_part attributes {node_id = 20 : i64, hierarchical_name = "top", procedure_kind = 0 : i32} {
           obelisk.sv.statement.expression_statement attributes {node_id = 19 : i64} {
             obelisk.sv.expression.assignment attributes {node_id = 18 : i64, assignment_kind = 0 : i32, semantic_type = !nibble} {
@@ -122,10 +122,10 @@ module attributes {llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8", llv
           } loc("computed_bounds.sv":40:1)
 
         }
-        obelisk.sv.symbol.procedural_block @init_unsupported attributes {node_id = 68 : i64, hierarchical_name = "top", procedure_kind = 0 : i32} {
+        obelisk.sv.symbol.procedural_block @init_cast_bound attributes {node_id = 68 : i64, hierarchical_name = "top", procedure_kind = 0 : i32} {
           obelisk.sv.statement.expression_statement attributes {node_id = 67 : i64} {
             obelisk.sv.expression.assignment attributes {node_id = 66 : i64, assignment_kind = 0 : i32, semantic_type = !nibble} {
-              obelisk.sv.expression.named_value attributes {node_id = 65 : i64, referenced_symbol = @root::@top::@body::@unsupported, referenced_path = "top.unsupported", semantic_type = !nibble} {}
+              obelisk.sv.expression.named_value attributes {node_id = 65 : i64, referenced_symbol = @root::@top::@body::@cast_bound, referenced_path = "top.cast_bound", semantic_type = !nibble} {}
               obelisk.sv.expression.range_select attributes {node_id = 64 : i64, selection_kind = 0 : i32, semantic_type = !nibble} {
                 obelisk.sv.expression.named_value attributes {node_id = 63 : i64, referenced_symbol = @root::@top::@body::@a, referenced_path = "top.a", semantic_type = !byte} {}
                 obelisk.sv.expression.conversion attributes {node_id = 61 : i64, is_implicit = false, semantic_type = !int, folded_constant = "7"} {

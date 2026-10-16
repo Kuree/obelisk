@@ -23,9 +23,9 @@ module attributes {llvm.data_layout = "e-p:64:64-i64:64", llvm.target_triple = "
               obelisk.sv.expression.integer_literal attributes {node_id = 16 : i64, constant_value = "1", is_signed = false, semantic_type = !pair} {}
               obelisk.sv.expression.integer_literal attributes {node_id = 17 : i64, constant_value = "2", is_signed = false, semantic_type = !pair} {}
             }
-            // This final label is outside the current materializer subset.
+            // Const casts are outside the current materializer subset.
             // Earlier supported literals and concat must leave no partial group.
-            obelisk.sv.expression.conversion attributes {node_id = 21 : i64, is_implicit = false, semantic_type = !nibble, is_signed = false} {
+            obelisk.sv.expression.conversion attributes {node_id = 21 : i64, is_implicit = false, is_const_cast = true, semantic_type = !nibble, is_signed = false} {
               obelisk.sv.expression.named_value attributes {node_id = 18 : i64, referenced_symbol = @root::@top::@body::@P, referenced_path = "top.P", semantic_type = !nibble} {}
             }
             obelisk.sv.statement.empty attributes {node_id = 19 : i64} {}

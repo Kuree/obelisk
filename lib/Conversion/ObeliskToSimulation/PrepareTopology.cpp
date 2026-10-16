@@ -5623,6 +5623,47 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
   // equally valid connections (37.14). Computed connections use shared
   // expression recipes with distinct occurrence identities in the instantiating
   // scope.
+  // Cast Typespecs use the same exact alias remapping as declarations. Freeze
+  // these before connection expressions are materialized; procedural uses
+  // consume the same metadata later, after local inventory is assigned.
+  llvm::DenseSet<Attribute> castAliases = pendingTypespecSymbols;
+  for (auto declaration : design.getOps<sim::SimVPITypespecDeclOp>())
+    castAliases.insert(FlatSymbolRefAttr::get(declaration.getSymNameAttr()));
+  semanticRoot->walk([&](semantic::SVConversionExpressionOp conversion) {
+    auto implicit = conversion->getAttrOfType<BoolAttr>("is_implicit");
+    auto sourceType = conversion->getAttrOfType<TypeAttr>("semantic_type");
+    if (!implicit || implicit.getValue() || !sourceType ||
+        !conversion->hasAttr(vpiTypedefLayersAttrName))
+      return;
+    Type scalar = sourceType.getValue();
+    for (;;) {
+      if (auto array = dyn_cast<semantic::RangedPackedArrayType>(scalar))
+        scalar = array.getElementType();
+      else if (auto array = dyn_cast<semantic::PackedArrayType>(scalar))
+        scalar = array.getElementType();
+      else
+        break;
+    }
+    if (!isa<semantic::IntegralType, semantic::LogicType>(scalar))
+      return;
+    auto converted = makeVPITypeSemantics(
+        sourceType.getValue(), getSemanticLocation(conversion),
+        typedefLayersFor(conversion), conversion);
+    if (failed(converted)) {
+      invalid = true;
+      return;
+    }
+    bool complete = true;
+    AttrTypeWalker aliases;
+    aliases.addWalk([&](sim::VPITypeSemanticsAttr current) {
+      if (auto names = current.getTypedefAliases())
+        for (Attribute name : names)
+          complete &= castAliases.contains(name);
+    });
+    aliases.walk(*converted);
+    if (complete)
+      sim::set<sim::metadata::VpiDeclaredType>(conversion, *converted);
+  });
   VPIExpressionMaterializer expressions(design, descriptors, builder);
   const auto *highConnection = reflection::findVPITraversal(
       static_cast<uint32_t>(VPIKind::Port),

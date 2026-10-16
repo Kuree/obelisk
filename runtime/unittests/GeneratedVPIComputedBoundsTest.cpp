@@ -103,15 +103,10 @@ TEST(GeneratedDesignDatabase, ComputedBounds) {
     auto statement = get(vpiStmt, process);
     int line = vpi_get(vpiLineNo, statement);
     auto expression = get(vpiRhs, statement);
-    if (line == 60) {
-      EXPECT_EQ(expression, nullptr);
-      EXPECT_EQ(vpi_chk_error(nullptr), 0);
-      continue;
-    }
     ASSERT_NE(expression, nullptr);
     ASSERT_TRUE(expressions.emplace(line, expression).second);
   }
-  ASSERT_EQ(expressions.size(), 4u);
+  ASSERT_EQ(expressions.size(), 5u);
   auto part = expressions.at(10), indexed = expressions.at(20);
   auto repeat = expressions.at(30), wide = expressions.at(40);
   EXPECT_EQ(vpi_get(vpiType, part), vpiPartSelect);
@@ -120,6 +115,12 @@ TEST(GeneratedDesignDatabase, ComputedBounds) {
   EXPECT_EQ(value(indexed), 2);
   EXPECT_EQ(value(repeat), 0x55);
   EXPECT_EQ(value(wide), 0xa);
+  auto castBound = expressions.at(60);
+  EXPECT_EQ(value(castBound), 0xa);
+  auto cast = get(vpiLeftRange, castBound);
+  EXPECT_EQ(vpi_get(vpiOpType, cast), vpiCastOp);
+  EXPECT_EQ(value(cast), 7);
+  ASSERT_NE(get(vpiTypespec, cast), nullptr);
   auto left = get(vpiLeftRange, part), right = get(vpiRightRange, part);
   EXPECT_EQ(vpi_get(vpiType, left), vpiOperation);
   EXPECT_EQ(vpi_get(vpiOpType, left), vpiAddOp);
@@ -173,9 +174,9 @@ TEST(GeneratedDesignDatabase, ComputedBounds) {
       arithmetic += node.getCode() != vpiMultiConcatOp;
     }
   }
-  EXPECT_EQ(arithmetic, 8u);
-  EXPECT_EQ(directory.getExpressionRootBindingCount(), 6u);
-  EXPECT_EQ(directory.getExpressionTemplateCount(), 5u);
+  EXPECT_EQ(arithmetic, 10u);
+  EXPECT_EQ(directory.getExpressionRootBindingCount(), 7u);
+  EXPECT_EQ(directory.getExpressionTemplateCount(), 6u);
   auto rejects = [&](auto mutate) {
     auto bytes = image;
     mutate(bytes);

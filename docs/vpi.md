@@ -105,9 +105,14 @@ Effective type or width differences split templates. Integral unary, arithmetic,
 bitwise, shift, comparison, logical, and conditional operations retain their
 elaborated result width and signedness. Live value queries propagate operand
 context before evaluating nested operations and preserve four-state results.
-Explicit casts, computed constant select bounds, bit-object selection,
-hierarchical reference spelling, and broader packed aggregate expressions
-remain follow-ups.
+Explicit integral casts retain one operand and the exact target `vpiTypespec`,
+including typedef identity, in the existing expression node. Cast operands
+preserve assignment width context, and conversion uses the operand's signedness
+before applying the target state domain. The same pure evaluator proves casts
+in constant select bounds. Decompilation uses an equivalent builtin or integral
+size/sign cast when its type semantics are provable; other target spellings
+report a notice. Const casts, nominal aggregate casts, hierarchical reference
+spelling, and broader packed aggregate expressions remain follow-ups.
 
 Elaborated generate scopes preserve packed parameters and localparams, including
 implicit genvar localparams, under their exact scope. Distinct declarations use
