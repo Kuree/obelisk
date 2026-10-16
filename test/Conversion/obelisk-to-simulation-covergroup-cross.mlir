@@ -261,6 +261,38 @@ module or_cross_selector;
   endgroup
 endmodule
 
+//--- explicit-bin.sv
+module explicit_cross_bin;
+  bit a_value;
+  bit b_value;
+  bit enabled;
+  covergroup cg;
+    a: coverpoint a_value {
+      bins zero = {0};
+      bins one = {1};
+    }
+    b: coverpoint b_value {
+      bins zero = {0};
+      bins one = {1};
+    }
+    ab: cross a, b {
+      // obelisk coverage off functional reason="selector excluded for reporting"
+      bins selected = binsof(a) intersect {0} iff (enabled);
+      // obelisk coverage on functional
+      bins named = binsof(a.zero) intersect {0};
+      bins negated = !binsof(a.one);
+      ignore_bins ignored = binsof(b.zero);
+      illegal_bins illegal = binsof(b.one);
+    }
+  endgroup
+
+  cg cov;
+  initial begin
+    cov = new;
+    cov.sample();
+  end
+endmodule
+
 //--- transition-selector.sv
 module transition_cross_selector;
   bit transition_value;
