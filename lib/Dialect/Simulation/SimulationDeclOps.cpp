@@ -5597,7 +5597,7 @@ LogicalResult SimDesignOp::verifyRegions() {
     uint64_t ordinal;
     uint32_t targetTag;
     uint64_t targetId;
-    bool sharedParameterOperand;
+    bool sharedDeclarationSlot;
     SimVPIRelationDeclOp relation;
   };
   // Resolve aliases to the same inventory declaration before grouping. Stable
@@ -5846,20 +5846,33 @@ LogicalResult SimDesignOp::verifyRegions() {
             {sourceId, static_cast<uint32_t>(relation.getSelector())}))
       return relation.emitOpError(
           "port connection is already supplied by a synthetic RefObj");
+    const auto *use = reflection::findVPITraversal(
+        *targetKind, static_cast<uint32_t>(reflection::VPIRelationKind::UseRel),
+        reflection::VPITraversalMode::Iterate);
+    bool repeatedCaseDeclaration =
+        *sourceKind ==
+            static_cast<uint32_t>(reflection::VPIObjectKind::CaseItem) &&
+        relation.getSelector() ==
+            static_cast<uint32_t>(reflection::VPIRelationKind::ExprRel) &&
+        mode == reflection::VPITraversalMode::Iterate && use &&
+        reflection::vpiObjectSetContains(
+            use->targets,
+            static_cast<uint32_t>(reflection::VPIObjectKind::Case));
     generalRelations.push_back(
         {sourceIdentity, targetIdentity,
          static_cast<uint32_t>(relation.getSource().getKind()), sourceId,
          static_cast<uint32_t>(relation.getSelector()),
          static_cast<uint32_t>(relation.getMode()), relation.getOrdinal(),
          static_cast<uint32_t>(relation.getTarget().getKind()), targetId,
-         *sourceKind ==
-                 static_cast<uint32_t>(reflection::VPIObjectKind::Operation) &&
-             *targetKind ==
-                 static_cast<uint32_t>(reflection::VPIObjectKind::Parameter) &&
-             relation.getSelector() ==
-                 static_cast<uint32_t>(
-                     reflection::VPIRelationKind::OperandRel) &&
-             mode == reflection::VPITraversalMode::Iterate,
+         repeatedCaseDeclaration ||
+             (*sourceKind ==
+                  static_cast<uint32_t>(reflection::VPIObjectKind::Operation) &&
+              *targetKind ==
+                  static_cast<uint32_t>(reflection::VPIObjectKind::Parameter) &&
+              relation.getSelector() ==
+                  static_cast<uint32_t>(
+                      reflection::VPIRelationKind::OperandRel) &&
+              mode == reflection::VPITraversalMode::Iterate),
          relation});
   }
   llvm::sort(generalRelations,
@@ -5890,10 +5903,10 @@ LogicalResult SimDesignOp::verifyRegions() {
     llvm::DenseSet<uint64_t> targets;
     for (size_t index = begin; index != end; ++index) {
       GeneralRelation &entry = generalRelations[index];
-      // Repeated references such as P + P share the Parameter declaration,
-      // while owned expression occurrences must still have unique targets.
+      // Repeated operands and case labels can name one declaration. Owned
+      // Constant/Operation occurrences must still have distinct identities.
       if (!targets.insert(entry.targetIdentity).second &&
-          !entry.sharedParameterOperand)
+          !entry.sharedDeclarationSlot)
         return entry.relation.emitOpError(
             "duplicates a target in the same source, selector, and access "
             "mode");

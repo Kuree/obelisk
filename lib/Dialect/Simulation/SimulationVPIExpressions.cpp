@@ -202,9 +202,16 @@ LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
             ? referenceSymbols.lookupNearestSymbolFrom<SimVPIExpressionDeclOp>(
                   relation, source.getSymbol())
             : SimVPIExpressionDeclOp{};
-    if (!computed)
+    bool caseLabel =
+        source.getKind() == VPIObjectRefKind::Statement &&
+        relation.getSelector() == uint32_t(Relation::ExprRel) &&
+        llvm::any_of(design.getOps<SimStatementDeclOp>(), [&](auto statement) {
+          return statement.getIdAttr() == source.getId() &&
+                 statement.getVpiKind() == uint32_t(Kind::CaseItem);
+        });
+    if (!computed && !caseLabel)
       return relation.emitOpError(
-          "contextual declaration root requires a singular expression slot");
+          "contextual declaration root requires a singular or case-label slot");
   }
   SmallVector<SimVPIExpressionDeclOp> expressions;
   for (auto expression : design.getOps<SimVPIExpressionDeclOp>())
@@ -344,9 +351,12 @@ LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
     bool ownerStatement = isa<SimStatementDeclOp>(owner->second.operation);
     bool ownerPort = owner->second.kind == uint32_t(Kind::Port);
     bool ownerTerminal = owner->second.kind == uint32_t(Kind::PrimTerm);
-    if (!ownerExpression && expression.getMode() != VPIRelationMode::Handle)
+    bool caseLabel = owner->second.kind == uint32_t(Kind::CaseItem) &&
+                     expression.getSelector() == uint32_t(Relation::ExprRel);
+    if (!ownerExpression && expression.getMode() != VPIRelationMode::Handle &&
+        !caseLabel)
       return expression.emitOpError(
-          "compact root currently requires a singular expression slot");
+          "compact root requires a singular or case-label slot");
     if (!ownerExpression && !ownerStatement && !ownerPort && !ownerTerminal)
       return expression.emitOpError(
           "owner must be an expression, statement, port or terminal");

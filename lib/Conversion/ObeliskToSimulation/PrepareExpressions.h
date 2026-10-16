@@ -49,7 +49,18 @@ public:
           sim::VPIRelationMode mode = sim::VPIRelationMode::Handle,
           uint64_t ordinal = 0);
 
+  /// Validate every expression before emitting an iterated relation group.
+  /// Unsupported labels leave the entire group unavailable, without gaps.
+  mlir::FailureOr<std::optional<mlir::SmallVector<VPIExpressionEndpoint>>>
+  resolveGroup(mlir::ArrayRef<mlir::Operation *> expressions,
+               sim::VPIObjectRefAttr owner, uint32_t ownerKind, uint64_t scope,
+               uint32_t selector);
+
 private:
+  mlir::FailureOr<std::optional<VPIExpressionEndpoint>>
+  resolveImpl(mlir::Operation *expression, sim::VPIObjectRefAttr owner,
+              uint32_t ownerKind, uint64_t scope, uint32_t selector,
+              sim::VPIRelationMode mode, uint64_t ordinal, bool materialize);
   sim::SimDesignOp design;
   VPIExpressionResolver declarations;
   mlir::OpBuilder &builder;

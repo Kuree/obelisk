@@ -140,6 +140,41 @@ VPIExpressionMaterializer::resolve(Operation *expression,
                                    uint32_t ownerKind, uint64_t scope,
                                    uint32_t selector, sim::VPIRelationMode mode,
                                    uint64_t ordinal) {
+  return resolveImpl(expression, owner, ownerKind, scope, selector, mode,
+                     ordinal, true);
+}
+
+FailureOr<std::optional<SmallVector<VPIExpressionEndpoint>>>
+VPIExpressionMaterializer::resolveGroup(ArrayRef<Operation *> expressions,
+                                        sim::VPIObjectRefAttr owner,
+                                        uint32_t ownerKind, uint64_t scope,
+                                        uint32_t selector) {
+  for (auto [ordinal, expression] : llvm::enumerate(expressions)) {
+    auto result = resolveImpl(expression, owner, ownerKind, scope, selector,
+                              sim::VPIRelationMode::Iterate, ordinal, false);
+    if (failed(result))
+      return failure();
+    if (!*result)
+      return std::optional<SmallVector<VPIExpressionEndpoint>>{};
+  }
+  SmallVector<VPIExpressionEndpoint> targets;
+  for (auto [ordinal, expression] : llvm::enumerate(expressions)) {
+    auto result = resolveImpl(expression, owner, ownerKind, scope, selector,
+                              sim::VPIRelationMode::Iterate, ordinal, true);
+    if (failed(result) || !*result)
+      return failure();
+    targets.push_back(**result);
+  }
+  return std::optional<SmallVector<VPIExpressionEndpoint>>(std::move(targets));
+}
+
+FailureOr<std::optional<VPIExpressionEndpoint>>
+VPIExpressionMaterializer::resolveImpl(Operation *expression,
+                                       sim::VPIObjectRefAttr owner,
+                                       uint32_t ownerKind, uint64_t scope,
+                                       uint32_t selector,
+                                       sim::VPIRelationMode mode,
+                                       uint64_t ordinal, bool materialize) {
   using Kind = reflection::VPIObjectKind;
   using Rel = reflection::VPIRelationKind;
   auto unsupported = []() -> std::optional<VPIExpressionEndpoint> {
@@ -299,8 +334,6 @@ VPIExpressionMaterializer::resolve(Operation *expression,
   };
   if (!legal(ownerKind, selector, mode, plan.front().kind))
     return unsupported();
-  if (!plan.front().endpoint && mode != sim::VPIRelationMode::Handle)
-    return unsupported();
   for (const auto &node : plan) {
     auto childMode = node.kind == uint32_t(Kind::Operation)
                          ? sim::VPIRelationMode::Iterate
@@ -310,6 +343,9 @@ VPIExpressionMaterializer::resolve(Operation *expression,
                  plan[child].kind))
         return unsupported();
   }
+  if (!materialize)
+    return std::optional<VPIExpressionEndpoint>(
+        VPIExpressionEndpoint{{}, plan.front().kind});
   uint64_t computed =
       llvm::count_if(plan, [](const Planned &node) { return !node.endpoint; });
   if (nextID > uint64_t(INT64_MAX) || computed > uint64_t(INT64_MAX) - nextID)
@@ -395,6 +431,13 @@ LogicalResult materializeProceduralExpressionRelations(
     statements[statement.getId()] = statement;
   if (statements.empty())
     return success();
+  llvm::DenseMap<std::pair<uint64_t, uint64_t>, uint64_t> caseItems;
+  for (auto relation : design.getOps<sim::SimVPIStatementRelationDeclOp>())
+    if (relation.getSourceKind() == sim::VPIStatementSourceKind::Statement &&
+        relation.getSelector() ==
+            static_cast<uint32_t>(reflection::VPIObjectKind::CaseItem))
+      caseItems[{relation.getSourceId(), relation.getOrdinal()}] =
+          relation.getTargetStatementId();
   VPIExpressionMaterializer materializer(design, descriptors, builder);
   bool invalid = false;
   llvm::DenseMap<Attribute, SmallVector<Attribute>> uses;
@@ -458,6 +501,54 @@ LogicalResult materializeProceduralExpressionRelations(
         targets.push_back(sourceRef);
       };
       auto children = getChildren(source);
+      if (auto caseStatement = dyn_cast<semantic::SVCaseStatementOp>(source)) {
+        size_t next = 1;
+        for (auto [itemOrdinal, count] :
+             llvm::enumerate(caseStatement.getItemLabelCounts())) {
+          auto found = caseItems.find({id, itemOrdinal});
+          if (found == caseItems.end() || count < 0 ||
+              next >= children.size() ||
+              static_cast<uint64_t>(count) >= children.size() - next) {
+            invalid = true;
+            source->emitError(
+                "case expression group has no exact retained item");
+            return WalkResult::advance();
+          }
+          auto item = statements.lookup(found->second);
+          auto owner = sim::VPIObjectRefAttr::get(
+              builder.getContext(), sim::VPIObjectRefKind::Statement,
+              builder.getI64IntegerAttr(found->second));
+          auto labels = ArrayRef(children).slice(next, count);
+          auto group = materializer.resolveGroup(
+              labels, owner, item.getVpiKind(), item.getScopeId(),
+              static_cast<uint32_t>(Relation::ExprRel));
+          if (failed(group))
+            invalid = true;
+          else if (*group)
+            for (auto [ordinal, target] : llvm::enumerate(**group)) {
+              auto location = getSemanticLocation(labels[ordinal]);
+              sim::SimVPIRelationDeclOp::create(
+                  builder, location, owner,
+                  static_cast<uint32_t>(Relation::ExprRel),
+                  sim::VPIRelationMode::Iterate, ordinal, target.reference);
+              const auto *use = reflection::findVPITraversal(
+                  target.kind, static_cast<uint32_t>(Relation::UseRel),
+                  Mode::Iterate);
+              if (!use || !reflection::vpiObjectSetContains(
+                              use->targets, statement.getVpiKind()))
+                continue;
+              auto &targets = uses[target.reference];
+              if (llvm::is_contained(targets, sourceRef))
+                continue;
+              sim::SimVPIRelationDeclOp::create(
+                  builder, location, target.reference,
+                  static_cast<uint32_t>(Relation::UseRel),
+                  sim::VPIRelationMode::Iterate, targets.size(), sourceRef);
+              targets.push_back(sourceRef);
+            }
+          next += count + 1;
+        }
+      }
       if (statement.getVpiKind() ==
           static_cast<uint32_t>(reflection::VPIObjectKind::EventControl)) {
         Operation *control = source;

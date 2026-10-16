@@ -3228,6 +3228,10 @@ constexpr uint32_t kExpressionOperandLeafFlag = UINT32_C(1) << 31;
 constexpr uint32_t kExpressionInstanceRelation = UINT32_MAX - 1;
 constexpr uint32_t kExpressionModuleRelation = UINT32_MAX - 2;
 constexpr uint32_t kExpressionUseOwnerRelation = UINT32_MAX - 3;
+// A root group iterates root indices in the low payload bits. This domain is
+// disjoint from operand indices (<2^30) and the high reserved sentinels.
+constexpr uint32_t kExpressionRootGroupFlag = UINT32_C(1) << 31;
+constexpr uint32_t kExpressionPayloadDomainMask = UINT32_C(3) << 30;
 
 const uint8_t *expressionRoot(const Database &database, uint32_t index) {
   return index < database.expressionRootBindingCount
@@ -3320,6 +3324,26 @@ bool expressionContext(const Database &database, const uint8_t *root,
   if (outOwner)
     *outOwner = offset;
   return true;
+}
+
+// Case items group labels; the LRM simple-expression Use target is the
+// enclosing case statement, using the existing containment identity.
+bool expressionUseOwner(const Database &database, const uint8_t *root,
+                        uint32_t &kind, uint64_t &offset) {
+  uint32_t scope = 0;
+  if (!expressionContext(database, root, scope, &kind, &offset))
+    return false;
+  using Kind = obelisk::reflection::VPIObjectKind;
+  if (kind != uint32_t(Kind::CaseItem))
+    return true;
+  if (!isStatementOffset(database, offset))
+    return false;
+  uint32_t parent = read32(database.data + offset + 16);
+  if (parent >= database.statementCount)
+    return false;
+  offset = database.statements + uint64_t{parent} * kStatementSize;
+  kind = read16(database.data + offset + 36);
+  return kind == uint32_t(Kind::Case);
 }
 
 struct ExpressionLeafInfo {
@@ -3680,15 +3704,23 @@ bool validateExpressions(const Database &database,
                                read16(root + 14), read32(root + 16));
     uint32_t scope = 0, ownerKind = 0;
     uint64_t owner = 0;
-    // The first compact slice owns singular expression slots. Iterated mixed
-    // physical/recipe groups need a common order index before being admitted.
-    if ((index && key <= previous) || read16(root + 14) != 0 ||
-        read32(root + 16) ||
+    bool iterate = read16(root + 14) == uint16_t(Mode::Iterate);
+    bool sameGroup = index && std::get<0>(key) == std::get<0>(previous) &&
+                     std::get<1>(key) == std::get<1>(previous) &&
+                     std::get<2>(key) == std::get<2>(previous);
+    uint64_t expectedOrdinal =
+        sameGroup ? uint64_t(std::get<3>(previous)) + 1 : 0;
+    if ((index && key <= previous) ||
+        read16(root + 14) > uint16_t(Mode::Iterate) ||
+        read32(root + 16) != expectedOrdinal || (!iterate && sameGroup) ||
         !expressionContext(database, root, scope, &ownerKind, &owner))
+      return false;
+    if (iterate && (ownerKind != uint32_t(Kind::CaseItem) ||
+                    read16(root + 12) != uint16_t(Rel::ExprRel)))
       return false;
     previous = key;
     const auto *edge = obelisk::reflection::findVPITraversal(
-        ownerKind, read16(root + 12), Mode::Handle);
+        ownerKind, read16(root + 12), iterate ? Mode::Iterate : Mode::Handle);
     if (!edge || edge->statementContainment ||
         edge->automaticRelation !=
             obelisk::reflection::VPIAutomaticRelation::None)
@@ -3700,10 +3732,10 @@ bool validateExpressions(const Database &database,
       return false;
     uint32_t ownerIndex = obelisk::reflection::unpackTableIndex(read32(root));
     uint64_t physical = lowerBoundRelation(database, table, ownerIndex,
-                                           read16(root + 12), false);
+                                           read16(root + 12), iterate);
     if (physical < database.relationCount &&
         relationMatches(relationAt(database, physical), table, ownerIndex,
-                        read16(root + 12), false))
+                        read16(root + 12), iterate))
       return false;
     uint32_t count = recipe ? read32(recipe + 20) : 1;
     uint32_t first = read32(root + 8);
@@ -10684,30 +10716,37 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
     }
   }
 
-physicalRelations:
-  if (!iterate) {
-    uint32_t packed = 0;
-    if (obelisk::reflection::tryPackTableIndex(table, sourceIndex, packed)) {
-      uint32_t low = 0, high = database.expressionRootBindingCount;
-      auto wanted = std::make_pair(packed, uint16_t(selector));
-      while (low != high) {
-        uint32_t middle = low + (high - low) / 2;
-        const uint8_t *root = expressionRoot(database, middle);
-        if (std::make_pair(read32(root), read16(root + 12)) < wanted)
-          low = middle + 1;
-        else
-          high = middle;
-      }
-      if (low < database.expressionRootBindingCount) {
-        const uint8_t *root = expressionRoot(database, low);
-        if (std::make_pair(read32(root), read16(root + 12)) == wanted) {
-          outRange->first = virtualToken(kVirtualMemberTag, low, UINT32_MAX);
-          outRange->count = 1;
-          return OBELISK_RT_OK;
-        }
-      }
+physicalRelations: {
+  uint32_t packed = 0;
+  if (obelisk::reflection::tryPackTableIndex(table, sourceIndex, packed)) {
+    uint32_t low = 0, high = database.expressionRootBindingCount;
+    auto wanted = std::make_tuple(packed, uint16_t(selector), uint16_t(mode));
+    auto group = [&](const uint8_t *root) {
+      return std::make_tuple(read32(root), read16(root + 12),
+                             read16(root + 14));
+    };
+    while (low != high) {
+      uint32_t middle = low + (high - low) / 2;
+      if (group(expressionRoot(database, middle)) < wanted)
+        low = middle + 1;
+      else
+        high = middle;
+    }
+    if (low < database.expressionRootBindingCount &&
+        group(expressionRoot(database, low)) == wanted) {
+      uint32_t end = low + 1;
+      while (iterate && end < database.expressionRootBindingCount &&
+             group(expressionRoot(database, end)) == wanted)
+        ++end;
+      outRange->first = iterate
+                            ? virtualToken(kVirtualMemberTag, 0,
+                                           kExpressionRootGroupFlag | low)
+                            : virtualToken(kVirtualMemberTag, low, UINT32_MAX);
+      outRange->count = end - low;
+      return OBELISK_RT_OK;
     }
   }
+}
   uint64_t first = lowerBoundRelation(database, table, sourceIndex,
                                       compactSelector, iterate);
   if (first == database.relationCount)
@@ -10736,14 +10775,21 @@ designVPIRelationTarget(const Database &database, uint64_t relationIndex,
   uint32_t payload = 0;
   if (decodeVirtualToken(relationIndex, kVirtualMemberTag, bindingIndex,
                          payload)) {
+    if ((payload & kExpressionPayloadDomainMask) == kExpressionRootGroupFlag) {
+      if (bindingIndex != 0)
+        return OBELISK_RT_INVALID_HANDLE;
+      bindingIndex = payload & ~kExpressionPayloadDomainMask;
+      const uint8_t *groupRoot = expressionRoot(database, bindingIndex);
+      if (!groupRoot || read16(groupRoot + 14) != 1)
+        return OBELISK_RT_INVALID_HANDLE;
+      payload = UINT32_MAX;
+    }
     const uint8_t *root = expressionRoot(database, bindingIndex);
     const uint8_t *recipe = root ? expressionTemplate(database, root) : nullptr;
     if (!root)
       return OBELISK_RT_INVALID_HANDLE;
     if (payload == kExpressionUseOwnerRelation) {
-      uint32_t scope = 0;
-      if (!expressionContext(database, root, scope, outType,
-                             &outCursor->offset))
+      if (!expressionUseOwner(database, root, *outType, outCursor->offset))
         return OBELISK_RT_INVALID_HANDLE;
       *outStatement = obelisk::reflection::unpackTableIndexKind(read32(root)) ==
                       obelisk::reflection::TableKind::Statement;
@@ -13508,9 +13554,9 @@ obelisk_rt_status obelisk_rt_cached_vpi_expression_use_ranges(
       if (!matches)
         continue;
       found = true;
-      uint32_t scope = 0, ownerKind = 0;
+      uint32_t ownerKind = 0;
       uint64_t owner = 0;
-      if (!expressionContext(*database, root, scope, &ownerKind, &owner))
+      if (!expressionUseOwner(*database, root, ownerKind, owner))
         return OBELISK_RT_INVALID_DESIGN;
       if (!obelisk::reflection::vpiObjectSetContains(edge->targets,
                                                      ownerKind) ||

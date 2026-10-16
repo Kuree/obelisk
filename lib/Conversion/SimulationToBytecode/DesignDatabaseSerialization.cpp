@@ -3835,6 +3835,39 @@ SmallVector<uint8_t> serializeDesignDatabase(
                ? expressionsBySymbol.lookup(reference.getSymbol().getValue())
                : sim::SimVPIExpressionDeclOp{};
   };
+  auto isCaseLabel = [&](sim::SimVPIRelationDeclOp relation) {
+    auto source = relation.getSource();
+    if (source.getKind() != sim::VPIObjectRefKind::Statement ||
+        relation.getSelector() != uint32_t(VPIRelationKind::ExprRel) ||
+        relation.getMode() != sim::VPIRelationMode::Iterate)
+      return false;
+    auto statement =
+        statementIndices.find(source.getId().getValue().getZExtValue());
+    return statement != statementIndices.end() &&
+           statements[statement->second].declaration.getVpiKind() ==
+               uint32_t(VPIObjectKind::CaseItem);
+  };
+  auto expressionUseSource = [&](sim::SimVPIRelationDeclOp relation) {
+    if (!isCaseLabel(relation))
+      return relation.getSource();
+    auto index = statementIndices.lookup(
+        relation.getSource().getId().getValue().getZExtValue());
+    auto parent = statements[index].declaration.getParentIdAttr();
+    return parent ? sim::VPIObjectRefAttr::get(relation.getContext(),
+                                               sim::VPIObjectRefKind::Statement,
+                                               parent)
+                  : sim::VPIObjectRefAttr{};
+  };
+  DenseSet<Attribute> compactCaseGroups;
+  DenseSet<std::pair<Attribute, Attribute>> caseTargets;
+  for (auto relation : generalRelationDeclarations)
+    if (isCaseLabel(relation) &&
+        (!caseTargets.insert({relation.getSource(), relation.getTarget()})
+              .second ||
+         expressionFor(relation.getTarget()) ||
+         relation.getTarget().getKind() ==
+             sim::VPIObjectRefKind::DefinitionMember))
+      compactCaseGroups.insert(relation.getSource());
   for (sim::SimVPIRelationDeclOp relation : generalRelationDeclarations) {
     if (relation.getSource().getKind() ==
         sim::VPIObjectRefKind::DefinitionMember) {
@@ -3844,9 +3877,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
           relation.getSelector() == uint32_t(VPIRelationKind::UseRel) &&
           relation.getMode() == sim::VPIRelationMode::Iterate &&
           llvm::any_of(generalRelationDeclarations, [&](auto forward) {
-            return forward.getSource() == relation.getTarget() &&
+            return expressionUseSource(forward) == relation.getTarget() &&
                    forward.getTarget() == relation.getSource() &&
-                   forward.getMode() == sim::VPIRelationMode::Handle;
+                   (forward.getMode() == sim::VPIRelationMode::Handle ||
+                    isCaseLabel(forward));
           });
       if (!exactUse) {
         relation.emitOpError("contextual declaration relation requires an "
@@ -3859,7 +3893,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
       expressionChildren[expression].push_back(relation);
       continue;
     }
-    if (expressionFor(relation.getTarget()) ||
+    if ((isCaseLabel(relation) &&
+         compactCaseGroups.contains(relation.getSource())) ||
+        expressionFor(relation.getTarget()) ||
         relation.getTarget().getKind() ==
             sim::VPIObjectRefKind::DefinitionMember) {
       expressionRootDeclarations.push_back(relation);
