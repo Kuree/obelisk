@@ -8,6 +8,7 @@
 
 #include "DesignBytecodeNets.h"
 #include "ProcessContext.h"
+#include "VPIExpressionValue.h"
 #include "VPIHandleToken.h"
 #include "VPIInternal.h"
 #include "obelisk/Reflection/DesignReflection.h"
@@ -5344,6 +5345,7 @@ bool readExpressionValue(__vpiHandle *handle, const VPIExpressionInfo &rootInfo,
     VPIExpressionInfo info{};
     obelisk_rt_design_cursor_v1 semantic{};
     uint64_t width = 0;
+    obelisk::reflection::VPIIntegralExpressionShape shape;
     std::vector<uint64_t> value, unknown;
   };
   struct Pending {
@@ -5356,6 +5358,19 @@ bool readExpressionValue(__vpiHandle *handle, const VPIExpressionInfo &rootInfo,
     std::unordered_map<uint64_t, Evaluated> results;
     std::vector<Pending> pending;
     pending.push_back({handle->cursor, rootInfo, 0, {}});
+    auto setShape = [&](Evaluated &result) {
+      obelisk_rt_design_semantic_type_info_v1 semantic{};
+      if (obelisk_rt_cached_design_semantic_type_info(
+              handle->owner->context, result.semantic, &semantic) !=
+          OBELISK_RT_OK)
+        return false;
+      result.shape = {
+          result.width,
+          bool(semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED),
+          bool(semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE),
+          result.info.kind == vpiOperation ? result.info.code : 0};
+      return true;
+    };
     auto readLeaf = [&](obelisk_rt_design_cursor_v1 cursor, uint32_t kind) {
       __vpiHandle leaf;
       leaf.owner = handle->owner;
@@ -5374,6 +5389,8 @@ bool readExpressionValue(__vpiHandle *handle, const VPIExpressionInfo &rootInfo,
         return false;
       result.width = source.info.bit_width;
       result.semantic = source.semanticCursor;
+      if (!setShape(result))
+        return false;
       results.emplace(cursor.offset, std::move(result));
       return true;
     };
@@ -5429,6 +5446,8 @@ bool readExpressionValue(__vpiHandle *handle, const VPIExpressionInfo &rootInfo,
       result.info = current.info;
       result.width = current.info.bitWidth;
       result.semantic = current.info.semantic;
+      if (!setShape(result))
+        return false;
       size_t words = 0;
       if (!checkedWordCount(result.width, 64, words))
         return false;
@@ -5457,20 +5476,47 @@ bool readExpressionValue(__vpiHandle *handle, const VPIExpressionInfo &rootInfo,
                                       << ((byte % 8) * 8);
         }
       } else if (current.info.kind == vpiOperation) {
-        bool repeat = current.info.code == vpiMultiConcatOp;
-        int64_t repetitions = 1;
-        if (repeat && (!integer(child(0), repetitions) || repetitions <= 0))
-          return false;
-        uint64_t destination = 0;
-        for (int64_t repetition = 0; repetition != repetitions; ++repetition)
-          for (size_t index = current.children.size();
-               index != size_t(repeat);) {
-            const auto &operand = child(--index);
-            for (uint64_t bit = 0; bit != operand.width; ++bit)
-              copyBit(operand, bit, destination++);
+        if (current.info.code != vpiConcatOp &&
+            current.info.code != vpiMultiConcatOp) {
+          using obelisk::designbytecode::Logic;
+          std::array<Logic, 3> values{};
+          std::array<obelisk::reflection::VPIIntegralExpressionShape, 3>
+              shapes{};
+          if (current.children.size() > values.size())
+            return false;
+          for (size_t index = 0; index != current.children.size(); ++index) {
+            const auto &input = child(index);
+            shapes[index] = input.shape;
+            Logic &logic = values[index];
+            logic.width = static_cast<uint32_t>(input.width);
+            logic.fourState = input.shape.fourState;
+            logic.value.assign(input.value.size(), 0);
+            logic.unknown.assign(input.unknown.size(), 0);
+            std::copy(input.value.begin(), input.value.end(),
+                      logic.value.begin());
+            std::copy(input.unknown.begin(), input.unknown.end(),
+                      logic.unknown.begin());
           }
-        if (destination != result.width)
-          return false;
+          Logic evaluated = obelisk::vpiexpression::evaluate(
+              current.info.code, result.shape, values, shapes);
+          result.value = std::move(evaluated.value).takeVector();
+          result.unknown = std::move(evaluated.unknown).takeVector();
+        } else {
+          bool repeat = current.info.code == vpiMultiConcatOp;
+          int64_t repetitions = 1;
+          if (repeat && (!integer(child(0), repetitions) || repetitions <= 0))
+            return false;
+          uint64_t destination = 0;
+          for (int64_t repetition = 0; repetition != repetitions; ++repetition)
+            for (size_t index = current.children.size();
+                 index != size_t(repeat);) {
+              const auto &operand = child(--index);
+              for (uint64_t bit = 0; bit != operand.width; ++bit)
+                copyBit(operand, bit, destination++);
+            }
+          if (destination != result.width)
+            return false;
+        }
       } else {
         const auto &parent = child(0);
         obelisk_rt_design_semantic_type_info_v1 semantic{};

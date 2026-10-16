@@ -208,7 +208,11 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
   // even repeated declaration leaves occupy distinct ordered operand slots.
   for (size_t index = 0; index != plan.size(); ++index) {
     Operation *source = plan[index].source;
-    // A level event and a singleton event list reuse their exact expression.
+    // Bound implicit integral conversions apply the surrounding context; they
+    // are not explicit source cast occurrences. Exact child operations already
+    // carry Slang's propagated type, while declaration leaves retain their
+    // declared type and are resized by the operator. Keep explicit casts and
+    // unsupported unsized X/Z filling unavailable.
     for (;;) {
       auto children = getChildren(source);
       if (auto signal = dyn_cast<semantic::SVSignalEventControlOp>(source);
@@ -218,7 +222,20 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
       else if (isa<semantic::SVEventListControlOp>(source) &&
                children.size() == 1)
         source = children.front();
-      else
+      else if (auto conversion =
+                   dyn_cast<semantic::SVConversionExpressionOp>(source);
+               conversion && source->getAttrOfType<BoolAttr>("is_implicit") &&
+               source->getAttrOfType<BoolAttr>("is_implicit").getValue() &&
+               children.size() == 1) {
+        auto type = source->getAttrOfType<TypeAttr>("semantic_type");
+        auto childType =
+            children.front()->getAttrOfType<TypeAttr>("semantic_type");
+        if (!type || !childType || !integral(type.getValue()) ||
+            !integral(childType.getValue()) ||
+            getUnsizedUnknownFillWidth(children.front()))
+          return unsupported();
+        source = children.front();
+      } else
         break;
     }
     plan[index].source = source;
@@ -285,6 +302,35 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
       if (!source->hasAttr("constant_value"))
         return unsupported();
       kind = uint32_t(Kind::Constant);
+    } else if (isa<semantic::SVUnaryExpressionOp,
+                   semantic::SVBinaryExpressionOp,
+                   semantic::SVConditionalExpressionOp>(source)) {
+      const reflection::VPISourceOperatorDescriptor *operation = nullptr;
+      if (auto unary = dyn_cast<semantic::SVUnaryExpressionOp>(source)) {
+        auto name = semantic::stringifySVUnaryOperator(unary.getOperatorKind());
+        operation = reflection::findVPISourceOperator(
+            std::string_view(name.data(), name.size()), 1);
+      } else if (auto binary =
+                     dyn_cast<semantic::SVBinaryExpressionOp>(source)) {
+        auto name =
+            semantic::stringifySVBinaryOperator(binary.getOperatorKind());
+        operation = reflection::findVPISourceOperator(
+            std::string_view(name.data(), name.size()), 2);
+      } else {
+        auto conditional = cast<semantic::SVConditionalExpressionOp>(source);
+        auto patterns = conditional.getConditionPatternFlags();
+        if (conditional.getConditionCount() != 1 || patterns.size() != 1 ||
+            patterns.front())
+          return unsupported();
+        operation = reflection::findVPISourceOperator("conditional", 3);
+      }
+      children = getChildren(source);
+      if (!operation || children.size() != operation->arity ||
+          reflection::integralOperatorRule(operation->value) ==
+              reflection::VPIIntegralOperatorRule::Unsupported)
+        return unsupported();
+      kind = uint32_t(Kind::Operation);
+      code = operation->value;
     } else if (isa<semantic::SVConcatenationExpressionOp>(source)) {
       kind = uint32_t(Kind::Operation);
       code = 33;
@@ -386,7 +432,52 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
   };
   if (!legal(ownerKind, selector, mode, plan.front().kind))
     return unsupported();
+  auto shape = [&](const Planned &node)
+      -> std::optional<reflection::VPIIntegralExpressionShape> {
+    auto type = node.source->getAttrOfType<TypeAttr>("semantic_type");
+    if (!type || !integral(type.getValue()))
+      return std::nullopt;
+    auto normalized = getNormalizedSemanticType(node.source);
+    auto semantic = makeVPITypeSemantics(
+        type.getValue(), getSemanticLocation(node.source), {}, node.source);
+    if (failed(normalized) || failed(semantic))
+      return std::nullopt;
+    auto width = sim::getPackedWidth(*normalized);
+    if (!width)
+      return std::nullopt;
+    return reflection::VPIIntegralExpressionShape{
+        *width, semantic->getIsSigned(), semantic->getIsFourState(), node.code};
+  };
   for (const auto &node : plan) {
+    // The retained width proof currently accepts frozen literals and exact
+    // Parameter declarations for static bounds. A computed constant bound
+    // needs its own non-evaluating constant proof before we can expose it.
+    auto computedBound = [&](unsigned position) {
+      return position < node.children.size() &&
+             plan[node.children[position]].kind == uint32_t(Kind::Operation);
+    };
+    if ((node.kind == uint32_t(Kind::PartSelect) &&
+         (computedBound(1) || computedBound(2))) ||
+        (node.kind == uint32_t(Kind::IndexedPartSelect) && computedBound(2)) ||
+        (node.kind == uint32_t(Kind::Operation) && node.code == 34 &&
+         computedBound(0)))
+      return unsupported();
+    if (!node.sourceOnly && node.kind == uint32_t(Kind::Operation) &&
+        reflection::integralOperatorRule(node.code) !=
+            reflection::VPIIntegralOperatorRule::Unsupported) {
+      auto resultShape = shape(node);
+      SmallVector<reflection::VPIIntegralExpressionShape, 3> operands;
+      for (unsigned child : node.children) {
+        auto childShape = shape(plan[child]);
+        if (!childShape)
+          return unsupported();
+        operands.push_back(*childShape);
+      }
+      if (!resultShape ||
+          !reflection::validVPIIntegralOperator(
+              node.code, *resultShape, operands.data(), operands.size()))
+        return unsupported();
+    }
     auto childMode = node.kind == uint32_t(Kind::Operation)
                          ? sim::VPIRelationMode::Iterate
                          : sim::VPIRelationMode::Handle;

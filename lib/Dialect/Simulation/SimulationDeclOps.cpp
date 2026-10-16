@@ -5858,13 +5858,25 @@ LogicalResult SimDesignOp::verifyRegions() {
         reflection::vpiObjectSetContains(
             use->targets,
             static_cast<uint32_t>(reflection::VPIObjectKind::Case));
+    using ExpressionKind = reflection::VPIObjectKind;
+    bool repeatedCompactDeclaration =
+        isa_and_nonnull<SimVPIExpressionDeclOp>(
+            symbolDeclaration(relation.getSource())) &&
+        *sourceKind == uint32_t(ExpressionKind::Operation) &&
+        relation.getSelector() ==
+            uint32_t(reflection::VPIRelationKind::OperandRel) &&
+        mode == reflection::VPITraversalMode::Iterate &&
+        *targetKind != uint32_t(ExpressionKind::Constant) &&
+        *targetKind != uint32_t(ExpressionKind::Operation) &&
+        *targetKind != uint32_t(ExpressionKind::PartSelect) &&
+        *targetKind != uint32_t(ExpressionKind::IndexedPartSelect);
     generalRelations.push_back(
         {sourceIdentity, targetIdentity,
          static_cast<uint32_t>(relation.getSource().getKind()), sourceId,
          static_cast<uint32_t>(relation.getSelector()),
          static_cast<uint32_t>(relation.getMode()), relation.getOrdinal(),
          static_cast<uint32_t>(relation.getTarget().getKind()), targetId,
-         repeatedCaseDeclaration ||
+         repeatedCaseDeclaration || repeatedCompactDeclaration ||
              (*sourceKind ==
                   static_cast<uint32_t>(reflection::VPIObjectKind::Operation) &&
               *targetKind ==

@@ -3607,13 +3607,23 @@ bool validateExpressions(const Database &database,
           return false;
         frozenReferenced[value] = 1;
       } else {
-        if (read32(node + 28) != UINT32_MAX ||
-            (flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED))
+        if (read32(node + 28) != UINT32_MAX)
           return false;
         if (kind == Kind::Operation) {
-          if ((code != 33 && code != 34) || size < (code == 34 ? 2u : 1u))
-            return false;
-        } else if (kind == Kind::PartSelect) {
+          if (code == 33 || code == 34) {
+            if (size < (code == 34 ? 2u : 1u) ||
+                (flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED))
+              return false;
+          } else {
+            auto descriptor = obelisk::reflection::findVPISourceOperator(code);
+            if (!descriptor || size != descriptor->arity ||
+                obelisk::reflection::integralOperatorRule(code) ==
+                    obelisk::reflection::VPIIntegralOperatorRule::Unsupported)
+              return false;
+          }
+        } else if (flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED)
+          return false;
+        else if (kind == Kind::PartSelect) {
           if (code || size != 3)
             return false;
         } else if (kind == Kind::IndexedPartSelect) {
@@ -3815,6 +3825,38 @@ bool validateExpressions(const Database &database,
       };
       bool fourState = false;
       if (kind == Kind::Operation) {
+        uint32_t code = read16(node + 2);
+        if (code != 33 && code != 34) {
+          std::array<obelisk::reflection::VPIIntegralExpressionShape, 3>
+              shapes{};
+          uint32_t count = read32(node + 12);
+          if (count > shapes.size())
+            return false;
+          for (uint32_t child = 0; child != count; ++child) {
+            uint64_t bits = 0;
+            uint32_t typeFlags = 0;
+            if (!typeAt(child, bits, typeFlags))
+              return false;
+            uint32_t operand = operandAt(child), childCode = 0;
+            if (!(operand & kExpressionOperandLeafFlag)) {
+              const uint8_t *childNode =
+                  expressionNode(database, recipe, operand);
+              if (read16(childNode) == uint32_t(Kind::Operation))
+                childCode = read16(childNode + 2);
+            }
+            shapes[child] = {
+                bits, bool(typeFlags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED),
+                bool(typeFlags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE),
+                childCode};
+          }
+          if (!obelisk::reflection::validVPIIntegralOperator(
+                  code,
+                  {width, bool(flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED),
+                   bool(flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE)},
+                  shapes.data(), count))
+            return false;
+          continue;
+        }
         bool repeated = read16(node + 2) == 34;
         int64_t multiplier = 1;
         if (repeated && (!expressionKnownInteger(database, root, recipe,

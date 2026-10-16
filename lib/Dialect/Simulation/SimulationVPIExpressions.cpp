@@ -182,9 +182,11 @@ LogicalResult SimVPIExpressionDeclOp::verify() {
       value && (value.getType() != getTypeAttr().getValue() ||
                 value.getIsSigned() != getVpiTypeAttr().getIsSigned()))
     return emitOpError("literal planes must match the exact result type");
-  if (auto operation = getOpType(); operation && !sourceOnly &&
-                                    *operation != concatOp &&
-                                    *operation != multiConcatOp)
+  if (auto operation = getOpType();
+      operation && !sourceOnly && *operation != concatOp &&
+      *operation != multiConcatOp &&
+      reflection::integralOperatorRule(*operation) ==
+          reflection::VPIIntegralOperatorRule::Unsupported)
     return emitOpError("unsupported exact expression operator");
   if (auto direction = getIndexedDirection();
       direction && *direction != 1 && *direction != 2)
@@ -464,6 +466,27 @@ LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
       break;
     case Kind::Operation: {
       auto &operands = children[uint32_t(Relation::OperandRel)];
+      uint32_t code = *expression.getOpType();
+      if (code != concatOp && code != multiConcatOp) {
+        SmallVector<reflection::VPIIntegralExpressionShape, 3> shapes;
+        for (const auto &operand : operands) {
+          auto child =
+              dyn_cast_if_present<SimVPIExpressionDeclOp>(operand.operation);
+          shapes.push_back(
+              {operand.width, operand.semantic.getIsSigned(),
+               operand.semantic.getIsFourState(),
+               child ? uint32_t(child.getOpType().value_or(0)) : 0});
+        }
+        auto semantic = expression.getVpiTypeAttr();
+        if (children.size() != 1 ||
+            !reflection::validVPIIntegralOperator(
+                code,
+                {width, semantic.getIsSigned(), semantic.getIsFourState()},
+                shapes.data(), shapes.size()))
+          return expression.emitOpError(
+              "operator operands disagree with the elaborated result context");
+        break;
+      }
       bool repeated = expression.getOpType() == multiConcatOp;
       if (children.size() != 1 || operands.size() < (repeated ? 2 : 1))
         return expression.emitOpError(

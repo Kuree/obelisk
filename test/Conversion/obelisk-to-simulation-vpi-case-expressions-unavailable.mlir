@@ -25,7 +25,7 @@ module attributes {llvm.data_layout = "e-p:64:64-i64:64", llvm.target_triple = "
             }
             // This final label is outside the current materializer subset.
             // Earlier supported literals and concat must leave no partial group.
-            obelisk.sv.expression.unary_op attributes {node_id = 21 : i64, operator_kind = 2 : i32, semantic_type = !nibble, is_signed = false} {
+            obelisk.sv.expression.conversion attributes {node_id = 21 : i64, is_implicit = false, semantic_type = !nibble, is_signed = false} {
               obelisk.sv.expression.named_value attributes {node_id = 18 : i64, referenced_symbol = @root::@top::@body::@P, referenced_path = "top.P", semantic_type = !nibble} {}
             }
             obelisk.sv.statement.empty attributes {node_id = 19 : i64} {}

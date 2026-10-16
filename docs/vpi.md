@@ -75,10 +75,13 @@ selected-net driver/load connectivity is a separate remaining step.
 
 Identical syntax templates share their node and type metadata across instances;
 small root and leaf bindings preserve distinct occurrence identities and values.
-Effective type or width differences split templates. Ordinary unary/binary
-operators, bit-object selection, hierarchical reference spelling,
-and broader source expressions
-remain follow-ups to this bounded procedural slice.
+Effective type or width differences split templates. Integral unary, arithmetic,
+bitwise, shift, comparison, logical, and conditional operations retain their
+elaborated result width and signedness. Live value queries propagate operand
+context before evaluating nested operations and preserve four-state results.
+Explicit casts, computed constant select bounds, bit-object selection,
+hierarchical reference spelling, and broader packed aggregate expressions
+remain follow-ups.
 
 Elaborated generate scopes preserve packed parameters and localparams, including
 implicit genvar localparams, under their exact scope. Distinct declarations use
