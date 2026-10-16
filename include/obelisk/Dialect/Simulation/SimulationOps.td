@@ -119,7 +119,10 @@ def SimVPIDefinitionMemberDeclOp : SimOp<"vpi_definition_member.decl", [
   let arguments = (ins SymbolNameAttr:$sym_name,
                        FlatSymbolRefAttr:$definition, I32Attr:$vpi_kind,
                        I32Attr:$ordinal, StrAttr:$member_name,
-                       OptionalAttr<SimVPIIODirection>:$direction);
+                       OptionalAttr<SimVPIIODirection>:$direction,
+                       OptionalAttr<UnitAttr>:$is_local_param,
+                       OptionalAttr<UnitAttr>:$has_explicit_parameter_range,
+                       OptionalAttr<UnitAttr>:$unavailable_default);
   let assemblyFormat = [{
     $sym_name `of` $definition `type` $vpi_kind `ordinal` $ordinal
     `name` $member_name (`direction` $direction^)? attr-dict
@@ -147,10 +150,11 @@ def SimVPIDefinitionMemberSpecializationOp
         DeclareOpInterfaceMethods<SymbolUserOpInterface>,
         MemoryEffects<[MemWrite<SimInventoryResource>]>
       ]> {
-  let summary = "effective type of one member in a shared specialization";
+  let summary = "effective type and immutable value in a shared specialization";
   let arguments = (ins FlatSymbolRefAttr:$specialization,
                        FlatSymbolRefAttr:$member,
-                       SimVPITypeSemanticsAttr:$effective_type);
+                       SimVPITypeSemanticsAttr:$effective_type,
+                       OptionalAttr<SimFrozenConstantAttr>:$immutable_value);
   let assemblyFormat = [{
     $specialization `member` $member `type` $effective_type attr-dict
   }];

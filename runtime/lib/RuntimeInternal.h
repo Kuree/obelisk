@@ -1801,6 +1801,8 @@ struct DesignDatabaseCache {
   uint64_t definitionSpecializationCount = 0;
   uint64_t definitionSpecializationBindings = 0;
   uint64_t definitionSpecializationBindingCount = 0;
+  uint64_t definitionParameterValues = 0;
+  uint64_t definitionParameterValueCount = 0;
   uint64_t definitionMemberEndpoints = 0;
   uint64_t definitionMemberEndpointCount = 0;
   uint64_t definitionMemberInstanceRelations = 0;
@@ -4127,6 +4129,11 @@ obelisk_rt_status obelisk_rt_cached_vpi_type(const obelisk_rt_context *context,
 obelisk_rt_status obelisk_rt_cached_vpi_fixed_property(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     uint32_t selector, VPIFixedPropertyValue *outValue) noexcept;
+// Exact instance context for a shared declaration; EOF for physical records.
+obelisk_rt_status obelisk_rt_cached_vpi_definition_member_scope(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    obelisk_rt_design_cursor_v1 *outScope) noexcept;
+
 obelisk_rt_status
 obelisk_rt_cached_vpi_frozen_value(const obelisk_rt_context *context,
                                    obelisk_rt_design_cursor_v1 cursor,

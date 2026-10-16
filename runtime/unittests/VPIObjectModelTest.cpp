@@ -76,7 +76,7 @@ TEST(VPIObjectModel, RefObjectTypespecRequiresNetVariableOrPartSelectActual) {
   EXPECT_FALSE(hasRefObjectTypespecActual(vpiParameter));
 }
 
-constexpr size_t kExpectedTraversalCount = 1902;
+constexpr size_t kExpectedTraversalCount = 1903;
 static_assert(sizeof(vpiTraversals) / sizeof(vpiTraversals[0]) ==
               kExpectedTraversalCount);
 constexpr size_t kExpectedPropertyCount = 2337;

@@ -136,7 +136,10 @@ VPIObjectRefAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
       return emitError() << "symbol VPI object reference requires only a symbol";
     return success();
   }
-  if (symbol)
+  if (kind == VPIObjectRefKind::DefinitionMember) {
+    if (!symbol)
+      return emitError() << "definition-member VPI reference requires a symbol";
+  } else if (symbol)
     return emitError() << "numeric VPI object reference cannot carry a symbol";
   if (!id || !id.getType().isSignlessInteger(64))
     return emitError() << "VPI object reference ID must be a signless i64";

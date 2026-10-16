@@ -53,6 +53,9 @@ def SimVPIObjectRefAttr : SimAttr<"VPIObjectRef", "vpi_ref"> {
     anchors, typespecs, or nettype declarations in the design symbol table.
     Backed anchors also reference executable scopes and code units. The
     serializer resolves references only after physical records have been sorted.
+    DefinitionMember carries both an exact instance scope ID and a shared
+    member symbol. Its context is checked against the scope definition; it is
+    never encoded as an ordinary physical table index.
   }];
   let parameters = (ins EnumParameter<SimVPIObjectRefKind>:$kind,
       OptionalParameter<"::mlir::IntegerAttr">:$id,

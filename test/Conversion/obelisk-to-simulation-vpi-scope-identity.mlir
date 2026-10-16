@@ -152,7 +152,8 @@ endpackage
 // FRONTEND-DAG: simulation.scope.decl {{.*}} hierarchy "top.u" {{.*}} vpi_kind 32 definition @[[CELL]] specialization @[[CELL_SPEC]]
 // FRONTEND-DAG: simulation.scope.decl {{.*}} hierarchy "top.v" {{.*}} vpi_kind 32 definition @[[CELL]] specialization @[[CELL_SPEC]]
 // FRONTEND-DAG: simulation.vpi_definition.decl @[[PARAM:[^ ]+]] type 32 name "param_cell"
-// FRONTEND-DAG: simulation.vpi_definition_member.decl @[[PARAM_P:[^ ]+]] of @[[PARAM]] type 28 ordinal 0 name "p" direction input
+// FRONTEND-DAG: simulation.vpi_definition_member.decl @[[PARAM_W:[^ ]+]] of @[[PARAM]] type 41 ordinal 0 name "W"
+// FRONTEND-DAG: simulation.vpi_definition_member.decl @[[PARAM_P:[^ ]+]] of @[[PARAM]] type 28 ordinal 1 name "p" direction input
 // FRONTEND-DAG: simulation.vpi_definition_specialization.decl @[[PARAM_SPEC8:[^ ]+]] of @[[PARAM]]
 // FRONTEND-DAG: simulation.vpi_definition_member.specialize @[[PARAM_SPEC8]] member @[[PARAM_P]] type <kind = packed_array, {{.*}} range = [7, 0]
 // FRONTEND-DAG: simulation.vpi_definition_specialization.decl @[[PARAM_SPEC4:[^ ]+]] of @[[PARAM]]

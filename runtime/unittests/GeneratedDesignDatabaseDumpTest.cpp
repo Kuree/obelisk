@@ -838,11 +838,17 @@ TEST(GeneratedDesignDatabase, Dump) {
                                     uint64_t{binding.getDefinition()} *
                                         DefinitionLayout.size);
     ASSERT_LE(binding.getFirstMemberEndpoint(), definitionMemberEndpointCount);
-    ASSERT_LE(definition.getMemberCount(),
-              definitionMemberEndpointCount - binding.getFirstMemberEndpoint());
+    uint32_t ioOrdinal = 0;
     for (uint32_t ordinal = 0; ordinal != definition.getMemberCount();
          ++ordinal) {
-      uint32_t endpoint = binding.getFirstMemberEndpoint() + ordinal;
+      const DefinitionMemberView member(
+          image + definitionMemberOffset +
+          uint64_t{definition.getFirstMember() + ordinal} *
+              DefinitionMemberLayout.size);
+      if (member.getVPIKind() != static_cast<uint32_t>(vpiIODecl))
+        continue;
+      uint32_t endpoint = binding.getFirstMemberEndpoint() + ioOrdinal++;
+      ASSERT_LT(endpoint, definitionMemberEndpointCount);
       ASSERT_EQ(endpointBindings[endpoint], UINT32_MAX);
       endpointBindings[endpoint] = static_cast<uint32_t>(index);
       endpointMembers[endpoint] = definition.getFirstMember() + ordinal;

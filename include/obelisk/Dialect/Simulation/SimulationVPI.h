@@ -8,15 +8,29 @@
 #ifndef OBELISK_DIALECT_SIMULATION_SIMULATIONVPI_H
 #define OBELISK_DIALECT_SIMULATION_SIMULATIONVPI_H
 
+#include "mlir/Support/LogicalResult.h"
 #include <cstdint>
 #include <optional>
+
+namespace mlir {
+class Operation;
+class SymbolTableCollection;
+} // namespace mlir
 
 namespace obelisk::sim {
 
 enum class EntryKind : uint32_t;
 class SimCodeUnitDeclOp;
+class SimDesignOp;
 class SimScopeDeclOp;
 class VPITypeSemanticsAttr;
+class VPIObjectRefAttr;
+
+/// Prove a shared declaration belongs to the exact instance definition.
+mlir::LogicalResult
+verifyVPIDefinitionMemberRef(mlir::Operation *use, SimDesignOp design,
+                             VPIObjectRefAttr reference,
+                             mlir::SymbolTableCollection &symbols);
 
 bool isVPIVisibleCodeUnit(SimCodeUnitDeclOp codeUnit);
 /// The source callable kind may differ from its executable ABI entry kind:

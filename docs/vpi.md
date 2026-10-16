@@ -33,6 +33,17 @@ Int, Vector, and BinStr values. `vpiNoDelay`, `vpiForceFlag`, and
 limbs use the standard 32-bit encoding with `bval = unknown` and
 `aval = value XOR unknown`.
 
+Module and interface parameter inventories preserve declaration order and exact
+instance identity while sharing declaration metadata and identical effective
+specializations. Packed value parameters and localparams expose their elaborated
+values, signedness, types, and explicitly declared ranges; type parameters retain
+typedef identity. Shared declarations do not add per-instance parameter records
+or unused IO endpoint slots. Original defaults and override-assignment relations
+for these shared instance parameters remain incomplete: a known original default
+reports a notice until its expression is retained. Nonpacked value parameters and
+generate-scope parameters remain outside this inventory slice. General expression
+use edges for these shared parameters await contextual expression recipes.
+
 Class queries distinguish a lexical `vpiClassDefn`, a resolved specialization's
 `vpiClassTypespec`, and a live `vpiClassObj` (IEEE 1800-2023 37.31–37.33).
 `vpiClassTypespec` on a variable reports its declared type; on a live object it

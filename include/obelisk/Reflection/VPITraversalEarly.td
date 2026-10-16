@@ -663,6 +663,8 @@ def VPIEarlyNamedEventIndices : VPITraversalEdge<NamedEventTargetObjects,
 // 37.28 Parameters and assignments.
 def VPIEarlyParameterModule : VPITraversalEdge<VPIEarlyParameters, Module,
   HandleMode, ModuleTarget, NoOrder, "37.28">;
+def VPIEarlyParameterInstance : VPITraversalEdge<ParameterObjects, InstanceRel,
+  HandleMode, VPIEarlyInstances, NoOrder, "37.10">;
 def VPIEarlyParameterTypespec : VPITraversalEdge<ParameterObjects, Typespec,
   HandleMode, VPIEarlyTypespecs, NoOrder, "37.28">;
 def VPIEarlyParameterExpr : VPITraversalEdge<ParameterObjects, ExprRel,

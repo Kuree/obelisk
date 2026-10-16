@@ -774,12 +774,12 @@ static const llvm::StringMap<discardable::PayloadCheck> &declarations() {
       metadata::DescriptorPackedLow, metadata::DescriptorRootType,
       metadata::FlushedPrivateSlot, metadata::GcPollFree,
       metadata::HierarchicalName, metadata::Rematerialized, metadata::VpiAnchor,
-      metadata::VpiStatementId, metadata::VpiCallSite,
-      metadata::VpiResolutionNet, metadata::VpiLocal, metadata::VpiDeclaredType,
-      metadata::VpiFrameInstrumentation, metadata::VpiAutomatic,
-      metadata::VpiCellInstance, metadata::VpiDefinitionName,
-      metadata::VpiIdentityDelegated, metadata::VpiBoxType,
-      metadata::VpiSourceTypeIdentity, metadata::VpiTop,
+      metadata::VpiDefinitionMember, metadata::VpiStatementId,
+      metadata::VpiCallSite, metadata::VpiResolutionNet, metadata::VpiLocal,
+      metadata::VpiDeclaredType, metadata::VpiFrameInstrumentation,
+      metadata::VpiAutomatic, metadata::VpiCellInstance,
+      metadata::VpiDefinitionName, metadata::VpiIdentityDelegated,
+      metadata::VpiBoxType, metadata::VpiSourceTypeIdentity, metadata::VpiTop,
       metadata::DumpportsScope, metadata::DynamicCastEnumValues,
       metadata::DynamicCastTask, metadata::EnumFormatNames,
       metadata::EnumFormatValues, metadata::EnumFormats,
@@ -794,6 +794,11 @@ static LogicalResult verifyDeclaredAttribute(Operation *operation,
   if (failed(discardable::verify(declarations(), operation, attribute)))
     return failure();
   Attribute value = attribute.getValue();
+  if (name == VpiDefinitionMember::getNameStr() &&
+      cast<VPIObjectRefAttr>(value).getKind() !=
+          VPIObjectRefKind::DefinitionMember)
+    return operation->emitOpError(
+        "vpi_definition_member requires an exact contextual member reference");
   auto error = [&]() {
     return operation->emitOpError("attribute '") << name << "' ";
   };

@@ -5377,14 +5377,6 @@ bool readValue(__vpiHandle *handle, const VPIValueSource &source,
       return guarded == OBELISK_RT_OK;
     }
   }
-  obelisk_rt_status memberStatus =
-      readClassMemberBits(handle, source.cursor, source.selectionBitOffset,
-                          info.bit_width, value.data(), unknown.data());
-  if (memberStatus != OBELISK_RT_EOF) {
-    if (memberStatus != OBELISK_RT_OK && !handle->owner->errorLevel)
-      setError(handle->owner, "VPI class member read failed", vpiInternal);
-    return memberStatus == OBELISK_RT_OK;
-  }
   if (source.form == VPIObjectForm::Design) {
     VPIFrozenValue frozen{};
     obelisk_rt_status frozenStatus = obelisk_rt_cached_vpi_frozen_value(
@@ -5408,6 +5400,14 @@ bool readValue(__vpiHandle *handle, const VPIValueSource &source,
       }
       return true;
     }
+  }
+  obelisk_rt_status memberStatus =
+      readClassMemberBits(handle, source.cursor, source.selectionBitOffset,
+                          info.bit_width, value.data(), unknown.data());
+  if (memberStatus != OBELISK_RT_EOF) {
+    if (memberStatus != OBELISK_RT_OK && !handle->owner->errorLevel)
+      setError(handle->owner, "VPI class member read failed", vpiInternal);
+    return memberStatus == OBELISK_RT_OK;
   }
   if (source.form == VPIObjectForm::Indexed) {
     if (obelisk_rt_read_design_slice(
@@ -11660,6 +11660,31 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
        concreteTypespec)) {
     propertyFor(handle, property);
     return nullptr;
+  }
+  if (property == vpiFullName && handle->form == VPIObjectForm::Design &&
+      (objectType == vpiParameter || objectType == vpiTypeParameter)) {
+    obelisk_rt_design_cursor_v1 scope{};
+    if (obelisk_rt_cached_vpi_definition_member_scope(
+            handle->owner->context, handle->cursor, &scope) == OBELISK_RT_OK) {
+      const uint8_t *local = nullptr, *parent = nullptr;
+      uint64_t localSize = 0, parentSize = 0;
+      if (obelisk_rt_cached_design_name(handle->owner->context, handle->cursor,
+                                        &local, &localSize) != OBELISK_RT_OK ||
+          obelisk_rt_cached_design_name(handle->owner->context, scope, &parent,
+                                        &parentSize) != OBELISK_RT_OK)
+        return nullptr;
+      OBELISK_RT_TRY {
+        scratch.assign(reinterpret_cast<const char *>(parent), parentSize);
+        scratch.push_back('.');
+        scratch.append(reinterpret_cast<const char *>(local), localSize);
+        return scratch.data();
+      }
+      OBELISK_RT_CATCH_ALL {
+        setError(handle->owner, "could not materialize parameter full name",
+                 vpiSystem);
+        return nullptr;
+      }
+    }
   }
   if (property == vpiFullName && objectType == vpiRefObj &&
       handle->form == VPIObjectForm::Design) {

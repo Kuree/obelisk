@@ -92,6 +92,8 @@ add("37.5",
     vpiModule, Mode::Handle, S({vpiModule}), Order::None);
 add("37.28", S({vpiParamAssign, vpiParameter, vpiTypeParameter}), vpiModule,
     Mode::Handle, S({vpiModule}), Order::None);
+add("37.10", S({vpiParameter}), vpiInstance, Mode::Handle,
+    S({vpiPackage, vpiModule, vpiInterface, vpiProgram}), Order::None);
 add("37.17; 37.20",
     S({vpiIntegerVar,
        vpiRealVar,

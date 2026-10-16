@@ -690,6 +690,8 @@ using GcPollFree = ObeliskSimulationDialect::GcPollFreeAttrHelper;
 using HierarchicalName = ObeliskSimulationDialect::HierarchicalNameAttrHelper;
 using Rematerialized = ObeliskSimulationDialect::RematerializedAttrHelper;
 using VpiAnchor = ObeliskSimulationDialect::VpiAnchorAttrHelper;
+using VpiDefinitionMember =
+    ObeliskSimulationDialect::VpiDefinitionMemberAttrHelper;
 using VpiStatementId = ObeliskSimulationDialect::VpiStatementIdAttrHelper;
 using VpiCallSite = ObeliskSimulationDialect::VpiCallSiteAttrHelper;
 using VpiResolutionNet = ObeliskSimulationDialect::VpiResolutionNetAttrHelper;

@@ -433,7 +433,9 @@ def DefinitionBinding : ReflectionLayout<"DefinitionBinding", 16,
 
 // Definition-owned declarations are templates. A synthetic runtime cursor
 // combines one of these member indices with an elaborated instance scope.
-// Flags currently carry the exact low-byte vpiDirection value for IODecl.
+// IODecl flags carry exact low-byte vpiDirection. Parameter flags use bits
+// 8/9/10 for localparam, explicit packed range, and known-unavailable default;
+// type parameters permit only localparam and unavailable default.
 def DefinitionMemberName : ReflectionField<"Name", 0, U32LE>;
 def DefinitionMemberFile : ReflectionField<"File", 4, U32LE>;
 def DefinitionMemberLine : ReflectionField<"Line", 8, U32LE>;
@@ -484,6 +486,16 @@ def DefinitionSpecializationBinding
     : ReflectionLayout<"DefinitionSpecializationBinding", 8,
       [DefinitionSpecializationBindingMember,
        DefinitionSpecializationBindingSemanticType]>;
+
+// Sparse immutable payloads for value-parameter specialization bindings.
+// Equal specializations share one row and the existing interned value pool.
+def DefinitionParameterValueSpecializationBinding
+    : ReflectionField<"SpecializationBinding", 0, U32LE>;
+def DefinitionParameterValueFrozenValue
+    : ReflectionField<"FrozenValue", 4, U32LE>;
+def DefinitionParameterValue : ReflectionLayout<"DefinitionParameterValue", 8,
+    [DefinitionParameterValueSpecializationBinding,
+     DefinitionParameterValueFrozenValue]>;
 
 // One instance-specific expression endpoint per definition member. The row
 // ordinal is implicit in DefinitionBinding.FirstMemberEndpoint, so the common
@@ -754,7 +766,12 @@ def SemanticDirectoryInitializerBindingOffset
 def SemanticDirectoryInitializerBindingCount
     : ReflectionField<"InitializerBindingCount", 744, U64LE>;
 
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 752,
+def SemanticDirectoryDefinitionParameterValueOffset
+    : ReflectionField<"DefinitionParameterValueOffset", 768, U64LE>;
+def SemanticDirectoryDefinitionParameterValueCount
+    : ReflectionField<"DefinitionParameterValueCount", 776, U64LE>;
+
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 784,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -845,7 +862,9 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 752,
    SemanticDirectoryCodeUnitScopeBindingOffset,
    SemanticDirectoryCodeUnitScopeBindingCount,
    SemanticDirectoryInitializerBindingOffset,
-   SemanticDirectoryInitializerBindingCount]>;
+   SemanticDirectoryInitializerBindingCount,
+   SemanticDirectoryDefinitionParameterValueOffset,
+   SemanticDirectoryDefinitionParameterValueCount]>;
 
 // Exact compatible implementations derived from typed class dispatch. Rows
 // are sorted by (CallID, CodeUnitID); every row in one call group carries the

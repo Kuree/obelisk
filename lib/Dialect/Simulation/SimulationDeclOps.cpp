@@ -365,10 +365,21 @@ LogicalResult SimVPIDefinitionMemberDeclOp::verify() {
       failed(verifyNonnegative(*this, getOrdinalAttr(), "member ordinal")))
     return failure();
   using Kind = reflection::VPIObjectKind;
-  if (static_cast<Kind>(getVpiKind()) != Kind::IODecl)
-    return emitOpError("currently requires vpiIODecl member kind");
-  if (!getDirectionAttr())
-    return emitOpError("vpiIODecl member requires a direction");
+  Kind kind = static_cast<Kind>(getVpiKind());
+  if (kind == Kind::IODecl) {
+    if (!getDirectionAttr())
+      return emitOpError("vpiIODecl member requires a direction");
+    if (getIsLocalParamAttr() || getHasExplicitParameterRangeAttr() ||
+        getUnavailableDefaultAttr())
+      return emitOpError("IO declaration cannot carry parameter facts");
+  } else if (kind == Kind::Parameter || kind == Kind::TypeParameter) {
+    if (getDirectionAttr())
+      return emitOpError("parameter declaration cannot carry an IO direction");
+    if (kind == Kind::TypeParameter && getHasExplicitParameterRangeAttr())
+      return emitOpError("type parameter cannot carry a value range");
+  } else {
+    return emitOpError("requires IODecl, Parameter, or TypeParameter kind");
+  }
   return success();
 }
 
@@ -410,6 +421,26 @@ LogicalResult SimVPIDefinitionMemberSpecializationOp::verifySymbolUses(
   if (specialization.getDefinitionAttr() != member.getDefinitionAttr())
     return emitOpError(
         "member and specialization reference different VPI definitions");
+  auto value = getImmutableValueAttr();
+  bool parameter = member.getVpiKind() ==
+                   static_cast<uint32_t>(reflection::VPIObjectKind::Parameter);
+  if (static_cast<bool>(value) != parameter)
+    return emitOpError("exactly value parameters require an immutable value");
+  if (value) {
+    auto width = getPackedWidth(value.getType());
+    if (!width || !*width)
+      return emitOpError("parameter requires a fixed packed immutable value");
+    if (member.getHasExplicitParameterRangeAttr() &&
+        getEffectiveType().getKind() != VPITypeKind::PackedArray)
+      return emitOpError(
+          "explicit parameter range requires a packed-array semantic root");
+    if (value.getIsSigned() != getEffectiveType().getIsSigned())
+      return emitOpError(
+          "parameter value and effective type signedness differ");
+    if (failed(verifyVPITypeSemantics([&] { return emitOpError(); },
+                                      value.getType(), getEffectiveType())))
+      return failure();
+  }
   return success();
 }
 
@@ -422,7 +453,8 @@ LogicalResult SimVPIDefinitionMemberInstanceBindingOp::verifySymbolUses(
 }
 
 LogicalResult SimVPIDefinitionMemberInstanceBindingOp::verify() {
-  if (getExprTarget().getKind() == VPIObjectRefKind::Symbol)
+  if (getExprTarget().getKind() == VPIObjectRefKind::Symbol ||
+      getExprTarget().getKind() == VPIObjectRefKind::DefinitionMember)
     return emitOpError(
         "expression endpoint must be whole storage or a declared net");
   return verifyNonnegative(*this, getScopeIdAttr(), "scope ID");
@@ -767,6 +799,13 @@ SimVPIRelationDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   for (auto [reference, endpoint] :
        {std::pair(getSource(), StringRef("source")),
         std::pair(getTarget(), StringRef("target"))}) {
+    if (reference.getKind() == VPIObjectRefKind::DefinitionMember) {
+      if (failed(verifyVPIDefinitionMemberRef(
+              *this, (*this)->getParentOfType<SimDesignOp>(), reference,
+              symbolTable)))
+        return failure();
+      continue;
+    }
     if (reference.getKind() != VPIObjectRefKind::Symbol)
       continue;
     Operation *declaration =
@@ -4015,7 +4054,13 @@ LogicalResult SimDesignOp::verifyRegions() {
                  llvm::DenseMap<uint64_t, SimVPIDefinitionMemberDeclOp>>
       definitionMemberOrdinals;
   SmallVector<Attribute> definitionMemberOrder;
+  llvm::DenseMap<Attribute, llvm::DenseSet<StringAttr>> definitionMemberNames;
   for (SimVPIDefinitionMemberDeclOp member : definitionMembers) {
+    if (!definitionMemberNames[member.getDefinitionAttr()]
+             .insert(member.getMemberNameAttr())
+             .second)
+      return member.emitOpError(
+          "duplicates a declaration name in the same VPI definition");
     auto [definitionEntry, newDefinition] =
         definitionMemberOrdinals.try_emplace(member.getDefinitionAttr());
     if (newDefinition)
@@ -4036,6 +4081,37 @@ LogicalResult SimDesignOp::verifyRegions() {
         return emitOpError()
                << "VPI definition " << definition
                << " member ordinals must be dense declaration order";
+  }
+
+  for (auto anchor : vpiAnchors) {
+    using Kind = reflection::VPIObjectKind;
+    if (anchor.getVpiKind() != static_cast<uint32_t>(Kind::Parameter) &&
+        anchor.getVpiKind() != static_cast<uint32_t>(Kind::TypeParameter))
+      continue;
+    auto scope = scopes.find(anchor.getEnclosingScopeId());
+    if (scope == scopes.end() || !scope->second.getVpiDefinitionAttr())
+      continue;
+    if (auto parent = anchor.getParentAttr()) {
+      auto owner = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+          anchor, parent);
+      auto backing = owner ? owner.getBackingAttr() : VPIObjectBackingAttr{};
+      if (!backing || backing.getKind() != VPIObjectBackingKind::Scope ||
+          backing.getId().getValue().getZExtValue() !=
+              anchor.getEnclosingScopeId())
+        continue;
+    }
+    auto members =
+        definitionMemberOrdinals.find(scope->second.getVpiDefinitionAttr());
+    if (members == definitionMemberOrdinals.end())
+      continue;
+    if (llvm::any_of(members->second, [](const auto &entry) {
+          auto member = entry.second;
+          uint32_t kind = member.getVpiKind();
+          return kind == static_cast<uint32_t>(Kind::Parameter) ||
+                 kind == static_cast<uint32_t>(Kind::TypeParameter);
+        }))
+      return anchor.emitOpError("parameter inventory cannot mix shared "
+                                "definition members and instance anchors");
   }
 
   llvm::DenseMap<Attribute, llvm::DenseSet<Attribute>> specializedMembers;
@@ -4144,6 +4220,7 @@ LogicalResult SimDesignOp::verifyRegions() {
     case VPIObjectRefKind::Statement:
     case VPIObjectRefKind::Port:
     case VPIObjectRefKind::Symbol:
+    case VPIObjectRefKind::DefinitionMember:
       return binding.emitOpError(
           "expression endpoint must be whole storage or a declared net");
     }
@@ -5454,6 +5531,8 @@ LogicalResult SimDesignOp::verifyRegions() {
     }
     llvm_unreachable("unknown backing kind");
   };
+  DenseMap<Attribute, uint64_t> contextualDeclarationIds;
+  uint64_t nextContextualDeclarationId = declarationIds.size();
   SmallVector<GeneralRelation> generalRelations;
   generalRelations.reserve(vpiRelations.size());
   for (SimVPIRelationDeclOp relation : vpiRelations) {
@@ -5513,6 +5592,14 @@ LogicalResult SimDesignOp::verifyRegions() {
         declaration = found->second;
         break;
       }
+      case VPIObjectRefKind::DefinitionMember: {
+        auto member =
+            symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionMemberDeclOp>(
+                relation, reference.getSymbol());
+        declaration = member;
+        kind = member.getVpiKind();
+        break;
+      }
       case VPIObjectRefKind::Symbol: {
         declaration = symbolTable.lookupNearestSymbolFrom(
             relation, reference.getSymbol());
@@ -5548,7 +5635,14 @@ LogicalResult SimDesignOp::verifyRegions() {
             << " ID " << id << " is not VPI-visible";
         return failure();
       }
-      identity = declarationIds.lookup(canonicalDeclaration(declaration));
+      if (reference.getKind() == VPIObjectRefKind::DefinitionMember) {
+        auto [entry, inserted] = contextualDeclarationIds.try_emplace(
+            reference, nextContextualDeclarationId);
+        if (inserted)
+          ++nextContextualDeclarationId;
+        identity = entry->second;
+      } else
+        identity = declarationIds.lookup(canonicalDeclaration(declaration));
       return kind;
     };
 

@@ -362,6 +362,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
   struct DefinitionSpecializationBindingRecord {
     uint32_t member = 0;
     uint32_t semanticType = 0;
+    sim::SimVPIDefinitionMemberSpecializationOp declaration;
+  };
+  struct DefinitionParameterValueRecord {
+    uint32_t binding = 0;
+    uint32_t value = 0;
   };
   struct DefinitionMemberEndpointRecord {
     uint32_t targetIndexAndTable = UINT32_MAX;
@@ -444,7 +449,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
   SmallVector<DefinitionSpecializationRecord> definitionSpecializations;
   SmallVector<DefinitionSpecializationBindingRecord>
       definitionSpecializationBindings;
+  SmallVector<DefinitionParameterValueRecord> definitionParameterValues;
   SmallVector<DefinitionMemberEndpointRecord> definitionMemberEndpoints;
+  DenseMap<uint32_t, uint32_t> definitionMemberEndpointOrdinals;
+  SmallVector<uint32_t> definitionEndpointCounts;
   SmallVector<DefinitionMemberInstanceRelationRecord>
       definitionMemberInstanceRelations;
   SmallVector<uint32_t> definitionMemberInstanceRelationTargets;
@@ -1369,6 +1377,13 @@ SmallVector<uint8_t> serializeDesignDatabase(
       ++owner.memberCount;
     }
 
+    definitionEndpointCounts.resize(definitions.size());
+    for (auto [index, member] : llvm::enumerate(definitionMembers))
+      if (member.declaration.getVpiKind() ==
+          static_cast<uint32_t>(VPIObjectKind::IODecl))
+        definitionMemberEndpointOrdinals[index] =
+            definitionEndpointCounts[member.definition]++;
+
     // Build one compact target range for each generated definition-member
     // traversal. The ranges and target lists are shared by every instance.
     for (auto [definitionIndex, definition] : llvm::enumerate(definitions)) {
@@ -1377,7 +1392,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
       auto [edgeFirst, edgeLast] = automaticEdges(
           static_cast<uint32_t>(definition.declaration.getVpiKind()));
       for (auto edge = edgeFirst; edge != edgeLast; ++edge) {
-        if (edge->automaticRelation != VPIAutomaticRelation::DefinitionMember)
+        bool parameters =
+            edge->automaticRelation == VPIAutomaticRelation::DirectChild &&
+            edge->mode == VPITraversalMode::Iterate &&
+            (edge->selector ==
+                 static_cast<uint32_t>(VPIObjectKind::Parameter) ||
+             edge->selector ==
+                 static_cast<uint32_t>(VPIObjectKind::TypeParameter));
+        if (edge->automaticRelation != VPIAutomaticRelation::DefinitionMember &&
+            !parameters)
           continue;
         uint32_t firstTarget =
             static_cast<uint32_t>(definitionMemberRelationTargets.size());
@@ -1489,9 +1512,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       return left.sourceIndexAndTable < right.sourceIndexAndTable;
     });
     for (DefinitionBindingRecord &binding : definitionBindings) {
-      const DefinitionRecord &definition = definitions[binding.definition];
-      if (definitionMemberEndpoints.size() >
-          UINT32_MAX - definition.memberCount) {
+      uint32_t endpointCount = definitionEndpointCounts[binding.definition];
+      if (definitionMemberEndpoints.size() > UINT32_MAX - endpointCount) {
         design.emitOpError("VPI definition-member endpoint table exceeds "
                            "32-bit indices");
         return {};
@@ -1499,7 +1521,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       binding.firstMemberEndpoint =
           static_cast<uint32_t>(definitionMemberEndpoints.size());
       definitionMemberEndpoints.resize(definitionMemberEndpoints.size() +
-                                       definition.memberCount);
+                                       endpointCount);
     }
   }
   for (auto [index, object] : llvm::enumerate(objects)) {
@@ -2002,8 +2024,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
         endpoint.emitOpError("VPI expression endpoint cannot be packed");
         return {};
       }
-      uint32_t slot =
-          binding.firstMemberEndpoint + (memberIndex - definition.firstMember);
+      uint32_t slot = binding.firstMemberEndpoint +
+                      definitionMemberEndpointOrdinals.lookup(memberIndex);
       if (slot >= definitionMemberEndpoints.size() ||
           definitionMemberEndpoints[slot].targetIndexAndTable != UINT32_MAX) {
         endpoint.emitOpError(
@@ -2064,8 +2086,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
             "VPI definition-member relation source is not a RefObj");
         return {};
       }
-      uint32_t endpointIndex = sourceBinding.firstMemberEndpoint +
-                               (memberIndex - sourceDefinition.firstMember);
+      uint32_t endpointIndex =
+          sourceBinding.firstMemberEndpoint +
+          definitionMemberEndpointOrdinals.lookup(memberIndex);
       if (endpointIndex >= definitionMemberEndpoints.size() ||
           definitionMemberEndpoints[endpointIndex].targetIndexAndTable ==
               UINT32_MAX) {
@@ -4481,7 +4504,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
         return {};
       }
       bindingsBySpecialization[specializationIndex].push_back(
-          {memberIndex, *rootIndex});
+          {memberIndex, *rootIndex, binding});
     }
     for (auto [index, bindings] : llvm::enumerate(bindingsBySpecialization)) {
       llvm::sort(bindings, [](const auto &left, const auto &right) {
@@ -4701,17 +4724,14 @@ SmallVector<uint8_t> serializeDesignDatabase(
             ImageObjectRef{TableKind::Object, index->second,
                            static_cast<uint32_t>(VPIObjectKind::EnumConst)});
       }
-    for (auto [source, frozen, reference] : immutableSources) {
-      uint32_t packedSource = 0;
-      if (!tryPackTableIndex(reference.table, reference.index, packedSource)) {
-        source->emitOpError("immutable VPI value source cannot be packed");
-        return {};
-      }
+    auto internFrozenValue =
+        [&](Operation *source,
+            sim::FrozenConstantAttr frozen) -> std::optional<uint32_t> {
       auto planes = dyn_cast<ArrayAttr>(frozen.getValue());
       std::optional<unsigned> width = sim::getPackedWidth(frozen.getType());
       if (!planes || planes.size() != 2 || !width || *width == 0) {
         source->emitOpError("immutable VPI value is not a fixed packed value");
-        return {};
+        return std::nullopt;
       }
       const llvm::APInt &value = cast<IntegerAttr>(planes[0]).getValue();
       const llvm::APInt &unknown = cast<IntegerAttr>(planes[1]).getValue();
@@ -4719,7 +4739,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       if (planeBytes > UINT64_MAX / 2 ||
           frozenValuePayload.size() > UINT64_MAX - planeBytes * 2) {
         source->emitOpError("immutable VPI value payload exceeds image limits");
-        return {};
+        return std::nullopt;
       }
       uint32_t kindAndFlags =
           static_cast<uint32_t>(FrozenValueKind::Packed) |
@@ -4752,8 +4772,28 @@ SmallVector<uint8_t> serializeDesignDatabase(
         frozenValues.push_back(record);
         llvm::append_range(frozenValuePayload, payload);
       }
-      frozenValueBindings.push_back({packedSource, entry->second});
+      return entry->second;
+    };
+    for (auto [source, frozen, reference] : immutableSources) {
+      uint32_t packedSource = 0;
+      if (!tryPackTableIndex(reference.table, reference.index, packedSource)) {
+        source->emitOpError("immutable VPI value source cannot be packed");
+        return {};
+      }
+      auto value = internFrozenValue(source, frozen);
+      if (!value)
+        return {};
+      frozenValueBindings.push_back({packedSource, *value});
     }
+    for (auto [index, binding] :
+         llvm::enumerate(definitionSpecializationBindings))
+      if (auto frozen = binding.declaration.getImmutableValueAttr()) {
+        auto value = internFrozenValue(binding.declaration, frozen);
+        if (!value)
+          return {};
+        definitionParameterValues.push_back(
+            {static_cast<uint32_t>(index), *value});
+      }
     llvm::sort(frozenValueBindings, [](const FrozenValueBindingRecord &left,
                                        const FrozenValueBindingRecord &right) {
       return left.sourceIndexAndTable < right.sourceIndexAndTable;
@@ -5484,10 +5524,13 @@ SmallVector<uint8_t> serializeDesignDatabase(
   uint64_t definitionSpecializationBindingOffset =
       definitionSpecializationOffset +
       definitionSpecializations.size() * DefinitionSpecializationLayout.size;
-  uint64_t definitionMemberEndpointOffset =
+  uint64_t definitionParameterValueOffset =
       definitionSpecializationBindingOffset +
       definitionSpecializationBindings.size() *
           DefinitionSpecializationBindingLayout.size;
+  uint64_t definitionMemberEndpointOffset =
+      definitionParameterValueOffset +
+      definitionParameterValues.size() * DefinitionParameterValueLayout.size;
   uint64_t definitionMemberInstanceRelationOffset =
       definitionMemberEndpointOffset +
       definitionMemberEndpoints.size() * DefinitionMemberEndpointLayout.size;
@@ -5836,6 +5879,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
         definitionSpecializationBindingOffset);
     writer.setDefinitionSpecializationBindingCount(
         definitionSpecializationBindings.size());
+    writer.setDefinitionParameterValueOffset(definitionParameterValueOffset);
+    writer.setDefinitionParameterValueCount(definitionParameterValues.size());
     writer.setDefinitionMemberEndpointOffset(definitionMemberEndpointOffset);
     writer.setDefinitionMemberEndpointCount(definitionMemberEndpoints.size());
     writer.setDefinitionMemberInstanceRelationOffset(
@@ -6159,10 +6204,17 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setLine(static_cast<uint32_t>(member.source.lineColumn >> 32));
     writer.setColumn(static_cast<uint32_t>(member.source.lineColumn));
     writer.setVPIKind(static_cast<uint16_t>(member.declaration.getVpiKind()));
-    writer.setFlags(
+    uint16_t flags =
         member.declaration.getDirectionAttr()
             ? static_cast<uint16_t>(member.declaration.getDirection().value())
-            : 0);
+            : 0;
+    if (member.declaration.getIsLocalParam())
+      flags |= 1u << 8;
+    if (member.declaration.getHasExplicitParameterRange())
+      flags |= 1u << 9;
+    if (member.declaration.getUnavailableDefault())
+      flags |= 1u << 10;
+    writer.setFlags(flags);
   }
   for (auto [index, relation] : llvm::enumerate(definitionMemberRelations)) {
     DefinitionMemberRelationWriter writer(
@@ -6196,6 +6248,13 @@ SmallVector<uint8_t> serializeDesignDatabase(
         index * DefinitionSpecializationBindingLayout.size);
     writer.setMember(binding.member);
     writer.setSemanticType(binding.semanticType);
+  }
+  for (auto [index, value] : llvm::enumerate(definitionParameterValues)) {
+    DefinitionParameterValueWriter writer(
+        output.data() + definitionParameterValueOffset +
+        index * DefinitionParameterValueLayout.size);
+    writer.setSpecializationBinding(value.binding);
+    writer.setFrozenValue(value.value);
   }
   for (auto [index, endpoint] : llvm::enumerate(definitionMemberEndpoints)) {
     DefinitionMemberEndpointWriter writer(
