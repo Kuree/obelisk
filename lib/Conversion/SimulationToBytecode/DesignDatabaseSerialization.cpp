@@ -1846,8 +1846,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
         return found->second;
       if (auto found = typespecsBySymbol.find(symbol.getValue());
           found != typespecsBySymbol.end() &&
-          found->second.getOrigin() ==
-              sim::VPITypespecOrigin::ClassSpecialization)
+          (found->second.getOrigin() ==
+               sim::VPITypespecOrigin::ClassSpecialization ||
+           found->second.getOrigin() == sim::VPITypespecOrigin::BuiltinClass))
         return found->second;
       return nullptr;
     };

@@ -827,8 +827,9 @@ static Operation *lookupVPILexicalOwner(Operation *from,
   if (isa_and_nonnull<SimVPIObjectAnchorOp>(owner))
     return owner;
   auto typespec = dyn_cast_or_null<SimVPITypespecDeclOp>(owner);
-  return typespec &&
-                 typespec.getOrigin() == VPITypespecOrigin::ClassSpecialization
+  return typespec && (typespec.getOrigin() ==
+                          VPITypespecOrigin::ClassSpecialization ||
+                      typespec.getOrigin() == VPITypespecOrigin::BuiltinClass)
              ? owner
              : nullptr;
 }

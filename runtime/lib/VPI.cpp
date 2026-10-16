@@ -5531,9 +5531,19 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
               vpiClassObj, static_cast<uint32_t>(type),
               obelisk::reflection::VPITraversalMode::Iterate))
         return nullptr;
-      // Direct builtin classes have no explicitly declared member inventory.
-      if (handle->semanticCursor.offset)
-        return nullptr;
+      // Direct builtins carry their semantic type instead of an executable
+      // class descriptor. Their canonical typespec owns immutable inventory,
+      // including mailbox type parameters. Legacy images may omit that index.
+      if (handle->semanticCursor.offset) {
+        auto status = obelisk_rt_cached_vpi_semantic_class_typespec(
+            state->context, handle->semanticCursor, &parent);
+        if (status == OBELISK_RT_EOF)
+          return nullptr;
+        if (status != OBELISK_RT_OK) {
+          setError(state, "builtin class VPI typespec lookup failed", vpiInternal);
+          return nullptr;
+        }
+      }
       // The specialization owns the immutable member inventory. The iterator
       // retains a weak receiver recipe for automatic members only.
       sourceDesign = true;

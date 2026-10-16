@@ -2634,6 +2634,45 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         IntegerAttr{});
     auto reference = FlatSymbolRefAttr::get(declaration.getSymNameAttr());
     builtinClassTypespecs[canonical] = reference;
+    // Builtin specializations retain their own effective formal parameters.
+    // In particular mailbox::T denotes the actual source type assignment,
+    // including typedef spelling (37.28 detail 2); the canonical class identity
+    // above deliberately has a separate alias-free semantic root.
+    uint64_t ordinal = 0;
+    for (Operation *child : getChildren(source)) {
+      auto parameter = dyn_cast<semantic::SVTypeParameterSymbolOp>(child);
+      if (!parameter)
+        continue;
+      auto type = parameter.getSemanticType();
+      auto payload =
+          type ? makeVPITypeSemantics(*type, getSemanticLocation(parameter),
+                                      typedefLayersFor(parameter), parameter)
+               : FailureOr<sim::VPITypeSemanticsAttr>(failure());
+      if (failed(payload)) {
+        parameter.emitOpError(
+            "builtin type parameter has no preserved effective source type");
+        invalid = true;
+        continue;
+      }
+      std::string parameterName =
+          "__obelisk_vpi_anchor_" + std::to_string(nextSyntheticInventoryId);
+      auto anchor = sim::SimVPIObjectAnchorOp::create(
+          builder, getSemanticLocation(parameter), parameterName,
+          nextSyntheticInventoryId++,
+          static_cast<uint32_t>(VPIKind::TypeParameter), scopes.lookup(source),
+          reference, ordinal++,
+          builder.getStringAttr(getHierarchyName(parameter)),
+          builder.getStringAttr(getDebugName(parameter)), UnitAttr{},
+          sim::VPIObjectBackingAttr{}, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
+          DenseI64ArrayAttr{}, DenseI64ArrayAttr{}, IntegerAttr{}, *payload,
+          sim::FrozenConstantAttr{}, UnitAttr{}, FlatSymbolRefAttr{});
+      if (auto identity = parameter->getAttrOfType<IntegerAttr>(
+              vpiSourceTypeIdentityAttrName))
+        sim::set<sim::metadata::VpiSourceTypeIdentity>(anchor, identity);
+      if (sim::VPIPropertySetAttr properties =
+              identityProperties(parameter, VPIKind::TypeParameter))
+        anchor->setAttr("vpi_properties", properties);
+    }
     return reference;
   };
   llvm::DenseMap<Operation *, FlatSymbolRefAttr> builtinBaseTypespecs;

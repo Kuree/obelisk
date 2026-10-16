@@ -4512,7 +4512,7 @@ TEST(GeneratedDesignDatabase, BuiltinClassAliases) {
   ASSERT_TRUE(module);
   auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
   obelisk::SimulationBytecodeOptions options;
-  options.vpi = "read";
+  options.vpi = "full";
   auto encoded = obelisk::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t checksum = 0;
@@ -4563,6 +4563,73 @@ TEST(GeneratedDesignDatabase, BuiltinClassAliases) {
     EXPECT_EQ(vpi_get64(vpiObjId, variable), 0);
     EXPECT_EQ(vpi_handle(vpiClassObj, variable), nullptr);
     EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    if (std::string_view(names[i]) == "mailbox") {
+      vpiHandle iterator = vpi_iterate(vpiParameter, type);
+      ASSERT_NE(iterator, nullptr);
+      vpiHandle parameter = vpi_scan(iterator);
+      ASSERT_NE(parameter, nullptr);
+      EXPECT_EQ(vpi_scan(iterator), nullptr);
+      EXPECT_EQ(vpi_get(vpiType, parameter), vpiTypeParameter);
+      EXPECT_STREQ(vpi_get_str(vpiName, parameter), "T");
+      EXPECT_EQ(vpi_get(vpiLocalParam, parameter), 0);
+      vpiHandle owner = vpi_handle(vpiScope, parameter);
+      ASSERT_NE(owner, nullptr);
+      EXPECT_EQ(vpi_compare_objects(owner, type), 1);
+      vpiHandle actual = vpi_handle(vpiTypespec, parameter);
+      ASSERT_NE(actual, nullptr);
+      char wordName[] = "$unit::Word";
+      vpiHandle word = vpi_handle_by_name(wordName, nullptr);
+      ASSERT_NE(word, nullptr);
+      EXPECT_EQ(vpi_compare_objects(actual, word), 1);
+      obelisk_rt_gc_lane_v1 *lane = nullptr;
+      ASSERT_EQ(obelisk_rt_v1_gc_lane_create(runtime, &lane), OBELISK_RT_OK);
+      ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+      obelisk_rt_object_v1 *mailbox = nullptr;
+      ASSERT_EQ(
+          obelisk_rt_v1_mailbox_create_typed(lane, 77, OBELISK_RT_ELEMENT_BITS,
+                                             OBELISK_RT_ELEMENT_SIGNED, 4, 4,
+                                             32, nullptr, 0, 0, &mailbox),
+          OBELISK_RT_OK);
+      obelisk_rt_gc_root_v1 root{};
+      ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &mailbox),
+                OBELISK_RT_OK);
+      obelisk_rt_design_cursor_v1 cursor{};
+      ASSERT_EQ(obelisk_rt_cached_design_lookup(
+                    runtime, reinterpret_cast<const uint8_t *>(name.data()),
+                    name.size(), &cursor),
+                OBELISK_RT_OK);
+      uint64_t value = obelisk_rt_managed_word_from_object(mailbox);
+      ASSERT_EQ(
+          obelisk_rt_v1_design_write(runtime, cursor, &value, nullptr, 64),
+          OBELISK_RT_OK);
+      vpiHandle object = vpi_handle(vpiClassObj, variable);
+      ASSERT_NE(object, nullptr);
+      vpiHandle objectIterator = vpi_iterate(vpiParameter, object);
+      ASSERT_NE(objectIterator, nullptr);
+      vpiHandle use = vpi_handle(vpiUse, objectIterator);
+      ASSERT_NE(use, nullptr);
+      EXPECT_EQ(vpi_compare_objects(use, object), 1);
+      EXPECT_EQ(vpi_release_handle(use), 1);
+      vpiHandle objectParameter = vpi_scan(objectIterator);
+      ASSERT_NE(objectParameter, nullptr);
+      EXPECT_EQ(vpi_scan(objectIterator), nullptr);
+      EXPECT_EQ(vpi_compare_objects(objectParameter, parameter), 1);
+      value = 0;
+      ASSERT_EQ(
+          obelisk_rt_v1_design_write(runtime, cursor, &value, nullptr, 64),
+          OBELISK_RT_OK);
+      ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
+      ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+      EXPECT_EQ(vpi_get(vpiType, object), vpiUndefined);
+      EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+      EXPECT_EQ(vpi_get(vpiType, objectParameter), vpiTypeParameter);
+      EXPECT_STREQ(vpi_get_str(vpiName, objectParameter), "T");
+      EXPECT_EQ(vpi_release_handle(objectParameter), 1);
+      ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+      ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+      for (vpiHandle handle : {word, actual, owner, parameter})
+        EXPECT_EQ(vpi_release_handle(handle), 1);
+    }
     for (vpiHandle handle : {type, aliasType, variable, alias})
       EXPECT_EQ(vpi_release_handle(handle), 1);
   }

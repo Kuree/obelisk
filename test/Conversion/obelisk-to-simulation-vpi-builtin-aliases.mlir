@@ -19,6 +19,10 @@ module attributes {
     hierarchical_name = "$root", name = "$root", node_id = 1 : i64} {
     obelisk.sv.symbol.compilation_unit @unit attributes {
       hierarchical_name = "$unit", node_id = 2 : i64} {
+      obelisk.sv.type.type_alias @word attributes {
+        hierarchical_name = "$unit::Word", name = "Word", node_id = 19 : i64,
+        semantic_type = !word,
+        vpi_typedef_layers = [{aliases = [@root::@unit::@word], path = array<i64>}]} {}
       obelisk.sv.type.type_alias @sem attributes {
         hierarchical_name = "$unit::Sem", name = "Sem", node_id = 3 : i64,
         semantic_type = !semaphore,
@@ -93,7 +97,8 @@ module attributes {
       generic_parameter_symbols = [@std::@mailbox::@T]} {
       obelisk.sv.symbol.type_parameter @T attributes {
         hierarchical_name = "std::mailbox#(int)::T", name = "T", node_id = 18 : i64,
-        semantic_type = !word} {}
+        semantic_type = !word,
+        vpi_typedef_layers = [{aliases = [@root::@unit::@word], path = array<i64>}]} {}
     }
   }
 }
