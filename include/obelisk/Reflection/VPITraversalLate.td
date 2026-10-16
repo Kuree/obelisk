@@ -197,7 +197,7 @@ def LateForeachLoopTargets : VPIObjectSet<"LateForeachLoopTargets",
    ByteVar, ClassVar, StringVar, EnumVar, StructVar, UnionVar, BitVar,
    ChandleVar, RegArray, PackedArrayVar, Operation]>;
 def LateForeachIndexedTargets : VPIObjectSet<"LateForeachIndexedTargets",
-  [RegArray, PackedArrayVar, StringVar]>;
+  [RegArray, PackedArrayVar, BitVar, Reg, StringVar]>;
 def LateAliasSource : VPIObjectSet<"LateAliasSource", [AliasStmt]>;
 def LateDisableSource : VPIObjectSet<"LateDisableSource", [Disable]>;
 def LateDisableTargets : VPIObjectSet<"LateDisableTargets",

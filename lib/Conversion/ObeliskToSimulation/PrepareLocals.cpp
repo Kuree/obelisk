@@ -3,9 +3,11 @@
 
 #include "PrepareLocals.h"
 #include "Detail.h"
+#include "PrepareExpressions.h"
 #include "mlir/IR/AttrTypeSubElements.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
+#include "obelisk/Dialect/ForeachLoopMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationVPI.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
 #include "llvm/ADT/DenseSet.h"
@@ -100,7 +102,7 @@ materializeProceduralLocals(sim::SimDesignOp design, const PreparedUnits &units,
       return WalkResult::advance();
     });
     llvm::DenseMap<uint64_t, uint64_t> ordinals, sourceOrdinals;
-    for (Candidate candidate : candidates) {
+    auto materialize = [&](Candidate candidate) -> LogicalResult {
       auto semantic =
           sim::get<sim::metadata::VpiDeclaredType>(candidate.source);
       bool complete = true;
@@ -125,7 +127,7 @@ materializeProceduralLocals(sim::SimDesignOp design, const PreparedUnits &units,
       });
       typeReferences.walk(semantic);
       if (!complete)
-        continue;
+        return success();
       auto type = getNormalizedSemanticType(candidate.source);
       if (failed(type))
         return failure();
@@ -147,18 +149,18 @@ materializeProceduralLocals(sim::SimDesignOp design, const PreparedUnits &units,
           staticSource |= routine.getReturnVariablePath() ==
                           getHierarchyName(candidate.source);
         if (!staticSource)
-          continue;
+          return success();
         // Existing static storage is the declaration identity. Events and
         // delegated inventories retain their own canonical source bindings.
         if (!isContextResolvableStorage(persistent->second))
-          continue;
+          return success();
         auto storage = storages.lookup(persistent->second.id);
         if (!storage ||
             sim::has<sim::metadata::VpiIdentityDelegated>(storage) ||
             !reflection::vpiObjectSetContains(
                 reflection::VPIObjectSetID::DataVariableObjects,
                 sim::vpiKindForStorage(semantic)))
-          continue;
+          return success();
         storage.setVpiTypeAttr(semantic);
         persistent->second.vpiType = semantic;
         if (auto identity = candidate.source->getAttrOfType<IntegerAttr>(
@@ -168,7 +170,7 @@ materializeProceduralLocals(sim::SimDesignOp design, const PreparedUnits &units,
             builder, getSemanticLocation(candidate.source), storage.getIdAttr(),
             owner.getIdAttr(), candidate.scope,
             builder.getI32IntegerAttr(sourceOrdinals[scope]++));
-        continue;
+        return success();
       }
       const uint32_t kind = sim::vpiKindForClassMember(semantic);
       const auto *edge = reflection::findVPITraversal(
@@ -176,7 +178,7 @@ materializeProceduralLocals(sim::SimDesignOp design, const PreparedUnits &units,
           static_cast<uint32_t>(reflection::VPIRelationKind::AutomaticsRel),
           reflection::VPITraversalMode::Iterate);
       if (!edge || !reflection::vpiObjectSetContains(edge->targets, kind))
-        continue;
+        return success();
       std::string symbol = "__obelisk_vpi_local_" + std::to_string(nextID);
       auto declaration = sim::SimVPILocalDeclOp::create(
           builder, getSemanticLocation(candidate.source),
@@ -193,7 +195,91 @@ materializeProceduralLocals(sim::SimDesignOp design, const PreparedUnits &units,
       if (auto identity = candidate.source->getAttrOfType<IntegerAttr>(
               vpiSourceTypeIdentityAttrName))
         sim::set<sim::metadata::VpiSourceTypeIdentity>(declaration, identity);
-    }
+      return success();
+    };
+    for (Candidate candidate : candidates)
+      if (failed(materialize(candidate)))
+        return failure();
+
+    // Foreach iterators are implicit symbols owned by the loop's scope, not
+    // ordinary declaration statements or members of the indexed collection.
+    VPIExpressionResolver resolver(design, descriptors);
+    bool invalid = false;
+    unit.source->walk<WalkOrder::PreOrder>([&](Operation *operation) {
+      if (operation != unit.source &&
+          isa<semantic::SVSubroutineSymbolOp,
+              semantic::SVProceduralBlockSymbolOp>(operation))
+        return WalkResult::skip();
+      auto loop = dyn_cast<semantic::SVForeachLoopStatementOp>(operation);
+      if (!loop)
+        return WalkResult::advance();
+      auto id = sim::get<sim::metadata::VpiStatementId>(loop);
+      auto statement = id ? statements.lookup(id.getValue().getZExtValue())
+                          : sim::SimStatementDeclOp{};
+      auto children = getChildren(loop);
+      if (!statement || statement.getCodeUnitId() != unit.id ||
+          children.size() != 2 || loop.getLoopDimensions().empty())
+        return WalkResult::advance();
+      auto collection = resolver.resolve(children[0]);
+      if (!collection ||
+          (collection->kind !=
+               static_cast<uint32_t>(reflection::VPIObjectKind::RegArray) &&
+           collection->kind != static_cast<uint32_t>(
+                                   reflection::VPIObjectKind::PackedArrayVar) &&
+           collection->kind !=
+               static_cast<uint32_t>(reflection::VPIObjectKind::BitVar) &&
+           collection->kind !=
+               static_cast<uint32_t>(reflection::VPIObjectKind::Reg)) ||
+          (collection->reference.getKind() != sim::VPIObjectRefKind::Storage &&
+           collection->reference.getKind() != sim::VPIObjectRefKind::Symbol))
+        return WalkResult::advance();
+      SmallVector<Operation *> indices;
+      for (Attribute attribute : loop.getLoopDimensions()) {
+        auto dimension = cast<DictionaryAttr>(attribute);
+        if (!dimension.getAs<BoolAttr>(foreach_metadata::hasStaticRange)
+                 .getValue())
+          return WalkResult::advance();
+        if (!dimension.getAs<BoolAttr>(foreach_metadata::hasIterator)
+                 .getValue()) {
+          indices.push_back(nullptr);
+          continue;
+        }
+        auto source = sourceSymbols.lookupSymbolIn(
+            module,
+            dimension.getAs<SymbolRefAttr>(foreach_metadata::iteratorSymbol));
+        auto semantic = source
+                            ? sim::get<sim::metadata::VpiDeclaredType>(source)
+                            : sim::VPITypeSemanticsAttr{};
+        if (!isa_and_present<semantic::SVIteratorSymbolOp>(source) ||
+            !semantic || semantic.getKind() != sim::VPITypeKind::Int)
+          return WalkResult::advance();
+        indices.push_back(source);
+      }
+      SmallVector<Attribute> slots;
+      for (Operation *source : indices) {
+        if (!source) {
+          slots.push_back(builder.getUnitAttr());
+          continue;
+        }
+        if (failed(materialize({source, id}))) {
+          invalid = true;
+          return WalkResult::interrupt();
+        }
+        auto declaration = sim::get<sim::metadata::VpiLocal>(source);
+        if (!declaration) {
+          source->emitError("retained foreach iterator did not materialize");
+          invalid = true;
+          return WalkResult::interrupt();
+        }
+        slots.push_back(declaration);
+      }
+      sim::SimVPIForeachDeclOp::create(builder, getSemanticLocation(loop), id,
+                                       collection->reference,
+                                       builder.getArrayAttr(slots));
+      return WalkResult::advance();
+    });
+    if (invalid)
+      return failure();
   }
   return success();
 }

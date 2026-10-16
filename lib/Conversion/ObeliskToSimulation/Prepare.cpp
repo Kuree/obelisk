@@ -9257,7 +9257,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       *preparedUnits, descriptors, semanticSymbols, classSources);
   if (failed(preparedCaptures))
     return abort();
-  if (failed(materializeProceduralLocals(
+  if (preserveVPIMethodBindings &&
+      failed(materializeProceduralLocals(
           design, *preparedUnits, *preparedCaptures, descriptors, builder)))
     return abort();
   if (failed(materializeProceduralExpressionRelations(design, *preparedUnits,

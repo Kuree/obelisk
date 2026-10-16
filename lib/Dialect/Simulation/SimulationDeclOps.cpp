@@ -638,6 +638,37 @@ LogicalResult SimVPICodeUnitScopeBindingOp::verify() {
   return success();
 }
 
+LogicalResult SimVPIForeachDeclOp::verify() {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("requires a simulation.design owner");
+  if (getStatementIdAttr().getValue().isNegative() || !getStatementId())
+    return emitOpError("foreach statement ID must be positive");
+  if (getCollection().getKind() != VPIObjectRefKind::Storage &&
+      getCollection().getKind() != VPIObjectRefKind::Symbol)
+    return emitOpError("collection must name a whole fixed-array variable");
+  if (getLoopVariables().empty() || getLoopVariables().size() > UINT32_MAX)
+    return emitOpError("requires a bounded nonempty index list");
+  for (Attribute index : getLoopVariables())
+    if (!isa<UnitAttr, FlatSymbolRefAttr>(index))
+      return emitOpError("index must be an exact local symbol or unit skip");
+  return success();
+}
+
+LogicalResult
+SimVPIForeachDeclOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  if (getCollection().getKind() == VPIObjectRefKind::Symbol &&
+      !symbols.lookupNearestSymbolFrom<SimVPILocalDeclOp>(
+          *this, getCollection().getSymbol()))
+    return emitOpError(
+        "symbolic collection must name an exact local declaration");
+  for (Attribute index : getLoopVariables())
+    if (auto reference = dyn_cast<FlatSymbolRefAttr>(index);
+        reference &&
+        !symbols.lookupNearestSymbolFrom<SimVPILocalDeclOp>(*this, reference))
+      return emitOpError("index must name an exact local declaration");
+  return success();
+}
+
 LogicalResult
 SimVPICodeUnitScopeBindingOp::verifySymbolUses(SymbolTableCollection &symbols) {
   auto anchor = symbols.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
@@ -3852,6 +3883,7 @@ LogicalResult SimDesignOp::verifyRegions() {
   SmallVector<SimVPICallDeclOp> vpiCalls;
   SmallVector<SimVPILocalDeclOp> vpiLocals;
   SmallVector<SimVPIStaticLocalBindingOp> staticLocals;
+  SmallVector<SimVPIForeachDeclOp> foreachDeclarations;
   llvm::DenseSet<uint64_t> vpiLocalIds;
   llvm::DenseMap<Attribute, SimVPIClassCallDispatchOp> vpiClassDispatchCalls;
   SmallVector<SimVPIStatementRelationDeclOp> statementRelations;
@@ -3922,6 +3954,8 @@ LogicalResult SimDesignOp::verifyRegions() {
               addId(local.getIdAttr(), vpiLocalIds, "VPI local declaration")))
         return failure();
       vpiLocals.push_back(local);
+    } else if (auto declaration = dyn_cast<SimVPIForeachDeclOp>(op)) {
+      foreachDeclarations.push_back(declaration);
     } else if (auto binding = dyn_cast<SimVPIStaticLocalBindingOp>(op)) {
       staticLocals.push_back(binding);
     } else if (auto call = dyn_cast<SimVPICallDeclOp>(op)) {
@@ -4931,6 +4965,72 @@ LogicalResult SimDesignOp::verifyRegions() {
                          local.getStatementScopeId().value_or(0)}]
         .push_back(local.getSourceOrdinal().value_or(local.getOrdinal()));
   }
+  llvm::DenseSet<uint64_t> foreachStatements;
+  llvm::DenseSet<Operation *> foreachIndices;
+  for (auto declaration : foreachDeclarations) {
+    auto statement = statements.lookup(declaration.getStatementId());
+    if (!statement ||
+        statement.getVpiKind() !=
+            static_cast<uint32_t>(reflection::VPIObjectKind::ForeachStmt) ||
+        !statement.getIsScope() || !statement.getCodeUnitId() ||
+        !foreachStatements.insert(declaration.getStatementId()).second)
+      return declaration.emitOpError(
+          "requires one exact retained foreach statement");
+    VPITypeSemanticsAttr semantic;
+    if (declaration.getCollection().getKind() == VPIObjectRefKind::Storage) {
+      auto storage = storagesById.lookup(
+          declaration.getCollection().getId().getValue().getZExtValue());
+      if (storage)
+        semantic = storage.getVpiTypeAttr();
+    } else if (auto local =
+                   symbolTable.lookupNearestSymbolFrom<SimVPILocalDeclOp>(
+                       declaration, declaration.getCollection().getSymbol())) {
+      semantic = local.getVpiType();
+    }
+    uint64_t dimensions = 0;
+    auto element = semantic;
+    while (element && (element.getKind() == VPITypeKind::UnpackedArray ||
+                       element.getKind() == VPITypeKind::PackedArray)) {
+      if (!element.getRange() || !element.getChildren() ||
+          element.getChildren().size() != 1)
+        break;
+      ++dimensions;
+      element = cast<VPITypeSemanticsAttr>(element.getChildren()[0]);
+    }
+    const uint32_t collectionKind =
+        semantic ? vpiKindForClassMember(semantic) : 0;
+    if (!dimensions || declaration.getLoopVariables().size() > dimensions ||
+        (collectionKind !=
+             static_cast<uint32_t>(reflection::VPIObjectKind::RegArray) &&
+         collectionKind !=
+             static_cast<uint32_t>(reflection::VPIObjectKind::PackedArrayVar) &&
+         collectionKind !=
+             static_cast<uint32_t>(reflection::VPIObjectKind::BitVar) &&
+         collectionKind !=
+             static_cast<uint32_t>(reflection::VPIObjectKind::Reg)))
+      return declaration.emitOpError(
+          "collection must prove all retained fixed-array dimensions");
+    for (Attribute index : declaration.getLoopVariables()) {
+      auto reference = dyn_cast<FlatSymbolRefAttr>(index);
+      if (!reference)
+        continue;
+      auto local = symbolTable.lookupNearestSymbolFrom<SimVPILocalDeclOp>(
+          declaration, reference);
+      if (!local || local.getStatementScopeId() != statement.getId() ||
+          local.getCodeUnitId() != statement.getCodeUnitId() ||
+          local.getScopeId() != statement.getScopeId() ||
+          local.getVpiType().getKind() != VPITypeKind::Int ||
+          !foreachIndices.insert(local).second)
+        return declaration.emitOpError(
+            "index must be a unique int declaration of this foreach scope");
+    }
+  }
+  for (auto local : vpiLocals)
+    if (local.getStatementScopeId() &&
+        foreachStatements.contains(*local.getStatementScopeId()) &&
+        !foreachIndices.contains(local))
+      return local.emitOpError(
+          "foreach local declaration is absent from its index list");
   llvm::DenseSet<uint64_t> staticLocalStorage;
   for (auto binding : staticLocals) {
     auto storage = storagesById.lookup(binding.getStorageId());

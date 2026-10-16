@@ -316,6 +316,25 @@ def SimVPILocalDeclOp : SimOp<"vpi_local.decl", [
   let hasVerifier = 1;
 }
 
+def SimVPIForeachDeclOp : SimOp<"vpi_foreach.decl", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "exact fixed-array foreach collection and ordered index declarations";
+  let description = [{
+    Names an existing foreach statement and its whole fixed-array declaration.
+    Each loop_variables entry is an exact local symbol or a unit attribute for
+    a skipped dimension. Positions are source order, independent of the dense
+    local declaration ordinals. Skips serialize as distinct unnamed NullOp
+    occurrences; actual index variables retain their declaration identities.
+  }];
+  let arguments = (ins I64Attr:$statement_id,
+                       SimVPIObjectRefAttr:$collection,
+                       ArrayAttr:$loop_variables);
+  let assemblyFormat = "$statement_id `collection` $collection `indices` $loop_variables attr-dict";
+  let hasVerifier = 1;
+}
+
 def SimVPIStaticLocalBindingOp : SimOp<"vpi_static_local.bind",
     [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
   let summary = "exact procedural scope of existing static variable storage";

@@ -3821,8 +3821,9 @@ TEST(VPIObjectModel, StatementRelationsKeepHandleAndIterationSemantics) {
   EXPECT_NE(findVPITraversal(vpiFor, vpiForInitStmt, Mode::Iterate), nullptr);
   EXPECT_NE(findVPITraversal(vpiFor, vpiForIncStmt, Mode::Handle), nullptr);
   EXPECT_NE(findVPITraversal(vpiFor, vpiForIncStmt, Mode::Iterate), nullptr);
-  expectTargetsExactly(vpiForeachStmt, vpiVariables, Mode::Iterate,
-                       {vpiRegArray, vpiPackedArrayVar, vpiStringVar});
+  expectTargetsExactly(
+      vpiForeachStmt, vpiVariables, Mode::Iterate,
+      {vpiRegArray, vpiPackedArrayVar, vpiBitVar, vpiReg, vpiStringVar});
   expectContains(vpiForeachStmt, vpiLoopVars, Mode::Iterate,
                  {vpiIntegerVar, vpiReg, vpiLongIntVar, vpiShortIntVar,
                   vpiIntVar, vpiByteVar, vpiEnumVar, vpiBitVar, vpiStringVar,

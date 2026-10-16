@@ -259,6 +259,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
   };
   SmallVector<ThreadOriginBindingRecord> threadOriginBindings;
   SmallVector<sim::SimVPILocalDeclOp> localDeclarations;
+  SmallVector<sim::SimVPIForeachDeclOp> foreachDeclarations;
+  DenseMap<std::pair<Operation *, uint32_t>, uint64_t> foreachNullIDs;
+  DenseMap<uint64_t, uint32_t> foreachNullIndices;
   DenseMap<uint64_t, sim::SimVPIStaticLocalBindingOp> staticLocalBindings;
   llvm::StringMap<sim::SimVPILocalDeclOp> localsBySymbol;
   struct FrameLocalBindingRecord {
@@ -711,6 +714,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
     else if (auto statement = dyn_cast<sim::SimStatementDeclOp>(operation)) {
       if (includeStatements)
         statements.push_back({statement, sourceFor(statement)});
+    } else if (auto declaration =
+                   dyn_cast<sim::SimVPIForeachDeclOp>(operation)) {
+      if (includeStatements)
+        foreachDeclarations.push_back(declaration);
     } else if (auto local = dyn_cast<sim::SimVPILocalDeclOp>(operation)) {
       if (includeStatements) {
         localDeclarations.push_back(local);
@@ -1127,6 +1134,32 @@ SmallVector<uint8_t> serializeDesignDatabase(
                        call.getName().str(), Type{}, 0, sourceFor(call), false,
                        call});
   }
+  llvm::sort(foreachDeclarations, [](auto left, auto right) {
+    return left.getStatementId() < right.getStatementId();
+  });
+  for (auto declaration : foreachDeclarations) {
+    auto statement = llvm::find_if(statements, [&](StatementRecord record) {
+      return record.declaration.getId() == declaration.getStatementId();
+    });
+    if (statement == statements.end()) {
+      declaration.emitOpError("foreach statement was not serialized");
+      return {};
+    }
+    for (auto [ordinal, index] :
+         llvm::enumerate(declaration.getLoopVariables())) {
+      if (!isa<UnitAttr>(index))
+        continue;
+      if (nextCallObjectID == UINT64_MAX) {
+        declaration.emitOpError("foreach skip identity cannot be encoded");
+        return {};
+      }
+      uint64_t id = ++nextCallObjectID;
+      foreachNullIDs[{declaration, ordinal}] = id;
+      staticObjects.push_back({id, statement->declaration.getScopeId(), "",
+                               static_cast<uint32_t>(VPIObjectKind::Operation),
+                               0, sourceFor(declaration), declaration});
+    }
+  }
   // Direct lookup of a static property denotes its class declaration view.
   // Its backing storage is implementation identity, not a second VPI object.
   for (Record &object : objects)
@@ -1541,8 +1574,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
       canonicalNetTargetIndices.try_emplace(object.id,
                                             static_cast<uint32_t>(index));
   }
-  for (auto [index, object] : llvm::enumerate(staticObjects))
+  for (auto [index, object] : llvm::enumerate(staticObjects)) {
     staticObjectIndices[object.identity] = static_cast<uint32_t>(index);
+    if (isa_and_present<sim::SimVPIForeachDeclOp>(object.identity))
+      foreachNullIndices[object.id] = static_cast<uint32_t>(index);
+  }
   for (const Record &object : objects) {
     auto identity =
         dyn_cast_if_present<sim::SimVPINetIdentityDeclOp>(object.identity);
@@ -2383,7 +2419,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
           static_cast<uint32_t>(VPIObjectKind::VirtualInterfaceVar)}) {
       const auto *edge =
           findVPITraversal(scopeKind, selector, VPITraversalMode::Iterate);
-      if (!edge || !vpiObjectSetContains(edge->targets, kind) ||
+      if (scopeKind == static_cast<uint32_t>(VPIObjectKind::ForeachStmt) ||
+          !edge || !vpiObjectSetContains(edge->targets, kind) ||
           edge->automaticRelation == VPIAutomaticRelation::DirectChild)
         continue;
       if (failed(addRelation(
@@ -3621,6 +3658,57 @@ SmallVector<uint8_t> serializeDesignDatabase(
       if (failed(addRelation(call, sourceTable, sourceIndex, callKind,
                              target.vpiKind, VPITraversalMode::Handle,
                              target.table, target.index, target.vpiKind)))
+        return {};
+    }
+  }
+
+  for (auto declaration : foreachDeclarations) {
+    uint32_t statement = statementIndices.lookup(declaration.getStatementId());
+    uint32_t foreachKind = static_cast<uint32_t>(VPIObjectKind::ForeachStmt);
+    ImageObjectRef collection;
+    if (declaration.getCollection().getKind() ==
+        sim::VPIObjectRefKind::Storage) {
+      auto found = storageRefs.find(
+          declaration.getCollection().getId().getValue().getZExtValue());
+      if (found == storageRefs.end()) {
+        declaration.emitOpError("foreach collection was not serialized");
+        return {};
+      }
+      collection = found->second;
+    } else {
+      auto local = localsBySymbol.lookup(
+          declaration.getCollection().getSymbol().getValue());
+      if (!local || !objectIndices.contains(local)) {
+        declaration.emitOpError("foreach local collection was not serialized");
+        return {};
+      }
+      collection = {TableKind::Object, objectIndices.lookup(local),
+                    sim::vpiKindForClassMember(local.getVpiType())};
+    }
+    if (failed(addRelation(declaration, TableKind::Statement, statement,
+                           foreachKind,
+                           static_cast<uint32_t>(VPIRelationKind::VariablesRel),
+                           VPITraversalMode::Iterate, collection.table,
+                           collection.index, collection.vpiKind, 0)))
+      return {};
+    for (auto [ordinal, index] :
+         llvm::enumerate(declaration.getLoopVariables())) {
+      ImageObjectRef target;
+      if (auto symbol = dyn_cast<FlatSymbolRefAttr>(index)) {
+        auto local = localsBySymbol.lookup(symbol.getValue());
+        target = {TableKind::Object, objectIndices.lookup(local),
+                  sim::vpiKindForClassMember(local.getVpiType())};
+      } else {
+        target = {TableKind::StaticObject,
+                  foreachNullIndices.lookup(
+                      foreachNullIDs.lookup({declaration, ordinal})),
+                  static_cast<uint32_t>(VPIObjectKind::Operation)};
+      }
+      if (failed(addRelation(
+              declaration, TableKind::Statement, statement, foreachKind,
+              static_cast<uint32_t>(VPIRelationKind::LoopVarsRel),
+              VPITraversalMode::Iterate, target.table, target.index,
+              target.vpiKind, ordinal)))
         return {};
     }
   }
@@ -5054,6 +5142,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
           storage && staticLocalBindings.contains(storage.getId()))
         if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
                                     storage.getDebugNameAttr())))
+          return failure();
+      if (isa<sim::SimVPIForeachDeclOp>(operation))
+        if (failed(addFixedProperty(operation, packedSource, exactKind, 39,
+                                    builder.getI32IntegerAttr(36))))
           return failure();
       if (auto local = dyn_cast<sim::SimVPILocalDeclOp>(operation)) {
         if (failed(addFixedProperty(operation, packedSource, exactKind, 2,

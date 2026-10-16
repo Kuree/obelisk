@@ -3144,6 +3144,7 @@ bool validateDatabaseImpl(const Database &database) {
   std::unordered_set<uint32_t> primitiveTerminals;
   std::unordered_map<uint32_t, uint32_t> terminalDirections;
   std::unordered_map<uint32_t, uint32_t> terminalOwners, terminalPrimitives;
+  std::unordered_set<uint32_t> foreachNulls, foreachNullProperties;
   std::unordered_set<uint32_t> sourceExpressionObjects;
   std::unordered_map<uint32_t, uint16_t> sourceExpressionOperators;
   std::unordered_set<uint32_t> sourceExpressionConstants;
@@ -3493,6 +3494,14 @@ bool validateDatabaseImpl(const Database &database) {
       if (payload < 1 || payload > 3)
         return false;
       terminalDirections.emplace(packedSource, static_cast<uint32_t>(payload));
+    }
+    if (table == obelisk::reflection::TableKind::StaticObject &&
+        exactKind == static_cast<uint32_t>(
+                         obelisk::reflection::VPIObjectKind::Operation) &&
+        selector == 39) {
+      if (payload != 36)
+        return false;
+      foreachNullProperties.insert(packedSource);
     }
     if (table == obelisk::reflection::TableKind::Object &&
         recordKind(database.data + database.objects +
@@ -4306,9 +4315,18 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
       primitiveTerminals.insert(packed);
     }
-    // Expression occurrences have an unnamed full record. Compact records
-    // denote named source declarations and cannot encode an expression tree.
-    if (isSourceExpressionKind(read16(object + 28)) ||
+    // Compact operation records are only skipped foreach dimensions. Their
+    // unique source owner and absence of outgoing operands are proved below.
+    bool foreachNull =
+        read16(object + 28) ==
+        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Operation);
+    if (foreachNull) {
+      if (caps || staticObjectSemanticRoots[index] || read32(object + 16) ||
+          !foreachNullProperties.count(packed))
+        return false;
+      foreachNulls.insert(packed);
+    }
+    if ((!foreachNull && isSourceExpressionKind(read16(object + 28))) ||
         obelisk::reflection::vpiObjectSetContains(
             obelisk::reflection::VPIObjectSetID::TaskFunctionCallObjects,
             read16(object + 28)))
@@ -5562,6 +5580,9 @@ bool validateDatabaseImpl(const Database &database) {
     if (read16(object + 28) ==
             static_cast<uint32_t>(
                 obelisk::reflection::VPIObjectKind::PrimTerm) ||
+        read16(object + 28) ==
+            static_cast<uint32_t>(
+                obelisk::reflection::VPIObjectKind::Operation) ||
         !obelisk::reflection::findVPIValuePolicy(read16(object + 28)) ||
         (read16(object + 30) &
          OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0)
@@ -6620,6 +6641,9 @@ bool validateDatabaseImpl(const Database &database) {
   std::unordered_map<uint32_t, uint32_t> frozenEnumOwners;
   std::unordered_map<uint32_t, uint32_t> frozenEnumInventories;
   std::unordered_map<uint32_t, uint64_t> unresolvedParameterParents;
+  std::unordered_map<uint32_t, uint32_t> foreachNullOwners;
+  std::unordered_map<uint32_t, uint32_t> foreachCollections, foreachSlotCounts;
+  std::unordered_set<uint32_t> foreachIndexLocals;
   std::unordered_map<uint32_t, uint32_t> expressionParents;
   std::unordered_map<uint32_t, uint32_t> expressionOperandCounts;
   std::unordered_set<uint32_t> explicitClassAssignments;
@@ -7028,10 +7052,43 @@ bool validateDatabaseImpl(const Database &database) {
           !proceduralStaticScopes.emplace(sourceEndpoint, packedTarget).second)
         return false;
     }
+    const bool foreachOwner =
+        sourceTable == obelisk::reflection::TableKind::Statement &&
+        sourceKind == static_cast<uint32_t>(
+                          obelisk::reflection::VPIObjectKind::ForeachStmt);
+    const bool foreachIndex =
+        foreachOwner && iterate &&
+        selector == static_cast<uint32_t>(
+                        obelisk::reflection::VPIRelationKind::LoopVarsRel);
+    if (foreachNulls.count(sourceEndpoint))
+      return false;
+    if (foreachNulls.count(packedTarget)) {
+      if (!foreachIndex || read32(target + 8) != read32(sourceRecord + 12) ||
+          !foreachNullOwners.emplace(packedTarget, sourceEndpoint).second)
+        return false;
+    }
+    if (foreachOwner && iterate &&
+        selector == static_cast<uint32_t>(
+                        obelisk::reflection::VPIRelationKind::VariablesRel)) {
+      if (ordinal ||
+          !foreachCollections.emplace(sourceEndpoint, packedTarget).second)
+        return false;
+    }
+    if (foreachIndex) {
+      ++foreachSlotCounts[sourceEndpoint];
+      if (!foreachNulls.count(packedTarget) &&
+          (!frameLocals.count(packedTarget) ||
+           targetKind != static_cast<uint32_t>(
+                             obelisk::reflection::VPIObjectKind::IntVar) ||
+           !foreachIndexLocals.insert(packedTarget).second))
+        return false;
+    }
     if (iterate &&
-        (lexicalForward ||
-         selector == static_cast<uint32_t>(
-                         obelisk::reflection::VPIRelationKind::VariablesRel)) &&
+        (lexicalForward || foreachIndex ||
+         (!foreachOwner &&
+          selector ==
+              static_cast<uint32_t>(
+                  obelisk::reflection::VPIRelationKind::VariablesRel))) &&
         frameLocals.count(packedTarget)) {
       if (frameLocalOwners.at(packedTarget) != sourceEndpoint)
         return false;
@@ -7440,6 +7497,35 @@ bool validateDatabaseImpl(const Database &database) {
     auto scope = proceduralStaticScopes.find(storage);
     if (owner == proceduralStaticOwners.end() ||
         scope == proceduralStaticScopes.end() || owner->second != scope->second)
+      return false;
+  }
+  if (foreachNullOwners.size() != foreachNulls.size() ||
+      foreachCollections.size() != foreachSlotCounts.size())
+    return false;
+  for (const auto &[owner, count] : foreachSlotCounts) {
+    auto collection = foreachCollections.find(owner);
+    uint32_t semanticIndex = 0;
+    if (collection == foreachCollections.end() ||
+        !findSemanticRootBinding(database, collection->second, semanticIndex))
+      return false;
+    uint32_t dimensions = 0;
+    while (true) {
+      const uint8_t *semantic = database.data + database.semanticTypes +
+                                uint64_t{semanticIndex} * kSemanticTypeSize;
+      uint32_t kind = read32(semantic) & UINT32_C(0xff);
+      if (kind != OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY &&
+          kind != OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY)
+        break;
+      if (read32(semantic + 8) != 1 ||
+          !(read32(semantic) & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE))
+        return false;
+      ++dimensions;
+      const uint8_t *child =
+          database.data + database.semanticTypeEdges +
+          uint64_t{read32(semantic + 4)} * kSemanticTypeEdgeSize;
+      semanticIndex = read32(child);
+    }
+    if (!count || count > dimensions)
       return false;
   }
   for (uint32_t local : frameLocals) {

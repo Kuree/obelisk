@@ -8,6 +8,7 @@
 #include "PrepareTopology.h"
 #include "PrepareExpressions.h"
 #include "PrepareRandomFunctions.h"
+#include "obelisk/Dialect/ForeachLoopMetadata.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
 #include "Detail.h"
@@ -5594,7 +5595,9 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
       continue;
     auto primitiveModule = moduleInstanceScope(parent.getEnclosingScopeId());
     auto terminalSources = getChildren(source);
-    for (auto [index, terminalSource] : llvm::enumerate(terminalSources)) {
+    for (auto terminalItem : llvm::enumerate(terminalSources)) {
+      size_t index = terminalItem.index();
+      Operation *terminalSource = terminalItem.value();
       uint32_t direction =
           primitiveTerminalDirection(primitive, index, terminalSource);
       Operation *expression = terminalSource;
@@ -5730,9 +5733,26 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
                   module, declaration.getReferencedSymbolAttr())))
         proceduralDeclarations.insert(variable);
     });
+    semanticRoot->walk([&](semantic::SVForeachLoopStatementOp loop) {
+      if (!isNestedInCodeUnit(loop) ||
+          llvm::any_of(loop.getLoopDimensions(), [](Attribute attribute) {
+            return !cast<DictionaryAttr>(attribute)
+                        .getAs<BoolAttr>(foreach_metadata::hasStaticRange)
+                        .getValue();
+          }))
+        return;
+      for (Attribute attribute : loop.getLoopDimensions()) {
+        auto reference = cast<DictionaryAttr>(attribute).getAs<SymbolRefAttr>(
+            foreach_metadata::iteratorSymbol);
+        if (reference)
+          if (auto iterator = dyn_cast_or_null<semantic::SVIteratorSymbolOp>(
+                  declarationSymbols.lookupSymbolIn(module, reference)))
+            proceduralDeclarations.insert(iterator);
+      }
+    });
     semanticRoot->walk([&](Operation *source) {
-      if (!isa<semantic::SVVariableSymbolOp,
-               semantic::SVFormalArgumentSymbolOp>(source) ||
+      if (!isa<semantic::SVVariableSymbolOp, semantic::SVFormalArgumentSymbolOp,
+               semantic::SVIteratorSymbolOp>(source) ||
           (!isNestedInCodeUnit(source) &&
            !proceduralDeclarations.contains(source)))
         return;

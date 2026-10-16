@@ -1951,7 +1951,7 @@ add("37.53", S({vpiSequenceDecl}), vpiVariables, Mode::Iterate,
        vpiPackedArrayVar, vpiVirtualInterfaceVar}),
     Order::None);
 add("37.75", S({vpiForeachStmt}), vpiVariables, Mode::Iterate,
-    S({vpiRegArray, vpiStringVar, vpiPackedArrayVar}), Order::None);
+    S({vpiRegArray, vpiStringVar, vpiPackedArrayVar, vpiBitVar, vpiReg}), Order::None);
 add("37.84", S({vpiIterator}), vpiUse, Mode::Handle,
     S({vpiAlways,
        vpiAssignStmt,
