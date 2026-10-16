@@ -11646,10 +11646,14 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
       }
       break;
     }
-    case vpiIntVal:
-      destination->value.integer =
-          width == 0 ? 0 : static_cast<PLI_INT32>(value[0] & ~unknown[0]);
+    case vpiIntVal: {
+      uint32_t low = width == 0 ? 0 : value[0] & ~unknown[0];
+      if (isSigned && width != 0 && width < 32 &&
+          (low & (uint32_t{1} << (width - 1))))
+        low |= ~uint32_t{0} << width;
+      destination->value.integer = static_cast<PLI_INT32>(low);
       break;
+    }
     case vpiScalarVal: {
       bool v = width != 0 && logicBit(value, 0);
       bool u = width != 0 && logicBit(unknown, 0);

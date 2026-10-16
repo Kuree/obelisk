@@ -17075,4 +17075,56 @@ TEST(VPI, WaitingThreadsUseRealSchedulerIdentityAndExpireWithExecution) {
   }
 }
 
+TEST(VPI, IntValueSignExtendsNarrowSignedValues) {
+  for (bool signedValue : {false, true}) {
+    Fixture fixture;
+    fixture.database = makeDatabase();
+    constexpr uint64_t objectOffset = 240, typeOffset = 336;
+    put64(fixture.database, objectOffset + 56, 9);
+    put64(fixture.database, objectOffset + 64, 8);
+    put64(fixture.database, typeOffset + 8, 9);
+    put64(fixture.database, typeOffset + 16, 8);
+    put32(fixture.database, typeOffset + 4,
+          OBELISK_RT_DESIGN_TYPE_SCALAR |
+              ((OBELISK_RT_DESIGN_TYPE_FOUR_STATE |
+                OBELISK_RT_DESIGN_TYPE_PACKED |
+                (signedValue ? OBELISK_RT_DESIGN_TYPE_SIGNED : 0))
+               << 8));
+    put64(fixture.database, 32, imageChecksum(fixture.database));
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+    char name[] = "top.value";
+    vpiHandle value = vpi_handle_by_name(name, nullptr);
+    ASSERT_NE(value, nullptr);
+    EXPECT_EQ(vpi_get(vpiSigned, value), signedValue);
+    obelisk_rt_design_cursor_v1 cursor{};
+    ASSERT_EQ(obelisk_rt_v1_design_lookup(
+                  &fixture.execution, reinterpret_cast<const uint8_t *>(name),
+                  9, &cursor),
+              OBELISK_RT_OK);
+    for (auto [bits, unknown, expected] :
+         {std::tuple<uint64_t, uint64_t, int32_t>{510, 0,
+                                                  signedValue ? -2 : 510},
+          {2, 0, 2},
+          {256, 256, 0}}) {
+      ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &bits, &unknown, 9),
+                OBELISK_RT_OK);
+      s_vpi_value read{};
+      read.format = vpiIntVal;
+      vpi_get_value(value, &read);
+      EXPECT_EQ(vpi_chk_error(nullptr), 0);
+      EXPECT_EQ(read.value.integer, expected);
+    }
+    EXPECT_EQ(vpi_release_handle(value), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
 } // namespace
