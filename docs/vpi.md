@@ -50,8 +50,22 @@ retains original builtin leaf type defaults (numeric, string, chandle, and void)
 and exact preceding type parameter references. `vpiTypespec` remains the effective elaborated type;
 original source File/Line stays attached to the typespec default. These defaults
 share one definition-owned root without per-instance syntax rows. Original
-aliases, nominal and aggregate type defaults, override-assignment relations,
-and nonpacked value parameters remain incomplete.
+aliases, nominal and aggregate type defaults and nonpacked value parameters
+remain incomplete.
+
+Explicit parameter assignments on direct scalar module/interface children of a
+module retain `vpiParamAssign` occurrence identity, exact child `vpiLhs`,
+`vpiConnByName`, and original `vpiRhs`. Literal, supported source operators,
+parent-parameter references, builtin type actuals, and parent type-parameter
+references preserve the source independently of the child's original default
+and effective specialization. Unsupported RHS syntax and named-empty default
+selection remain explicit notices. Assignment declarations and RHS recipes are
+shared across repeated parent instances; only exact contextual child endpoints
+grow per instance. In the two-assignment differential fixture, 128 parent
+instances occupy 63,344 bytes versus 96,872 bytes with duplicated source
+definitions. Equal syntax in separate assignment occurrences keeps distinct
+identity. Interface-parent, instance-array, generate-owned, defparam, and
+configuration override inventories remain incomplete.
 
 Retained expression slots include integral literals, concatenations,
 replications, and bit/part-selects of scalar bits or one-bit packed-array elements.

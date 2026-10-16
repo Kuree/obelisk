@@ -3,6 +3,7 @@
 #ifndef OBELISK_DIALECT_SOURCEPARAMETERMETADATA_H
 #define OBELISK_DIALECT_SOURCEPARAMETERMETADATA_H
 
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/SymbolTable.h"
 
@@ -131,13 +132,13 @@ mlir::LogicalResult verifyValueParameter(Parameter op) {
 
 template <typename Root, typename Actual, typename Unary, typename Binary,
           typename Conditional, typename Reference, typename Literal,
-          typename Expression>
+          typename... ExtraOwners, typename Expression>
 mlir::LogicalResult verifyValueExpression(Expression op, unsigned operands) {
   if (op->hasAttr("semantic_type"))
     return op.emitOpError(
         "unbound source expression cannot carry an effective type");
-  if (!mlir::isa_and_nonnull<Root, Actual, Unary, Binary, Conditional>(
-          op->getParentOp()))
+  if (!mlir::isa_and_nonnull<Root, Actual, Unary, Binary, Conditional,
+                             ExtraOwners...>(op->getParentOp()))
     return op.emitOpError(
         "source expression requires an original value default owner");
   if (childCount(op) != operands)
@@ -175,6 +176,83 @@ mlir::LogicalResult verifyValueReference(Reference op,
   if (target == owner || !target->isBeforeInBlock(owner))
     return op.emitOpError(
         "default reference must name a preceding value parameter");
+  return mlir::success();
+}
+
+// An explicit scalar-instance actual is owned by the instantiating body. The
+// target is a full module-root reference into one direct child instance.
+template <typename InstanceBody, typename TypeDefault, typename TypeReference,
+          typename Unary, typename Binary, typename Conditional,
+          typename Reference, typename Literal, typename Actual>
+mlir::LogicalResult verifyInstanceActual(Actual op) {
+  if (!mlir::isa_and_nonnull<InstanceBody>(op->getParentOp()) ||
+      op->hasAttr("semantic_type"))
+    return op.emitOpError("parameter actual requires an instantiating body "
+                          "and no effective type");
+  if (op.getOrdinal() < 0 || uint64_t(op.getOrdinal()) > UINT32_MAX)
+    return op.emitOpError("parameter actual ordinal exceeds the compact range");
+  bool omitted = bool(op.getUseDefaultAttr());
+  bool unavailable = bool(op.getUnavailableRhsAttr());
+  if ((omitted && (!op.getIsNamedAttr() || unavailable)) ||
+      (unavailable && op.getUnavailableRhs()->empty()) ||
+      childCount(op) != unsigned(!omitted && !unavailable))
+    return op.emitOpError("parameter actual requires one original RHS, named "
+                          "empty syntax, or explicit unavailability");
+  if (childCount(op) &&
+      !mlir::isa<TypeDefault, TypeReference, Unary, Binary, Conditional,
+                 Reference, Literal>(op.getBody().front().front()))
+    return op.emitOpError("parameter actual has an unsupported RHS node");
+  uint64_t expected = 0;
+  for (mlir::Operation &sibling : op->getParentOp()->getRegion(0).front()) {
+    if (&sibling == op.getOperation())
+      break;
+    if (auto previous = mlir::dyn_cast<Actual>(sibling)) {
+      ++expected;
+      if (previous.getParameterAttr() == op.getParameterAttr())
+        return op.emitOpError("duplicates an explicit parameter target");
+    }
+  }
+  if (uint64_t(op.getOrdinal()) != expected)
+    return op.emitOpError(
+        "parameter actual ordinals must be dense source order");
+  return mlir::success();
+}
+
+template <typename Instance, typename InstanceBody, typename Parameter,
+          typename TypeParameter, typename TypeDefault, typename TypeReference,
+          typename Actual>
+mlir::LogicalResult
+verifyInstanceActualTarget(Actual op, mlir::SymbolTableCollection &symbols) {
+  auto module = op->template getParentOfType<mlir::ModuleOp>();
+  auto *target =
+      module ? symbols.lookupSymbolIn(module, op.getParameterAttr()) : nullptr;
+  if (!mlir::isa_and_nonnull<Parameter, TypeParameter>(target) ||
+      isLocalParameter(target))
+    return op.emitOpError("parameter actual must name a nonlocal parameter");
+  auto body = mlir::dyn_cast_or_null<InstanceBody>(target->getParentOp());
+  auto instance =
+      body ? mlir::dyn_cast_or_null<Instance>(body->getParentOp()) : Instance{};
+  if (!instance || instance->getParentOp() != op->getParentOp())
+    return op.emitOpError("parameter actual target must belong to a direct "
+                          "child instance");
+  if (childCount(op)) {
+    bool type =
+        mlir::isa<TypeDefault, TypeReference>(op.getBody().front().front());
+    if (type != mlir::isa<TypeParameter>(target))
+      return op.emitOpError("parameter actual RHS and target kinds disagree");
+  }
+  return mlir::success();
+}
+
+template <typename Actual, typename Parameter, typename Reference>
+mlir::LogicalResult
+verifyInstanceActualLeaf(Reference op, mlir::SymbolTableCollection &symbols) {
+  auto actual = op->template getParentOfType<Actual>();
+  auto *target = symbols.lookupNearestSymbolFrom(op, op.getParameterAttr());
+  if (!actual || !mlir::isa_and_nonnull<Parameter>(target) ||
+      target->getParentOp() != actual->getParentOp())
+    return op.emitOpError("parameter actual reference requires an exact "
+                          "parameter in the instantiating body");
   return mlir::success();
 }
 

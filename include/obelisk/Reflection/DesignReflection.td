@@ -435,7 +435,10 @@ def DefinitionBinding : ReflectionLayout<"DefinitionBinding", 16,
 // combines one of these member indices with an elaborated instance scope.
 // IODecl flags carry exact low-byte vpiDirection. Parameter flags use bits
 // 8/9/10 for localparam, explicit packed range, and known-unavailable default;
-// type parameters permit only localparam and unavailable default.
+// type parameters permit only localparam and unavailable default. Bit 11 marks
+// a complete original source root. ParamAssign members are unnamed: their
+// kind-specific bits 0/1/2 mean named connection, type target, and named-empty
+// default selection; bits 10/11 mean unavailable/retained original RHS.
 def DefinitionMemberName : ReflectionField<"Name", 0, U32LE>;
 def DefinitionMemberFile : ReflectionField<"File", 4, U32LE>;
 def DefinitionMemberLine : ReflectionField<"Line", 8, U32LE>;
@@ -499,7 +502,9 @@ def DefinitionParameterValue : ReflectionLayout<"DefinitionParameterValue", 8,
 
 // One instance-specific expression endpoint per definition member. The row
 // ordinal is implicit in DefinitionBinding.FirstMemberEndpoint, so the common
-// direct case costs only one packed table/index word.
+// direct case costs only one packed table/index word. Only IODecl and
+// ParamAssign consume slots. For IODecl the word is a packed expression target;
+// for ParamAssign it indexes ExpressionBoundMember, the exact child declaration.
 def DefinitionMemberEndpointTarget
     : ReflectionField<"TargetIndexAndTable", 0, U32LE>;
 def DefinitionMemberEndpoint : ReflectionLayout<"DefinitionMemberEndpoint", 4,

@@ -5838,6 +5838,146 @@ private:
     node.getBody().emplaceBlock();
   }
 
+  void
+  importSourceParameterActuals(const slang::ast::InstanceBodySymbol &body) {
+    if (body.flags.has(slang::ast::InstanceFlags::Uninstantiated))
+      return;
+    const auto parameters = originalParameterMap(body);
+    uint64_t ordinal = 0;
+    for (const auto &member : body.members()) {
+      if (member.getParentScope() != &body ||
+          member.kind != slang::ast::SymbolKind::Instance)
+        continue;
+      const auto &instance = member.as<slang::ast::InstanceSymbol>();
+      const auto *syntax = instance.getSyntax();
+      if (!instance.arrayPath.empty() ||
+          instance.body.flags.has(slang::ast::InstanceFlags::Uninstantiated) ||
+          !syntax ||
+          syntax->kind != slang::syntax::SyntaxKind::HierarchicalInstance ||
+          !syntax->parent)
+        continue;
+      const auto *declaration =
+          syntax->parent->as_if<slang::syntax::HierarchyInstantiationSyntax>();
+      if (!declaration || !declaration->parameters)
+        continue;
+      SmallVector<const slang::ast::Symbol *> formals;
+      for (const auto *parameter : instance.body.getParameters())
+        if (!parameter->isLocalParam())
+          formals.push_back(&parameter->symbol);
+      slang::ast::ASTContext context(
+          body, slang::ast::LookupLocation::before(instance));
+      auto sourceParameter = [&](const slang::syntax::NameSyntax &name,
+                                 bool type) -> FlatSymbolRefAttr {
+        slang::ast::LookupResult lookup;
+        slang::ast::Lookup::name(name, context,
+                                 type ? slang::ast::LookupFlags::Type
+                                      : slang::ast::LookupFlags::None,
+                                 lookup);
+        if (!type && (!lookup.found ||
+                      lookup.found->kind != slang::ast::SymbolKind::Parameter))
+          return {};
+        return parameters.lookup(lookup.found);
+      };
+      auto valueReference = [&](const slang::syntax::NameSyntax &name) {
+        return sourceParameter(name, false);
+      };
+      size_t position = 0;
+      for (const auto *argument : declaration->parameters->parameters) {
+        const slang::ast::Symbol *formal = nullptr;
+        const slang::syntax::ExpressionSyntax *expression = nullptr;
+        bool named = false;
+        if (const auto *actual =
+                argument->as_if<slang::syntax::NamedParamAssignmentSyntax>()) {
+          named = true;
+          expression = actual->expr;
+          for (const auto *candidate : formals)
+            if (candidate->name == actual->name.valueText()) {
+              formal = candidate;
+              break;
+            }
+        } else if (const auto *actual =
+                       argument->as_if<
+                           slang::syntax::OrderedParamAssignmentSyntax>()) {
+          expression = actual->expr;
+          if (position < formals.size())
+            formal = formals[position];
+        }
+        ++position;
+        // Slang reports malformed actual lists. Do not manufacture a target
+        // for recovery nodes or an implicit connection for omitted syntax.
+        if (!formal || (!named && !expression))
+          continue;
+        auto range = argument->sourceRange();
+        auto attrs = originalSourceAttributes(range);
+        attrs.set("parameter", getSemanticSymbolReference(*formal));
+        attrs.set("ordinal", builder.getI64IntegerAttr(ordinal++));
+        if (named)
+          attrs.set("is_named", builder.getUnitAttr());
+        FlatSymbolRefAttr typeReference;
+        Type concreteType;
+        bool valueExpression = false;
+        if (!expression) {
+          attrs.set("use_default", builder.getUnitAttr());
+        } else if (formal->kind == slang::ast::SymbolKind::TypeParameter) {
+          const slang::syntax::NameSyntax *name =
+              expression->as_if<slang::syntax::NameSyntax>();
+          if (const auto *type =
+                  expression->as_if<slang::syntax::NamedTypeSyntax>())
+            name = type->name;
+          if (name)
+            typeReference = sourceParameter(*name, true);
+          bool independent = false;
+          if (const auto *integer =
+                  expression->as_if<slang::syntax::IntegerTypeSyntax>())
+            independent = integer->dimensions.empty();
+          if (expression->as_if<slang::syntax::KeywordTypeSyntax>())
+            independent =
+                expression->kind != slang::syntax::SyntaxKind::Untyped;
+          if (independent) {
+            const auto &type = slang::ast::Type::fromSyntax(
+                body.getCompilation(),
+                expression->as<slang::syntax::DataTypeSyntax>(), context,
+                nullptr);
+            if (!type.isError())
+              concreteType = typeConverter.convert(type);
+          }
+        } else {
+          valueExpression =
+              canImportOriginalValueExpression(*expression, valueReference);
+        }
+        if (expression && !typeReference && !concreteType && !valueExpression)
+          attrs.set("unavailable_rhs",
+                    builder.getStringAttr(expression->toString()));
+        auto actual = slangir::SourceParameterActualOp::create(
+            builder, sourceLocation(range.start()), TypeRange{}, ValueRange{},
+            attrs.getAttrs());
+        actual.getBody().emplaceBlock();
+        pendingReferences.push_back(
+            {actual, formal, builder.getStringAttr("parameter")});
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPointToStart(&actual.getBody().front());
+        if (typeReference || concreteType) {
+          auto typeAttrs = originalSourceAttributes(expression->sourceRange());
+          Operation *node;
+          if (typeReference) {
+            typeAttrs.set("parameter", typeReference);
+            node = slangir::SourceTypeReferenceDefaultOp::create(
+                builder, sourceLocation(expression->sourceRange().start()),
+                TypeRange{}, ValueRange{}, typeAttrs.getAttrs());
+          } else {
+            typeAttrs.set("semantic_type", TypeAttr::get(concreteType));
+            node = slangir::SourceTypeDefaultOp::create(
+                builder, sourceLocation(expression->sourceRange().start()),
+                TypeRange{}, ValueRange{}, typeAttrs.getAttrs());
+          }
+          node->getRegion(0).emplaceBlock();
+        } else if (valueExpression) {
+          importOriginalValueExpression(*expression, context, valueReference);
+        }
+      }
+    }
+  }
+
   void importSourceDeclaredType(const slang::ast::DeclaredType &declared,
                                 const slang::ast::Symbol &symbol,
                                 const OriginalParameterMap &types) {
@@ -6760,6 +6900,9 @@ private:
       this->visitDefault(node);
       if (const auto *baseConstructorCall = node.getBaseConstructorCall())
         baseConstructorCall->visit(*this);
+    } else if constexpr (std::same_as<T, slang::ast::InstanceBodySymbol>) {
+      this->visitDefault(node);
+      importSourceParameterActuals(node);
     } else if constexpr (std::same_as<T, slang::ast::InstanceSymbol>) {
       importPortConnections(node);
       node.body.visit(*this);

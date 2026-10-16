@@ -327,6 +327,7 @@ add_executable(obelisk-design-database-dump-test EXCLUDE_FROM_ALL
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPISharedParametersTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPISharedParameterDefaultsTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPISharedTypeDefaultsTest.cpp"
+  "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIParameterAssignmentsTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIExpressionTemplatesTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPISourceOnlyExpressionsTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIIntegralOperatorsTest.cpp"

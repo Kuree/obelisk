@@ -416,6 +416,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   SmallVector<ExpressionNodeRecord> expressionNodes;
   SmallVector<uint32_t> expressionOperands, expressionLeaves;
   SmallVector<std::pair<uint32_t, uint32_t>> expressionBoundMembers;
+  DenseMap<std::pair<uint32_t, uint32_t>, uint32_t> boundMemberIndices;
   SmallVector<ExpressionLeafShapeRecord> expressionLeafShapes;
   SmallVector<sim::SimVPIRelationDeclOp> expressionRootDeclarations;
   llvm::StringMap<sim::SimVPIExpressionDeclOp> expressionsBySymbol;
@@ -1452,8 +1453,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
 
     definitionEndpointCounts.resize(definitions.size());
     for (auto [index, member] : llvm::enumerate(definitionMembers))
-      if (member.declaration.getVpiKind() ==
-          static_cast<uint32_t>(VPIObjectKind::IODecl))
+      if (member.declaration.getVpiKind() == uint32_t(VPIObjectKind::IODecl) ||
+          member.declaration.getVpiKind() ==
+              uint32_t(VPIObjectKind::ParamAssign))
         definitionMemberEndpointOrdinals[index] =
             definitionEndpointCounts[member.definition]++;
 
@@ -1471,7 +1473,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
             (edge->selector ==
                  static_cast<uint32_t>(VPIObjectKind::Parameter) ||
              edge->selector ==
-                 static_cast<uint32_t>(VPIObjectKind::TypeParameter));
+                 static_cast<uint32_t>(VPIObjectKind::TypeParameter) ||
+             edge->selector ==
+                 static_cast<uint32_t>(VPIObjectKind::ParamAssign));
         if (edge->automaticRelation != VPIAutomaticRelation::DefinitionMember &&
             !parameters)
           continue;
@@ -2059,6 +2063,37 @@ SmallVector<uint8_t> serializeDesignDatabase(
         endpoint.emitOpError("VPI endpoint member belongs to another scope "
                              "definition");
         return {};
+      }
+      if (member->second.getVpiKind() == uint32_t(VPIObjectKind::ParamAssign)) {
+        auto reference = endpoint.getExprTarget();
+        auto child = definitionBindingByScope.find(
+            reference.getId().getValue().getZExtValue());
+        auto target =
+            definitionMembersBySymbol.find(reference.getSymbol().getValue());
+        if (reference.getKind() != sim::VPIObjectRefKind::DefinitionMember ||
+            child == definitionBindingByScope.end() ||
+            target == definitionMembersBySymbol.end() ||
+            !definitionMemberIndices.count(target->second)) {
+          endpoint.emitOpError("assignment Lhs endpoint was not serialized");
+          return {};
+        }
+        auto pair = std::make_pair(
+            child->second, definitionMemberIndices.lookup(target->second));
+        auto [entry, inserted] =
+            boundMemberIndices.try_emplace(pair, expressionBoundMembers.size());
+        if (inserted)
+          expressionBoundMembers.push_back(pair);
+        uint32_t slot = binding.firstMemberEndpoint +
+                        definitionMemberEndpointOrdinals.lookup(memberIndex);
+        if (entry->second >= (uint32_t{1} << 30) ||
+            slot >= definitionMemberEndpoints.size() ||
+            definitionMemberEndpoints[slot].targetIndexAndTable != UINT32_MAX) {
+          endpoint.emitOpError(
+              "assignment endpoint is duplicate or not encodable");
+          return {};
+        }
+        definitionMemberEndpoints[slot].targetIndexAndTable = entry->second;
+        continue;
       }
       uint64_t id = endpoint.getExprTarget().getId().getValue().getZExtValue();
       std::optional<ImageObjectRef> target;
@@ -5069,7 +5104,6 @@ SmallVector<uint8_t> serializeDesignDatabase(
         expressionScopeBindings
             [scopes[unpackTableIndex(binding.sourceIndexAndTable)].getId()] =
                 index;
-    DenseMap<std::pair<uint32_t, uint32_t>, uint32_t> boundMemberIndices;
     llvm::StringMap<uint32_t> expressionTemplateIndices;
     auto append32 = [](std::string &key, uint32_t value) {
       for (unsigned byte = 0; byte != 4; ++byte)
@@ -5385,12 +5419,14 @@ SmallVector<uint8_t> serializeDesignDatabase(
         return {};
       }
       Source source = sourceFor(original);
-      expressionRoots.push_back({definitionMemberIndices.lookup(member),
-                                 *semantic, 0,
-                                 uint16_t(VPIRelationKind::ExprRel),
-                                 uint16_t(expressionRootDefinitionMember |
-                                          expressionRootConcreteTypeDefault),
-                                 uint32_t(source.lineColumn >> 32), source});
+      expressionRoots.push_back(
+          {definitionMemberIndices.lookup(member), *semantic, 0,
+           uint16_t(member.getVpiKind() == uint32_t(VPIObjectKind::ParamAssign)
+                        ? VPIRelationKind::RhsRel
+                        : VPIRelationKind::ExprRel),
+           uint16_t(expressionRootDefinitionMember |
+                    expressionRootConcreteTypeDefault),
+           uint32_t(source.lineColumn >> 32), source});
     }
     llvm::sort(expressionRoots, [](const auto &left, const auto &right) {
       return std::tie(left.owner, left.selector, left.mode, left.ordinal) <
@@ -6008,7 +6044,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       intern(definition.source.file);
   }
   for (DefinitionMemberRecord &member : definitionMembers) {
-    intern(member.declaration.getMemberName());
+    if (!member.declaration.getMemberName().empty())
+      intern(member.declaration.getMemberName());
     if (!member.source.file.empty())
       intern(member.source.file);
   }
@@ -6874,8 +6911,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
   for (auto [index, member] : llvm::enumerate(definitionMembers)) {
     DefinitionMemberWriter writer(output.data() + definitionMemberOffset +
                                   index * DefinitionMemberLayout.size);
-    writer.setName(
-        static_cast<uint32_t>(intern(member.declaration.getMemberName())));
+    writer.setName(member.declaration.getMemberName().empty()
+                       ? 0
+                       : static_cast<uint32_t>(
+                             intern(member.declaration.getMemberName())));
     writer.setFile(member.source.file.empty()
                        ? 0
                        : static_cast<uint32_t>(intern(member.source.file)));
@@ -6893,6 +6932,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
     if (member.declaration.getUnavailableDefault())
       flags |= 1u << 10;
     if (member.declaration.getHasOriginalDefault())
+      flags |= 1u << 11;
+    if (member.declaration.getParamAssignByName())
+      flags |= 1u;
+    if (member.declaration.getParamAssignType())
+      flags |= 2u;
+    if (member.declaration.getParamAssignDefault())
+      flags |= 4u;
+    if (member.declaration.getUnavailableRhs())
+      flags |= 1u << 10;
+    if (member.declaration.getHasOriginalRhs())
       flags |= 1u << 11;
     writer.setFlags(flags);
   }

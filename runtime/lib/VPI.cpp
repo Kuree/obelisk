@@ -1464,8 +1464,7 @@ bool rejectUnavailableInheritanceRelation(__vpiHandle *handle,
     message = "explicit class parameter source assignments are unavailable";
   else if (!iterate && selector == vpiRhs &&
            (caps & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETER_RHS))
-    message =
-        "explicit class parameter source expression or type is unavailable";
+    message = "explicit parameter source expression or type is unavailable";
   else if (iterate && (caps & OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC) &&
            (selector == vpiVariables || selector == vpiMethods ||
             selector == vpiConstraint || selector == vpiNamedEvent ||
@@ -9616,7 +9615,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       return nullptr;
     }
   }
-  if (type == vpiExpr && sourceType == vpiTypeParameter &&
+  if (((type == vpiExpr && sourceType == vpiTypeParameter) ||
+       (type == vpiRhs && sourceType == vpiParamAssign)) &&
       handle->form == VPIObjectForm::Design) {
     VPITypeDefaultInfo original{};
     auto status = obelisk_rt_cached_vpi_type_default(handle->owner->context,

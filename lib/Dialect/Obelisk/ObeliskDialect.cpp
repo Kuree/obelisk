@@ -697,6 +697,22 @@ SVSourceClassExtendsOp::verifySymbolUses(SymbolTableCollection &symbols) {
                                              SVClassTypeOp>(*this, symbols);
 }
 
+LogicalResult SVSourceParameterActualOp::verify() {
+  return sourceparameter::verifyInstanceActual<
+      SVInstanceBodySymbolOp, SVSourceTypeDefaultOp,
+      SVSourceTypeReferenceDefaultOp, SVSourceUnaryExpressionOp,
+      SVSourceBinaryExpressionOp, SVSourceConditionalExpressionOp,
+      SVSourceParameterReferenceOp, SVIntegerLiteralOp>(*this);
+}
+
+LogicalResult
+SVSourceParameterActualOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  return sourceparameter::verifyInstanceActualTarget<
+      SVInstanceSymbolOp, SVInstanceBodySymbolOp, SVParameterSymbolOp,
+      SVTypeParameterSymbolOp, SVSourceTypeDefaultOp,
+      SVSourceTypeReferenceDefaultOp>(*this, symbols);
+}
+
 LogicalResult SVSourceClassParameterActualOp::verify() {
   return sourceclass::verifyParameterActual<
       SVSourceClassExtendsOp, SVSourceTypeDefaultOp,
@@ -771,11 +787,16 @@ LogicalResult SVSourceParameterReferenceOp::verify() {
       SVSourceValueDefaultOp, SVSourceClassParameterActualOp,
       SVSourceUnaryExpressionOp, SVSourceBinaryExpressionOp,
       SVSourceConditionalExpressionOp, SVSourceParameterReferenceOp,
-      SVIntegerLiteralOp>(*this, 0);
+      SVIntegerLiteralOp, SVSourceParameterActualOp>(*this, 0);
 }
 
 LogicalResult
 SVSourceParameterReferenceOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  if ((*this)->getParentOfType<SVSourceParameterActualOp>())
+    return sourceparameter::verifyInstanceActualLeaf<SVSourceParameterActualOp,
+                                                     SVParameterSymbolOp>(
+        *this, symbols);
+
   return sourceparameter::verifyValueReference<SVSourceValueParameterSymbolOp,
                                                SVParameterSymbolOp,
                                                SVSourceClassParameterActualOp>(
@@ -796,7 +817,7 @@ LogicalResult SVSourceUnaryExpressionOp::verify() {
       SVSourceValueDefaultOp, SVSourceClassParameterActualOp,
       SVSourceUnaryExpressionOp, SVSourceBinaryExpressionOp,
       SVSourceConditionalExpressionOp, SVSourceParameterReferenceOp,
-      SVIntegerLiteralOp>(*this, 1);
+      SVIntegerLiteralOp, SVSourceParameterActualOp>(*this, 1);
 }
 
 LogicalResult SVSourceBinaryExpressionOp::verify() {
@@ -807,7 +828,7 @@ LogicalResult SVSourceBinaryExpressionOp::verify() {
       SVSourceValueDefaultOp, SVSourceClassParameterActualOp,
       SVSourceUnaryExpressionOp, SVSourceBinaryExpressionOp,
       SVSourceConditionalExpressionOp, SVSourceParameterReferenceOp,
-      SVIntegerLiteralOp>(*this, 2);
+      SVIntegerLiteralOp, SVSourceParameterActualOp>(*this, 2);
 }
 
 LogicalResult SVSourceConditionalExpressionOp::verify() {
@@ -815,7 +836,7 @@ LogicalResult SVSourceConditionalExpressionOp::verify() {
       SVSourceValueDefaultOp, SVSourceClassParameterActualOp,
       SVSourceUnaryExpressionOp, SVSourceBinaryExpressionOp,
       SVSourceConditionalExpressionOp, SVSourceParameterReferenceOp,
-      SVIntegerLiteralOp>(*this, 3);
+      SVIntegerLiteralOp, SVSourceParameterActualOp>(*this, 3);
 }
 
 LogicalResult SVSourceTypeDefaultOp::verify() {
@@ -826,7 +847,7 @@ LogicalResult SVSourceTypeDefaultOp::verify() {
     return failure();
   if (failed(sourceparameter::verifyDefaultOwner<
              SVSourceTypeParameterSymbolOp, SVTypeParameterSymbolOp,
-             SVSourceClassParameterActualOp>(*this)))
+             SVSourceClassParameterActualOp, SVSourceParameterActualOp>(*this)))
     return failure();
   bool unresolved = false;
   getSemanticType().walk([&](Type type) {
@@ -847,14 +868,18 @@ LogicalResult SVSourceTypeReferenceDefaultOp::verify() {
     return failure();
   if ((*this)->hasAttr("semantic_type"))
     return emitOpError("unbound source default cannot carry an effective type");
-  return sourceparameter::verifyDefaultOwner<SVSourceTypeParameterSymbolOp,
-                                             SVTypeParameterSymbolOp,
-                                             SVSourceClassParameterActualOp>(
-      *this);
+  return sourceparameter::verifyDefaultOwner<
+      SVSourceTypeParameterSymbolOp, SVTypeParameterSymbolOp,
+      SVSourceClassParameterActualOp, SVSourceParameterActualOp>(*this);
 }
 
 LogicalResult SVSourceTypeReferenceDefaultOp::verifySymbolUses(
     SymbolTableCollection &symbols) {
+  if ((*this)->getParentOfType<SVSourceParameterActualOp>())
+    return sourceparameter::verifyInstanceActualLeaf<SVSourceParameterActualOp,
+                                                     SVTypeParameterSymbolOp>(
+        *this, symbols);
+
   return sourceparameter::verifyTypeReference<SVSourceClassParameterActualOp,
                                               SVSourceTypeParameterSymbolOp,
                                               SVTypeParameterSymbolOp>(*this,

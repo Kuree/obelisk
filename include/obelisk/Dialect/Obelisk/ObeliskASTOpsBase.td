@@ -1133,6 +1133,24 @@ def SVSourceClassExtendsOp
   let hasVerifier = 1;
 }
 
+def SVSourceParameterActualOp
+    : ObeliskASTNodeOp<"sv.source.parameter_actual",
+                     [DeclareOpInterfaceMethods<SymbolUserOpInterface>],
+                     (ins SymbolRefAttr:$parameter, I64Attr:$ordinal,
+                         OptionalAttr<UnitAttr>:$is_named,
+                         OptionalAttr<UnitAttr>:$use_default,
+                         OptionalAttr<StrAttr>:$unavailable_rhs)> {
+  let summary = "an exact explicit scalar-instance parameter connection";
+  let description = [{
+    The source node belongs to the instantiating instance body. Its parameter
+    names an exact nonlocal declaration in a directly instantiated child body.
+    A supported original value/type is its single child. Unsupported syntax
+    and named empty connections are explicit, without substituting an effective
+    parameter value/type. Ordinals distinguish source assignment occurrences.
+  }];
+  let hasVerifier = 1;
+}
+
 def SVSourceClassParameterActualOp
     : ObeliskASTNodeOp<"sv.source.class_parameter_actual",
                        [DeclareOpInterfaceMethods<SymbolUserOpInterface>],

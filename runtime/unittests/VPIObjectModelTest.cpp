@@ -856,6 +856,9 @@ TEST(VPIObjectModel, AutomaticRelationsAreExplicitStructuralEdges) {
         << keyName(edge.sourceType, edge.selector, edge.mode);
   }
 
+  EXPECT_EQ(requireTraversal(vpiModule, vpiParamAssign, Mode::Iterate)
+                .automaticRelation,
+            Automatic::DirectChild);
   EXPECT_EQ(
       requireTraversal(vpiModule, vpiProcess, Mode::Iterate).automaticRelation,
       Automatic::DirectChild);

@@ -362,8 +362,11 @@ LogicalResult SimVPIDefinitionBindingOp::verifySymbolUses(
 }
 
 LogicalResult SimVPIDefinitionMemberDeclOp::verify() {
-  if (getMemberName().empty())
-    return emitOpError("requires a nonempty member name");
+  bool assignment = getVpiKind() == static_cast<uint32_t>(
+                                        reflection::VPIObjectKind::ParamAssign);
+  if (getMemberName().empty() != assignment)
+    return emitOpError(assignment ? "parameter assignment must be unnamed"
+                                  : "requires a nonempty member name");
   if (getMemberName().contains('\0'))
     return emitOpError("member name contains an embedded NUL");
   if (failed(verifyNonnegative(*this, getVpiKindAttr(), "VPI object kind")) ||
@@ -371,6 +374,23 @@ LogicalResult SimVPIDefinitionMemberDeclOp::verify() {
     return failure();
   using Kind = reflection::VPIObjectKind;
   Kind kind = static_cast<Kind>(getVpiKind());
+  if (assignment) {
+    if (getDirectionAttr() || getIsLocalParam() ||
+        getHasExplicitParameterRange() || getUnavailableDefault() ||
+        getHasOriginalDefault())
+      return emitOpError("parameter assignment cannot carry declaration facts");
+    if (getHasOriginalRhs() == getUnavailableRhs())
+      return emitOpError(
+          "parameter assignment requires exactly one RHS availability fact");
+    if (getParamAssignDefault() &&
+        (!getParamAssignByName() || !getUnavailableRhs()))
+      return emitOpError(
+          "empty named actual requires unavailable source-default RHS");
+    return success();
+  }
+  if (getParamAssignByName() || getParamAssignType() ||
+      getParamAssignDefault() || getUnavailableRhs() || getHasOriginalRhs())
+    return emitOpError("assignment facts require a ParamAssign member");
   if (kind == Kind::IODecl) {
     if (!getDirectionAttr())
       return emitOpError("vpiIODecl member requires a direction");
@@ -398,6 +418,10 @@ LogicalResult SimVPIDefinitionMemberDeclOp::verifySymbolUses(
     return emitOpError("references an unknown VPI definition");
   if (definition.getPrimitiveTypeAttr())
     return emitOpError("built-in primitive definitions cannot have members");
+  if (getVpiKind() == uint32_t(reflection::VPIObjectKind::ParamAssign) &&
+      definition.getVpiKind() != uint32_t(reflection::VPIObjectKind::Module))
+    return emitOpError(
+        "shared parameter assignments require a module definition");
   return success();
 }
 
@@ -428,6 +452,9 @@ LogicalResult SimVPIDefinitionMemberSpecializationOp::verifySymbolUses(
   if (specialization.getDefinitionAttr() != member.getDefinitionAttr())
     return emitOpError(
         "member and specialization reference different VPI definitions");
+  if (member.getVpiKind() == uint32_t(reflection::VPIObjectKind::ParamAssign))
+    return emitOpError(
+        "parameter assignments have no effective specialization type");
   auto value = getImmutableValueAttr();
   bool parameter = member.getVpiKind() ==
                    static_cast<uint32_t>(reflection::VPIObjectKind::Parameter);
@@ -460,8 +487,7 @@ LogicalResult SimVPIDefinitionMemberInstanceBindingOp::verifySymbolUses(
 }
 
 LogicalResult SimVPIDefinitionMemberInstanceBindingOp::verify() {
-  if (getExprTarget().getKind() == VPIObjectRefKind::Symbol ||
-      getExprTarget().getKind() == VPIObjectRefKind::DefinitionMember)
+  if (getExprTarget().getKind() == VPIObjectRefKind::Symbol)
     return emitOpError(
         "expression endpoint must be whole storage or a declared net");
   return verifyNonnegative(*this, getScopeIdAttr(), "scope ID");
@@ -4222,7 +4248,8 @@ LogicalResult SimDesignOp::verifyRegions() {
   SmallVector<Attribute> definitionMemberOrder;
   llvm::DenseMap<Attribute, llvm::DenseSet<StringAttr>> definitionMemberNames;
   for (SimVPIDefinitionMemberDeclOp member : definitionMembers) {
-    if (!definitionMemberNames[member.getDefinitionAttr()]
+    if (!member.getMemberName().empty() &&
+        !definitionMemberNames[member.getDefinitionAttr()]
              .insert(member.getMemberNameAttr())
              .second)
       return member.emitOpError(
@@ -4300,7 +4327,9 @@ LogicalResult SimDesignOp::verifyRegions() {
     if (auto definition =
             definitionMemberOrdinals.find(specialization.getDefinitionAttr());
         definition != definitionMemberOrdinals.end())
-      expectedMemberCount = definition->second.size();
+      for (auto entry : definition->second)
+        expectedMemberCount += entry.second.getVpiKind() !=
+                               uint32_t(reflection::VPIObjectKind::ParamAssign);
     size_t actualMemberCount = 0;
     auto specializationMembers = specializedMembers.find(
         FlatSymbolRefAttr::get(specialization.getSymNameAttr()));
@@ -4326,6 +4355,7 @@ LogicalResult SimDesignOp::verifyRegions() {
   llvm::DenseMap<std::pair<uint64_t, Attribute>,
                  SimVPIDefinitionMemberInstanceBindingOp>
       instanceMemberBindings;
+  llvm::DenseSet<std::pair<uint64_t, Attribute>> assignmentTargets;
   for (SimVPIDefinitionMemberInstanceBindingOp binding :
        definitionMemberInstanceBindings) {
     auto scope = scopes.find(binding.getScopeId());
@@ -4339,10 +4369,48 @@ LogicalResult SimDesignOp::verifyRegions() {
     if (scope->second.getVpiDefinitionAttr() != member.getDefinitionAttr())
       return binding.emitOpError(
           "member does not belong to the scope's VPI definition");
-    if (member.getVpiKind() !=
-        static_cast<uint32_t>(reflection::VPIObjectKind::IODecl))
+    if (member.getVpiKind() ==
+        uint32_t(reflection::VPIObjectKind::ParamAssign)) {
+      auto endpoint = binding.getExprTarget();
+      if (endpoint.getKind() != VPIObjectRefKind::DefinitionMember)
+        return binding.emitOpError(
+            "assignment Lhs requires an exact contextual parameter");
+      auto childScope = scopes.find(endpoint.getId().getValue().getZExtValue());
+      auto target =
+          symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionMemberDeclOp>(
+              binding, endpoint.getSymbol());
+      uint32_t targetKind =
+          member.getParamAssignType()
+              ? uint32_t(reflection::VPIObjectKind::TypeParameter)
+              : uint32_t(reflection::VPIObjectKind::Parameter);
+      if (childScope == scopes.end() || !target || target.getIsLocalParam() ||
+          target.getVpiKind() != targetKind ||
+          !childScope->second.getParentAttr() ||
+          *childScope->second.getParent() != binding.getScopeId() ||
+          childScope->second.getVpiDefinitionAttr() !=
+              target.getDefinitionAttr())
+        return binding.emitOpError("assignment Lhs must name a nonlocal "
+                                   "parameter of an exact child instance");
+      if (!assignmentTargets
+               .insert({uint64_t(binding.getScopeId()), Attribute(endpoint)})
+               .second)
+        return binding.emitOpError(
+            "duplicates a parameter override target in one parent instance");
+      if (!instanceMemberBindings
+               .try_emplace(std::make_pair(binding.getScopeId(),
+                                           Attribute(binding.getMemberAttr())),
+                            binding)
+               .second)
+        return binding.emitOpError(
+            "duplicates an instance binding for the same VPI member");
+      continue;
+    }
+    if (member.getVpiKind() != uint32_t(reflection::VPIObjectKind::IODecl))
       return binding.emitOpError(
-          "expression endpoint member is not a VPI IO declaration");
+          "endpoint member requires IODecl or ParamAssign kind");
+    if (binding.getExprTarget().getKind() == VPIObjectRefKind::DefinitionMember)
+      return binding.emitOpError(
+          "IO endpoint must be whole storage or a declared net");
 
     uint64_t targetId =
         binding.getExprTarget().getId().getValue().getZExtValue();
@@ -4457,6 +4525,23 @@ LogicalResult SimDesignOp::verifyRegions() {
     if (!inserted)
       return binding.emitOpError(
           "duplicates an instance binding for the same VPI member");
+  }
+
+  for (const auto &entry : scopes) {
+    auto scope = entry.second;
+    auto members = definitionMemberOrdinals.find(scope.getVpiDefinitionAttr());
+    if (members == definitionMemberOrdinals.end())
+      continue;
+    for (const auto &item : members->second) {
+      auto member = item.second;
+      if (member.getVpiKind() ==
+              uint32_t(reflection::VPIObjectKind::ParamAssign) &&
+          !instanceMemberBindings.count(
+              std::make_pair(uint64_t(scope.getId()),
+                             Attribute(FlatSymbolRefAttr::get(member)))))
+        return scope.emitOpError(
+            "requires every parameter assignment's exact child endpoint");
+    }
   }
 
   auto memberRelationKey = [](uint64_t scope, Attribute member,

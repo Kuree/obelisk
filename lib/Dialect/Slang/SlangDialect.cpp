@@ -625,6 +625,22 @@ SourceClassExtendsOp::verifySymbolUses(SymbolTableCollection &symbols) {
       *this, symbols);
 }
 
+LogicalResult SourceParameterActualOp::verify() {
+  return sourceparameter::verifyInstanceActual<
+      InstanceBodySymbolOp, SourceTypeDefaultOp, SourceTypeReferenceDefaultOp,
+      SourceUnaryExpressionOp, SourceBinaryExpressionOp,
+      SourceConditionalExpressionOp, SourceParameterReferenceOp,
+      IntegerLiteralOp>(*this);
+}
+
+LogicalResult
+SourceParameterActualOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  return sourceparameter::verifyInstanceActualTarget<
+      InstanceSymbolOp, InstanceBodySymbolOp, ParameterSymbolOp,
+      TypeParameterSymbolOp, SourceTypeDefaultOp, SourceTypeReferenceDefaultOp>(
+      *this, symbols);
+}
+
 LogicalResult SourceClassParameterActualOp::verify() {
   return sourceclass::verifyParameterActual<
       SourceClassExtendsOp, SourceTypeDefaultOp, SourceTypeReferenceDefaultOp,
@@ -697,11 +713,16 @@ LogicalResult SourceParameterReferenceOp::verify() {
       SourceValueDefaultOp, SourceClassParameterActualOp,
       SourceUnaryExpressionOp, SourceBinaryExpressionOp,
       SourceConditionalExpressionOp, SourceParameterReferenceOp,
-      IntegerLiteralOp>(*this, 0);
+      IntegerLiteralOp, SourceParameterActualOp>(*this, 0);
 }
 
 LogicalResult
 SourceParameterReferenceOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  if ((*this)->getParentOfType<SourceParameterActualOp>())
+    return sourceparameter::verifyInstanceActualLeaf<SourceParameterActualOp,
+                                                     ParameterSymbolOp>(
+        *this, symbols);
+
   return sourceparameter::verifyValueReference<SourceValueParameterSymbolOp,
                                                ParameterSymbolOp,
                                                SourceClassParameterActualOp>(
@@ -722,7 +743,7 @@ LogicalResult SourceUnaryExpressionOp::verify() {
       SourceValueDefaultOp, SourceClassParameterActualOp,
       SourceUnaryExpressionOp, SourceBinaryExpressionOp,
       SourceConditionalExpressionOp, SourceParameterReferenceOp,
-      IntegerLiteralOp>(*this, 1);
+      IntegerLiteralOp, SourceParameterActualOp>(*this, 1);
 }
 
 LogicalResult SourceBinaryExpressionOp::verify() {
@@ -733,7 +754,7 @@ LogicalResult SourceBinaryExpressionOp::verify() {
       SourceValueDefaultOp, SourceClassParameterActualOp,
       SourceUnaryExpressionOp, SourceBinaryExpressionOp,
       SourceConditionalExpressionOp, SourceParameterReferenceOp,
-      IntegerLiteralOp>(*this, 2);
+      IntegerLiteralOp, SourceParameterActualOp>(*this, 2);
 }
 
 LogicalResult SourceConditionalExpressionOp::verify() {
@@ -741,7 +762,7 @@ LogicalResult SourceConditionalExpressionOp::verify() {
       SourceValueDefaultOp, SourceClassParameterActualOp,
       SourceUnaryExpressionOp, SourceBinaryExpressionOp,
       SourceConditionalExpressionOp, SourceParameterReferenceOp,
-      IntegerLiteralOp>(*this, 3);
+      IntegerLiteralOp, SourceParameterActualOp>(*this, 3);
 }
 
 LogicalResult SourceTypeDefaultOp::verify() {
@@ -749,10 +770,9 @@ LogicalResult SourceTypeDefaultOp::verify() {
              SourceValueDefaultOp, SourceTypeDefaultOp,
              SourceTypeReferenceDefaultOp, SourceUnsupportedDefaultOp>(*this)))
     return failure();
-  if (failed(sourceparameter::verifyDefaultOwner<SourceTypeParameterSymbolOp,
-                                                 TypeParameterSymbolOp,
-                                                 SourceClassParameterActualOp>(
-          *this)))
+  if (failed(sourceparameter::verifyDefaultOwner<
+             SourceTypeParameterSymbolOp, TypeParameterSymbolOp,
+             SourceClassParameterActualOp, SourceParameterActualOp>(*this)))
     return failure();
   bool unresolved = false;
   getSemanticType().walk([&](Type type) {
@@ -772,14 +792,18 @@ LogicalResult SourceTypeReferenceDefaultOp::verify() {
     return failure();
   if ((*this)->hasAttr("semantic_type"))
     return emitOpError("unbound source default cannot carry an effective type");
-  return sourceparameter::verifyDefaultOwner<SourceTypeParameterSymbolOp,
-                                             TypeParameterSymbolOp,
-                                             SourceClassParameterActualOp>(
-      *this);
+  return sourceparameter::verifyDefaultOwner<
+      SourceTypeParameterSymbolOp, TypeParameterSymbolOp,
+      SourceClassParameterActualOp, SourceParameterActualOp>(*this);
 }
 
 LogicalResult
 SourceTypeReferenceDefaultOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  if ((*this)->getParentOfType<SourceParameterActualOp>())
+    return sourceparameter::verifyInstanceActualLeaf<SourceParameterActualOp,
+                                                     TypeParameterSymbolOp>(
+        *this, symbols);
+
   return sourceparameter::verifyTypeReference<SourceClassParameterActualOp,
                                               SourceTypeParameterSymbolOp,
                                               TypeParameterSymbolOp>(*this,

@@ -123,7 +123,12 @@ def SimVPIDefinitionMemberDeclOp : SimOp<"vpi_definition_member.decl", [
                        OptionalAttr<UnitAttr>:$is_local_param,
                        OptionalAttr<UnitAttr>:$has_explicit_parameter_range,
                        OptionalAttr<UnitAttr>:$unavailable_default,
-                       OptionalAttr<UnitAttr>:$has_original_default);
+                       OptionalAttr<UnitAttr>:$has_original_default,
+                       OptionalAttr<UnitAttr>:$param_assign_by_name,
+                       OptionalAttr<UnitAttr>:$param_assign_type,
+                       OptionalAttr<UnitAttr>:$param_assign_default,
+                       OptionalAttr<UnitAttr>:$unavailable_rhs,
+                       OptionalAttr<UnitAttr>:$has_original_rhs);
   let assemblyFormat = [{
     $sym_name `of` $definition `type` $vpi_kind `ordinal` $ordinal
     `name` $member_name (`direction` $direction^)? attr-dict
@@ -135,12 +140,14 @@ def SimVPIDefinitionTypeDefaultOp : SimOp<"vpi_definition_type_default", [
     DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemWrite<SimInventoryResource>]>
   ]> {
-  let summary = "original builtin typespec default of a shared type parameter";
+  let summary = "original builtin typespec source of a shared member";
   let description = [{
-    Stores the source default independently of effective specialization types.
-    The exact member must be a TypeParameter with has_original_default. This
+    Stores an original type source independently of effective specialization types.
+    The exact member must be a TypeParameter with has_original_default or a
+    type-target ParamAssign with has_original_rhs. This
     bounded form admits anonymous builtin leaf types, without nominal or alias
-    identity. A preceding type parameter uses an exact Expr relation instead.
+    identity. A type parameter reference uses an exact Expr (default) or Rhs
+    (assignment) relation instead.
   }];
   let arguments = (ins FlatSymbolRefAttr:$member,
                        SimVPITypeSemanticsAttr:$original_type);

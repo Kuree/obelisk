@@ -2055,7 +2055,8 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
   auto originalDefaultKey = [&](Operation *parameter) -> FailureOr<ArrayAttr> {
     SmallVector<Operation *> pending;
     for (Operation *child : getChildren(parameter))
-      if (isa<semantic::SVSourceValueDefaultOp, semantic::SVSourceTypeDefaultOp,
+      if (isa<semantic::SVSourceParameterActualOp>(parameter) ||
+          isa<semantic::SVSourceValueDefaultOp, semantic::SVSourceTypeDefaultOp,
               semantic::SVSourceTypeReferenceDefaultOp,
               semantic::SVSourceUnsupportedDefaultOp>(child))
         pending.push_back(child);
@@ -2272,6 +2273,7 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
                 signature.explicitRange ? builder.getUnitAttr() : UnitAttr{},
                 signature.unavailableDefault ? builder.getUnitAttr()
                                              : UnitAttr{},
+                UnitAttr{}, UnitAttr{}, UnitAttr{}, UnitAttr{}, UnitAttr{},
                 UnitAttr{});
             plan.memberSymbols.push_back(FlatSymbolRefAttr::get(declaration));
           }
@@ -2298,7 +2300,10 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
             }
           }
         }
-        if (!signatures.empty())
+        if (!signatures.empty() ||
+            llvm::any_of(getChildren(body), [](Operation *child) {
+              return isa<semantic::SVSourceParameterActualOp>(child);
+            }))
           definitionInstancePlans.push_back(
               {body, scope, definition, std::move(members)});
       });
@@ -2876,7 +2881,141 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     nextSharedExpressionId =
         std::max(nextSharedExpressionId, uint64_t(expression.getId()) + 1);
   SymbolTableCollection defaultSymbols;
-  for (const auto &instance : definitionInstancePlans) {
+  auto materializeOriginalValue =
+      [&](Operation *original, sim::SimVPIDefinitionMemberDeclOp member,
+          ArrayRef<Operation *> sourceMembers,
+          ArrayRef<FlatSymbolRefAttr> memberSymbols, size_t leafLimit,
+          reflection::VPIRelationKind rootSelector) -> LogicalResult {
+    struct DefaultNode {
+      Operation *source;
+      uint32_t parent;
+      uint32_t ordinal;
+      uint32_t code = 0;
+      FlatSymbolRefAttr reference;
+      sim::VPITypeSemanticsAttr semantic;
+      sim::FrozenConstantAttr frozen;
+    };
+    SmallVector<DefaultNode> nodes;
+    SmallVector<DefaultNode> pending{{original, UINT32_MAX, 0}};
+    bool supported = true;
+    while (!pending.empty()) {
+      DefaultNode node = pending.pop_back_val();
+      auto children = getChildren(node.source);
+      if (auto reference =
+              dyn_cast<semantic::SVSourceParameterReferenceOp>(node.source)) {
+        Operation *target = defaultSymbols.lookupNearestSymbolFrom(
+            reference, reference.getParameterAttr());
+        auto found = llvm::find(sourceMembers, target);
+        if (found == sourceMembers.end() ||
+            !isa_and_nonnull<semantic::SVParameterSymbolOp>(target) ||
+            size_t(found - sourceMembers.begin()) >= leafLimit ||
+            !children.empty()) {
+          supported = false;
+          break;
+        }
+        node.reference = memberSymbols[found - sourceMembers.begin()];
+      } else if (isa<semantic::SVIntegerLiteralOp>(node.source)) {
+        auto semantic = makeVPITypeSemantics(
+            node.source->getAttrOfType<TypeAttr>("semantic_type").getValue(),
+            getSemanticLocation(node.source), {}, node.source);
+        auto frozen = freezeSemanticConstant(node.source);
+        if (failed(semantic) || failed(frozen))
+          return failure();
+        node.semantic = *semantic;
+        node.frozen = *frozen;
+      } else {
+        const reflection::VPISourceOperatorDescriptor *operation = nullptr;
+        if (auto unary =
+                dyn_cast<semantic::SVSourceUnaryExpressionOp>(node.source)) {
+          auto name =
+              semantic::stringifySVUnaryOperator(unary.getOperatorKind());
+          operation = reflection::findVPISourceOperator(
+              std::string_view(name.data(), name.size()), 1);
+        } else if (auto binary = dyn_cast<semantic::SVSourceBinaryExpressionOp>(
+                       node.source)) {
+          auto name =
+              semantic::stringifySVBinaryOperator(binary.getOperatorKind());
+          operation = reflection::findVPISourceOperator(
+              std::string_view(name.data(), name.size()), 2);
+        } else if (isa<semantic::SVSourceConditionalExpressionOp>(node.source))
+          operation = reflection::findVPISourceOperator("conditional", 3);
+        if (!operation || children.size() != operation->arity) {
+          supported = false;
+          break;
+        }
+        node.code = operation->value;
+      }
+      if (nodes.size() >= UINT32_MAX)
+        return node.source->emitError("original default tree is too large"),
+               failure();
+      uint32_t parent = nodes.size();
+      nodes.push_back(node);
+      for (size_t ordinal = children.size(); ordinal != 0;)
+        pending.push_back({children[--ordinal], parent, uint32_t(ordinal)});
+    }
+    if (!supported)
+      return success();
+    SmallVector<uint64_t> ids(nodes.size(), 0);
+    for (auto [index, node] : llvm::enumerate(nodes)) {
+      if (node.reference)
+        continue;
+      for (;;) {
+        if (nextSharedExpressionId > uint64_t(INT64_MAX))
+          return node.source->emitError(
+                     "original default expression IDs exhausted"),
+                 failure();
+        ids[index] = nextSharedExpressionId++;
+        auto candidate = FlatSymbolRefAttr::get(
+            builder.getContext(),
+            "__obelisk_vpi_shared_default_" + std::to_string(ids[index]));
+        if (!defaultSymbols.lookupSymbolIn(design, candidate)) {
+          nodes[index].reference = candidate;
+          break;
+        }
+      }
+    }
+    if (member.getVpiKind() == uint32_t(VPIKind::ParamAssign)) {
+      member.removeUnavailableRhsAttr();
+      member.setHasOriginalRhsAttr(builder.getUnitAttr());
+    } else {
+      member.removeUnavailableDefaultAttr();
+      member.setHasOriginalDefaultAttr(builder.getUnitAttr());
+    }
+    for (auto [index, node] : llvm::enumerate(nodes)) {
+      auto owner = node.parent == UINT32_MAX ? FlatSymbolRefAttr::get(member)
+                                             : nodes[node.parent].reference;
+      uint32_t selector = uint32_t(
+          node.parent == UINT32_MAX ? rootSelector
+                                    : reflection::VPIRelationKind::OperandRel);
+      auto mode = node.parent == UINT32_MAX ? sim::VPIRelationMode::Handle
+                                            : sim::VPIRelationMode::Iterate;
+      auto ownerRef = sim::VPIObjectRefAttr::get(builder.getContext(), owner);
+      bool leaf = isa<semantic::SVSourceParameterReferenceOp>(node.source);
+      if (!leaf)
+        sim::SimVPIExpressionDeclOp::create(
+            builder, getSemanticLocation(node.source),
+            node.reference.getValue(), ids[index],
+            uint32_t(node.frozen ? VPIKind::Constant : VPIKind::Operation),
+            IntegerAttr{}, ownerRef, selector, mode, node.ordinal,
+            node.frozen ? TypeAttr::get(node.frozen.getType()) : TypeAttr{},
+            node.semantic, node.frozen,
+            node.code ? builder.getI32IntegerAttr(node.code) : IntegerAttr{},
+            IntegerAttr{}, !node.frozen, member.getDefinitionAttr());
+      auto relation = sim::SimVPIRelationDeclOp::create(
+          builder, getSemanticLocation(node.source), ownerRef, selector, mode,
+          node.ordinal,
+          sim::VPIObjectRefAttr::get(builder.getContext(), node.reference));
+      if (leaf && node.parent != UINT32_MAX) {
+        auto target =
+            defaultSymbols.lookupSymbolIn<sim::SimVPIDefinitionMemberDeclOp>(
+                design, node.reference);
+        sim::set<sim::metadata::VpiExpressionIdentifier>(
+            relation, target.getMemberNameAttr());
+      }
+    }
+    return success();
+  };
+  for (auto instance : definitionInstancePlans) {
     if (!defaultsMaterialized.insert(instance.definition).second)
       continue;
     auto &definitionPlan =
@@ -2939,137 +3078,155 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
       auto original = getChildren(defaultSource);
       if (original.size() != 1)
         continue;
-      struct DefaultNode {
-        Operation *source;
-        uint32_t parent;
-        uint32_t ordinal;
-        uint32_t code = 0;
-        FlatSymbolRefAttr reference;
-        sim::VPITypeSemanticsAttr semantic;
-        sim::FrozenConstantAttr frozen;
-      };
-      SmallVector<DefaultNode> nodes;
-      SmallVector<DefaultNode> pending{{original.front(), UINT32_MAX, 0}};
-      bool supported = true;
-      while (!pending.empty()) {
-        DefaultNode node = pending.pop_back_val();
-        auto children = getChildren(node.source);
-        if (auto reference =
-                dyn_cast<semantic::SVSourceParameterReferenceOp>(node.source)) {
-          Operation *target = defaultSymbols.lookupNearestSymbolFrom(
-              reference, reference.getParameterAttr());
-          auto found = llvm::find(instance.members, target);
-          if (found == instance.members.end() ||
-              !isa_and_nonnull<semantic::SVParameterSymbolOp>(target) ||
-              size_t(found - instance.members.begin()) >= memberOrdinal ||
-              !children.empty()) {
-            supported = false;
-            break;
-          }
-          node.reference =
-              definitionPlan.memberSymbols[found - instance.members.begin()];
-        } else if (isa<semantic::SVIntegerLiteralOp>(node.source)) {
-          auto semantic = makeVPITypeSemantics(
-              node.source->getAttrOfType<TypeAttr>("semantic_type").getValue(),
-              getSemanticLocation(node.source), {}, node.source);
-          auto frozen = freezeSemanticConstant(node.source);
-          if (failed(semantic) || failed(frozen))
-            return failure();
-          node.semantic = *semantic;
-          node.frozen = *frozen;
-        } else {
-          const reflection::VPISourceOperatorDescriptor *operation = nullptr;
-          if (auto unary =
-                  dyn_cast<semantic::SVSourceUnaryExpressionOp>(node.source)) {
-            auto name =
-                semantic::stringifySVUnaryOperator(unary.getOperatorKind());
-            operation = reflection::findVPISourceOperator(
-                std::string_view(name.data(), name.size()), 1);
-          } else if (auto binary =
-                         dyn_cast<semantic::SVSourceBinaryExpressionOp>(
-                             node.source)) {
-            auto name =
-                semantic::stringifySVBinaryOperator(binary.getOperatorKind());
-            operation = reflection::findVPISourceOperator(
-                std::string_view(name.data(), name.size()), 2);
-          } else if (isa<semantic::SVSourceConditionalExpressionOp>(
-                         node.source))
-            operation = reflection::findVPISourceOperator("conditional", 3);
-          if (!operation || children.size() != operation->arity) {
-            supported = false;
-            break;
-          }
-          node.code = operation->value;
-        }
-        if (nodes.size() >= UINT32_MAX)
-          return node.source->emitError("original default tree is too large"),
-                 failure();
-        uint32_t parent = nodes.size();
-        nodes.push_back(node);
-        for (size_t ordinal = children.size(); ordinal != 0;)
-          pending.push_back({children[--ordinal], parent, uint32_t(ordinal)});
-      }
-      if (!supported)
-        continue;
       auto member =
           defaultSymbols.lookupSymbolIn<sim::SimVPIDefinitionMemberDeclOp>(
               design, definitionPlan.memberSymbols[memberOrdinal]);
-      SmallVector<uint64_t> ids(nodes.size(), 0);
-      for (auto [index, node] : llvm::enumerate(nodes)) {
-        if (node.reference)
-          continue;
-        for (;;) {
-          if (nextSharedExpressionId > uint64_t(INT64_MAX))
-            return node.source->emitError(
-                       "original default expression IDs exhausted"),
-                   failure();
-          ids[index] = nextSharedExpressionId++;
-          auto candidate = FlatSymbolRefAttr::get(
-              builder.getContext(),
-              "__obelisk_vpi_shared_default_" + std::to_string(ids[index]));
-          if (!defaultSymbols.lookupSymbolIn(design, candidate)) {
-            nodes[index].reference = candidate;
-            break;
-          }
-        }
+      if (failed(materializeOriginalValue(
+              original.front(), member, instance.members,
+              definitionPlan.memberSymbols, memberOrdinal,
+              reflection::VPIRelationKind::ExprRel)))
+        return failure();
+    }
+  }
+
+  // Explicit actuals belong to the instantiating definition. Share their
+  // syntax once and retain only an exact contextual child endpoint per parent.
+  struct AssignmentPlan {
+    SmallVector<ArrayAttr> signatures;
+    SmallVector<FlatSymbolRefAttr> members;
+  };
+  DenseMap<Attribute, AssignmentPlan> assignmentPlans;
+  for (auto instance : definitionInstancePlans) {
+    if (sim::vpiKindForScope(instance.scope) != uint32_t(VPIKind::Module))
+      continue;
+    auto &declarations = definitionMemberPlans[instance.definition.getValue()];
+    SmallVector<semantic::SVSourceParameterActualOp> actuals;
+    SmallVector<sim::VPIObjectRefAttr> targets;
+    SmallVector<ArrayAttr> signatures;
+    for (auto actual : instance.body.getBody()
+                           .front()
+                           .getOps<semantic::SVSourceParameterActualOp>()) {
+      Operation *target =
+          defaultSymbols.lookupSymbolIn(module, actual.getParameterAttr());
+      auto endpoint = target
+                          ? sim::get<sim::metadata::VpiDefinitionMember>(target)
+                          : sim::VPIObjectRefAttr{};
+      if (!endpoint)
+        continue; // An unsupported target declaration has no fabricated Lhs.
+      Operation *childBody = target->getParentOp();
+      Operation *childInstance = childBody->getParentOp();
+      if (!isa<semantic::SVInstanceBodySymbolOp>(childBody) ||
+          !isa<semantic::SVInstanceSymbolOp>(childInstance) ||
+          childInstance->getParentOp() != instance.body)
+        return actual.emitOpError(
+            "requires an exact direct child instance target");
+      uint64_t childOrdinal = 0, parameterOrdinal = 0;
+      for (Operation *sibling : getChildren(instance.body)) {
+        if (sibling == childInstance)
+          break;
+        childOrdinal += isa<semantic::SVInstanceSymbolOp>(sibling);
       }
-      member.removeUnavailableDefaultAttr();
-      member.setHasOriginalDefaultAttr(builder.getUnitAttr());
-      for (auto [index, node] : llvm::enumerate(nodes)) {
-        auto owner = node.parent == UINT32_MAX
-                         ? definitionPlan.memberSymbols[memberOrdinal]
-                         : nodes[node.parent].reference;
-        uint32_t selector =
-            uint32_t(node.parent == UINT32_MAX
-                         ? reflection::VPIRelationKind::ExprRel
-                         : reflection::VPIRelationKind::OperandRel);
-        auto mode = node.parent == UINT32_MAX ? sim::VPIRelationMode::Handle
-                                              : sim::VPIRelationMode::Iterate;
-        auto ownerRef = sim::VPIObjectRefAttr::get(builder.getContext(), owner);
-        bool leaf = isa<semantic::SVSourceParameterReferenceOp>(node.source);
-        if (!leaf)
-          sim::SimVPIExpressionDeclOp::create(
-              builder, getSemanticLocation(node.source),
-              node.reference.getValue(), ids[index],
-              uint32_t(node.frozen ? VPIKind::Constant : VPIKind::Operation),
-              IntegerAttr{}, ownerRef, selector, mode, node.ordinal,
-              node.frozen ? TypeAttr::get(node.frozen.getType()) : TypeAttr{},
-              node.semantic, node.frozen,
-              node.code ? builder.getI32IntegerAttr(node.code) : IntegerAttr{},
-              IntegerAttr{}, !node.frozen, instance.definition);
-        auto relation = sim::SimVPIRelationDeclOp::create(
-            builder, getSemanticLocation(node.source), ownerRef, selector, mode,
-            node.ordinal,
-            sim::VPIObjectRefAttr::get(builder.getContext(), node.reference));
-        if (leaf && node.parent != UINT32_MAX) {
-          auto target =
-              defaultSymbols.lookupSymbolIn<sim::SimVPIDefinitionMemberDeclOp>(
-                  design, node.reference);
-          sim::set<sim::metadata::VpiExpressionIdentifier>(
-              relation, target.getMemberNameAttr());
-        }
+      for (Operation *sibling : getChildren(childBody)) {
+        if (sibling == target)
+          break;
+        parameterOrdinal += isa<semantic::SVParameterSymbolOp,
+                                semantic::SVTypeParameterSymbolOp>(sibling);
+      }
+      auto original = originalDefaultKey(actual);
+      if (failed(original))
+        return failure();
+      signatures.push_back(builder.getArrayAttr(
+          {builder.getI64IntegerAttr(actual.getOrdinal()),
+           builder.getI64IntegerAttr(childOrdinal),
+           builder.getI64IntegerAttr(parameterOrdinal),
+           builder.getBoolAttr(bool(actual.getIsNamed())),
+           builder.getBoolAttr(bool(actual.getUseDefault())),
+           builder.getBoolAttr(isa<semantic::SVTypeParameterSymbolOp>(target)),
+           actual.getUnavailableRhsAttr()
+               ? Attribute(actual.getUnavailableRhsAttr())
+               : Attribute(builder.getUnitAttr()),
+           *original}));
+      actuals.push_back(actual);
+      targets.push_back(endpoint);
+    }
+    auto [entry, first] = assignmentPlans.try_emplace(instance.definition);
+    auto &plan = entry->second;
+    if (!first && plan.signatures != signatures)
+      return instance.body.emitOpError("instances of one definition disagree "
+                                       "on original parameter assignments");
+    if (first) {
+      plan.signatures = signatures;
+      for (auto [index, actual] : llvm::enumerate(actuals)) {
+        if (declarations.memberSymbols.size() + index > uint64_t(INT32_MAX))
+          return actual.emitOpError(
+              "parameter assignment member ordinal is not encodable");
+        auto name = "__obelisk_vpi_definition_member_" +
+                    std::to_string(nextDefinitionMemberId++);
+        auto member = sim::SimVPIDefinitionMemberDeclOp::create(
+            builder, getSemanticLocation(actual), builder.getStringAttr(name),
+            instance.definition,
+            builder.getI32IntegerAttr(uint32_t(VPIKind::ParamAssign)),
+            builder.getI32IntegerAttr(declarations.memberSymbols.size() +
+                                      index),
+            builder.getStringAttr(""), sim::VPIIODirectionAttr{}, UnitAttr{},
+            UnitAttr{}, UnitAttr{}, UnitAttr{},
+            actual.getIsNamed() ? builder.getUnitAttr() : UnitAttr{},
+            cast<BoolAttr>(signatures[index][5]).getValue()
+                ? builder.getUnitAttr()
+                : UnitAttr{},
+            actual.getUseDefault() ? builder.getUnitAttr() : UnitAttr{},
+            builder.getUnitAttr(), UnitAttr{});
+        plan.members.push_back(FlatSymbolRefAttr::get(member));
+        auto children = getChildren(actual);
+        if (children.size() != 1 || actual.getUseDefault() ||
+            actual.getUnavailableRhsAttr())
+          continue;
+        Operation *original = children.front();
+        if (auto type = dyn_cast<semantic::SVSourceTypeDefaultOp>(original)) {
+          auto semantic = makeVPITypeSemantics(type.getSemanticType(),
+                                               getSemanticLocation(type),
+                                               typedefLayersFor(type), type);
+          if (failed(semantic))
+            return failure();
+          if (!sim::isVPIOriginalBuiltinTypeDefault(*semantic))
+            continue;
+          sim::SimVPIDefinitionTypeDefaultOp::create(
+              builder, getSemanticLocation(type),
+              FlatSymbolRefAttr::get(member), *semantic);
+          member.removeUnavailableRhsAttr();
+          member.setHasOriginalRhsAttr(builder.getUnitAttr());
+        } else if (auto reference =
+                       dyn_cast<semantic::SVSourceTypeReferenceDefaultOp>(
+                           original)) {
+          auto target = defaultSymbols.lookupNearestSymbolFrom(
+              reference, reference.getParameterAttr());
+          auto found = llvm::find(instance.members, target);
+          if (found == instance.members.end() ||
+              !isa_and_nonnull<semantic::SVTypeParameterSymbolOp>(target))
+            continue;
+          sim::SimVPIRelationDeclOp::create(
+              builder, getSemanticLocation(reference),
+              sim::VPIObjectRefAttr::get(builder.getContext(),
+                                         FlatSymbolRefAttr::get(member)),
+              uint32_t(reflection::VPIRelationKind::RhsRel),
+              sim::VPIRelationMode::Handle, 0,
+              sim::VPIObjectRefAttr::get(
+                  builder.getContext(),
+                  declarations
+                      .memberSymbols[found - instance.members.begin()]));
+          member.removeUnavailableRhsAttr();
+          member.setHasOriginalRhsAttr(builder.getUnitAttr());
+        } else if (failed(materializeOriginalValue(
+                       original, member, instance.members,
+                       declarations.memberSymbols, instance.members.size(),
+                       reflection::VPIRelationKind::RhsRel)))
+          return failure();
       }
     }
+    for (auto [member, target] : llvm::zip_equal(plan.members, targets))
+      sim::SimVPIDefinitionMemberInstanceBindingOp::create(
+          builder, getSemanticLocation(instance.body),
+          instance.scope.getIdAttr(), member, target);
   }
 
   std::function<FailureOr<sim::VPITypeSemanticsAttr>(Operation *,

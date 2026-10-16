@@ -22,6 +22,28 @@ using Kind = reflection::VPIObjectKind;
 using Relation = reflection::VPIRelationKind;
 constexpr uint32_t concatOp = 33, multiConcatOp = 34;
 
+bool assignmentMember(SimVPIDefinitionMemberDeclOp member) {
+  return member.getVpiKind() == uint32_t(Kind::ParamAssign);
+}
+uint32_t sourceMemberKind(SimVPIDefinitionMemberDeclOp member) {
+  return assignmentMember(member)
+             ? uint32_t(member.getParamAssignType() ? Kind::TypeParameter
+                                                    : Kind::Parameter)
+             : member.getVpiKind();
+}
+bool originalSourceAvailable(SimVPIDefinitionMemberDeclOp member) {
+  return assignmentMember(member) ? bool(member.getHasOriginalRhs())
+                                  : bool(member.getHasOriginalDefault());
+}
+bool originalSourceUnavailable(SimVPIDefinitionMemberDeclOp member) {
+  return assignmentMember(member) ? bool(member.getUnavailableRhs())
+                                  : bool(member.getUnavailableDefault());
+}
+uint32_t originalSourceSelector(SimVPIDefinitionMemberDeclOp member) {
+  return uint32_t(assignmentMember(member) ? Relation::RhsRel
+                                           : Relation::ExprRel);
+}
+
 bool isIntegral(VPITypeSemanticsAttr semantic) {
   if (!semantic)
     return false;
@@ -185,23 +207,23 @@ LogicalResult verifyDefinitionDefaults(SimDesignOp design) {
     outgoing[source].push_back(relation);
     if (!member)
       continue;
-    if ((member.getVpiKind() != uint32_t(Kind::Parameter) &&
-         member.getVpiKind() != uint32_t(Kind::TypeParameter)) ||
-        member.getUnavailableDefault() || !member.getHasOriginalDefault() ||
-        relation.getSelector() != uint32_t(Relation::ExprRel) ||
+    if ((sourceMemberKind(member) != uint32_t(Kind::Parameter) &&
+         sourceMemberKind(member) != uint32_t(Kind::TypeParameter)) ||
+        originalSourceUnavailable(member) || !originalSourceAvailable(member) ||
+        relation.getSelector() != originalSourceSelector(member) ||
         relation.getMode() != VPIRelationMode::Handle || relation.getOrdinal())
       return relation.emitOpError(
           "definition default requires one available parameter Expr slot");
     if (outgoing[source].size() != 1)
       return relation.emitOpError("duplicates a definition default root");
     if (targetComputed) {
-      if (member.getVpiKind() != uint32_t(Kind::Parameter))
+      if (sourceMemberKind(member) != uint32_t(Kind::Parameter))
         return relation.emitOpError(
             "type parameter default cannot be a value expression");
       roots[target] = member;
     } else {
       auto leaf = cast<SimVPIDefinitionMemberDeclOp>(target);
-      if (leaf.getVpiKind() != member.getVpiKind() ||
+      if (leaf.getVpiKind() != sourceMemberKind(member) ||
           leaf.getDefinitionAttr() != member.getDefinitionAttr() ||
           leaf.getOrdinal() >= member.getOrdinal())
         return relation.emitOpError("default leaf must be an exact preceding "
@@ -210,7 +232,7 @@ LogicalResult verifyDefinitionDefaults(SimDesignOp design) {
   }
   for (auto member : design.getOps<SimVPIDefinitionMemberDeclOp>())
     if (outgoing[member].size() + concreteDefaults.count(member) > 1 ||
-        bool(member.getHasOriginalDefaultAttr()) !=
+        originalSourceAvailable(member) !=
             (outgoing[member].size() + concreteDefaults.count(member) == 1))
       return member.emitOpError(
           "original default fact requires exactly one source root");
@@ -311,8 +333,8 @@ LogicalResult SimVPIDefinitionTypeDefaultOp::verifySymbolUses(
     SymbolTableCollection &symbols) {
   auto member = symbols.lookupNearestSymbolFrom<SimVPIDefinitionMemberDeclOp>(
       *this, getMemberAttr());
-  if (!member || member.getVpiKind() != uint32_t(Kind::TypeParameter) ||
-      !member.getHasOriginalDefault() || member.getUnavailableDefault())
+  if (!member || sourceMemberKind(member) != uint32_t(Kind::TypeParameter) ||
+      !originalSourceAvailable(member) || originalSourceUnavailable(member))
     return emitOpError(
         "requires an available TypeParameter original default member");
   return success();

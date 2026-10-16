@@ -683,7 +683,7 @@ def VPIEarlyDefParamRhs : VPITraversalEdge<DefParamObjects, RhsRel,
   HandleMode, VPIEarlyOrdinaryExpressions, NoOrder, "37.28">;
 def VPIEarlyModuleParamAssigns : VPITraversalEdge<ModuleSource, ParamAssign,
   IterateMode, VPIObjectSet<"EarlyModuleParamAssignTargets", [ParamAssign]>,
-  NoOrder, "37.28">;
+  NoOrder, "37.28", 0, AutomaticDirectChild>;
 def VPIEarlyScopeParamAssigns : VPITraversalEdge<NonInstanceScopeObjects,
   ParamAssign, IterateMode,
   VPIObjectSet<"EarlyScopeParamAssignTargets", [ParamAssign]>,

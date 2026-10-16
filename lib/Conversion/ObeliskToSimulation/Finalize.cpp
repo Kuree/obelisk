@@ -717,6 +717,14 @@ verifyExecutableSubtree(Operation *root, ModuleOp module,
               contextualMemberReference =
                   endpoint.getKind() == sim::VPIObjectRefKind::DefinitionMember &&
                   endpoint.getSymbol() == reference;
+        if (auto binding =
+                dyn_cast<sim::SimVPIDefinitionMemberInstanceBindingOp>(op))
+          if (named.getName() == binding.getExprTargetAttrName()) {
+            auto endpoint = binding.getExprTarget();
+            contextualMemberReference =
+                endpoint.getKind() == sim::VPIObjectRefKind::DefinitionMember &&
+                endpoint.getSymbol() == reference;
+          }
         bool originalDefaultReference = false;
         if (auto endpoint = dyn_cast<sim::VPIObjectRefAttr>(named.getValue());
             endpoint && endpoint.getKind() == sim::VPIObjectRefKind::Symbol &&
