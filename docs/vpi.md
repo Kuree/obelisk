@@ -215,6 +215,11 @@ retain that source-thread parent after the export returns.
 Frame-local declaration inventories can be enumerated before storage is bound.
 Bound local values and selections use weak automatic references and expire with
 their activation; structural typespec and lexical-scope handles remain valid.
+Expressions reached through a frame's current statement retain a weak execution
+context. Automatic operands resolve exact declarations within that invocation,
+including enclosing lexical blocks. Source statements and expressions survive
+frame expiry, while reads requiring expired actuals report a notice. This reuses
+the existing automatic declaration inventory without adding image records.
 Compiler frame instrumentation and source-level local bindings are still being
 completed; ordinary source execution does not yet populate these frame queries.
 

@@ -39,6 +39,7 @@ struct LocalProbe {
             selected = nullptr;
   vpiHandle bit = nullptr, lock = nullptr, pending = nullptr;
   vpiHandle typespec = nullptr, scope = nullptr;
+  vpiHandle expression = nullptr, statement = nullptr;
   std::vector<unsigned> phases;
 };
 int readInt(vpiHandle handle) {
@@ -192,10 +193,88 @@ void inspectLocalABI(obelisk_rt_context *context, LocalProbe &probe,
   auto shadow = vpi_handle_by_name(const_cast<char *>("value"), block);
   ASSERT_NE(shadow, nullptr);
   EXPECT_EQ(vpi_compare_objects(shadow, probe.value), 0);
-  ASSERT_EQ(obelisk_rt_v1_vpi_frame_bind(context, 4, probe.valueRef),
+  ASSERT_EQ(obelisk_rt_v1_vpi_frame_checkpoint(context, 13), OBELISK_RT_OK);
+  probe.statement = vpi_handle(vpiStmt, block);
+  ASSERT_NE(probe.statement, nullptr);
+  probe.expression = vpi_handle(vpiRhs, probe.statement);
+  ASSERT_NE(probe.expression, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, probe.expression), vpiOperation);
+  EXPECT_EQ(vpi_get(vpiOpType, probe.expression), vpiAddOp);
+  vpi_get_value(probe.expression, &unavailable);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+  number = 5;
+  uint64_t shadowRef = 0;
+  ASSERT_EQ(obelisk_rt_v1_native_state_alloc(
+                context, 32, reinterpret_cast<uint8_t *>(&number), nullptr,
+                &shadowRef),
             OBELISK_RT_OK);
-  EXPECT_EQ(readInt(shadow), 23);
+  ASSERT_EQ(obelisk_rt_v1_vpi_frame_bind(context, 4, shadowRef), OBELISK_RT_OK);
+  EXPECT_EQ(readInt(shadow), 5);
+  EXPECT_EQ(readInt(probe.expression), 28);
+  number = 9;
+  ASSERT_EQ(obelisk_rt_v1_native_state_store_plane(
+                context,
+                reinterpret_cast<uint8_t *>(context->stateValue.data()),
+                context->execution->state_bit_count, shadowRef, 32, 0,
+                reinterpret_cast<uint8_t *>(&number), &changed),
+            OBELISK_RT_OK);
+  EXPECT_EQ(readInt(probe.expression), 32);
+  number = 5;
+  ASSERT_EQ(obelisk_rt_v1_native_state_store_plane(
+                context,
+                reinterpret_cast<uint8_t *>(context->stateValue.data()),
+                context->execution->state_bit_count, shadowRef, 32, 0,
+                reinterpret_cast<uint8_t *>(&number), &changed),
+            OBELISK_RT_OK);
+  auto operands = vpi_iterate(vpiOperand, probe.expression);
+  ASSERT_NE(operands, nullptr);
+  same(operands, vpiUse, probe.expression);
+  auto first = vpi_scan(operands);
+  auto second = vpi_scan(operands);
+  ASSERT_NE(first, nullptr);
+  ASSERT_NE(second, nullptr);
+  EXPECT_EQ(vpi_scan(operands), nullptr);
+  EXPECT_EQ(vpi_compare_objects(first, probe.value), 1);
+  EXPECT_EQ(vpi_compare_objects(second, shadow), 1);
+  EXPECT_EQ(readInt(first), 23);
+  EXPECT_EQ(readInt(second), 5);
+  EXPECT_EQ(vpi_release_handle(first), 1);
+  EXPECT_EQ(vpi_release_handle(second), 1);
+
+  // Re-enter the same code unit: an unbound callee variable must not read the
+  // caller's live declaration, even though its immutable cursor is identical.
+  uint64_t recursiveID = 0, recursiveBlockID = 0;
+  ASSERT_EQ(obelisk_rt_v1_vpi_frame_enter(
+                context, 45, OBELISK_RT_VPI_FRAME_CALL, 22, &recursiveID),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_frame_enter(context, 45,
+                                          OBELISK_RT_VPI_FRAME_STATEMENT_SCOPE,
+                                          12, &recursiveBlockID),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_frame_bind(context, 4, shadowRef), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_frame_checkpoint(context, 13), OBELISK_RT_OK);
+  auto recursive = vpi_handle(vpiFrame, nullptr);
+  auto recursiveStatement = vpi_handle(vpiStmt, recursive);
+  auto recursiveExpression = vpi_handle(vpiRhs, recursiveStatement);
+  ASSERT_NE(recursiveExpression, nullptr);
+  EXPECT_EQ(vpi_compare_objects(recursiveExpression, probe.expression), 1);
+  vpi_get_value(recursiveExpression, &unavailable);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+  EXPECT_EQ(readInt(probe.expression), 28);
+  EXPECT_EQ(vpi_release_handle(recursiveExpression), 1);
+  EXPECT_EQ(vpi_release_handle(recursiveStatement), 1);
+  EXPECT_EQ(vpi_release_handle(recursive), 1);
+  ASSERT_EQ(obelisk_rt_v1_vpi_frame_leave(context, recursiveBlockID),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_frame_leave(context, recursiveID), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, shadowRef, 0),
+            OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_vpi_frame_leave(context, blockID), OBELISK_RT_OK);
+  // Source objects outlive execution; only reading their lost actual fails.
+  EXPECT_EQ(vpi_get(vpiType, probe.statement), vpiAssignment);
+  EXPECT_EQ(vpi_get(vpiType, probe.expression), vpiOperation);
+  vpi_get_value(probe.expression, &unavailable);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
   EXPECT_EQ(vpi_get(vpiType, shadow), vpiUndefined);
   EXPECT_NE(vpi_chk_error(nullptr), 0);
   ASSERT_EQ(obelisk_rt_v1_vpi_frame_enter(context, 45,
@@ -371,6 +450,10 @@ TEST(GeneratedDesignDatabase, FrameAutomaticVariables) {
   EXPECT_EQ(vpi_get(vpiType, probe.scope), vpiTask);
   EXPECT_EQ(vpi_release_handle(probe.typespec), 1);
   EXPECT_EQ(vpi_release_handle(probe.scope), 1);
+  EXPECT_EQ(vpi_get(vpiType, probe.statement), vpiAssignment);
+  EXPECT_EQ(vpi_get(vpiType, probe.expression), vpiOperation);
+  EXPECT_EQ(vpi_release_handle(probe.statement), 1);
+  EXPECT_EQ(vpi_release_handle(probe.expression), 1);
   obelisk_rt_v1_context_destroy(runtime);
 
   auto invalid = [&](auto mutate) {

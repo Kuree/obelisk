@@ -25,11 +25,16 @@ module attributes {
     simulation.statement.decl 12 in 45 scope 1 type 33 name "block" {is_scope}
     simulation.statement.decl 13 in 45 scope 1 type 3 parent 12
     simulation.statement.decl 14 in 46 scope 1 type 38
+    simulation.vpi_expression.decl @sum id 100 type 39 in 1 owned_by #simulation.vpi_ref<kind = statement, id = 13 : i64> selector 82 handle ordinal 0 : i32 {vpi_type = #word, op_type = 24 : i32}
+    simulation.vpi_relation.decl #simulation.vpi_ref<kind = statement, id = 13 : i64> selector 82 handle ordinal 0 to #simulation.vpi_ref<kind = symbol, symbol = @sum>
+    simulation.vpi_relation.decl #simulation.vpi_ref<kind = symbol, symbol = @sum> selector 97 iterate ordinal 0 to #simulation.vpi_ref<kind = symbol, symbol = @value> {simulation.vpi_expression_identifier = "value"}
+    simulation.vpi_relation.decl #simulation.vpi_ref<kind = symbol, symbol = @sum> selector 97 iterate ordinal 1 to #simulation.vpi_ref<kind = symbol, symbol = @shadow> {simulation.vpi_expression_identifier = "value"}
     simulation.statement_site.decl 1100 on 11 phase 0
     simulation.statement_site.decl 1200 on 12 phase 0
     simulation.statement_site.decl 1300 on 13 phase 0
     simulation.vpi_call.decl @task_call id 20 in 44 scope 1 type 60 name "worker" statement 11 within 11 callee 45
     simulation.vpi_call.decl @nested_call id 21 in 45 scope 1 type 19 name "inner" within 13 callee 46
+    simulation.vpi_call.decl @recursive_call id 22 in 45 scope 1 type 60 name "worker" within 13 callee 45
     simulation.func @startup(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
       %actor = simulation.spawn @outer(%ctx) : !simulation.context -> !simulation.process

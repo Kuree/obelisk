@@ -212,6 +212,9 @@ struct __vpiHandle {
   uint64_t logicalProcess = 0;
   uint64_t frameActivation = 0;
   uint64_t localDeclarationID = 0;
+  // Source statements and expressions survive execution. This weak context
+  // only selects automatic actuals during value and operand queries.
+  uint64_t expressionFrameActivation = 0;
 
   uint32_t selectionRootType = 0;
   obelisk::reflection::VPIIndexedAccessKind selectionAccessKind =
@@ -858,6 +861,8 @@ vpiHandle makeHandle(VPIState *state, obelisk_rt_design_cursor_v1 cursor,
   }
 }
 
+void inheritExpressionContext(__vpiHandle &target, const __vpiHandle &source);
+
 // Bind an immutable member declaration to a receiver only when the member
 // needs an instance. Static members retain their independent lifetime.
 vpiHandle makeRelatedHandle(__vpiHandle *source,
@@ -871,6 +876,8 @@ vpiHandle makeRelatedHandle(__vpiHandle *source,
       makeHandle(source->owner, target, targetType, statement,
                  obelisk::runtime::hasClassDefinitionValueOrigin(
                      sourceType, source->classDefinitionOrigin, targetType));
+  if (auto *handle = findHandle(result))
+    inheritExpressionContext(*handle, *source);
   if (!result || !source->dynamicObject)
     return result;
   VPIClassMemberBinding member{};
@@ -4188,6 +4195,7 @@ void copyUseRecipe(__vpiHandle &iterator, const __vpiHandle &source) {
   iterator.logicalProcess = source.logicalProcess;
   iterator.frameActivation = source.frameActivation;
   iterator.localDeclarationID = source.localDeclarationID;
+  iterator.expressionFrameActivation = source.expressionFrameActivation;
   iterator.useForm = source.form;
   iterator.snapshot = source.snapshot;
   iterator.useSemanticCursor = source.semanticCursor;
@@ -4267,6 +4275,53 @@ vpiHandle threadChildren(__vpiHandle *source) {
   OBELISK_RT_CATCH_ALL {
     setError(source->owner, "could not snapshot VPI child threads", vpiSystem);
     return nullptr;
+  }
+}
+
+void inheritExpressionContext(__vpiHandle &target, const __vpiHandle &source) {
+  const uint64_t activation = source.expressionFrameActivation
+                                  ? source.expressionFrameActivation
+                                  : source.frameActivation;
+  if (!activation)
+    return;
+  obelisk_rt_design_info_v1 info{};
+  const bool local =
+      obelisk_rt_cached_design_info(target.owner->context, target.cursor,
+                                    &info) == OBELISK_RT_OK &&
+      (info.capabilities & OBELISK_RT_DESIGN_CAP_FRAME_LOCAL);
+  VPIExpressionInfo expression{};
+  if (!local && !target.statement &&
+      obelisk_rt_cached_vpi_expression(target.owner->context, target.cursor,
+                                       &expression) != OBELISK_RT_OK)
+    return;
+  target.expressionFrameActivation = activation;
+  if (!local)
+    return;
+  auto *state = target.owner;
+  auto frame = state->frames.find(activation);
+  std::vector<VPIFrameLocalBinding> locals;
+  while (frame != state->frames.end()) {
+    const auto &scope = frame->second;
+    auto status = obelisk_rt_cached_vpi_frame_locals(
+        state->context, scope.lexicalCodeUnit, scope.lexicalScope, locals);
+    if (status != OBELISK_RT_OK)
+      return;
+    for (const auto &binding : locals) {
+      if (binding.declaration.offset != target.cursor.offset)
+        continue;
+      target.frameActivation = scope.id;
+      target.localDeclarationID = binding.id;
+      target.allocationScheme = vpiAutomaticScheme;
+      state->hasFrameHandles = true;
+      return;
+    }
+    // Stop at this invocation's code-unit scope, including recursive calls.
+    // Caller activations cannot supply an unbound callee declaration.
+    auto owner = state->frameLexicalOwners.find(scope.codeUnit);
+    if (owner == state->frameLexicalOwners.end() ||
+        scope.lexicalScope.offset == owner->second.second.offset)
+      return;
+    frame = state->frames.find(scope.parent);
   }
 }
 
@@ -4398,6 +4453,7 @@ vpiHandle makeUseHandle(__vpiHandle *iterator) {
         handle->logicalProcess = iterator->logicalProcess;
         handle->frameActivation = iterator->frameActivation;
         handle->localDeclarationID = iterator->localDeclarationID;
+        handle->expressionFrameActivation = iterator->expressionFrameActivation;
         handle->allocationScheme = iterator->useAllocationScheme;
       }
     }
@@ -5423,7 +5479,7 @@ bool readExpressionValue(__vpiHandle *handle, const VPIExpressionInfo &rootInfo,
       leaf.classDefinitionOrigin = handle->classDefinitionOrigin;
       leaf.dynamicObject = handle->dynamicObject;
       leaf.dynamicIdentity = handle->dynamicIdentity;
-      leaf.frameActivation = handle->frameActivation;
+      inheritExpressionContext(leaf, *handle);
       const auto *policy = valuePolicyFor(&leaf);
       VPIValueSource source{};
       Evaluated result;
@@ -6165,18 +6221,22 @@ obelisk_rt_status selectedObjectSpan(__vpiHandle *handle,
   selected.cursor = handle->cursor;
   selected.exactVpiType = handle->exactVpiType;
   selected.frameActivation = handle->frameActivation;
+  selected.expressionFrameActivation = handle->expressionFrameActivation;
   selected.dynamicObject = handle->dynamicObject;
   selected.dynamicIdentity = handle->dynamicIdentity;
   VPIValueSource source = initial;
   uint64_t offset = 0;
   auto operand = [&](uint32_t index, __vpiHandle &child) {
     child.owner = handle->owner;
-    child.frameActivation = handle->frameActivation;
+    child.expressionFrameActivation = handle->expressionFrameActivation;
     child.dynamicObject = handle->dynamicObject;
     child.dynamicIdentity = handle->dynamicIdentity;
-    return obelisk_rt_cached_vpi_expression_operand(
-               context, selected.cursor, index, &child.cursor,
-               &child.exactVpiType) == OBELISK_RT_OK;
+    if (obelisk_rt_cached_vpi_expression_operand(
+            context, selected.cursor, index, &child.cursor,
+            &child.exactVpiType) != OBELISK_RT_OK)
+      return false;
+    inheritExpressionContext(child, selected);
+    return true;
   };
   auto integer = [&](uint32_t index, int64_t &result) {
     __vpiHandle child;
@@ -9419,8 +9479,12 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
                  vpiInternal);
         return nullptr;
       }
-      return makeHandle(handle->owner, cursor, exact,
-                        type == vpiStmt || frame.originIsStatement);
+      auto result = makeHandle(handle->owner, cursor, exact,
+                               type == vpiStmt || frame.originIsStatement);
+      if (type == vpiStmt)
+        if (auto *statement = findHandle(result))
+          statement->expressionFrameActivation = frame.id;
+      return result;
     }
     return nullptr;
   }
@@ -10787,6 +10851,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
     source.dynamicIdentity = iterator->dynamicIdentity;
     source.frameActivation = iterator->frameActivation;
     source.localDeclarationID = iterator->localDeclarationID;
+    source.expressionFrameActivation = iterator->expressionFrameActivation;
     for (;;) {
       if (iterator->flatMemberCursor.offset != 0) {
         vpiHandle array = makeRelatedHandle(&source, iterator->flatMemberCursor,
