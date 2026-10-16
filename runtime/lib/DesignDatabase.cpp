@@ -54,6 +54,8 @@ constexpr uint64_t kThreadOriginBindingSize =
     obelisk::reflection::ThreadOriginBindingLayout.size;
 constexpr uint64_t kCallSiteBindingSize =
     obelisk::reflection::CallSiteBindingLayout.size;
+constexpr uint64_t kFrameLocalBindingSize =
+    obelisk::reflection::FrameLocalBindingLayout.size;
 constexpr uint64_t kEventBindingSize =
     obelisk::reflection::EventBindingLayout.size;
 constexpr uint64_t kEventArrayStorageBindingSize =
@@ -273,6 +275,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
            eventArrayStorageBindingCount = 0;
   uint64_t threadOriginBindingOffset = 0, threadOriginBindingCount = 0;
   uint64_t callSiteBindingOffset = 0, callSiteBindingCount = 0;
+  uint64_t frameLocalBindingOffset = 0, frameLocalBindingCount = 0;
   uint64_t relationIndexOffset = 0, relationIndexCount = 0;
   uint64_t relationIndexDimensionOffset = 0, relationIndexDimensionCount = 0;
   uint64_t relationIndexKeyOffset = 0, relationIndexKeyCount = 0;
@@ -382,6 +385,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     threadOriginBindingCount = reader.getThreadOriginBindingCount();
     callSiteBindingOffset = reader.getCallSiteBindingOffset();
     callSiteBindingCount = reader.getCallSiteBindingCount();
+    frameLocalBindingOffset = reader.getFrameLocalBindingOffset();
+    frameLocalBindingCount = reader.getFrameLocalBindingCount();
   }
   database = {data,
               execution->design_database_size,
@@ -431,6 +436,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               threadOriginBindingCount,
               callSiteBindingOffset,
               callSiteBindingCount,
+              frameLocalBindingOffset,
+              frameLocalBindingCount,
               relationIndexOffset,
               relationIndexCount,
               relationIndexDimensionOffset,
@@ -518,6 +525,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
          kThreadOriginBindingSize},
         {database.callSiteBindings, database.callSiteBindingCount,
          kCallSiteBindingSize},
+        {database.frameLocalBindings, database.frameLocalBindingCount,
+         kFrameLocalBindingSize},
         {database.relationIndices, database.relationIndexCount,
          kRelationIndexSize},
         {database.relationIndexDimensions, database.relationIndexDimensionCount,
@@ -598,6 +607,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         database.eventArrayStorageBindingCount != 0 ||
         database.threadOriginBindingCount != 0 ||
         database.callSiteBindingCount != 0 ||
+        database.frameLocalBindingCount != 0 ||
         database.relationIndexCount != 0 ||
         database.relationIndexDimensionCount != 0 ||
         database.relationIndexKeyCount != 0 ||
@@ -667,6 +677,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
                   database.size) ||
       !validRange(database.callSiteBindings, database.callSiteBindingCount,
                   kCallSiteBindingSize, database.size) ||
+      !validRange(database.frameLocalBindings, database.frameLocalBindingCount,
+                  kFrameLocalBindingSize, database.size) ||
       !validRange(database.relationIndices, database.relationIndexCount,
                   kRelationIndexSize, database.size) ||
       !validRange(database.relationIndexDimensions,
@@ -754,6 +766,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        database.threadOriginBindings < kHeaderSize) ||
       (database.callSiteBindingCount != 0 &&
        database.callSiteBindings < kHeaderSize) ||
+      (database.frameLocalBindingCount != 0 &&
+       database.frameLocalBindings < kHeaderSize) ||
       (database.semanticRootBindingCount != 0 &&
        database.semanticRootBindings < kHeaderSize) ||
       (database.relationIndexCount != 0 &&
@@ -833,6 +847,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       database.eventArrayStorageBindingCount > UINT32_MAX ||
       database.threadOriginBindingCount > UINT32_MAX ||
       database.callSiteBindingCount > UINT32_MAX ||
+      database.frameLocalBindingCount > UINT32_MAX ||
       database.relationIndexCount > UINT32_MAX ||
       database.relationIndexDimensionCount > UINT32_MAX ||
       database.relationIndexKeyCount > UINT32_MAX ||
@@ -1064,6 +1079,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        kThreadOriginBindingSize},
       {database.callSiteBindings, database.callSiteBindingCount,
        kCallSiteBindingSize},
+      {database.frameLocalBindings, database.frameLocalBindingCount,
+       kFrameLocalBindingSize},
       {database.relationIndices, database.relationIndexCount,
        kRelationIndexSize},
       {database.relationIndexDimensions, database.relationIndexDimensionCount,
@@ -1461,6 +1478,25 @@ bool packedObjectReferenceOffset(const Database &database, uint32_t packed,
   return false;
 }
 
+// Frame-local lexical owners are either a subroutine object or a retained
+// procedural scope statement; they are not restricted to object tables.
+bool packedFrameLocalScopeOffset(const Database &database, uint32_t packed,
+                                 uint64_t &offset) {
+  using obelisk::reflection::TableKind;
+  const uint32_t index = obelisk::reflection::unpackTableIndex(packed);
+  switch (obelisk::reflection::unpackTableIndexKind(packed)) {
+  case TableKind::Object:
+    return packedObjectReferenceOffset(database, packed, offset);
+  case TableKind::Statement:
+    if (index >= database.statementCount)
+      return false;
+    offset = database.statements + uint64_t{index} * kStatementSize;
+    return true;
+  default:
+    return false;
+  }
+}
+
 bool packedObjectReferenceForCursor(const Database &database, uint64_t offset,
                                     uint32_t &packed) {
   obelisk::reflection::TableKind table;
@@ -1763,6 +1799,10 @@ bool validateDatabaseImpl(const Database &database) {
            kind == static_cast<uint32_t>(Kind::Operation);
   };
   std::unordered_set<uint32_t> sourceClassProperties;
+  std::unordered_set<uint32_t> frameLocals, automaticFrameLocals;
+  std::unordered_map<uint32_t, uint32_t> frameLocalOwners;
+  std::unordered_set<uint32_t> frameLocalForward, frameLocalReverse;
+  std::unordered_map<uint32_t, std::string_view> fixedNames;
   std::unordered_map<uint32_t, uint32_t> sourceClassPropertyOwners;
   std::unordered_map<uint32_t, uint32_t> sourceClassPropertyScopes;
   std::unordered_set<uint32_t> unresolvedTypeParameters;
@@ -1880,7 +1920,8 @@ bool validateDatabaseImpl(const Database &database) {
         const auto *indexed =
             obelisk::reflection::findVPIIndexedAccess(intrinsicKind);
         bool relationIndexed =
-            (caps & OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY) == 0 &&
+            (caps & (OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY |
+                     OBELISK_RT_DESIGN_CAP_FRAME_LOCAL)) == 0 &&
             indexed &&
             indexed->accessKind ==
                 obelisk::reflection::VPIIndexedAccessKind::RelationElement;
@@ -1892,6 +1933,7 @@ bool validateDatabaseImpl(const Database &database) {
         if ((caps & ~(OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC |
                       OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY |
                       OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS |
+                      OBELISK_RT_DESIGN_CAP_FRAME_LOCAL |
                       parameterSourceFlags)) != 0 ||
             !validParameterSourceFlags(intrinsicKind, caps) ||
             read64(record + 80) != 0 ||
@@ -1964,7 +2006,8 @@ bool validateDatabaseImpl(const Database &database) {
                   ~(kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT
                         ? parameterSourceFlags |
                               OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY |
-                              OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS
+                              OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS |
+                              OBELISK_RT_DESIGN_CAP_FRAME_LOCAL
                         : 0u)) != 0) {
         return false;
       }
@@ -2057,6 +2100,14 @@ bool validateDatabaseImpl(const Database &database) {
              obelisk::reflection::VPIPropertyRealization::OptionalImage) ||
         kindAndFlags != static_cast<uint16_t>(descriptor->valueKind))
       return false;
+    if (table == obelisk::reflection::TableKind::Object && selector == 50 &&
+        (read32(database.data + database.objects +
+                uint64_t{sourceIndex} * kObjectSize + 4) &
+         OBELISK_RT_DESIGN_CAP_FRAME_LOCAL)) {
+      if (payload != 1)
+        return false;
+      automaticFrameLocals.insert(packedSource);
+    }
     using ValueKind = obelisk::reflection::VPIPropertyValueKind;
     switch (descriptor->valueKind) {
     case ValueKind::Boolean:
@@ -2084,6 +2135,8 @@ bool validateDatabaseImpl(const Database &database) {
       if (!getString(database, payload, value) ||
           (payload != database.strings && database.data[payload - 1] != 0))
         return false;
+      if (selector == 2 /* vpiName */)
+        fixedNames.emplace(packedSource, value);
       break;
     }
     }
@@ -2810,6 +2863,23 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
       sourceClassProperties.insert(packed);
     }
+    if ((caps & OBELISK_RT_DESIGN_CAP_FRAME_LOCAL) != 0) {
+      const auto *automatics = obelisk::reflection::findVPITraversal(
+          static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Frame),
+          static_cast<uint32_t>(
+              obelisk::reflection::VPIRelationKind::AutomaticsRel),
+          obelisk::reflection::VPITraversalMode::Iterate);
+      if (caps != OBELISK_RT_DESIGN_CAP_FRAME_LOCAL ||
+          !objectSemanticRoots[index] ||
+          !isTypeOffset(database, read64(object + 48)) || !automatics ||
+          !obelisk::reflection::vpiObjectSetContains(automatics->targets,
+                                                     recordVPIKind(object)))
+        return false;
+      if (obelisk::reflection::findVPIProperty(recordVPIKind(object), 50) &&
+          !automaticFrameLocals.count(packed))
+        return false;
+      frameLocals.insert(packed);
+    }
     if (unresolved)
       unresolvedTypeParameters.insert(packed);
     if ((caps & OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0) {
@@ -2847,7 +2917,8 @@ bool validateDatabaseImpl(const Database &database) {
     bool unresolved =
         (caps & OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER) != 0;
     if ((caps & (OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY |
-                 OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS)) != 0 ||
+                 OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS |
+                 OBELISK_RT_DESIGN_CAP_FRAME_LOCAL)) != 0 ||
         !validParameterSourceFlags(read16(object + 28), caps) ||
         (typespec && (unresolved ? staticObjectSemanticRoots[index]
                                  : !staticObjectSemanticRoots[index])))
@@ -3061,7 +3132,8 @@ bool validateDatabaseImpl(const Database &database) {
     if (!packedObjectReferenceOffset(database, read32(binding), objectOffset))
       return false;
     uint32_t root = read32(binding + 4);
-    if (sourceClassProperties.count(read32(binding)) != 0) {
+    if (sourceClassProperties.count(read32(binding)) != 0 ||
+        frameLocals.count(read32(binding)) != 0) {
       // Reuse the generated typespec-to-variable mapping. Events are separate
       // declaration kinds, including an unpacked event-array declaration.
       const uint8_t *semantic = database.data + database.semanticTypes +
@@ -3316,6 +3388,92 @@ bool validateDatabaseImpl(const Database &database) {
   if (canonicalClassRootBindings.size() != canonicalClassRoots.size())
     return false;
 
+  // Automatic local declarations have immutable source and storage shape,
+  // but no allocation until an exact live frame binds an automatic reference.
+  std::unordered_map<uint64_t, uint32_t> localCodeUnits;
+  if (database.frameLocalBindingCount) {
+    for (uint32_t index = 0; index != database.objectCount; ++index) {
+      const uint8_t *object =
+          database.data + database.objects + uint64_t{index} * kObjectSize;
+      if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_PROCESS &&
+          recordKind(object) != OBELISK_RT_DESIGN_RECORD_FUNCTION)
+        continue;
+      auto [entry, inserted] =
+          localCodeUnits.emplace(read64(object + 8), index);
+      if (!inserted)
+        entry->second = UINT32_MAX;
+    }
+  }
+  std::unordered_map<uint32_t, std::unordered_set<uint32_t>> localOrdinals;
+  std::unordered_map<uint32_t, std::unordered_set<std::string_view>> localNames;
+  uint64_t previousLocalID = 0;
+  for (uint64_t index = 0; index != database.frameLocalBindingCount; ++index) {
+    obelisk::reflection::FrameLocalBindingView binding(
+        database.data + database.frameLocalBindings +
+        index * kFrameLocalBindingSize);
+    const uint32_t objectIndex = binding.getObjectIndex();
+    const uint32_t codeUnitIndex = binding.getOwnerCodeUnitIndex();
+    const uint32_t scope = binding.getScopeIndexAndTable();
+    if (!binding.getID() || binding.getID() > INT64_MAX ||
+        binding.getID() <= previousLocalID ||
+        objectIndex >= database.objectCount ||
+        codeUnitIndex >= database.objectCount)
+      return false;
+    previousLocalID = binding.getID();
+    const uint8_t *object =
+        database.data + database.objects + uint64_t{objectIndex} * kObjectSize;
+    const uint8_t *codeUnit = database.data + database.objects +
+                              uint64_t{codeUnitIndex} * kObjectSize;
+    uint32_t packed = 0;
+    if (!obelisk::reflection::tryPackTableIndex(
+            obelisk::reflection::TableKind::Object, objectIndex, packed) ||
+        !frameLocals.count(packed) ||
+        !frameLocalOwners.emplace(packed, scope).second ||
+        read64(object + 16) != read64(codeUnit + 16))
+      return false;
+    auto uniqueUnit = localCodeUnits.find(read64(codeUnit + 8));
+    if (uniqueUnit == localCodeUnits.end() ||
+        uniqueUnit->second != codeUnitIndex)
+      return false;
+    using obelisk::reflection::TableKind;
+    const uint32_t scopeIndex = obelisk::reflection::unpackTableIndex(scope);
+    switch (obelisk::reflection::unpackTableIndexKind(scope)) {
+    case TableKind::Object:
+      if (scopeIndex != codeUnitIndex ||
+          (recordVPIKind(codeUnit) !=
+               static_cast<uint32_t>(
+                   obelisk::reflection::VPIObjectKind::Task) &&
+           recordVPIKind(codeUnit) !=
+               static_cast<uint32_t>(
+                   obelisk::reflection::VPIObjectKind::Function)))
+        return false;
+      break;
+    case TableKind::Statement: {
+      if (scopeIndex >= database.statementCount)
+        return false;
+      const uint8_t *statement = database.data + database.statements +
+                                 uint64_t{scopeIndex} * kStatementSize;
+      if (read32(statement + 8) != codeUnitIndex ||
+          !(read16(statement + 38) & OBELISK_RT_DESIGN_STATEMENT_SCOPE))
+        return false;
+      break;
+    }
+    default:
+      return false;
+    }
+    auto name = fixedNames.find(packed);
+    if (name == fixedNames.end() || name->second.empty() ||
+        !localNames[scope].insert(name->second).second ||
+        !localOrdinals[scope].insert(binding.getOrdinal()).second)
+      return false;
+  }
+  if (frameLocalOwners.size() != frameLocals.size())
+    return false;
+  for (const auto &[scope, ordinals] : localOrdinals)
+    for (uint32_t ordinal = 0; ordinal != ordinals.size(); ++ordinal)
+      if (!ordinals.count(ordinal))
+        return false;
+
   // Each value layout owns a complete pairing between one semantic value
   // graph and exact normalized storage. Legacy mailbox rows share the proof,
   // but never overlap a common-owner group.
@@ -3361,7 +3519,7 @@ bool validateDatabaseImpl(const Database &database) {
     const uint8_t *record = database.data + offset;
     if (recordKind(record) != OBELISK_RT_DESIGN_RECORD_STORAGE &&
         !(recordKind(record) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
-          classFieldLayoutOwners.count(owner)))
+          (classFieldLayoutOwners.count(owner) || frameLocals.count(owner))))
       return false;
     const uint64_t physical = read64(record + 48);
     if (!isTypeOffset(database, physical))
@@ -3636,6 +3794,10 @@ bool validateDatabaseImpl(const Database &database) {
       return false;
   }
 
+  for (uint32_t local : frameLocals)
+    if (!valueLayouts.count(ownerKey(LayoutOwnerKind::ReflectedObject, local)))
+      return false;
+
   std::unordered_set<uint32_t> boundEvents;
   uint32_t previousEvent = 0;
   for (uint64_t index = 0; index != database.eventBindingCount; ++index) {
@@ -3869,7 +4031,7 @@ bool validateDatabaseImpl(const Database &database) {
     if (!obelisk::reflection::tryPackTableIndex(
             obelisk::reflection::TableKind::Object, index, packed) ||
         (!boundClassFields.count(packed) &&
-         !sourceClassProperties.count(packed)))
+         !sourceClassProperties.count(packed) && !frameLocals.count(packed)))
       return false;
   }
 
@@ -5195,6 +5357,22 @@ bool validateDatabaseImpl(const Database &database) {
       if (!inserted && entry->second != sourceEndpoint)
         return false;
     }
+    if (iterate &&
+        (lexicalForward ||
+         selector == static_cast<uint32_t>(
+                         obelisk::reflection::VPIRelationKind::VariablesRel)) &&
+        frameLocals.count(packedTarget)) {
+      if (frameLocalOwners.at(packedTarget) != sourceEndpoint)
+        return false;
+      frameLocalForward.insert(packedTarget);
+    }
+    if (!iterate && frameLocals.count(sourceEndpoint) &&
+        selector == static_cast<uint32_t>(
+                        obelisk::reflection::VPIRelationKind::ScopeRel)) {
+      if (frameLocalOwners.at(sourceEndpoint) != packedTarget)
+        return false;
+      frameLocalReverse.insert(sourceEndpoint);
+    }
     if (!iterate && sourceClassProperties.count(sourceEndpoint) &&
         selector == static_cast<uint32_t>(
                         obelisk::reflection::VPIRelationKind::ScopeRel)) {
@@ -5502,6 +5680,28 @@ bool validateDatabaseImpl(const Database &database) {
                             staticLexicalParents.count(parent->second) != 0;
                    }))
     return false;
+  for (uint32_t local : frameLocals) {
+    if (!frameLocalForward.count(local) || boundClassFields.count(local) ||
+        boundEvents.count(local) || eventArrayStorage.count(local))
+      return false;
+    uint64_t localOffset = 0, scopeOffset = 0;
+    if (!packedObjectReferenceOffset(database, local, localOffset) ||
+        !packedFrameLocalScopeOffset(database, frameLocalOwners.at(local),
+                                     scopeOffset))
+      return false;
+    const auto *scopeEdge = obelisk::reflection::findVPITraversal(
+        objectReferenceVPIKind(database, localOffset),
+        static_cast<uint32_t>(obelisk::reflection::VPIRelationKind::ScopeRel),
+        obelisk::reflection::VPITraversalMode::Handle);
+    if (scopeEdge &&
+        obelisk::reflection::vpiObjectSetContains(
+            scopeEdge->targets,
+            isStatementOffset(database, scopeOffset)
+                ? read16(database.data + scopeOffset + 36)
+                : objectReferenceVPIKind(database, scopeOffset)) &&
+        !frameLocalReverse.count(local))
+      return false;
+  }
   for (uint32_t property : sourceClassProperties) {
     auto owner = sourceClassPropertyOwners.find(property);
     if (owner == sourceClassPropertyOwners.end() ||
@@ -5837,6 +6037,8 @@ bool validateDatabaseImpl(const Database &database) {
         !classEventArray &&
         !sourceClassProperties.count(
             relationEndpoint(obelisk::reflection::TableKind::Object, index)) &&
+        !frameLocals.count(
+            relationEndpoint(obelisk::reflection::TableKind::Object, index)) &&
         access &&
         access->accessKind ==
             obelisk::reflection::VPIIndexedAccessKind::RelationElement;
@@ -5962,6 +6164,9 @@ bool validateDatabaseImpl(const Database &database) {
           kind == OBELISK_RT_DESIGN_RECORD_TYPE)
         return false;
       recordName = read64(record + 40);
+      if (kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+          (read32(record + 4) & OBELISK_RT_DESIGN_CAP_FRAME_LOCAL))
+        return false;
     }
     if (hash != nameHash(reinterpret_cast<const uint8_t *>(name.data()),
                          name.size()) ||
@@ -6240,6 +6445,8 @@ bool sameDatabase(const Database &left, const Database &right) noexcept {
          left.threadOriginBindingCount == right.threadOriginBindingCount &&
          left.callSiteBindings == right.callSiteBindings &&
          left.callSiteBindingCount == right.callSiteBindingCount &&
+         left.frameLocalBindings == right.frameLocalBindings &&
+         left.frameLocalBindingCount == right.frameLocalBindingCount &&
          left.relationIndices == right.relationIndices &&
          left.relationIndexCount == right.relationIndexCount &&
          left.relationIndexDimensions == right.relationIndexDimensions &&
@@ -8018,6 +8225,92 @@ obelisk_rt_status obelisk_rt_cached_vpi_event_array_cell(
   outBinding->storage.offset = storage;
   outBinding->bitOffset = bitOffset;
   return OBELISK_RT_OK;
+}
+
+namespace {
+void decodeFrameLocalBinding(const Database &database,
+                             obelisk::reflection::FrameLocalBindingView binding,
+                             VPIFrameLocalBinding &result) noexcept {
+  result.id = binding.getID();
+  result.declaration.offset =
+      database.objects + uint64_t{binding.getObjectIndex()} * kObjectSize;
+  result.lexicalCodeUnitID =
+      read64(database.data + database.objects +
+             uint64_t{binding.getOwnerCodeUnitIndex()} * kObjectSize + 8);
+  (void)packedFrameLocalScopeOffset(database, binding.getScopeIndexAndTable(),
+                                    result.scope.offset);
+  result.ordinal = binding.getOrdinal();
+}
+} // namespace
+
+obelisk_rt_status
+obelisk_rt_cached_vpi_frame_local(const obelisk_rt_context *context,
+                                  uint64_t id,
+                                  VPIFrameLocalBinding *outBinding) noexcept {
+  if (!outBinding)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outBinding = {};
+  const Database *database = cachedDatabase(context);
+  if (!database)
+    return OBELISK_RT_INVALID_HANDLE;
+  uint64_t low = 0, high = database->frameLocalBindingCount;
+  while (low < high) {
+    const uint64_t middle = low + (high - low) / 2;
+    obelisk::reflection::FrameLocalBindingView binding(
+        database->data + database->frameLocalBindings +
+        middle * kFrameLocalBindingSize);
+    if (binding.getID() < id)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == database->frameLocalBindingCount)
+    return OBELISK_RT_EOF;
+  obelisk::reflection::FrameLocalBindingView binding(
+      database->data + database->frameLocalBindings +
+      low * kFrameLocalBindingSize);
+  if (binding.getID() != id)
+    return OBELISK_RT_EOF;
+  decodeFrameLocalBinding(*database, binding, *outBinding);
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status obelisk_rt_cached_vpi_frame_locals(
+    const obelisk_rt_context *context, uint64_t lexicalCodeUnitID,
+    obelisk_rt_design_cursor_v1 scope,
+    std::vector<VPIFrameLocalBinding> &outBindings) noexcept {
+  outBindings.clear();
+  const Database *database = cachedDatabase(context);
+  if (!database)
+    return OBELISK_RT_INVALID_HANDLE;
+  obelisk::reflection::TableKind table;
+  uint32_t index = 0, packed = 0;
+  if (!relationSourceForCursor(*database, scope.offset, table, index) ||
+      !obelisk::reflection::tryPackTableIndex(table, index, packed))
+    return OBELISK_RT_INVALID_HANDLE;
+  OBELISK_RT_TRY {
+    std::vector<VPIFrameLocalBinding> bindings;
+    for (uint64_t index = 0; index != database->frameLocalBindingCount;
+         ++index) {
+      obelisk::reflection::FrameLocalBindingView binding(
+          database->data + database->frameLocalBindings +
+          index * kFrameLocalBindingSize);
+      if (binding.getScopeIndexAndTable() != packed)
+        continue;
+      VPIFrameLocalBinding local;
+      decodeFrameLocalBinding(*database, binding, local);
+      if (local.lexicalCodeUnitID == lexicalCodeUnitID)
+        bindings.push_back(local);
+    }
+    std::sort(bindings.begin(), bindings.end(),
+              [](const auto &left, const auto &right) {
+                return left.ordinal < right.ordinal;
+              });
+    outBindings = std::move(bindings);
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
 obelisk_rt_status

@@ -704,7 +704,12 @@ def SemanticDirectoryCallSiteBindingOffset
     : ReflectionField<"CallSiteBindingOffset", 560, U64LE>;
 def SemanticDirectoryCallSiteBindingCount
     : ReflectionField<"CallSiteBindingCount", 568, U64LE>;
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 576,
+def SemanticDirectoryFrameLocalBindingOffset
+    : ReflectionField<"FrameLocalBindingOffset", 576, U64LE>;
+def SemanticDirectoryFrameLocalBindingCount
+    : ReflectionField<"FrameLocalBindingCount", 584, U64LE>;
+
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 592,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -773,7 +778,19 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 576,
    SemanticDirectoryValueElementBindingOffset,
    SemanticDirectoryValueElementBindingCount,
    SemanticDirectoryCallSiteBindingOffset,
-   SemanticDirectoryCallSiteBindingCount]>;
+   SemanticDirectoryCallSiteBindingCount,
+   SemanticDirectoryFrameLocalBindingOffset,
+   SemanticDirectoryFrameLocalBindingCount]>;
+
+// A declaration identity and exact lexical scope; no executable address.
+def FrameLocalBindingID : ReflectionField<"ID", 0, U64LE>;
+def FrameLocalBindingObject : ReflectionField<"ObjectIndex", 8, U32LE>;
+def FrameLocalBindingOwner : ReflectionField<"OwnerCodeUnitIndex", 12, U32LE>;
+def FrameLocalBindingScope : ReflectionField<"ScopeIndexAndTable", 16, U32LE>;
+def FrameLocalBindingOrdinal : ReflectionField<"Ordinal", 20, U32LE>;
+def FrameLocalBinding : ReflectionLayout<"FrameLocalBinding", 24,
+  [FrameLocalBindingID, FrameLocalBindingObject, FrameLocalBindingOwner,
+   FrameLocalBindingScope, FrameLocalBindingOrdinal]>;
 
 // Exact immutable call occurrences, including expression-nested calls.
 def CallSiteBindingID : ReflectionField<"ID", 0, U64LE>;

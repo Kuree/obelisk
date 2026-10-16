@@ -257,6 +257,32 @@ def SimStatementDeclOp : SimOp<"statement.decl", [
   let hasVerifier = 1;
 }
 
+def SimVPILocalDeclOp : SimOp<"vpi_local.decl", [
+    Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable declaration of a frame automatic variable";
+  let description = [{
+    Preserves a local declaration independently of any runtime activation or
+    storage allocation. Its owner is the exact lexical code unit; `within`
+    names the nearest retained procedural scope statement when present.
+    Without `within`, the owner must be a task or function scope. Declaration
+    ordinals are dense within each exact scope. The stable ID belongs to the
+    independent local-declaration namespace. This operation does not initialize
+    or allocate storage; an executable binding supplies the current automatic
+    reference after that reference exists.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
+                       I64Attr:$code_unit_id, I64Attr:$scope_id,
+                       OptionalAttr<I64Attr>:$statement_scope_id,
+                       I32Attr:$ordinal, StrAttr:$hierarchical_name,
+                       StrAttr:$debug_name, TypeAttr:$value_type,
+                       SimVPITypeSemanticsAttr:$vpi_type);
+  let assemblyFormat = [{$sym_name `id` $id `in` $code_unit_id `scope`
+    $scope_id (`within` $statement_scope_id^)? `ordinal` $ordinal
+    `hierarchy` $hierarchical_name `debug` $debug_name `:` $value_type attr-dict}];
+  let hasVerifier = 1;
+}
+
 def SimVPICallDeclOp : SimOp<"vpi_call.decl", [
     Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
   ]> {

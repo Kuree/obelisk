@@ -1736,6 +1736,8 @@ struct DesignDatabaseCache {
   uint64_t threadOriginBindingCount = 0;
   uint64_t callSiteBindings = 0;
   uint64_t callSiteBindingCount = 0;
+  uint64_t frameLocalBindings = 0;
+  uint64_t frameLocalBindingCount = 0;
   uint64_t relationIndices = 0;
   uint64_t relationIndexCount = 0;
   uint64_t relationIndexDimensions = 0;
@@ -3887,6 +3889,24 @@ obelisk_rt_status obelisk_rt_cached_vpi_event_array_cell(
 // returned separately because call-as-statement aliases share a public kind
 // with expression occurrences. No native code passes packed image-table
 // references.
+// Immutable automatic declaration inventory. A successful lookup never
+// implies that any activation has initialized or bound executable storage.
+struct VPIFrameLocalBinding {
+  uint64_t id = 0;
+  obelisk_rt_design_cursor_v1 declaration{};
+  uint64_t lexicalCodeUnitID = 0;
+  obelisk_rt_design_cursor_v1 scope{};
+  uint32_t ordinal = 0;
+};
+obelisk_rt_status
+obelisk_rt_cached_vpi_frame_local(const obelisk_rt_context *context,
+                                  uint64_t id,
+                                  VPIFrameLocalBinding *outBinding) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_frame_locals(
+    const obelisk_rt_context *context, uint64_t lexicalCodeUnitID,
+    obelisk_rt_design_cursor_v1 scope,
+    std::vector<VPIFrameLocalBinding> &outBindings) noexcept;
+
 obelisk_rt_status
 obelisk_rt_cached_vpi_call(const obelisk_rt_context *context, uint64_t callID,
                            obelisk_rt_design_cursor_v1 *outCursor,

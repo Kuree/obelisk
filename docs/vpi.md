@@ -112,9 +112,11 @@ The runtime frame API tracks distinct activations and exposes their parent,
 origin, thread, current statement, active state, and automatic lifetime.
 Suspension preserves a frame; return, disable, and kill invalidate the exited
 activations without invalidating their immutable source objects. Bytecode,
-native, and AOT scheduler paths restore the saved caller frame depth. Compiler
-frame instrumentation and automatic-local bindings are still being completed;
-ordinary source execution does not yet populate these frame queries.
+native, and AOT scheduler paths restore the saved caller frame depth. Frame-local declaration inventories can be enumerated before storage is bound.
+Bound local values and selections use weak automatic references and expire with
+their activation; structural typespec and lexical-scope handles remain valid.
+Compiler frame instrumentation and source-level local bindings are still being
+completed; ordinary source execution does not yet populate these frame queries.
 
 `vpiMessages` snapshots mailbox contents in FIFO order without consuming them.
 Integral and packed values retain every bit and unknown bit; real and string

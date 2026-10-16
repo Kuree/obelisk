@@ -1690,6 +1690,8 @@ enum {
   // Named typedef of an unresolved lexical class type parameter. This object
   // acts as a typespec, not a parameter declaration with an effective value.
   OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS = UINT32_C(1) << 12,
+  // Immutable automatic declaration; its value belongs to a live VPI frame.
+  OBELISK_RT_DESIGN_CAP_FRAME_LOCAL = UINT32_C(1) << 13,
   // Definition-backed vpiIODecl views use these record-kind-specific bits
   // for the exact IEEE direction, including vpiRef and undefined.
   OBELISK_RT_DESIGN_CAP_IO_DIRECTION_SHIFT = 8,
@@ -3399,6 +3401,11 @@ obelisk_rt_status obelisk_rt_v1_vpi_frame_enter(obelisk_rt_context *context,
                                                 uint32_t origin_kind,
                                                 uint64_t origin_id,
                                                 uint64_t *out_activation);
+// Bind an existing automatic state reference to one immutable local declaration
+// in the current exact activation. This neither allocates nor initializes it.
+obelisk_rt_status obelisk_rt_v1_vpi_frame_bind(obelisk_rt_context *context,
+                                               uint64_t local_id,
+                                               uint64_t automatic_reference);
 obelisk_rt_status
 obelisk_rt_v1_vpi_frame_checkpoint(obelisk_rt_context *context,
                                    uint64_t statement_id);

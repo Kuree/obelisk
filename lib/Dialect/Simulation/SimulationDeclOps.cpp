@@ -503,6 +503,51 @@ LogicalResult SimStatementDeclOp::verify() {
                                reflectionDefinitionLoc(*this));
 }
 
+LogicalResult SimVPILocalDeclOp::verify() {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("requires a simulation.design owner");
+  if (failed(verifyNonnegative(*this, getIdAttr(), "local declaration ID")) ||
+      failed(verifyNonnegative(*this, getCodeUnitIdAttr(), "code-unit ID")) ||
+      failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")) ||
+      failed(verifyNonnegative(*this, getOrdinalAttr(), "declaration ordinal")))
+    return failure();
+  if (!getId() || !getCodeUnitId())
+    return emitOpError("local declaration and code-unit IDs must be nonzero");
+  if (getStatementScopeIdAttr() &&
+      (failed(verifyNonnegative(*this, getStatementScopeIdAttr(),
+                                "statement scope ID")) ||
+       !*getStatementScopeId()))
+    return emitOpError("statement scope ID must be positive");
+  if (getHierarchicalName().empty() || getDebugName().empty() ||
+      getHierarchicalName().contains('\0') || getDebugName().contains('\0'))
+    return emitOpError("requires nonempty source names without NUL bytes");
+  auto emit = [&] { return emitOpError(); };
+  if (failed(verifyElementType(emit, getValueType())) ||
+      failed(verifyVPITypeSemantics(emit, getValueType(), getVpiType())))
+    return failure();
+  const uint32_t kind = vpiKindForClassMember(getVpiType());
+  const auto *edge = reflection::findVPITraversal(
+      static_cast<uint32_t>(reflection::VPIObjectKind::Frame),
+      static_cast<uint32_t>(reflection::VPIRelationKind::AutomaticsRel),
+      reflection::VPITraversalMode::Iterate);
+  if (!edge || !reflection::vpiObjectSetContains(edge->targets, kind))
+    return emitOpError("type is not a legal frame automatic declaration");
+  if (auto properties = reflectionProperties(*this))
+    for (Attribute attribute : properties.getProperties()) {
+      auto property = cast<VPIPropertyAttr>(attribute);
+      const uint64_t selector =
+          property.getSelector().getValue().getZExtValue();
+      if (selector == 2 && property.getValue() != getDebugNameAttr())
+        return emitOpError(
+            "vpiName must match the exact local declaration name");
+      if (selector == 50 &&
+          property.getValue() != BoolAttr::get(getContext(), true))
+        return emitOpError("frame local declarations must be automatic");
+    }
+  return verifyFixedReflection(*this, kind, reflectionProperties(*this),
+                               reflectionDefinitionLoc(*this));
+}
+
 LogicalResult SimVPICallDeclOp::verify() {
   if (!isa<SimDesignOp>((*this)->getParentOp()))
     return emitOpError("requires a simulation.design owner");
@@ -630,8 +675,8 @@ SimVPIRelationDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       return emitOpError() << "references an unknown " << endpoint
                            << " VPI symbol " << reference.getSymbol();
     if (!isa<SimVPIObjectAnchorOp, SimVPITypespecDeclOp, SimVPINettypeDeclOp,
-             SimVPIClassMemberDeclOp, SimVPIUnresolvedTypeAliasDeclOp>(
-            declaration))
+             SimVPIClassMemberDeclOp, SimVPIUnresolvedTypeAliasDeclOp,
+             SimVPILocalDeclOp>(declaration))
       return emitOpError()
              << endpoint << " VPI symbol " << reference.getSymbol()
              << " must name an object anchor, typespec, or nettype";
@@ -3337,6 +3382,8 @@ LogicalResult SimDesignOp::verifyRegions() {
   SmallVector<SimStatementSiteDeclOp> statementSites;
   SmallVector<SimVPIThreadOriginBindingOp> threadOrigins;
   SmallVector<SimVPICallDeclOp> vpiCalls;
+  SmallVector<SimVPILocalDeclOp> vpiLocals;
+  llvm::DenseSet<uint64_t> vpiLocalIds;
   SmallVector<SimVPIStatementRelationDeclOp> statementRelations;
   SmallVector<SimVPIRelationDeclOp> vpiRelations;
   SmallVector<SimVPIDefinitionMemberDeclOp> definitionMembers;
@@ -3396,6 +3443,11 @@ LogicalResult SimDesignOp::verifyRegions() {
         return failure();
       statements[statement.getId()] = statement;
       statementInventory.push_back(statement);
+    } else if (auto local = dyn_cast<SimVPILocalDeclOp>(op)) {
+      if (failed(
+              addId(local.getIdAttr(), vpiLocalIds, "VPI local declaration")))
+        return failure();
+      vpiLocals.push_back(local);
     } else if (auto call = dyn_cast<SimVPICallDeclOp>(op)) {
       if (failed(addId(call.getIdAttr(), vpiCallIds, "VPI call-site")))
         return failure();
@@ -4189,6 +4241,8 @@ LogicalResult SimDesignOp::verifyRegions() {
       semantic = specialization.getEffectiveTypeAttr();
     else if (auto member = dyn_cast<SimVPIClassMemberDeclOp>(op))
       semantic = member.getVpiType();
+    else if (auto local = dyn_cast<SimVPILocalDeclOp>(op))
+      semantic = local.getVpiType();
     else if (auto anchor = dyn_cast<SimVPIObjectAnchorOp>(op))
       semantic = anchor.getVpiTypeAttr();
     if (!semantic)
@@ -4226,6 +4280,44 @@ LogicalResult SimDesignOp::verifyRegions() {
       static_cast<uint32_t>(reflection::VPIObjectKind::Thread),
       static_cast<uint32_t>(reflection::VPIRelationKind::OriginRel),
       reflection::VPITraversalMode::Handle);
+  llvm::DenseMap<std::pair<uint64_t, uint64_t>, SmallVector<uint32_t>>
+      localOrdinals;
+  llvm::DenseSet<std::pair<Operation *, Attribute>> localNames;
+  for (SimVPILocalDeclOp local : vpiLocals) {
+    auto owner = codeUnits.lookup(local.getCodeUnitId());
+    if (!owner || owner.getScopeId() != local.getScopeId())
+      return local.emitOpError(
+          "owner must name a code unit in its physical scope");
+    Operation *scope = owner;
+    if (auto statementID = local.getStatementScopeId()) {
+      auto statement = statements.lookup(*statementID);
+      if (!statement || !statement.getIsScope() ||
+          statement.getCodeUnitId() != local.getCodeUnitId())
+        return local.emitOpError(
+            "statement scope must belong to the exact lexical code unit");
+      scope = statement;
+    } else if (owner.getCodeUnitKind() != EntryKind::Task &&
+               owner.getCodeUnitKind() != EntryKind::Function) {
+      return local.emitOpError(
+          "local without a statement scope requires a task or function owner");
+    }
+    if (!localNames.insert({scope, local.getDebugNameAttr()}).second)
+      return local.emitOpError(
+          "duplicates a declaration name in the same procedural scope");
+    if (failed(verifyTypeReferences(local, local.getVpiType())))
+      return failure();
+    localOrdinals[{local.getCodeUnitId(),
+                   local.getStatementScopeId().value_or(0)}]
+        .push_back(local.getOrdinal());
+  }
+  for (auto &entry : localOrdinals) {
+    llvm::sort(entry.second);
+    for (auto [index, ordinal] : llvm::enumerate(entry.second))
+      if (index != ordinal)
+        return emitOpError("VPI local declaration ordinals must be dense and "
+                           "unique within each scope");
+  }
+
   llvm::DenseSet<uint64_t> callStatementAliases;
   for (SimVPICallDeclOp call : vpiCalls) {
     auto owner = codeUnits.lookup(call.getCodeUnitId());
@@ -4759,6 +4851,8 @@ LogicalResult SimDesignOp::verifyRegions() {
           kind = static_cast<uint32_t>(reflection::VPIObjectKind::NettypeDecl);
         else if (auto member = dyn_cast<SimVPIClassMemberDeclOp>(declaration))
           kind = vpiKindForClassMember(member.getVpiType());
+        else if (auto local = dyn_cast<SimVPILocalDeclOp>(declaration))
+          kind = vpiKindForClassMember(local.getVpiType());
         break;
       }
       }
