@@ -2389,6 +2389,9 @@ TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
         (descriptor.property == vpiStrength0 ||
          descriptor.property == vpiStrength1))
       expected = PropertyRealization::FixedImage;
+    if (descriptor.sourceType == vpiContAssign &&
+        descriptor.property == vpiNetDeclAssign)
+      expected = PropertyRealization::FixedImage;
     if (netSource && descriptor.property == vpiResolvedNetType)
       expected = PropertyRealization::IndexedImage;
     if (descriptor.stability == PropertyStability::Dynamic)

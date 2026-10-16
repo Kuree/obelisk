@@ -302,7 +302,13 @@ Static inventory includes concrete statement kinds that are not cbStmt-capable;
 those kinds have no callback-site records. A statement's hierarchy-scope index
 identifies its exact elaborated scope. Behavioral statements also name their
 owning process/function object; scope-owned continuous assignments and alias
-statements use the absent-owner sentinel. Lexical statement nesting uses the
+statements use the absent-owner sentinel. Net declaration initializers also
+retain a distinct continuous-assignment identity, the exact declared-net Lhs,
+and supported original Rhs expressions. `vpiNetDeclAssign` distinguishes these
+from explicit assignments to the same net; only true facts occupy image rows.
+Whole-declaration endpoints share the existing driver/load/use relations and
+static strength facts. Assignment value and delay queries remain separate
+followups. Lexical statement nesting uses the
 parent-statement index. Per-design VPI relation edges (such as `vpiStmt`,
 `vpiElseStmt`, and ordered case/for children) are stored in a separate table
 rather than being overloaded onto either field. Structural statement scope

@@ -1069,7 +1069,8 @@ def CaseTypeZ : VPIIntegerPropertyValue<CaseTypeProperty, 3>;
 def NetDeclAssignProperty : VPIProperty<"vpiNetDeclAssign", 43,
   BooleanProperty, NetAndContinuousObjects, "37.16; 37.47", StaticProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
-  DerivedProperty, NetPropertyObjects>;
+  DerivedProperty,
+  VPIObjectSet<"NetDeclarationAssignmentProperties", [ContAssign], [NetFamily]>>;
 def FuncTypeProperty : VPIProperty<"vpiFuncType", 44, IntegerProperty,
   FunctionPropertyObjects, "37.41; 37.42">;
 def UserDefnProperty : VPIProperty<"vpiUserDefn", 45, BooleanProperty,

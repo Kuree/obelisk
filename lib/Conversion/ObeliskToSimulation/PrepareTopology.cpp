@@ -1560,6 +1560,10 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
       defaultStrength = 64; // IEEE 10.3: strong0 and strong1.
       strength0 = assignment.getDriveStrength0();
       strength1 = assignment.getDriveStrength1();
+    } else if (auto net = dyn_cast<semantic::SVNetSymbolOp>(source)) {
+      defaultStrength = 64; // A net declaration assignment is continuous.
+      strength0 = net.getDriveStrength0();
+      strength1 = net.getDriveStrength1();
     } else if (auto primitive =
                    dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(source)) {
       if (primitive->hasAttr("udp_metadata"))
@@ -2301,8 +2305,9 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
   if (invalid)
     return failure();
 
-  // Continuous assignments and net aliases are scope-owned VPI statement
-  // objects even though continuous assignments also have an internal
+  // Continuous assignments, including net declaration assignments, and net
+  // aliases are scope-owned VPI statement objects even though assignments have
+  // an internal
   // executable code unit. Preserve their source identity independently of
   // that executable representation. The generated traversal model decides
   // whether the exact lexical scope may expose each statement kind.
@@ -2334,9 +2339,16 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
   semanticRoot->walk<WalkOrder::PreOrder>(
       [&](Operation *source) {
         VPIKind statementKind;
+        Operation *netInitializer = nullptr;
         if (isa<semantic::SVContinuousAssignSymbolOp>(source))
           statementKind = VPIKind::ContAssign;
-        else if (isa<semantic::SVNetAliasSymbolOp>(source))
+        else if (isa<semantic::SVNetSymbolOp>(source)) {
+          auto initializers = getNetInitializerExpressions(source);
+          if (initializers.size() != 1)
+            return;
+          statementKind = VPIKind::ContAssign;
+          netInitializer = initializers.front();
+        } else if (isa<semantic::SVNetAliasSymbolOp>(source))
           statementKind = VPIKind::AliasStmt;
         else
           return;
@@ -2396,11 +2408,22 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
               builder, location, statementId, IntegerAttr{},
               scopes.lookup(source), selector, IntegerAttr{}, StringAttr{},
               UnitAttr{}, UnitAttr{});
+          SmallVector<Attribute> properties;
           if (auto strengths = driverProperties(source))
-            declaration->setAttr("vpi_properties", strengths);
+            llvm::append_range(properties, strengths.getProperties());
+          if (netInitializer)
+            properties.push_back(sim::VPIPropertyAttr::get(
+                builder.getContext(), builder.getI32IntegerAttr(43),
+                builder.getBoolAttr(true))); // vpiNetDeclAssign
+          if (!properties.empty())
+            declaration->setAttr(
+                "vpi_properties",
+                sim::VPIPropertySetAttr::get(builder.getContext(),
+                                             builder.getArrayAttr(properties)));
           if (statementKind == VPIKind::ContAssign)
             scopeOwnedStatementPlans.push_back(
-                {source, statementId, scopes.lookup(source), statementKind});
+                {source, statementId, scopes.lookup(source), statementKind,
+                 nullptr, netInitializer});
           else
             scopeOwnedStatementPlans.push_back(
                 {source, statementId, scopes.lookup(source), statementKind,
@@ -5798,7 +5821,8 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
 
   for (const ScopeOwnedStatementPlan &plan : scopeOwnedStatementPlans) {
     SmallVector<Operation *> lhsRhs;
-    if (plan.kind == VPIKind::AliasStmt) {
+    bool netInitializer = isa<semantic::SVNetSymbolOp>(plan.source);
+    if (plan.kind == VPIKind::AliasStmt || netInitializer) {
       lhsRhs = {plan.lhs, plan.rhs};
     } else {
       SmallVector<Operation *> children = getChildren(plan.source);
@@ -5813,9 +5837,25 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     if (lhsRhs.size() != 2)
       continue;
 
-    std::optional<DirectEndpoint> lhs = directEndpoint(lhsRhs[0]);
+    std::optional<DirectEndpoint> lhs =
+        netInitializer ? directEndpointForPath(getHierarchyName(plan.source))
+                       : directEndpoint(lhsRhs[0]);
     std::optional<DirectEndpoint> rhs = directEndpoint(lhsRhs[1]);
     sim::VPIObjectRefAttr statement = statementReference(plan.statementId);
+    auto emitRelation = [&](sim::VPIObjectRefAttr target, uint32_t targetKind,
+                            reflection::VPIRelationKind selector) {
+      uint32_t selectorNumber = selectorValue(selector);
+      const auto *edge = reflection::findVPITraversal(
+          static_cast<uint32_t>(plan.kind), selectorNumber,
+          reflection::VPITraversalMode::Handle);
+      if (!edge || edge->statementContainment ||
+          edge->automaticRelation != reflection::VPIAutomaticRelation::None ||
+          !reflection::vpiObjectSetContains(edge->targets, targetKind))
+        return;
+      sim::SimVPIRelationDeclOp::create(
+          builder, getSemanticLocation(plan.source), statement, selectorNumber,
+          sim::VPIRelationMode::Handle, 0, target);
+    };
     auto emitForward = [&](Operation *expression,
                            reflection::VPIRelationKind selector) {
       uint32_t selectorNumber = selectorValue(selector);
@@ -5829,18 +5869,17 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
       auto target = *resolved;
       if (!target)
         return;
-      const auto *edge = reflection::findVPITraversal(
-          static_cast<uint32_t>(plan.kind), selectorNumber,
-          reflection::VPITraversalMode::Handle);
-      if (!edge || edge->statementContainment ||
-          edge->automaticRelation != reflection::VPIAutomaticRelation::None ||
-          !reflection::vpiObjectSetContains(edge->targets, target->kind))
-        return;
-      sim::SimVPIRelationDeclOp::create(
-          builder, getSemanticLocation(plan.source), statement, selectorNumber,
-          sim::VPIRelationMode::Handle, 0, target->reference);
+      emitRelation(target->reference, target->kind, selector);
     };
-    emitForward(lhsRhs[0], reflection::VPIRelationKind::LhsRel);
+    if (netInitializer) {
+      // The left side is the declaration itself, not a fabricated source
+      // expression or a substitute for its retained declaration identity.
+      if (lhs)
+        emitRelation(lhs->reference, lhs->vpiKind,
+                     reflection::VPIRelationKind::LhsRel);
+    } else {
+      emitForward(lhsRhs[0], reflection::VPIRelationKind::LhsRel);
+    }
     emitForward(lhsRhs[1], reflection::VPIRelationKind::RhsRel);
 
     if (plan.kind == VPIKind::AliasStmt)
