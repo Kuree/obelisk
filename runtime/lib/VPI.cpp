@@ -3996,6 +3996,24 @@ bool readManagedStateWord(__vpiHandle *handle,
                vpiNotice);
       return false;
     }
+    if (handle->snapshot->object) {
+      ManagedExecutionScope managed(handle->owner->context);
+      if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane()) {
+        setError(handle->owner, "snapshot query cannot enter GC scope",
+                 vpiInternal);
+        return false;
+      }
+      ManagedObjectLease lease;
+      if (obelisk_rt_managed_object_acquire(
+              managed.getLane(), handle->snapshot->object,
+              OBELISK_RT_MANAGED_INVALID, &lease) != OBELISK_RT_OK ||
+          obelisk_rt_v1_object_id(handle->snapshot->object) !=
+              handle->snapshot->identity) {
+        setError(handle->owner, "snapshot references a reclaimed class object",
+                 vpiNotice);
+        return false;
+      }
+    }
     word = handle->snapshot->value[0];
     return true;
   }
@@ -4827,8 +4845,14 @@ vpiHandle makeSnapshotHandle(VPIState *state,
     handle->exactVpiType = value->exactType;
     handle->snapshot = std::move(value);
     handle->suppressSemanticDimension = handle->snapshot->bitSelection;
-    handle->dynamicObject = handle->snapshot->object;
-    handle->dynamicIdentity = handle->snapshot->identity;
+    // A copied aggregate owns its expression/member inventory independently
+    // of class referents. Keep nested weak-reference nodes traversable after
+    // collection; reading their reference validates the saved object identity.
+    // Standalone class snapshots retain their established dynamic lifetime.
+    if (!handle->snapshot->parent) {
+      handle->dynamicObject = handle->snapshot->object;
+      handle->dynamicIdentity = handle->snapshot->identity;
+    }
     handle->logicalProcess = handle->snapshot->logicalProcess;
     handle->hasInfo = true;
     handle->info.kind = OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT;
