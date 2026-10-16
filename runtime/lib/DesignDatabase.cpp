@@ -3574,8 +3574,10 @@ bool validateExpressions(const Database &database,
       uint32_t start = read32(node + 8), size = read32(node + 12);
       uint64_t width = 0;
       uint32_t flags = 0;
+      bool sourceOnly = read32(node + 4) == UINT32_MAX;
       if (start != nextLocalOperand || uint64_t{start} + size > operands ||
-          !expressionIntegral(database, read32(node + 4), width, flags))
+          (!sourceOnly &&
+           !expressionIntegral(database, read32(node + 4), width, flags)))
         return false;
       nextLocalOperand += size;
       uint32_t file = read32(node + 16);
@@ -3587,7 +3589,11 @@ bool validateExpressions(const Database &database,
         return false;
       Kind kind = static_cast<Kind>(read16(node));
       uint16_t code = read16(node + 2);
-      if (kind == Kind::Constant) {
+      if (sourceOnly) {
+        if (kind != Kind::Operation || read32(node + 28) != UINT32_MAX ||
+            !obelisk::reflection::validVPISourceOnlyArity(code, size))
+          return false;
+      } else if (kind == Kind::Constant) {
         VPIFrozenValue frozen{};
         uint32_t value = read32(node + 28);
         if (size || code != 7 || !expressionFrozen(database, value, frozen) ||
@@ -3648,7 +3654,10 @@ bool validateExpressions(const Database &database,
         } else {
           if (operand <= ordinal || operand >= count || owned[operand]++)
             return false;
-          childKind = read16(expressionNode(database, recipe, operand));
+          const uint8_t *childNode = expressionNode(database, recipe, operand);
+          if (!sourceOnly && read32(childNode + 4) == UINT32_MAX)
+            return false;
+          childKind = read16(childNode);
         }
         uint32_t selector =
             kind == Kind::Operation ? uint32_t(Rel::OperandRel)
@@ -3777,7 +3786,7 @@ bool validateExpressions(const Database &database,
     for (uint32_t ordinal = 0; ordinal != read32(recipe + 8); ++ordinal) {
       const uint8_t *node = expressionNode(database, recipe, ordinal);
       Kind kind = static_cast<Kind>(read16(node));
-      if (kind == Kind::Constant)
+      if (kind == Kind::Constant || read32(node + 4) == UINT32_MAX)
         continue;
       uint64_t width = 0;
       uint32_t flags = 0;
@@ -9459,7 +9468,8 @@ obelisk_rt_status designInfo(const Database &database,
                           expressionOrdinal, root, recipe, node)) {
     *outInfo = {};
     outInfo->kind = OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT;
-    if (semanticPackedBitWidth(database, read32(node + 4),
+    if (read32(node + 4) != UINT32_MAX &&
+        semanticPackedBitWidth(database, read32(node + 4),
                                &outInfo->bit_width) != OBELISK_RT_OK)
       return OBELISK_RT_INVALID_DESIGN;
     return OBELISK_RT_OK;
@@ -9671,6 +9681,10 @@ obelisk_rt_status designSemanticRoot(const Database &database,
   if (expressionForCursor(database, object.offset, expressionRootIndex,
                           expressionOrdinal, expressionRootRecord, recipe,
                           node)) {
+    if (read32(node + 4) == UINT32_MAX) {
+      *outCursor = {};
+      return OBELISK_RT_EOF;
+    }
     outCursor->offset = uint64_t{read32(node + 4)} + 1;
     return OBELISK_RT_OK;
   }
@@ -13447,6 +13461,9 @@ obelisk_rt_cached_vpi_expression(const obelisk_rt_context *context,
   outInfo->kind = read16(node);
   outInfo->code = read16(node + 2);
   outInfo->operandCount = read32(node + 12);
+  outInfo->sourceOnly = read32(node + 4) == UINT32_MAX;
+  if (outInfo->sourceOnly)
+    return OBELISK_RT_OK;
   outInfo->semantic.offset = uint64_t{read32(node + 4)} + 1;
   if (semanticPackedBitWidth(*database, read32(node + 4), &outInfo->bitWidth) !=
       OBELISK_RT_OK)

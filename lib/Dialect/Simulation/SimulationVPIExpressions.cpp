@@ -153,12 +153,22 @@ LogicalResult SimVPIExpressionDeclOp::verify() {
   if (getSelector() > UINT16_MAX || getOrdinal() > UINT32_MAX ||
       (getMode() == VPIRelationMode::Handle && getOrdinal() != 0))
     return emitOpError("owner relation slot is not encodable");
-  if (!isIntegral(getVpiType()) || !getPackedScalarType(getType()) ||
-      !getPackedWidth(getType()).value_or(0))
-    return emitOpError("requires an exact fixed integral result type");
-  if (failed(verifyVPITypeSemantics([&] { return emitOpError(); }, getType(),
-                                    getVpiType())))
-    return failure();
+  bool sourceOnly = getSourceOnly();
+  if (sourceOnly) {
+    if (getVpiKind() != uint32_t(Kind::Operation) || getTypeAttr() ||
+        getVpiTypeAttr())
+      return emitOpError(
+          "source_only requires an Operation without result types");
+  } else {
+    if (!getTypeAttr() || !getVpiTypeAttr() || !isIntegral(getVpiTypeAttr()) ||
+        !getPackedScalarType(getTypeAttr().getValue()) ||
+        !getPackedWidth(getTypeAttr().getValue()).value_or(0))
+      return emitOpError("requires an exact fixed integral result type");
+    if (failed(verifyVPITypeSemantics([&] { return emitOpError(); },
+                                      getTypeAttr().getValue(),
+                                      getVpiTypeAttr())))
+      return failure();
+  }
   auto kind = static_cast<Kind>(getVpiKind());
   if (kind != Kind::Constant && kind != Kind::Operation &&
       kind != Kind::PartSelect && kind != Kind::IndexedPartSelect)
@@ -169,11 +179,12 @@ LogicalResult SimVPIExpressionDeclOp::verify() {
     return emitOpError(
         "literal, operator and selection metadata must match kind");
   if (auto value = getImmutableValueAttr();
-      value && (value.getType() != getType() ||
-                value.getIsSigned() != getVpiType().getIsSigned()))
+      value && (value.getType() != getTypeAttr().getValue() ||
+                value.getIsSigned() != getVpiTypeAttr().getIsSigned()))
     return emitOpError("literal planes must match the exact result type");
-  if (auto operation = getOpType();
-      operation && *operation != concatOp && *operation != multiConcatOp)
+  if (auto operation = getOpType(); operation && !sourceOnly &&
+                                    *operation != concatOp &&
+                                    *operation != multiConcatOp)
     return emitOpError("unsupported exact expression operator");
   if (auto direction = getIndexedDirection();
       direction && *direction != 1 && *direction != 2)
@@ -276,8 +287,8 @@ LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
           expression,
           expression.getVpiKind(),
           expression.getScopeId(),
-          expression.getType(),
-          expression.getVpiType(),
+          expression.getType().value_or(Type{}),
+          expression.getVpiTypeAttr(),
           expression.getImmutableValueAttr()};
     }
   }
@@ -409,10 +420,16 @@ LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
       if (relation.getSelector() == uint32_t(Relation::UseRel))
         continue;
       auto target = endpoints.find(relation.getTarget());
-      if (target == endpoints.end() || !isIntegral(target->second.semantic) ||
-          !target->second.width)
-        return expression.emitOpError(
-            "expression operand requires an exact integral value");
+      bool sourceOnlyChild =
+          target != endpoints.end() &&
+          isa_and_nonnull<SimVPIExpressionDeclOp>(target->second.operation) &&
+          cast<SimVPIExpressionDeclOp>(target->second.operation)
+              .getSourceOnly();
+      if (target == endpoints.end() ||
+          ((!isIntegral(target->second.semantic) || !target->second.width) &&
+           !(expression.getSourceOnly() && sourceOnlyChild)))
+        return expression.emitOpError("expression operand requires an exact "
+                                      "integral value or source-only syntax");
       bool operand = relation.getSelector() == uint32_t(Relation::OperandRel);
       if (relation.getMode() !=
           (operand ? VPIRelationMode::Iterate : VPIRelationMode::Handle))
@@ -430,7 +447,16 @@ LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
                  ? &found->second.front()
                  : nullptr;
     };
-    uint64_t width = *getPackedWidth(expression.getType());
+    if (expression.getSourceOnly()) {
+      auto operands = children.find(uint32_t(Relation::OperandRel));
+      if (children.size() != 1 || operands == children.end() ||
+          !reflection::validVPISourceOnlyArity(*expression.getOpType(),
+                                               operands->second.size()))
+        return expression.emitOpError(
+            "source-only operator requires its exact ordered operands");
+      continue;
+    }
+    uint64_t width = *getPackedWidth(expression.getTypeAttr().getValue());
     switch (static_cast<Kind>(expression.getVpiKind())) {
     case Kind::Constant:
       if (!children.empty())
@@ -465,8 +491,8 @@ LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
                        [](const Endpoint &operand) {
                          return operand.semantic.getIsFourState();
                        });
-      if (expression.getVpiType().getIsSigned() ||
-          expression.getVpiType().getIsFourState() != fourState)
+      if (expression.getVpiTypeAttr().getIsSigned() ||
+          expression.getVpiTypeAttr().getIsFourState() != fourState)
         return expression.emitOpError("concatenation requires unsigned result "
                                       "and exact operand state domain");
       break;
@@ -514,8 +540,8 @@ LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
       if (!unitStride || count != width)
         return expression.emitOpError(
             "selection result requires the exact scalar integral width");
-      if (expression.getVpiType().getIsSigned() ||
-          expression.getVpiType().getIsFourState() !=
+      if (expression.getVpiTypeAttr().getIsSigned() ||
+          expression.getVpiTypeAttr().getIsFourState() !=
               parent->semantic.getIsFourState())
         return expression.emitOpError(
             "selection requires unsigned result and the selected state domain");

@@ -399,8 +399,8 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
     sim::SimVPIExpressionDeclOp::create(
         builder, getSemanticLocation(node.source),
         node.endpoint->reference.getSymbol().getValue(), ids[index], node.kind,
-        scope, slot.owner, slot.selector, slot.mode, slot.ordinal, node.type,
-        node.semantic, node.frozen,
+        scope, slot.owner, slot.selector, slot.mode, slot.ordinal,
+        TypeAttr::get(node.type), node.semantic, node.frozen,
         node.kind == uint32_t(Kind::Operation)
             ? builder.getI32IntegerAttr(node.code)
             : IntegerAttr{},

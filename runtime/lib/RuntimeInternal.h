@@ -1893,6 +1893,7 @@ struct VPIExpressionInfo {
   uint64_t bitWidth = 0;
   obelisk_rt_design_cursor_v1 semantic{};
   bool constantSelect = false;
+  bool sourceOnly = false;
 };
 obelisk_rt_status
 obelisk_rt_cached_vpi_expression(const obelisk_rt_context *,

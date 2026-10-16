@@ -5335,6 +5335,11 @@ bool readValue(__vpiHandle *, const VPIValueSource &, std::vector<uint64_t> &,
 bool readExpressionValue(__vpiHandle *handle, const VPIExpressionInfo &rootInfo,
                          std::vector<uint64_t> &value,
                          std::vector<uint64_t> &unknown) {
+  if (rootInfo.sourceOnly) {
+    setError(handle->owner, "source expression has no elaborated result value",
+             vpiNotice);
+    return false;
+  }
   struct Evaluated {
     VPIExpressionInfo info{};
     obelisk_rt_design_cursor_v1 semantic{};
@@ -8987,6 +8992,16 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
   }
   if (type == vpiTypespec && rejectUnresolvedParameterQuery(handle))
     return nullptr;
+  if (type == vpiTypespec && handle->form == VPIObjectForm::Design) {
+    VPIExpressionInfo expression{};
+    if (obelisk_rt_cached_vpi_expression(handle->owner->context, handle->cursor,
+                                         &expression) == OBELISK_RT_OK &&
+        expression.sourceOnly) {
+      setError(handle->owner, "source expression has no elaborated result type",
+               vpiNotice);
+      return nullptr;
+    }
+  }
   if (type == vpiExpr && handle->form == VPIObjectForm::Design &&
       (sourceType == vpiParameter || sourceType == vpiTypeParameter)) {
     obelisk_rt_design_info_v1 info{};
@@ -10841,6 +10856,12 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
                                        &expression) == OBELISK_RT_OK) {
     if (!propertyFor(handle, property))
       return vpiUndefined;
+    if (expression.sourceOnly &&
+        (property == vpiSize || property == vpiSigned)) {
+      setError(handle->owner, "source expression has no elaborated result type",
+               vpiNotice);
+      return vpiUndefined;
+    }
     if (property == vpiSize)
       return static_cast<PLI_INT32>(
           std::min<uint64_t>(expression.bitWidth, INT32_MAX));
@@ -11664,6 +11685,8 @@ bool decompileRetainedExpression(__vpiHandle *handle, std::string &result) {
     uint32_t kind = 0;
     std::string_view identifier;
     std::string token;
+    uint32_t parentPrecedence = 0;
+    bool parenthesizeEqual = false;
   };
   auto *context = handle->owner->context;
   OBELISK_RT_TRY {
@@ -11734,7 +11757,37 @@ bool decompileRetainedExpression(__vpiHandle *handle, std::string &result) {
         children.push_back(std::move(child));
       }
       std::vector<Pending> ordered;
-      if (item.kind == vpiOperation) {
+      const auto *operation =
+          item.kind == vpiOperation
+              ? obelisk::reflection::findVPISourceOnlyOperator(expression.code)
+              : nullptr;
+      bool parenthesize =
+          operation && (operation->precedence < item.parentPrecedence ||
+                        (operation->precedence == item.parentPrecedence &&
+                         item.parenthesizeEqual));
+      if (parenthesize)
+        ordered.push_back(token("("));
+      if (operation) {
+        if (operation->arity == 1)
+          ordered.push_back(token(std::string(operation->token) + " "));
+        for (size_t index = 0; index != children.size(); ++index) {
+          if (index) {
+            std::string separator =
+                operation->arity == 3
+                    ? std::string(1, operation->token[index - 1])
+                    : operation->token;
+            ordered.push_back(token(" " + separator + " "));
+          }
+          children[index].parentPrecedence = operation->precedence;
+          children[index].parenthesizeEqual =
+              operation->arity == 3
+                  ? index != 2
+                  : operation->arity == 2 &&
+                        (index == 0 ? operation->rightAssociative
+                                    : !operation->rightAssociative);
+          ordered.push_back(std::move(children[index]));
+        }
+      } else if (item.kind == vpiOperation) {
         bool repeated = expression.code == vpiMultiConcatOp;
         ordered.push_back(token("{ "));
         if (repeated) {
@@ -11758,6 +11811,8 @@ bool decompileRetainedExpression(__vpiHandle *handle, std::string &result) {
         ordered.push_back(std::move(children[2]));
         ordered.push_back(token(" ]"));
       }
+      if (parenthesize)
+        ordered.push_back(token(")"));
       for (auto iterator = ordered.rbegin(); iterator != ordered.rend();
            ++iterator)
         pending.push_back(std::move(*iterator));

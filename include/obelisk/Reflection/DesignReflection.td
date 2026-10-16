@@ -573,6 +573,9 @@ def ExpressionTemplate : ReflectionLayout<"ExpressionTemplate", 28,
 
 def ExpressionNodeKind : ReflectionField<"Kind", 0, U16LE>;
 def ExpressionNodeCode : ReflectionField<"Code", 2, U16LE>;
+// UINT32_MAX explicitly denotes a source-only Operation with no retained
+// elaborated result type/value. Every typed value node has a valid semantic
+// index, and a typed parent may not consume source-only child syntax.
 def ExpressionNodeSemanticTypeIndex : ReflectionField<"SemanticTypeIndex", 4, U32LE>;
 def ExpressionNodeFirstOperand : ReflectionField<"FirstOperand", 8, U32LE>;
 def ExpressionNodeOperandCount : ReflectionField<"OperandCount", 12, U32LE>;

@@ -48,7 +48,11 @@ The query layer preserves ordered operands, exact selected parents, contextual
 parameter identity, Module/Instance ancestry, and owning-statement `vpiUse`.
 Value reads observe current declaration values and preserve wide four-state
 planes. Exact retained leaf identifiers support `vpiDecompile`; unsupported
-reference spellings report a notice. Computed expressions are read-only.
+reference spellings report a notice. Computed expressions are read-only. Source-only operator
+recipes can retain ordered operands and exact decompilation without an elaborated
+result type. Their `vpiSize`, value, and typespec queries report a notice; typed
+literal and declaration operands retain their own value/type queries. This
+representation does not imply evaluation of original defaults or event controls.
 
 Identical syntax templates share their node and type metadata across instances;
 small root and leaf bindings preserve distinct occurrence identities and values.

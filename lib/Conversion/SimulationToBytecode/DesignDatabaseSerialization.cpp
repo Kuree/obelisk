@@ -5158,7 +5158,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
                 work.push_back(expression);
         }
         for (auto node : order) {
-          auto semantic = addSemanticType(node.getVpiType());
+          auto semantic = node.getSourceOnly()
+                              ? std::optional<uint32_t>(UINT32_MAX)
+                              : addSemanticType(node.getVpiTypeAttr());
           auto frozen =
               node.getImmutableValueAttr()
                   ? internFrozenValue(node, node.getImmutableValueAttr())
