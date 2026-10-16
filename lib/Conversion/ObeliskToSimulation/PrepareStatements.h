@@ -17,5 +17,10 @@ mlir::LogicalResult materializeProceduralCalls(
     sim::SimDesignOp design, const PreparedUnits &units,
     const llvm::StringMap<mlir::Operation *> &semanticSymbols,
     mlir::OpBuilder &builder);
+/// Freeze declaration-owned nominal interface members and dispatch contracts.
+mlir::LogicalResult materializeVPIInterfaceDispatch(
+    sim::SimDesignOp design, ir::SVRootSymbolOp semanticRoot,
+    const PreparedUnits &units, const PreparedScopeDeclarations &scopes,
+    mlir::OpBuilder &builder);
 } // namespace obelisk::simlowering
 #endif

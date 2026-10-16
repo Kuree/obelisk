@@ -34,14 +34,11 @@ struct PreparedVirtualInterfaceCallee {
   mlir::Operation *dispatchSource;
   mlir::SymbolRefAttr interfaceIdentity;
   std::string method;
-  std::string design;
   bool externExport = false;
 };
 
 struct PreparedUnits {
-  using VirtualInterfaceCalleeIndex = llvm::StringMap<llvm::StringMap<
-      llvm::DenseMap<mlir::SymbolRefAttr, mlir::SmallVector<unsigned>>>>;
-  using GlobalVirtualInterfaceCalleeIndex = llvm::StringMap<
+  using VirtualInterfaceCalleeIndex = llvm::StringMap<
       llvm::DenseMap<mlir::SymbolRefAttr, mlir::SmallVector<unsigned>>>;
 
   mlir::SmallVector<PreparedUnit> units;
@@ -53,7 +50,6 @@ struct PreparedUnits {
   llvm::DenseMap<mlir::Operation *, sim::SimCodeUnitDeclOp> declarations;
   mlir::SmallVector<PreparedVirtualInterfaceCallee> virtualInterfaceCallees;
   VirtualInterfaceCalleeIndex virtualInterfaceCalleeIndex;
-  GlobalVirtualInterfaceCalleeIndex globalVirtualInterfaceCalleeIndex;
   uint64_t rootID;
 
   /// Resolve a direct call by semantic symbol identity, falling back to its

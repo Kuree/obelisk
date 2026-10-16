@@ -309,6 +309,69 @@ def SimVPICallDeclOp : SimOp<"vpi_call.decl", [
   let hasVerifier = 1;
 }
 
+// Declaration-owned callable facts survive executable IPO. These are original
+// source ABI types, before hidden receivers, captures, or return slots.
+def SimVPICallableDeclOp : SimOp<"vpi_callable.decl", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "original callable ABI and interface export provenance";
+  let arguments = (ins I64Attr:$code_unit_id,
+                       TypeAttrOf<FunctionType>:$signature,
+                       DenseI32ArrayAttr:$directions,
+                       OptionalAttr<FlatSymbolRefAttr>:$interface_member,
+                       OptionalAttr<DenseI64ArrayAttr>:$interface_exports,
+                       UnitAttr:$is_fork_join);
+  let assemblyFormat = [{$code_unit_id `signature` $signature
+    `directions` $directions (`member` $interface_member^)? attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimVPIInterfaceMemberDeclOp : SimOp<"vpi_interface_member.decl", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "a callable member of one exact nominal interface type";
+  let arguments = (ins SymbolNameAttr:$sym_name,
+                       FlatSymbolRefAttr:$interface_type, StrAttr:$name,
+                       SimEntryKind:$member_kind,
+                       TypeAttrOf<FunctionType>:$signature,
+                       DenseI32ArrayAttr:$directions, UnitAttr:$is_extern);
+  let assemblyFormat = [{$sym_name `of` $interface_type `name` $name
+    $member_kind `signature` $signature `directions` $directions attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimVPIInterfaceInstanceBindingOp : SimOp<"vpi_interface_instance.bind", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "exact nominal type of an elaborated interface instance";
+  let arguments = (ins I64Attr:$scope_id, FlatSymbolRefAttr:$interface_type);
+  let assemblyFormat = "$scope_id `to` $interface_type attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPIInterfaceCallDispatchOp : SimOp<"vpi_interface_call.dispatch", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "source identity and visibility contract of an indirect interface call";
+  let description = [{
+    Identifies the exact nominal member independently of its executable target
+    set. Access is 0 for an unrestricted interface, 1 for a modport import, and
+    2 for a modport export. All elaborated instances of the exact nominal
+    interface type participate, including instances under another top module
+    (IEEE 1800-2023 25.9). Empty target sets remain explicit contracts. Implementations are derived only
+    from declaration-owned interface membership and exports.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$call,
+                       FlatSymbolRefAttr:$member,
+                       I32Attr:$access);
+  let assemblyFormat = [{$call `member` $member `access` $access attr-dict}];
+  let hasVerifier = 1;
+}
+
 // A class dispatch domain is symbolic inventory, not an unchecked list of
 // target function IDs. The image encoder derives compatible implementations
 // from the same class-dispatch analysis used by executable lowering.

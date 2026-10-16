@@ -1,3 +1,6 @@
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0 vpi=full' | FileCheck %s --check-prefix=VPI
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3 vpi=full' | FileCheck %s --check-prefix=VPI
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=vpi=off' | FileCheck %s --check-prefix=VPI-OFF
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
 // A compilation-unit subroutine, like a class method, has no enclosing
@@ -113,3 +116,12 @@ module {
 // CHECK: arith.cmpi eq
 // CHECK: simulation.call
 // CHECK: virtual interface call used a null or invalid handle.
+
+// VPI-DAG: simulation.vpi_interface_member.decl @[[MEMBER:[^ ]+]] of @{{[^ ]+}} name "ping" function signature () -> () directions []
+// VPI-DAG: simulation.vpi_callable.decl {{[0-9]+}} signature () -> () directions [] member @[[MEMBER]]
+// VPI: simulation.vpi_interface_call.dispatch @{{[^ ]+}} member @[[MEMBER]] access 0{{$}}
+// VPI-OFF-NOT: simulation.vpi_interface
+// VPI-OFF-NOT: simulation.vpi_callable
+// VPI-OFF: simulation.design
+// VPI-OFF-NOT: simulation.vpi_interface
+// VPI-OFF-NOT: simulation.vpi_callable

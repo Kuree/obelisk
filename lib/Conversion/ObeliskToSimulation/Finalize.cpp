@@ -391,9 +391,11 @@ void ObeliskSimFinalizePass::runOnOperation() {
              sim::SimVPIClassMemberDeclOp, sim::SimVPIEventBindingOp,
              sim::SimVPIThreadOriginBindingOp, sim::SimVPICallDeclOp,
              sim::SimVPIClassCallDispatchOp, sim::SimVPILocalDeclOp,
-             sim::SimClassDeclOp, sim::SimClassFieldDeclOp,
-             sim::SimClassMethodDeclOp, sim::SimRandomConstraintTemplateOp,
-             sim::SimFuncOp>(op))
+             sim::SimVPICallableDeclOp, sim::SimVPIInterfaceMemberDeclOp,
+             sim::SimVPIInterfaceInstanceBindingOp,
+             sim::SimVPIInterfaceCallDispatchOp, sim::SimClassDeclOp,
+             sim::SimClassFieldDeclOp, sim::SimClassMethodDeclOp,
+             sim::SimRandomConstraintTemplateOp, sim::SimFuncOp>(op))
       return;
     if (auto name =
             op->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()))

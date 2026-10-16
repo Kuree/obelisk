@@ -112,6 +112,11 @@ exact lexical owners, direct callee relations, and shared identity for calls
 that are themselves statements. Indirect dispatch remains explicitly marked.
 Unsupported source statement forms remain unbound.
 
+Virtual-interface call lowering considers every elaborated instance of the exact
+nominal interface type, including instances under other top modules, with
+modport import/export filtering. Typed source contracts retain the original
+callable ABI and declaration-owned extern providers through optimization.
+
 The runtime frame API tracks distinct activations and exposes their parent,
 origin, thread, current statement, active state, and automatic lifetime.
 Suspension preserves a frame; return, disable, and kill invalidate the exited

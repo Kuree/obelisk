@@ -15,6 +15,9 @@
 
 namespace obelisk::sim {
 
+/// Verify declaration-owned interface dispatch contracts across the design.
+mlir::LogicalResult verifyVPIInterfaceDispatch(SimDesignOp design);
+
 /// Verifies that a postponed-region function reads state without writing it.
 mlir::LogicalResult verifyPostponedReadOnly(SimFuncOp root);
 

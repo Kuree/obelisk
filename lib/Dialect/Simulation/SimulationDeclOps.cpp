@@ -3393,6 +3393,8 @@ SimVPIClassCallDispatchOp::verifySymbolUses(SymbolTableCollection &symbols) {
 }
 
 LogicalResult SimDesignOp::verifyRegions() {
+  if (failed(verifyVPIInterfaceDispatch(*this)))
+    return failure();
   // One cached table for the whole design walk below. The uncached lookups
   // rescan this design's block per call, which is quadratic across classes.
   SymbolTableCollection symbolTable;
