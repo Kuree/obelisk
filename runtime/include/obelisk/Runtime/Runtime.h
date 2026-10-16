@@ -3403,7 +3403,8 @@ enum {
   OBELISK_RT_VPI_FRAME_CODE_UNIT_SCOPE = 0,
   OBELISK_RT_VPI_FRAME_CALL = 1,
   OBELISK_RT_VPI_FRAME_STATEMENT_SCOPE = 2,
-  OBELISK_RT_VPI_FRAME_NET_RESOLUTION = 3
+  OBELISK_RT_VPI_FRAME_NET_RESOLUTION = 3,
+  OBELISK_RT_VPI_FRAME_DPI_EXPORT = 4
 };
 obelisk_rt_status obelisk_rt_v1_vpi_frame_enter(obelisk_rt_context *context,
                                                 uint64_t code_unit_id,
@@ -3421,6 +3422,11 @@ obelisk_rt_status obelisk_rt_v1_vpi_call_prepare(obelisk_rt_context *context,
 obelisk_rt_status
 obelisk_rt_v1_vpi_resolution_prepare(obelisk_rt_context *context,
                                      uint64_t net_id, uint64_t *out_ticket);
+// A generated DPI export bridge prepares its exact public callable scope.
+// The runtime accepts it only during the matching validated export dispatch.
+obelisk_rt_status obelisk_rt_v1_vpi_export_prepare(obelisk_rt_context *context,
+                                                   uint64_t code_unit_id,
+                                                   uint64_t *out_ticket);
 obelisk_rt_status
 obelisk_rt_v1_vpi_frame_enter_prepared(obelisk_rt_context *context,
                                        uint64_t code_unit_id, uint32_t is_task,

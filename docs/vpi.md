@@ -137,6 +137,9 @@ synchronous and suspending calls, including native and AOT task handoffs.
 Resolution-function activations use the exact net or net-array origin and verify
 its retained nettype resolution function. Imported DPI tasks retain their public
 task identity while entering through their physical synchronous function ABI.
+Synchronous DPI exports use their exact public callable scope as the activation
+origin, preserve the importing frame as parent, and restore its frame depth on
+foreign-call failure. Exported task thread handoff is still being completed.
 Frame-local declaration inventories can be enumerated before storage is bound.
 Bound local values and selections use weak automatic references and expire with
 their activation; structural typespec and lexical-scope handles remain valid.

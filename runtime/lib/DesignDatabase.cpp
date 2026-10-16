@@ -9539,6 +9539,37 @@ obelisk_rt_cached_vpi_resolution_target(const obelisk_rt_context *context,
   return OBELISK_RT_EOF;
 }
 
+obelisk_rt_status
+obelisk_rt_cached_vpi_export_target(const obelisk_rt_context *context,
+                                    uint64_t codeUnitID, uint64_t scopeID,
+                                    bool isTask) noexcept {
+  const Database *database = cachedDatabase(context);
+  if (!database)
+    return OBELISK_RT_INVALID_HANDLE;
+  for (uint32_t index = 0; index != database->objectCount; ++index) {
+    const uint8_t *unit =
+        database->data + database->objects + uint64_t{index} * kObjectSize;
+    if (recordKind(unit) != (isTask ? OBELISK_RT_DESIGN_RECORD_PROCESS
+                                    : OBELISK_RT_DESIGN_RECORD_FUNCTION) ||
+        read64(unit + 8) != codeUnitID)
+      continue;
+    uint32_t packed = 0;
+    uint64_t source = 0;
+    if (!findCallableSource(*database, index, packed, source) ||
+        objectReferenceVPIKind(*database, source) !=
+            static_cast<uint32_t>(
+                isTask ? obelisk::reflection::VPIObjectKind::Task
+                       : obelisk::reflection::VPIObjectKind::Function))
+      return OBELISK_RT_EOF;
+    uint64_t scope = read64(unit + 16);
+    return isScopeOffset(*database, scope) &&
+                   read64(database->data + scope + 8) == scopeID
+               ? OBELISK_RT_OK
+               : OBELISK_RT_EOF;
+  }
+  return OBELISK_RT_EOF;
+}
+
 obelisk_rt_status obelisk_rt_cached_vpi_frame_origin(
     const obelisk_rt_context *context, uint32_t originKind, uint64_t originID,
     obelisk_rt_design_cursor_v1 *outCursor, bool *outIsStatement) noexcept {
@@ -9547,6 +9578,7 @@ obelisk_rt_status obelisk_rt_cached_vpi_frame_origin(
   *outCursor = {};
   *outIsStatement = false;
   switch (originKind) {
+  case 4:
   case 0: {
     uint64_t lexicalOwner = 0;
     auto status = obelisk_rt_cached_vpi_code_unit_scope(

@@ -1348,6 +1348,8 @@ ABI_FUNCTION(obelisk_rt_v1_vpi_frame_enter,
                                    uint64_t, uint64_t *));
 ABI_FUNCTION(obelisk_rt_v1_vpi_call_prepare,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint64_t *));
+ABI_FUNCTION(obelisk_rt_v1_vpi_export_prepare,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint64_t *));
 ABI_FUNCTION(obelisk_rt_v1_vpi_frame_enter_prepared,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint32_t,
                                    uint64_t *));

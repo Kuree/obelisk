@@ -3970,6 +3970,18 @@ obelisk_rt_status obelisk_rt_cached_vpi_frame_origin(
 // Remove activations belonging to a returned, disabled, or killed scope.
 // Scheduler callers hold the context mutex; this helper is also safe to call
 // recursively from ordinary execution. A zero target depth removes the root.
+// Scoped provenance for C-to-SystemVerilog dispatch. These runtime-only
+// boundaries do not themselves create an observable activation.
+obelisk_rt_status
+obelisk_rt_vpi_export_begin(obelisk_rt_context *context,
+                            const obelisk_rt_export_descriptor_v1 *descriptor,
+                            uint64_t *outToken);
+obelisk_rt_status obelisk_rt_vpi_export_end(obelisk_rt_context *context,
+                                            uint64_t token);
+obelisk_rt_status
+obelisk_rt_cached_vpi_export_target(const obelisk_rt_context *context,
+                                    uint64_t codeUnitID, uint64_t scopeID,
+                                    bool isTask) noexcept;
 obelisk_rt_status
 obelisk_rt_vpi_frame_unwind_process(obelisk_rt_context *context,
                                     uint64_t logicalProcess, uint64_t depth);

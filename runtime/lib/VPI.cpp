@@ -340,6 +340,12 @@ struct VPIFrameCall {
   VPIFrameCallPhase phase = VPIFrameCallPhase::Prepared;
 };
 
+struct VPIExportDispatch {
+  uint64_t token, codeUnit, scope, process, frameDepth;
+  bool isTask;
+  uint64_t ticket = 0;
+};
+
 struct VPIState {
   obelisk_rt_context *context = nullptr;
   // Keep the simulation thread's binding slot alive even if that thread exits
@@ -361,6 +367,8 @@ struct VPIState {
   bool hasFrameHandles = false;
   uint64_t nextFrameActivation = 1;
   uint64_t nextCallTicket = 1;
+  uint64_t nextExportToken = 1;
+  std::vector<VPIExportDispatch> exports;
   uint64_t frameGeneration = 0;
   uint64_t lastPrunedFrameGeneration = 0;
   // Code-unit metadata is immutable. Resolve each distinct executable owner
@@ -7246,7 +7254,7 @@ extern "C" OBELISK_VPI_EXPORT obelisk_rt_status obelisk_rt_v1_vpi_frame_enter(
   if (outActivation)
     *outActivation = 0;
   if (!context || !outActivation ||
-      originKind > OBELISK_RT_VPI_FRAME_NET_RESOLUTION)
+      originKind > OBELISK_RT_VPI_FRAME_DPI_EXPORT)
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
@@ -7280,6 +7288,20 @@ extern "C" OBELISK_VPI_EXPORT obelisk_rt_status obelisk_rt_v1_vpi_frame_enter(
   const uint64_t parent = topFrame(state, process);
   if (originKind == OBELISK_RT_VPI_FRAME_CODE_UNIT_SCOPE) {
     if (parent || originID != codeUnitID)
+      return OBELISK_RT_INVALID_FRAME;
+  } else if (originKind == OBELISK_RT_VPI_FRAME_DPI_EXPORT) {
+    if (originID != codeUnitID || state->exports.empty())
+      return OBELISK_RT_INVALID_FRAME;
+    const auto &dispatch = state->exports.back();
+    if (dispatch.codeUnit != codeUnitID || dispatch.process != process ||
+        !dispatch.ticket)
+      return OBELISK_RT_INVALID_FRAME;
+    auto calls = state->frameCalls.find(process);
+    if (calls == state->frameCalls.end() || calls->second.empty())
+      return OBELISK_RT_INVALID_FRAME;
+    const auto &call = calls->second.back();
+    if (call.ticket != dispatch.ticket ||
+        call.phase != VPIFrameCallPhase::Prepared || call.parent != parent)
       return OBELISK_RT_INVALID_FRAME;
   } else if (originKind == OBELISK_RT_VPI_FRAME_NET_RESOLUTION) {
     status =
@@ -7453,6 +7475,107 @@ obelisk_rt_v1_vpi_resolution_prepare(obelisk_rt_context *context,
                              outTicket);
 }
 
+obelisk_rt_status
+obelisk_rt_vpi_export_begin(obelisk_rt_context *context,
+                            const obelisk_rt_export_descriptor_v1 *descriptor,
+                            uint64_t *outToken) {
+  if (outToken)
+    *outToken = 0;
+  if (!context || !descriptor || !outToken)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextMutexLock lock(context);
+  auto *state = static_cast<VPIState *>(context->vpiState);
+  if (!state)
+    return OBELISK_RT_OK;
+  if (!state->nextExportToken)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  const uint64_t process = context->activeLogicalProcessToken;
+  uint64_t depth = 0;
+  auto stack = state->frameStacks.find(process);
+  if (stack != state->frameStacks.end())
+    depth = stack->second.size();
+  OBELISK_RT_TRY {
+    state->exports.push_back(
+        {state->nextExportToken, descriptor->code_unit_id, descriptor->scope_id,
+         process, depth, bool(descriptor->flags & OBELISK_RT_EXPORT_TASK)});
+    *outToken = state->nextExportToken++;
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
+}
+
+obelisk_rt_status obelisk_rt_vpi_export_end(obelisk_rt_context *context,
+                                            uint64_t token) {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextMutexLock lock(context);
+  auto *state = static_cast<VPIState *>(context->vpiState);
+  if (!state)
+    return token ? OBELISK_RT_INVALID_FRAME : OBELISK_RT_OK;
+  if (!token || state->exports.empty() || state->exports.back().token != token)
+    return OBELISK_RT_INVALID_FRAME;
+  auto dispatch = state->exports.back();
+  state->exports.pop_back();
+  // Uninstrumented exports leave no frame state. An instrumented bridge that
+  // exits exceptionally must not strand a callee or an unconsumed ticket.
+  if (!dispatch.ticket)
+    return OBELISK_RT_OK;
+  auto stack = state->frameStacks.find(dispatch.process);
+  uint64_t depth = stack == state->frameStacks.end() ? 0 : stack->second.size();
+  if (depth < dispatch.frameDepth)
+    return OBELISK_RT_OK; // A nonlocal disable already unwound the caller.
+  auto status = obelisk_rt_vpi_frame_unwind_process(context, dispatch.process,
+                                                    dispatch.frameDepth);
+  if (status != OBELISK_RT_OK)
+    return status;
+  auto calls = state->frameCalls.find(dispatch.process);
+  if (calls != state->frameCalls.end()) {
+    auto &records = calls->second;
+    auto first =
+        std::find_if(records.begin(), records.end(), [&](const auto &call) {
+          return call.ticket == dispatch.ticket;
+        });
+    records.erase(first, records.end());
+    if (records.empty())
+      state->frameCalls.erase(calls);
+  }
+  return OBELISK_RT_OK;
+}
+
+extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
+obelisk_rt_v1_vpi_export_prepare(obelisk_rt_context *context,
+                                 uint64_t codeUnitID, uint64_t *outTicket) {
+  if (outTicket)
+    *outTicket = 0;
+  if (!context || !outTicket)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextMutexLock lock(context);
+  auto *state = static_cast<VPIState *>(context->vpiState);
+  if (!state)
+    return OBELISK_RT_OK;
+  if (state->exports.empty())
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  auto &dispatch = state->exports.back();
+  if (dispatch.codeUnit != codeUnitID)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (dispatch.process != context->activeLogicalProcessToken || dispatch.ticket)
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  // Task exports require a separate executor-to-source thread handoff.
+  if (dispatch.isTask)
+    return OBELISK_RT_TIER_UNAVAILABLE;
+  auto status = obelisk_rt_cached_vpi_export_target(context, codeUnitID,
+                                                    dispatch.scope, false);
+  if (status != OBELISK_RT_OK)
+    return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
+  status = prepareVPIFrameCall(
+      state, dispatch.process, topFrame(state, dispatch.process),
+      OBELISK_RT_VPI_FRAME_DPI_EXPORT, codeUnitID, outTicket);
+  if (status == OBELISK_RT_OK)
+    dispatch.ticket = *outTicket;
+  return status;
+}
+
 obelisk_rt_status obelisk_rt_vpi_pending_call(obelisk_rt_context *context,
                                               uint64_t *outCallID) {
   if (outCallID)
@@ -7498,11 +7621,24 @@ obelisk_rt_v1_vpi_frame_enter_prepared(obelisk_rt_context *context,
   // Check the source target before the execution transport. A function that
   // cannot implement this invocation is a bad target even if its ABI mode also
   // differs from the requested handoff.
-  auto targetStatus = call.originKind == OBELISK_RT_VPI_FRAME_CALL
-                          ? obelisk_rt_cached_vpi_call_target(
-                                context, call.originID, codeUnitID)
-                          : obelisk_rt_cached_vpi_resolution_target(
-                                context, call.originID, codeUnitID);
+  obelisk_rt_status targetStatus;
+  if (call.originKind == OBELISK_RT_VPI_FRAME_DPI_EXPORT) {
+    if (state->exports.empty() || state->exports.back().ticket != call.ticket ||
+        state->exports.back().process != process)
+      return OBELISK_RT_INVALID_FRAME;
+    const auto &dispatch = state->exports.back();
+    targetStatus =
+        codeUnitID == call.originID
+            ? obelisk_rt_cached_vpi_export_target(
+                  context, codeUnitID, dispatch.scope, dispatch.isTask)
+            : OBELISK_RT_EOF;
+  } else {
+    targetStatus = call.originKind == OBELISK_RT_VPI_FRAME_CALL
+                       ? obelisk_rt_cached_vpi_call_target(
+                             context, call.originID, codeUnitID)
+                       : obelisk_rt_cached_vpi_resolution_target(
+                             context, call.originID, codeUnitID);
+  }
   if (targetStatus != OBELISK_RT_OK)
     return targetStatus == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT
                                           : targetStatus;
