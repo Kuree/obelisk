@@ -2011,8 +2011,8 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
       ++annotationApplicationWork;
       if (left.block == right.block)
         continue;
-      StringRef leftPath = left.scope->getHierarchicalPath();
-      StringRef rightPath = right.scope->getHierarchicalPath();
+      std::string leftPath = left.scope->getHierarchicalPath();
+      std::string rightPath = right.scope->getHierarchicalPath();
       if (!contains(leftPath, rightPath) && !contains(rightPath, leftPath))
         continue;
       // IEEE 1800-2017 32.5/.6 make successive annotations observable. Calls

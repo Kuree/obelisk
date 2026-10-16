@@ -3161,7 +3161,7 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
   size_t setOffset = image.size();
   uint32_t imageFirstKind = 0;
   for (const Record *set : imageSets) {
-    ArrayRef<uint32_t> kinds = expandedSets.lookup(set);
+    const auto &kinds = expandedSets.lookup(set);
     if (imageFirstKind > std::numeric_limits<uint16_t>::max() ||
         kinds.size() > std::numeric_limits<uint16_t>::max()) {
       PrintError(set->getLoc(), "VPI image target set exceeds 16 bits");

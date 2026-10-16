@@ -900,7 +900,10 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       onStack.insert(root);
       while (!work.empty()) {
         Frame &frame = work.back();
-        ArrayRef<uint32_t> targets = successors.lookup(frame.node);
+        // lookup() returns the vector by value; keep a view of the map entry.
+        ArrayRef<uint32_t> targets;
+        if (auto found = successors.find(frame.node); found != successors.end())
+          targets = found->second;
         if (frame.next < targets.size()) {
           uint32_t successor = targets[frame.next++];
           if (!discovery.contains(successor)) {

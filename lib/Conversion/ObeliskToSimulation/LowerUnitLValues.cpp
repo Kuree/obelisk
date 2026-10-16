@@ -3507,7 +3507,8 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
                              afterOccurrence, ValueRange{}, wait, ValueRange{});
 
     OpBuilder cycleWaitBuilder = OpBuilder::atBlockEnd(cycleWait);
-    ValueRange forwarded{cycleWait->getArgument(0)};
+    BlockArgument forwardedCount = cycleWait->getArgument(0);
+    ValueRange forwarded(forwardedCount);
     sim::EventRegionAttr reactive =
         sim::EventRegionAttr::get(context, sim::EventRegion::Reactive);
     sim::EdgeKind delayedEdge = static_cast<sim::EdgeKind>(cycleEdge);
