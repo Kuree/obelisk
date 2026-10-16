@@ -199,6 +199,8 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
     sim::FrozenConstantAttr frozen;
     StringAttr identifier;
     SmallVector<unsigned> children;
+    bool sourceOnly = false;
+    bool unqualifiedEvent = false;
   };
   SmallVector<Planned> plan;
   plan.push_back({expression, {}});
@@ -206,6 +208,20 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
   // even repeated declaration leaves occupy distinct ordered operand slots.
   for (size_t index = 0; index != plan.size(); ++index) {
     Operation *source = plan[index].source;
+    // A level event and a singleton event list reuse their exact expression.
+    for (;;) {
+      auto children = getChildren(source);
+      if (auto signal = dyn_cast<semantic::SVSignalEventControlOp>(source);
+          signal && signal.getEdgeKind() == semantic::EdgeKind::Change &&
+          !signal.getHasIff() && children.size() == 1)
+        source = children.front();
+      else if (isa<semantic::SVEventListControlOp>(source) &&
+               children.size() == 1)
+        source = children.front();
+      else
+        break;
+    }
+    plan[index].source = source;
     if (auto endpoint = declarations.resolve(source)) {
       plan[index].endpoint = endpoint;
       plan[index].kind = endpoint->kind;
@@ -233,7 +249,39 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
     }
     SmallVector<Operation *> children;
     uint32_t kind = 0, code = 0;
-    if (isa<semantic::SVIntegerLiteralOp>(source)) {
+    bool sourceOnly = false;
+    if (auto signal = dyn_cast<semantic::SVSignalEventControlOp>(source)) {
+      auto syntax = getChildren(source);
+      if (syntax.size() != (signal.getHasIff() ? 2u : 1u))
+        return unsupported();
+      auto edge = signal.getEdgeKind();
+      if (edge != semantic::EdgeKind::Change &&
+          edge != semantic::EdgeKind::Posedge &&
+          edge != semantic::EdgeKind::Negedge)
+        return unsupported();
+      kind = uint32_t(Kind::Operation);
+      sourceOnly = true;
+      if (signal.getHasIff() && !plan[index].unqualifiedEvent) {
+        code = 68; // vpiIffOp
+        // A qualified edge owns a distinct edge operation below the iff.
+        // Plan that occurrence from the same typed source, without cloning IR.
+        children = {edge == semantic::EdgeKind::Change ? syntax.front()
+                                                       : source,
+                    syntax.back()};
+      } else {
+        if (edge == semantic::EdgeKind::Change)
+          return unsupported();
+        code = edge == semantic::EdgeKind::Posedge ? 39 : 40;
+        children.push_back(syntax.front());
+      }
+    } else if (isa<semantic::SVEventListControlOp>(source)) {
+      kind = uint32_t(Kind::Operation);
+      code = 35; // vpiEventOrOp
+      sourceOnly = true;
+      children = getChildren(source);
+      if (children.size() < 2)
+        return unsupported();
+    } else if (isa<semantic::SVIntegerLiteralOp>(source)) {
       if (!source->hasAttr("constant_value"))
         return unsupported();
       kind = uint32_t(Kind::Constant);
@@ -279,26 +327,29 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
       }
     } else
       return unsupported();
-    auto sourceType = source->getAttrOfType<TypeAttr>("semantic_type");
-    if (!sourceType || !integral(sourceType.getValue()))
-      return unsupported();
-    auto normalized = getNormalizedSemanticType(source);
-    auto semantic = makeVPITypeSemantics(
-        sourceType.getValue(), getSemanticLocation(source), {}, source);
-    if (failed(normalized) || failed(semantic))
-      return failure();
-    if (!sim::getPackedScalarType(*normalized) ||
-        !sim::getPackedWidth(*normalized).value_or(0))
-      return unsupported();
     plan[index].kind = kind;
     plan[index].code = code;
-    plan[index].type = *normalized;
-    plan[index].semantic = *semantic;
-    if (kind == uint32_t(Kind::Constant)) {
-      auto frozen = freezeSemanticConstant(source);
-      if (failed(frozen))
+    plan[index].sourceOnly = sourceOnly;
+    if (!sourceOnly) {
+      auto sourceType = source->getAttrOfType<TypeAttr>("semantic_type");
+      if (!sourceType || !integral(sourceType.getValue()))
+        return unsupported();
+      auto normalized = getNormalizedSemanticType(source);
+      auto semantic = makeVPITypeSemantics(
+          sourceType.getValue(), getSemanticLocation(source), {}, source);
+      if (failed(normalized) || failed(semantic))
         return failure();
-      plan[index].frozen = *frozen;
+      if (!sim::getPackedScalarType(*normalized) ||
+          !sim::getPackedWidth(*normalized).value_or(0))
+        return unsupported();
+      plan[index].type = *normalized;
+      plan[index].semantic = *semantic;
+      if (kind == uint32_t(Kind::Constant)) {
+        auto frozen = freezeSemanticConstant(source);
+        if (failed(frozen))
+          return failure();
+        plan[index].frozen = *frozen;
+      }
     }
     for (Operation *child : children) {
       if (plan.size() >= std::numeric_limits<unsigned>::max()) {
@@ -308,6 +359,7 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
       }
       unsigned childIndex = static_cast<unsigned>(plan.size());
       plan.push_back({child, {}});
+      plan.back().unqualifiedEvent = child == source;
       plan[index].children.push_back(childIndex);
     }
   }
@@ -393,20 +445,22 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
   OpBuilder::InsertionGuard guard(builder);
   builder.setInsertionPointToEnd(&design.getBody().front());
   for (auto [index, node] : llvm::enumerate(plan)) {
-    if (!node.type)
+    if (!node.type && !node.sourceOnly)
       continue;
     auto slot = incoming[index];
     sim::SimVPIExpressionDeclOp::create(
         builder, getSemanticLocation(node.source),
         node.endpoint->reference.getSymbol().getValue(), ids[index], node.kind,
         scope, slot.owner, slot.selector, slot.mode, slot.ordinal,
-        TypeAttr::get(node.type), node.semantic, node.frozen,
+        node.type ? TypeAttr::get(node.type) : TypeAttr{}, node.semantic,
+        node.frozen,
         node.kind == uint32_t(Kind::Operation)
             ? builder.getI32IntegerAttr(node.code)
             : IntegerAttr{},
         node.kind == uint32_t(Kind::IndexedPartSelect)
             ? builder.getI32IntegerAttr(node.code)
-            : IntegerAttr{});
+            : IntegerAttr{},
+        node.sourceOnly);
     for (unsigned child : node.children) {
       auto edge = incoming[child];
       auto relation = sim::SimVPIRelationDeclOp::create(
@@ -554,13 +608,7 @@ LogicalResult materializeProceduralExpressionRelations(
         Operation *control = source;
         if (isa<semantic::SVTimedStatementOp>(source) && children.size() == 2)
           control = children.front();
-        if (auto signal = dyn_cast<semantic::SVSignalEventControlOp>(control);
-            signal && signal.getEdgeKind() == semantic::EdgeKind::Change &&
-            !signal.getHasIff()) {
-          auto operands = getChildren(signal);
-          if (operands.size() == 1)
-            emit(Relation::ConditionRel, operands.front());
-        }
+        emit(Relation::ConditionRel, control);
         return WalkResult::advance();
       }
       if (isa<semantic::SVExpressionStatementOp>(source) &&

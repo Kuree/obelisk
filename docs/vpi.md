@@ -54,11 +54,19 @@ result type. Their `vpiSize`, value, and typespec queries report a notice; typed
 literal and declaration operands retain their own value/type queries. This
 representation does not imply evaluation of original defaults or event controls.
 
+Case-item expression iteration preserves every label slot, including repeated
+declarations and distinct literal occurrences. Its reverse `vpiUse` relation
+identifies the enclosing case statement. Event-control conditions retain level
+expressions, posedge/negedge operations, ordered event lists, and iff guards,
+including intra-assignment and repeated-event controls. Repeated declarations
+produce one reverse use per control; expression occurrences retain distinct
+identities. Both-edge and implicit event-list source queries remain incomplete.
+
 Identical syntax templates share their node and type metadata across instances;
 small root and leaf bindings preserve distinct occurrence identities and values.
 Effective type or width differences split templates. Ordinary unary/binary
-operators, bit-object selection, hierarchical reference spelling, iterated
-expression-root lists, and selected/compound port or primitive source producers
+operators, bit-object selection, hierarchical reference spelling,
+and selected/compound port or primitive source producers
 remain follow-ups to this bounded procedural slice.
 
 Elaborated generate scopes preserve packed parameters and localparams, including
