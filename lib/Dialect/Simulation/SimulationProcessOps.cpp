@@ -442,6 +442,116 @@ LogicalResult SimCallOp::verify() {
   return success();
 }
 
+namespace {
+struct VPIProbeOwner {
+  SimFuncOp function;
+  SimDesignOp design;
+  SimCodeUnitDeclOp unit;
+  uint64_t lexicalID;
+};
+FailureOr<VPIProbeOwner> vpiProbeOwner(Operation *operation) {
+  auto function = operation->getParentOfType<SimFuncOp>();
+  auto design = operation->getParentOfType<SimDesignOp>();
+  if (!function || !design || !function.getCodeUnitId()) {
+    operation->emitOpError("requires an exact executable code-unit owner");
+    return failure();
+  }
+  const uint64_t id = *function.getCodeUnitId();
+  SimCodeUnitDeclOp unit;
+  for (auto declaration : design.getOps<SimCodeUnitDeclOp>())
+    if (declaration.getId() == id)
+      unit = declaration;
+  if (!unit) {
+    operation->emitOpError("executable owner has no code-unit declaration");
+    return failure();
+  }
+  uint64_t lexicalID = id;
+  if (unit.getInternal())
+    for (auto origin : design.getOps<SimVPIThreadOriginBindingOp>())
+      if (origin.getCodeUnitId() == id)
+        for (auto statement : design.getOps<SimStatementDeclOp>())
+          if (statement.getId() == origin.getStatementId() &&
+              statement.getCodeUnitId())
+            lexicalID = *statement.getCodeUnitId();
+  return VPIProbeOwner{function, design, unit, lexicalID};
+}
+
+LogicalResult verifyVPIProbeStatement(Operation *operation, int64_t id,
+                                      bool requireScope) {
+  auto owner = vpiProbeOwner(operation);
+  if (failed(owner))
+    return failure();
+  for (auto statement : owner->design.getOps<SimStatementDeclOp>()) {
+    if (statement.getId() != id)
+      continue;
+    if (statement.getCodeUnitId() != owner->lexicalID)
+      return operation->emitOpError(
+          "statement belongs to a different lexical code unit");
+    if (requireScope && !statement.getIsScope().value_or(false))
+      return operation->emitOpError("frame origin must name a statement scope");
+    return success();
+  }
+  return operation->emitOpError("references an unknown statement ID");
+}
+} // namespace
+
+LogicalResult
+SimVPICallPrepareOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  auto call =
+      symbols.lookupNearestSymbolFrom<SimVPICallDeclOp>(*this, getCallAttr());
+  if (!call)
+    return emitOpError("call must name a simulation.vpi_call.decl");
+  auto owner = vpiProbeOwner(*this);
+  if (failed(owner))
+    return failure();
+  if (call.getCodeUnitId() != owner->lexicalID)
+    return emitOpError("call belongs to a different lexical code unit");
+  auto *edge = reflection::findVPITraversal(
+      static_cast<uint32_t>(reflection::VPIObjectKind::Frame),
+      static_cast<uint32_t>(reflection::VPIRelationKind::OriginRel),
+      reflection::VPITraversalMode::Handle);
+  if (!edge ||
+      !reflection::vpiObjectSetContains(edge->targets, call.getVpiKind()))
+    return emitOpError("call kind cannot be a procedural frame origin");
+  return success();
+}
+
+LogicalResult SimVPIFrameEnterPreparedOp::verify() {
+  if (failed(verifyPositive(*this, getCodeUnitIdAttr(), "code-unit ID")))
+    return failure();
+  auto owner = vpiProbeOwner(*this);
+  if (failed(owner))
+    return failure();
+  if (owner->unit.getId() != getCodeUnitId())
+    return emitOpError("entry must name its exact executable code unit");
+  if (owner->unit.getCodeUnitKind() !=
+      (getIsTask() ? EntryKind::Task : EntryKind::Function))
+    return emitOpError("entry task/function kind disagrees with its code unit");
+  return success();
+}
+
+LogicalResult SimVPIFrameEnterOp::verify() {
+  if (failed(verifyPositive(*this, getCodeUnitIdAttr(), "code-unit ID")))
+    return failure();
+  auto owner = vpiProbeOwner(*this);
+  if (failed(owner))
+    return failure();
+  if (owner->unit.getId() != getCodeUnitId())
+    return emitOpError("entry must name its exact executable code unit");
+  if (getStatementIdAttr()) {
+    if (failed(verifyPositive(*this, getStatementIdAttr(), "statement ID")))
+      return failure();
+    return verifyVPIProbeStatement(*this, *getStatementId(), true);
+  }
+  return success();
+}
+
+LogicalResult SimVPIFrameCheckpointOp::verify() {
+  if (failed(verifyPositive(*this, getStatementIdAttr(), "statement ID")))
+    return failure();
+  return verifyVPIProbeStatement(*this, getStatementId(), false);
+}
+
 LogicalResult verifyVPICallSite(Operation *operation,
                                 SymbolTableCollection &symbols, bool isTask) {
   auto reference = sim::get<metadata::VpiCallSite>(operation);

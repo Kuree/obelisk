@@ -302,6 +302,8 @@ InlineLegality getInlineCalleeLegality(SimFuncOp callee, bool calleeIsRecursive,
     return InlineLegality::LateMetadata;
   if (calleeIsRecursive)
     return InlineLegality::Recursive;
+  if (sim::has<sim::metadata::VpiFrameInstrumentation>(callee))
+    return InlineLegality::VPIFrameActivation;
   if (hasUnknownInlineMetadata(callee))
     return InlineLegality::UnknownMetadata;
 
@@ -311,8 +313,10 @@ InlineLegality getInlineCalleeLegality(SimFuncOp callee, bool calleeIsRecursive,
       return WalkResult::skip();
     if (legality != InlineLegality::Legal)
       return WalkResult::interrupt();
-    if (auto display = dyn_cast<SimDisplayOp>(operation);
-        display && !display.getScopeAttr())
+    if (isa<SimVPIFrameEnterPreparedOp, SimVPIFrameEnterOp>(operation))
+      legality = InlineLegality::VPIFrameActivation;
+    else if (auto display = dyn_cast<SimDisplayOp>(operation);
+             display && !display.getScopeAttr())
       legality = InlineLegality::UnfrozenDisplayScope;
     else if (auto format = dyn_cast<SimStringOutputFormatOp>(operation);
              format && !format.getScopeAttr())
@@ -380,6 +384,8 @@ StringRef getInlineLegalityReason(InlineLegality legality) {
     return "display has no frozen lexical scope";
   case InlineLegality::UnknownBoundaryMetadata:
     return "call boundary contains unknown simulation metadata";
+  case InlineLegality::VPIFrameActivation:
+    return "callee owns an observable procedural activation";
   }
   llvm_unreachable("unknown simulation inline legality");
 }
@@ -768,7 +774,8 @@ static const llvm::StringMap<discardable::PayloadCheck> &declarations() {
       metadata::DescriptorPackedLow, metadata::DescriptorRootType,
       metadata::FlushedPrivateSlot, metadata::GcPollFree,
       metadata::HierarchicalName, metadata::Rematerialized, metadata::VpiAnchor,
-      metadata::VpiStatementId, metadata::VpiCallSite, metadata::VpiAutomatic,
+      metadata::VpiStatementId, metadata::VpiCallSite,
+      metadata::VpiFrameInstrumentation, metadata::VpiAutomatic,
       metadata::VpiCellInstance, metadata::VpiDefinitionName,
       metadata::VpiIdentityDelegated, metadata::VpiBoxType,
       metadata::VpiSourceTypeIdentity, metadata::VpiTop,

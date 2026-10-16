@@ -543,6 +543,8 @@ def ObeliskSimulationDialect : Dialect {
     "::mlir::IntegerAttr":$vpi_statement_id,
     // Exact source call declaration, including calls nested in expressions.
     "::mlir::FlatSymbolRefAttr":$vpi_call_site,
+    // Exact procedural activation boundary retained until frame ABI lowering.
+    "::mlir::UnitAttr":$vpi_frame_instrumentation,
     "::mlir::BoolAttr":$vpi_automatic,
     "::mlir::BoolAttr":$vpi_cell_instance,
     "::mlir::StringAttr":$vpi_definition_name,

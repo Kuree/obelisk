@@ -439,6 +439,10 @@ bool validIntrinsic(const Image &image, const Function &function,
     return layout && layout->kind == OBELISK_RT_DBREG_BITS &&
            (!width || layout->width == *width);
   };
+  auto vpiIdentity = [](const std::optional<Layout> &layout) {
+    return layout && layout->kind == OBELISK_RT_DBREG_BITS &&
+           layout->flags == 0 && layout->width == 64 && layout->size == 8;
+  };
   auto bytes = [](const std::optional<Layout> &layout) {
     return layout && layout->kind == OBELISK_RT_DBREG_BYTES;
   };
@@ -1699,6 +1703,24 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_FILE_TELL:
     return site.inputCount == 1 && site.outputCount == 1 &&
            bits(input(0), 32) && bits(output(0), 64);
+  case OBELISK_RT_INTRINSIC_V1_VPI_CALL_PREPARE:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 1 && vpiIdentity(input(0)) &&
+           vpiIdentity(output(0));
+  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER_PREPARED:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 1 && vpiIdentity(input(0)) &&
+           vpiIdentity(input(1)) && vpiIdentity(output(0));
+  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER:
+    return signature.flags == 0 && site.inputCount == 3 &&
+           site.outputCount == 1 && vpiIdentity(input(0)) &&
+           vpiIdentity(input(1)) && vpiIdentity(input(2)) &&
+           vpiIdentity(output(0));
+  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_CHECKPOINT:
+  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_LEAVE:
+  case OBELISK_RT_INTRINSIC_V1_VPI_CALL_FINISH:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 0 && vpiIdentity(input(0));
   case OBELISK_RT_INTRINSIC_V1_VPI_ROOT:
     return site.inputCount == 0 && site.outputCount == 2 && cursor(output(0)) &&
            status(output(1));

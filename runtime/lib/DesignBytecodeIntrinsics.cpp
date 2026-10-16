@@ -6453,6 +6453,47 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         obelisk_rt_v1_file_rewind(context, static_cast<uint32_t>(*descriptor));
     return sentinel(0, status == OBELISK_RT_OK ? 0 : UINT32_MAX);
   }
+  case OBELISK_RT_INTRINSIC_V1_VPI_CALL_PREPARE: {
+    auto call = scalar(0);
+    if (!call)
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t ticket = 0;
+    auto status = obelisk_rt_v1_vpi_call_prepare(context, *call, &ticket);
+    return status == OBELISK_RT_OK ? sentinel(0, ticket) : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER_PREPARED: {
+    auto unit = scalar(0), task = scalar(1);
+    if (!unit || !task || *task > 1)
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t activation = 0;
+    auto status = obelisk_rt_v1_vpi_frame_enter_prepared(
+        context, *unit, static_cast<uint32_t>(*task), &activation);
+    return status == OBELISK_RT_OK ? sentinel(0, activation) : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER: {
+    auto unit = scalar(0), kind = scalar(1), origin = scalar(2);
+    if (!unit || !kind || !origin || (*kind != 0 && *kind != 2))
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t activation = 0;
+    auto status = obelisk_rt_v1_vpi_frame_enter(
+        context, *unit, static_cast<uint32_t>(*kind), *origin, &activation);
+    return status == OBELISK_RT_OK ? sentinel(0, activation) : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_CHECKPOINT: {
+    auto statement = scalar(0);
+    return statement ? obelisk_rt_v1_vpi_frame_checkpoint(context, *statement)
+                     : OBELISK_RT_INVALID_BYTECODE;
+  }
+  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_LEAVE: {
+    auto activation = scalar(0);
+    return activation ? obelisk_rt_v1_vpi_frame_leave(context, *activation)
+                      : OBELISK_RT_INVALID_BYTECODE;
+  }
+  case OBELISK_RT_INTRINSIC_V1_VPI_CALL_FINISH: {
+    auto ticket = scalar(0);
+    return ticket ? obelisk_rt_v1_vpi_call_finish(context, *ticket)
+                  : OBELISK_RT_INVALID_BYTECODE;
+  }
   case OBELISK_RT_INTRINSIC_V1_VPI_ROOT: {
     if (!context || !context->execution)
       return OBELISK_RT_INVALID_ARGUMENT;

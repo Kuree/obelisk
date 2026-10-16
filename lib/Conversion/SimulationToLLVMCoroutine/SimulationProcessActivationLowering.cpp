@@ -471,6 +471,18 @@ void declareProcessSpawnRuntimeABI(ModuleOp module) {
                            LLVM::LLVMVoidType::get(context), {pointer, i32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_disable_children",
                            i32, {pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_vpi_call_prepare", i32,
+                           {pointer, i64, pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_vpi_frame_enter_prepared",
+                           i32, {pointer, i64, i32, pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_vpi_frame_enter", i32,
+                           {pointer, i64, i32, i64, pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_vpi_frame_checkpoint", i32,
+                           {pointer, i64});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_vpi_frame_leave", i32,
+                           {pointer, i64});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_vpi_call_finish", i32,
+                           {pointer, i64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_control_enter", i32,
                            {pointer, i64, pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_control_boundary", i32,

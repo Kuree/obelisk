@@ -975,6 +975,39 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     return emitIntrinsicRegisters(plan, intrinsic, inputs,
                                   {reg(plan, op.getResult())});
   }
+  if (auto op = dyn_cast<sim::SimVPICallPrepareOp>(operation)) {
+    auto call = SymbolTable::lookupNearestSymbolFrom<sim::SimVPICallDeclOp>(
+        op, op.getCallAttr());
+    if (!call)
+      return op.emitOpError("missing verified VPI call declaration");
+    return emitIntrinsicRegisters(
+        plan, OBELISK_RT_INTRINSIC_V1_VPI_CALL_PREPARE,
+        {emitU64Constant(plan, call.getId())}, {reg(plan, op.getTicket())});
+  }
+  if (auto op = dyn_cast<sim::SimVPIFrameEnterPreparedOp>(operation))
+    return emitIntrinsicRegisters(
+        plan, OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER_PREPARED,
+        {emitU64Constant(plan, op.getCodeUnitId()),
+         emitU64Constant(plan, op.getIsTask())},
+        {reg(plan, op.getActivation())});
+  if (auto op = dyn_cast<sim::SimVPIFrameEnterOp>(operation))
+    return emitIntrinsicRegisters(
+        plan, OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER,
+        {emitU64Constant(plan, op.getCodeUnitId()),
+         emitU64Constant(plan, op.getStatementId() ? 2 : 0),
+         emitU64Constant(plan,
+                         op.getStatementId().value_or(op.getCodeUnitId()))},
+        {reg(plan, op.getActivation())});
+  if (auto op = dyn_cast<sim::SimVPIFrameCheckpointOp>(operation))
+    return emitIntrinsicRegisters(
+        plan, OBELISK_RT_INTRINSIC_V1_VPI_FRAME_CHECKPOINT,
+        {emitU64Constant(plan, op.getStatementId())}, {});
+  if (auto op = dyn_cast<sim::SimVPIFrameLeaveOp>(operation))
+    return emitIntrinsic(plan, OBELISK_RT_INTRINSIC_V1_VPI_FRAME_LEAVE,
+                         {op.getActivation()}, {});
+  if (auto op = dyn_cast<sim::SimVPICallFinishOp>(operation))
+    return emitIntrinsic(plan, OBELISK_RT_INTRINSIC_V1_VPI_CALL_FINISH,
+                         {op.getTicket()}, {});
   if (isa<sim::SimDisableChildrenOp>(operation))
     return emitIntrinsic(plan, kIntrinsicDisableChildren, {}, {});
   if (auto op = dyn_cast<sim::SimControlEnterOp>(operation)) {

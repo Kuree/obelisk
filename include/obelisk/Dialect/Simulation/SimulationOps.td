@@ -4186,6 +4186,79 @@ def SimProcessControlOp : SimOp<"process.control", [
   let hasVerifier = 1;
 }
 
+// Exact observation of dynamic procedural activations. The context is explicit;
+// IDs designate retained immutable declarations, never runtime frame indices.
+def SimVPICallPrepareOp
+    : SimOp<
+          "vpi.call.prepare", [DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+                               MemoryEffects<[MemWrite<SimProcessResource>]>]> {
+  let summary = "prepare one exact source call without entering its callee";
+  let arguments = (ins SimContextType:$runtime_context,
+      FlatSymbolRefAttr:$call);
+  let results = (outs I64:$ticket);
+  let assemblyFormat = "$runtime_context `from` $call attr-dict";
+}
+
+def SimVPIFrameEnterPreparedOp
+    : SimOp<"vpi.frame.enter_prepared",
+            [MemoryEffects<[MemWrite<SimProcessResource>]>]> {
+  let summary = "enter the prepared activation from its callee prologue";
+  let arguments = (ins SimContextType:$runtime_context, I64Attr:$code_unit_id,
+      DefaultValuedAttr<BoolAttr, "false">:$is_task);
+  let results = (outs I64:$activation);
+  let assemblyFormat = "$runtime_context `unit` $code_unit_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPIFrameEnterOp
+    : SimOp<
+          "vpi.frame.enter", [MemoryEffects<[MemWrite<SimProcessResource>]>]> {
+  let summary = "enter an exact root or nested statement scope";
+  let arguments = (ins SimContextType:$runtime_context, I64Attr:$code_unit_id,
+      OptionalAttr<I64Attr>:$statement_id);
+  let results = (outs I64:$activation);
+  let assemblyFormat = [{
+    $runtime_context `unit` $code_unit_id (`within` $statement_id^)? attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIFrameCheckpointOp
+    : SimOp<"vpi.frame.checkpoint",
+            [MemoryEffects<[MemWrite<SimProcessResource>]>]> {
+  let summary = "record the exact current source statement";
+  let arguments = (ins SimContextType:$runtime_context, I64Attr:$statement_id);
+  let assemblyFormat = "$runtime_context `statement` $statement_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPIFrameLeaveOp
+    : SimOp<
+          "vpi.frame.leave", [MemoryEffects<[MemWrite<SimProcessResource>]>]> {
+  let summary = "end a procedural activation and its local observation borrows";
+  let description = [{
+    Observed references are lexical observation-borrow endpoints. They keep
+    actual automatic owners live through this activation's query lifetime and
+    must survive ownership planning; they do not extend the runtime lifetime
+    after the frame leaves. Nonlocal disable ends observation at its control
+    operation instead of executing a second leave on an unwound activation.
+  }];
+  let arguments = (ins SimContextType:$runtime_context, I64:$activation,
+      Arg<Variadic<SimRefType>, "", [MemRead<SimStorageResource>]>:$observed);
+  let assemblyFormat = [{
+    $runtime_context `,` $activation
+    (`observing` `(` $observed^ `:` type($observed) `)`)? attr-dict
+  }];
+}
+
+def SimVPICallFinishOp
+    : SimOp<
+          "vpi.call.finish", [MemoryEffects<[MemWrite<SimProcessResource>]>]> {
+  let summary = "finish a consumed or cancelled source-call ticket";
+  let arguments = (ins SimContextType:$runtime_context, I64:$ticket);
+  let assemblyFormat = "$runtime_context `,` $ticket attr-dict";
+}
+
 def SimControlEnterOp : SimOp<"control.enter", [
     MemoryEffects<[MemWrite<SimProcessResource>]>
   ]> {

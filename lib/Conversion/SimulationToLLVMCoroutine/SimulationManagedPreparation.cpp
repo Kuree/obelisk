@@ -105,6 +105,13 @@ prepareManagedClassInventory(ModuleOp module,
                              llvm::StringMap<ManagedClassLayout> &layouts) {
   SmallVector<sim::SimClassDeclOp> classes;
   SmallVector<sim::SimClassMethodDeclOp> methods;
+  module.walk([&](sim::SimVPICallPrepareOp op) {
+    auto declaration =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimVPICallDeclOp>(
+            op, op.getCallAttr());
+    if (declaration)
+      native::set<native::VpiCallId>(op, declaration.getIdAttr());
+  });
   module.walk([&](sim::SimBoxBindTypeOp op) {
     auto descriptor =
         SymbolTable::lookupNearestSymbolFrom<sim::SimVPIBoxTypeDeclOp>(
