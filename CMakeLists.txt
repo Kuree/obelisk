@@ -262,6 +262,8 @@ set(OBELISK_SLANG_ARCHIVE_SHA256
     "50676d5a9adbefb97d266a4b174e6b0513901afd5ac57a6cdfea0a61149c3704")
 set(OBELISK_SLANG_SOURCE_DIR "" CACHE PATH
     "Extracted slang v${OBELISK_SLANG_VERSION} source tree (offline builds)")
+set(OBELISK_SLANG_PREBUILT_BUILD_DIR "" CACHE PATH
+    "Existing Obelisk CMake build providing compiled static Slang and fmt")
 
 # Z3 is a host-side compiler dependency only. Build a pinned static library
 # from source so the compiler does not inherit the glibc floor of Z3's release
@@ -394,58 +396,63 @@ if(OBELISK_ENABLE_Z3)
   endif()
 endif()
 
-# slang v11.0 declares these dependencies by git tag. Declare checksummed
-# release archives first (FetchContent's first declaration wins) so Obelisk's
-# dependency graph is immutable and works without git.
 find_package(Python 3.8 COMPONENTS Interpreter REQUIRED)
-FetchContent_Declare(fmt
-  URL "https://github.com/fmtlib/fmt/archive/refs/tags/12.1.0.tar.gz"
-  URL_HASH
-    "SHA256=ea7de4299689e12b6dddd392f9896f08fb0777ac7168897a244a6d6085043fea"
-  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-if(OBELISK_SLANG_SOURCE_DIR)
-  FetchContent_Declare(obelisk_slang
-    SOURCE_DIR "${OBELISK_SLANG_SOURCE_DIR}")
+if(OBELISK_SLANG_PREBUILT_BUILD_DIR)
+  include("${PROJECT_SOURCE_DIR}/cmake/PrebuiltSlang.cmake")
+  obelisk_import_prebuilt_slang()
 else()
-  FetchContent_Declare(obelisk_slang
-    URL "https://github.com/MikePopoloski/slang/archive/refs/tags/v${OBELISK_SLANG_VERSION}.tar.gz"
-    URL_HASH "SHA256=${OBELISK_SLANG_ARCHIVE_SHA256}"
+  # slang v11.0 declares these dependencies by git tag. Declare checksummed
+  # release archives first (FetchContent's first declaration wins) so Obelisk's
+  # dependency graph is immutable and works without git.
+  FetchContent_Declare(fmt
+    URL "https://github.com/fmtlib/fmt/archive/refs/tags/12.1.0.tar.gz"
+    URL_HASH
+      "SHA256=ea7de4299689e12b6dddd392f9896f08fb0777ac7168897a244a6d6085043fea"
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-endif()
+  if(OBELISK_SLANG_SOURCE_DIR)
+    FetchContent_Declare(obelisk_slang
+      SOURCE_DIR "${OBELISK_SLANG_SOURCE_DIR}")
+  else()
+    FetchContent_Declare(obelisk_slang
+      URL "https://github.com/MikePopoloski/slang/archive/refs/tags/v${OBELISK_SLANG_VERSION}.tar.gz"
+      URL_HASH "SHA256=${OBELISK_SLANG_ARCHIVE_SHA256}"
+      DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  endif()
 
-# Only the slang library is needed; keep third-party build surface minimal.
-set(SLANG_INCLUDE_TOOLS OFF CACHE BOOL "" FORCE)
-set(SLANG_INCLUDE_TESTS OFF CACHE BOOL "" FORCE)
-set(SLANG_INCLUDE_DOCS OFF CACHE BOOL "" FORCE)
-set(SLANG_INCLUDE_PYLIB OFF CACHE BOOL "" FORCE)
-set(SLANG_INCLUDE_INSTALL OFF CACHE BOOL "" FORCE)
-set(SLANG_INCLUDE_BENCHMARKS OFF CACHE BOOL "" FORCE)
-set(SLANG_USE_MIMALLOC OFF CACHE BOOL "" FORCE)
-# slang derives its version from `git describe`, which walks up from the
-# extracted source into Obelisk's checkout: Obelisk tags garble or break the
-# version and every Obelisk commit reruns CMake. Pre-empt slang's gitversion
-# module (by its include guard) to report what a release tarball built outside
-# any repository reports. The check below fails configure if a slang bump stops
-# honoring the override.
-set(__get_git_version YES)
-function(get_git_version _patch _prerelease _hash)
-  set(${_patch} 0 PARENT_SCOPE)
-  set(${_prerelease} "" PARENT_SCOPE)
-  set(${_hash} 0 PARENT_SCOPE)
-endfunction()
-set(SLANG_VERSION_PRERELEASE "" CACHE STRING "" FORCE)
-FetchContent_MakeAvailable(obelisk_slang)
-get_directory_property(_obelisk_slang_version_hash
-  DIRECTORY "${obelisk_slang_SOURCE_DIR}" DEFINITION SLANG_VERSION_HASH)
-if(NOT _obelisk_slang_version_hash STREQUAL "0")
-  message(FATAL_ERROR
-    "slang no longer uses Obelisk's get_git_version override (hash "
-    "'${_obelisk_slang_version_hash}'); update it for slang's gitversion module")
+  # Only the slang library is needed; keep third-party build surface minimal.
+  set(SLANG_INCLUDE_TOOLS OFF CACHE BOOL "" FORCE)
+  set(SLANG_INCLUDE_TESTS OFF CACHE BOOL "" FORCE)
+  set(SLANG_INCLUDE_DOCS OFF CACHE BOOL "" FORCE)
+  set(SLANG_INCLUDE_PYLIB OFF CACHE BOOL "" FORCE)
+  set(SLANG_INCLUDE_INSTALL OFF CACHE BOOL "" FORCE)
+  set(SLANG_INCLUDE_BENCHMARKS OFF CACHE BOOL "" FORCE)
+  set(SLANG_USE_MIMALLOC OFF CACHE BOOL "" FORCE)
+  # slang derives its version from `git describe`, which walks up from the
+  # extracted source into Obelisk's checkout: Obelisk tags garble or break the
+  # version and every Obelisk commit reruns CMake. Pre-empt slang's gitversion
+  # module (by its include guard) to report what a release tarball built outside
+  # any repository reports. The check below fails configure if a slang bump stops
+  # honoring the override.
+  set(__get_git_version YES)
+  function(get_git_version _patch _prerelease _hash)
+    set(${_patch} 0 PARENT_SCOPE)
+    set(${_prerelease} "" PARENT_SCOPE)
+    set(${_hash} 0 PARENT_SCOPE)
+  endfunction()
+  set(SLANG_VERSION_PRERELEASE "" CACHE STRING "" FORCE)
+  FetchContent_MakeAvailable(obelisk_slang)
+  get_directory_property(_obelisk_slang_version_hash
+    DIRECTORY "${obelisk_slang_SOURCE_DIR}" DEFINITION SLANG_VERSION_HASH)
+  if(NOT _obelisk_slang_version_hash STREQUAL "0")
+    message(FATAL_ERROR
+      "slang no longer uses Obelisk's get_git_version override (hash "
+      "'${_obelisk_slang_version_hash}'); update it for slang's gitversion module")
+  endif()
+  set(OBELISK_SLANG_SOURCE_DIR "${obelisk_slang_SOURCE_DIR}")
+  message(STATUS
+    "Building slang v${OBELISK_SLANG_VERSION} from ${OBELISK_SLANG_SOURCE_DIR}")
 endif()
-set(OBELISK_SLANG_SOURCE_DIR "${obelisk_slang_SOURCE_DIR}")
 set(OBELISK_SLANG_INCLUDE_DIR "${OBELISK_SLANG_SOURCE_DIR}/include")
-message(STATUS
-  "Building slang v${OBELISK_SLANG_VERSION} from ${OBELISK_SLANG_SOURCE_DIR}")
 if(_obelisk_configure_wasm_support)
   # The standalone runtime compiler needs Slang's canonical IEEE VPI headers.
   # Configure it only after FetchContent has resolved every supported source
