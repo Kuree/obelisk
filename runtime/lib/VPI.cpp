@@ -141,6 +141,9 @@ struct __vpiHandle {
   // reclaims the object; a VPI reference must not extend its lifetime.
   obelisk_rt_object_v1 *dynamicObject = nullptr;
   uint64_t dynamicIdentity = 0;
+  // A process class reference is a scheduler token, never a managed pointer.
+  // Finished and killed process objects retain their identity in tombstones.
+  uint64_t logicalProcess = 0;
 
   uint32_t selectionRootType = 0;
   obelisk::reflection::VPIIndexedAccessKind selectionAccessKind =
@@ -3076,6 +3079,7 @@ void copyUseRecipe(__vpiHandle &iterator, const __vpiHandle &source) {
   iterator.useClassDefinitionOrigin = source.classDefinitionOrigin;
   iterator.dynamicObject = source.dynamicObject;
   iterator.dynamicIdentity = source.dynamicIdentity;
+  iterator.logicalProcess = source.logicalProcess;
   iterator.useForm = source.form;
   iterator.useSemanticCursor = source.semanticCursor;
   iterator.useSemanticEdge = source.semanticEdge;
@@ -3098,6 +3102,7 @@ vpiHandle makeUseHandle(__vpiHandle *iterator) {
       if (auto *handle = findHandle(result)) {
         handle->dynamicObject = iterator->dynamicObject;
         handle->dynamicIdentity = iterator->dynamicIdentity;
+        handle->logicalProcess = iterator->logicalProcess;
         handle->allocationScheme = iterator->useAllocationScheme;
       }
     }
@@ -3106,8 +3111,10 @@ vpiHandle makeUseHandle(__vpiHandle *iterator) {
   if (iterator->useForm == VPIObjectForm::ClassObject) {
     vpiHandle result =
         makeHandle(iterator->owner, iterator->useCursor, vpiClassObj);
-    if (auto *handle = result ? findHandle(result) : nullptr)
+    if (auto *handle = result ? findHandle(result) : nullptr) {
       handle->form = VPIObjectForm::ClassObject;
+      handle->semanticCursor = iterator->useSemanticCursor;
+    }
     return finish(result);
   }
   if (iterator->useForm == VPIObjectForm::Design) {
@@ -4056,6 +4063,60 @@ vpiHandle virtualInterfaceActual(__vpiHandle *source) {
   return makeHandle(source->owner, actual, actualType);
 }
 
+struct VPIClassReference {
+  obelisk_rt_object_v1 *object = nullptr;
+  uint64_t identity = 0;
+  uint64_t logicalProcess = 0;
+  obelisk_rt_design_cursor_v1 semantic{};
+};
+
+// The caller holds the context transaction and an active GC lane through use
+// of this weak reference. A process token must never enter managed-pointer
+// validation, even when its numerical value happens to look like an address.
+bool readClassReference(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
+                        VPIClassReference &reference) {
+  uint64_t word = 0;
+  if (!readManagedStateWord(source, word))
+    return false;
+  if (word == 0)
+    return true;
+  obelisk_rt_design_cursor_v1 semantic{};
+  obelisk_rt_design_semantic_type_info_v1 info{};
+  if (semanticCursorFor(source, semantic) &&
+      !semanticTypeInfo(source, semantic, info))
+    return false;
+  if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_PROCESS) {
+    if (obelisk_rt_process_object_identity(source->owner->context, word,
+                                           &reference.identity) !=
+        OBELISK_RT_OK) {
+      setError(source->owner, "invalid process reference in VPI design state",
+               vpiInternal);
+      return false;
+    }
+    reference.logicalProcess = word;
+    reference.semantic = semantic;
+  } else {
+    auto *object = obelisk_rt_object_from_managed_word(word);
+    ManagedObjectLease lease;
+    if (!object ||
+        obelisk_rt_managed_object_acquire(
+            lane, object, OBELISK_RT_MANAGED_CLASS, &lease) != OBELISK_RT_OK ||
+        obelisk_rt_managed_object_context(object) != source->owner->context) {
+      setError(source->owner, "invalid class reference in VPI design state",
+               vpiInternal);
+      return false;
+    }
+    reference.object = object;
+    reference.identity = obelisk_rt_v1_object_id(object);
+  }
+  if (reference.identity == 0 || reference.identity > INT64_MAX) {
+    setError(source->owner, "invalid class identity in VPI design state",
+             vpiInternal);
+    return false;
+  }
+  return true;
+}
+
 vpiHandle makeClassObjectHandle(__vpiHandle *source) {
   if (source->classDefinitionOrigin) {
     setError(source->owner,
@@ -4068,33 +4129,22 @@ vpiHandle makeClassObjectHandle(__vpiHandle *source) {
     setError(source->owner, "class VPI query cannot enter GC scope", vpiInternal);
     return nullptr;
   }
-  uint64_t word = 0;
-  if (!readManagedStateWord(source, word) || word == 0)
+  VPIClassReference reference;
+  if (!readClassReference(source, managed.getLane(), reference) ||
+      reference.identity == 0)
     return nullptr;
-  auto *object = obelisk_rt_object_from_managed_word(word);
-  ManagedObjectLease lease;
-  if (!object ||
-      obelisk_rt_managed_object_acquire(managed.getLane(), object,
-                                        OBELISK_RT_MANAGED_CLASS, &lease) !=
-          OBELISK_RT_OK ||
-      obelisk_rt_managed_object_context(object) != source->owner->context) {
-    setError(source->owner, "invalid class reference in VPI design state",
-             vpiInternal);
-    return nullptr;
-  }
-  uint64_t identity = obelisk_rt_v1_object_id(object);
-  if (identity == 0 || identity > INT64_MAX) {
-    setError(source->owner, "invalid class identity in VPI design state",
-             vpiInternal);
-    return nullptr;
-  }
   obelisk_rt_design_cursor_v1 typespec{};
   bool isProtected = false;
-  const auto *descriptor = obelisk_rt_managed_object_class_descriptor(object);
+  const auto *descriptor =
+      reference.object
+          ? obelisk_rt_managed_object_class_descriptor(reference.object)
+          : nullptr;
   obelisk_rt_status typeStatus =
-      descriptor ? obelisk_rt_cached_vpi_class_typespec(
-                       source->owner->context, descriptor->class_id, &typespec)
-                 : OBELISK_RT_INVALID_HANDLE;
+      reference.logicalProcess ? OBELISK_RT_EOF
+      : descriptor
+          ? obelisk_rt_cached_vpi_class_typespec(
+                source->owner->context, descriptor->class_id, &typespec)
+          : OBELISK_RT_INVALID_HANDLE;
   if ((typeStatus != OBELISK_RT_OK && typeStatus != OBELISK_RT_EOF) ||
       (typeStatus == OBELISK_RT_OK &&
        !fixedProtectionFor(source->owner, typespec, isProtected))) {
@@ -4107,11 +4157,13 @@ vpiHandle makeClassObjectHandle(__vpiHandle *source) {
     handle->form = VPIObjectForm::ClassObject;
     handle->exactVpiType = vpiClassObj;
     handle->allocationScheme = vpiDynamicScheme;
-    handle->dynamicObject = object;
-    handle->dynamicIdentity = identity;
-    handle->cursor = typespec;
+    handle->dynamicObject = reference.object;
+    handle->dynamicIdentity = reference.identity;
+    handle->logicalProcess = reference.logicalProcess;
+    handle->cursor = reference.logicalProcess ? source->cursor : typespec;
+    handle->semanticCursor = reference.semantic;
     handle->protectedObject = isProtected;
-    source->owner->hasDynamicHandles = true;
+    source->owner->hasDynamicHandles |= reference.object != nullptr;
     return keepHandle(source->owner, std::move(handle));
   }
   OBELISK_RT_CATCH_ALL {
@@ -4122,6 +4174,9 @@ vpiHandle makeClassObjectHandle(__vpiHandle *source) {
 }
 
 vpiHandle classObjectTypespec(__vpiHandle *handle) {
+  if (handle->logicalProcess)
+    return makeTypespecHandle(handle->owner, handle->cursor,
+                              handle->semanticCursor, false);
   ManagedExecutionScope managed(handle->owner->context);
   if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane())
     return nullptr;
@@ -5241,6 +5296,9 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
               vpiClassObj, static_cast<uint32_t>(type),
               obelisk::reflection::VPITraversalMode::Iterate))
         return nullptr;
+      // The process class has no user-declared members or resource waiters.
+      if (handle->logicalProcess)
+        return nullptr;
       // The specialization owns the immutable member inventory. The iterator
       // retains a weak receiver recipe for automatic members only.
       sourceDesign = true;
@@ -6091,6 +6149,19 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
       return distance == UINT64_MAX ? UINT64_MAX : distance + 1;
     };
     switch (property) {
+    case vpiClassType:
+      switch (info.kind) {
+      case OBELISK_RT_DESIGN_SEMANTIC_CLASS:
+        return vpiUserDefinedClass;
+      case OBELISK_RT_DESIGN_SEMANTIC_MAILBOX:
+        return vpiMailboxClass;
+      case OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE:
+        return vpiSemaphoreClass;
+      case OBELISK_RT_DESIGN_SEMANTIC_PROCESS:
+        return vpiProcessClass;
+      default:
+        return vpiUndefined;
+      }
     case vpiSize: {
       uint64_t size = 0;
       if (handle->form == VPIObjectForm::IntegralConstant)
@@ -6388,28 +6459,10 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT64 vpi_get64(PLI_INT32 property,
                vpiInternal);
       return vpiUndefined;
     }
-    uint64_t word = 0;
-    if (!readManagedStateWord(handle, word))
-      return vpiUndefined;
-    if (word == 0)
-      return 0;
-    obelisk_rt_object_v1 *object = obelisk_rt_object_from_managed_word(word);
-    ManagedObjectLease lease;
-    if (!object ||
-        obelisk_rt_managed_object_acquire(
-            lane, object, OBELISK_RT_MANAGED_CLASS, &lease) != OBELISK_RT_OK ||
-        obelisk_rt_managed_object_context(object) != handle->owner->context) {
-      setError(handle->owner, "invalid class reference in VPI design state",
-               vpiInternal);
-      return vpiUndefined;
-    }
-    uint64_t identity = obelisk_rt_v1_object_id(object);
-    if (identity == 0 || identity > INT64_MAX) {
-      setError(handle->owner, "invalid class identity in VPI design state",
-               vpiInternal);
-      return vpiUndefined;
-    }
-    return static_cast<PLI_INT64>(identity);
+    VPIClassReference reference;
+    return readClassReference(handle, lane, reference)
+               ? static_cast<PLI_INT64>(reference.identity)
+               : vpiUndefined;
   }
   setError(handle->owner, "unsupported 64-bit integer VPI property", vpiNotice);
   return vpiUndefined;
@@ -6647,12 +6700,15 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     obelisk_rt_design_semantic_type_info_v1 info{};
     if (!semanticTypeInfo(handle, handle->semanticCursor, info) ||
         (info.kind != OBELISK_RT_DESIGN_SEMANTIC_CLASS &&
+         info.kind != OBELISK_RT_DESIGN_SEMANTIC_PROCESS &&
          info.kind != OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE))
       return nullptr;
     OBELISK_RT_TRY {
       if (info.name_size != 0) {
         scratch.assign(reinterpret_cast<const char *>(info.name),
                        static_cast<size_t>(info.name_size));
+      } else if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_PROCESS) {
+        scratch = "process";
       } else if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_CLASS &&
                  info.identity_target.offset != 0) {
         const uint8_t *name = nullptr;

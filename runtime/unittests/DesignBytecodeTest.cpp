@@ -2213,6 +2213,30 @@ std::vector<uint8_t> makeManagedScalarDatabase(uint32_t exactType,
   return bytes;
 }
 
+std::vector<uint8_t> makeProcessClassVariableDatabase() {
+  std::vector<uint8_t> bytes = makeManagedScalarDatabase(vpiClassVar);
+  const uint32_t directoryOffset = static_cast<uint32_t>(bytes.size());
+  const uint64_t typeOffset = directoryOffset + kSemanticDirectorySize;
+  const uint64_t rootOffset = typeOffset + 64;
+  bytes.resize(rootOffset + 8, 0);
+  put32(bytes, 12, directoryOffset);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, directoryOffset, typeOffset);
+  put64(bytes, directoryOffset + 8, 1);
+  put64(bytes, directoryOffset + 32, rootOffset);
+  put64(bytes, directoryOffset + 40, 1);
+  put32(bytes, typeOffset,
+        OBELISK_RT_DESIGN_SEMANTIC_PROCESS |
+            (vpiClassTypespec
+             << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+  put32(bytes, typeOffset + 12, UINT32_MAX);
+  put32(bytes, typeOffset + 16, UINT32_MAX);
+  put32(bytes, rootOffset, uint32_t{1} << 30);
+  put32(bytes, rootOffset + 4, 0);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeSemanticTraversalDatabase(bool wildcardAssoc = false) {
   std::vector<uint8_t> bytes = makeDatabase(false, true);
   constexpr uint32_t typeCount = 11;
@@ -7743,6 +7767,119 @@ TEST(VPI, ClassVariableObjectIdTracksLiveManagedIdentity) {
   EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), vpiUndefined);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   EXPECT_EQ(vpi_release_handle(firstHandle), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, ProcessClassObjectsRetainIdentityAndTypespecAfterExit) {
+  Fixture fixture;
+  fixture.database = makeProcessClassVariableDatabase();
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  char name[] = "top.value";
+  vpiHandle variable = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(variable, nullptr);
+  EXPECT_EQ(vpi_get64(vpiObjId, variable), 0);
+  EXPECT_EQ(vpi_handle(vpiClassObj, variable), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  vpiHandle declaredType = vpi_handle(vpiClassTypespec, variable);
+  ASSERT_NE(declaredType, nullptr);
+  EXPECT_EQ(vpi_get(vpiClassType, declaredType), vpiProcessClass);
+  EXPECT_STREQ(vpi_get_str(vpiName, declaredType), "process");
+  EXPECT_EQ(vpi_handle(vpiClassDefn, declaredType), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  obelisk_rt_design_cursor_v1 cursor{};
+  ASSERT_EQ(obelisk_rt_v1_design_lookup(&fixture.execution,
+                                        reinterpret_cast<const uint8_t *>(name),
+                                        std::strlen(name), &cursor),
+            OBELISK_RT_OK);
+  std::array<uint64_t, 2> tokens{};
+  std::array<PLI_INT64, 2> identities{};
+  std::array<vpiHandle, 2> objects{};
+  for (size_t i = 0; i != tokens.size(); ++i) {
+    obelisk_rt_process_instance_v1 *instance = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_process_instance_create_for_context(
+                  context, &fixture.descriptor, &instance),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
+    tokens[i] = obelisk_rt_v1_scheduler_process_token(context, instance);
+    ASSERT_NE(tokens[i], 0u);
+    ASSERT_EQ(
+        obelisk_rt_v1_design_write(context, cursor, &tokens[i], nullptr, 64),
+        OBELISK_RT_OK);
+    objects[i] = vpi_handle(vpiClassObj, variable);
+    ASSERT_NE(objects[i], nullptr);
+    identities[i] = vpi_get64(vpiObjId, objects[i]);
+    ASSERT_GT(identities[i], 0);
+    EXPECT_EQ(vpi_get64(vpiObjId, variable), identities[i]);
+    EXPECT_EQ(vpi_get(vpiType, objects[i]), vpiClassObj);
+    EXPECT_EQ(vpi_get(vpiAllocScheme, objects[i]), vpiDynamicScheme);
+    EXPECT_EQ(vpi_get(vpiIsProtected, objects[i]), 0);
+    vpiHandle alias = vpi_handle(vpiClassObj, variable);
+    ASSERT_NE(alias, nullptr);
+    EXPECT_EQ(vpi_compare_objects(objects[i], alias), 1);
+    EXPECT_EQ(vpi_compare_objects(objects[i], variable), 0);
+    EXPECT_EQ(vpi_release_handle(alias), 1);
+    vpiHandle actualType = vpi_handle(vpiClassTypespec, objects[i]);
+    ASSERT_NE(actualType, nullptr);
+    EXPECT_EQ(vpi_compare_objects(declaredType, actualType), 1);
+    EXPECT_EQ(vpi_get(vpiClassType, actualType), vpiProcessClass);
+    EXPECT_EQ(vpi_handle(vpiClassDefn, actualType), nullptr);
+    EXPECT_EQ(vpi_release_handle(actualType), 1);
+    for (PLI_INT32 selector :
+         {vpiVariables, vpiMethods, vpiWaitingProcesses, vpiMessages}) {
+      EXPECT_EQ(vpi_iterate(selector, objects[i]), nullptr);
+      EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    }
+  }
+  EXPECT_NE(identities[0], identities[1]);
+  EXPECT_EQ(vpi_compare_objects(objects[0], objects[1]), 0);
+  obelisk_rt_process_control_disposition disposition{};
+  ASSERT_EQ(obelisk_rt_v1_process_control(context, tokens[1],
+                                          OBELISK_RT_PROCESS_CONTROL_KILL,
+                                          &disposition),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  for (size_t i = 0; i != tokens.size(); ++i) {
+    obelisk_rt_process_state state{};
+    ASSERT_EQ(obelisk_rt_v1_process_status(context, tokens[i], &state),
+              OBELISK_RT_OK);
+    EXPECT_EQ(state,
+              i == 0 ? OBELISK_RT_PROCESS_FINISHED : OBELISK_RT_PROCESS_KILLED);
+    EXPECT_EQ(vpi_get64(vpiObjId, objects[i]), identities[i]);
+    ASSERT_EQ(
+        obelisk_rt_v1_design_write(context, cursor, &tokens[i], nullptr, 64),
+        OBELISK_RT_OK);
+    EXPECT_EQ(vpi_get64(vpiObjId, variable), identities[i]);
+    vpiHandle alias = vpi_handle(vpiClassObj, variable);
+    ASSERT_NE(alias, nullptr);
+    EXPECT_EQ(vpi_compare_objects(alias, objects[i]), 1);
+    EXPECT_EQ(vpi_release_handle(alias), 1);
+  }
+  // The native/design tag is part of a process reference, not an address bit.
+  uint64_t unknown = tokens[0] & ~OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG;
+  ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &unknown, nullptr, 64),
+            OBELISK_RT_OK);
+  EXPECT_EQ(vpi_get64(vpiObjId, variable), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
+  EXPECT_EQ(vpi_handle(vpiClassObj, variable), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
+  uint64_t nullWord = 0;
+  ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &nullWord, nullptr, 64),
+            OBELISK_RT_OK);
+  EXPECT_EQ(vpi_handle(vpiClassObj, variable), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  for (vpiHandle object : objects)
+    EXPECT_EQ(vpi_release_handle(object), 1);
+  EXPECT_EQ(vpi_release_handle(declaredType), 1);
+  EXPECT_EQ(vpi_release_handle(variable), 1);
   obelisk_rt_v1_context_destroy(context);
 }
 
