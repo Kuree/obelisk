@@ -3320,22 +3320,15 @@ obelisk_rt_retire_process_parent_unlocked(obelisk_rt_context *context,
   links[finished] = parent;
 }
 
-/// Adds to `tree` the finished processes whose parent `contains` accepts,
-/// returning whether any was added. Descendant collection repeats this with
-/// the live-process scan until neither grows the tree.
-template <typename Contains>
-inline bool
-obelisk_rt_add_finished_descendants_unlocked(const obelisk_rt_context *context,
-                                             std::vector<uint64_t> &tree,
-                                             Contains &&contains) {
-  bool added = false;
-  for (const auto &[finished, parent] : context->finishedProcessParents)
-    if (contains(parent) && !contains(finished)) {
-      tree.push_back(finished);
-      added = true;
-    }
-  return added;
-}
+/// Returns `root` and every logical process descending from it: live
+/// processes and design tasks, the executing activation, and finished
+/// processes whose descendants are still alive (IEEE 1800-2023 9.6.3, 9.7).
+/// Sets `rootLive` when `root` itself is scheduled or executing. The cost is
+/// linear in the scheduled processes and finished links, independent of the
+/// tree's size or depth.
+std::unordered_set<uint64_t>
+obelisk_rt_collect_process_tree_unlocked(const obelisk_rt_context *context,
+                                         uint64_t root, bool &rootLive);
 
 obelisk_rt_status obelisk_rt_initialize_design_bytecode_image(
     const obelisk_rt_execution_descriptor_v1 &execution,

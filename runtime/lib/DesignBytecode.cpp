@@ -5,6 +5,7 @@
 #include "DesignBytecodeLogic.h"
 #include "DesignBytecodeNets.h"
 #include "DesignBytecodeRoots.h"
+#include "ProcessObservers.h"
 #include "ProcessPacking.h"
 #include "ProcessShared.h"
 #include "ProcessSignals.h"
@@ -3643,47 +3644,16 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
                                            bool &preserved) {
   OBELISK_RT_TRY {
     preserved = false;
-    std::vector<uint64_t> targets{root};
+    std::unordered_set<uint64_t> targets;
     std::vector<obelisk_rt_process_instance_v1 *> nativeInstances;
     std::vector<CancelledLogicalDesignActivation> designActivations;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       invalidateDesignReadyCohort(context);
-      auto contains = [&](uint64_t token) {
-        return std::find(targets.begin(), targets.end(), token) !=
-               targets.end();
-      };
-      bool foundRoot = preservedActive == root &&
-                       context->activeLogicalProcessToken == preservedActive;
-      bool changed = true;
-      while (changed) {
-        changed = false;
-        for (const ScheduledProcess &process : context->scheduledProcesses) {
-          uint64_t token =
-              OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG | process.token;
-          foundRoot |= token == root && process.instance;
-          if (process.instance && contains(process.parent) &&
-              !contains(token)) {
-            targets.push_back(token);
-            changed = true;
-          }
-        }
-        for (const ScheduledDesignTask &task : context->scheduledDesignTasks) {
-          foundRoot |= task.id == root && !task.terminated;
-          if (!task.terminated && contains(task.parent) && !contains(task.id)) {
-            targets.push_back(task.id);
-            changed = true;
-          }
-        }
-        changed |= obelisk_rt_add_finished_descendants_unlocked(
-            context, targets, contains);
-        if (preservedActive != 0 && !contains(preservedActive) &&
-            context->activeLogicalProcessToken == preservedActive &&
-            contains(context->activeLogicalProcessParent)) {
-          targets.push_back(preservedActive);
-          changed = true;
-        }
-      }
+      bool foundRoot = false;
+      targets =
+          obelisk_rt_collect_process_tree_unlocked(context, root, foundRoot);
+      auto contains = [&](uint64_t token) { return targets.count(token) != 0; };
       // A finished root has nothing left to terminate but its descendants.
       if (!foundRoot && !context->finishedProcessParents.count(root))
         return OBELISK_RT_INVALID_HANDLE;
@@ -3888,13 +3858,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_control(
 
       if (kind != OBELISK_RT_PROCESS_CONTROL_KILL) {
         if (native) {
-          auto found = std::find_if(context->scheduledProcesses.begin(),
-                                    context->scheduledProcesses.end(),
-                                    [&](const ScheduledProcess &process) {
-                                      return process.token == nativeToken &&
-                                             process.instance;
-                                    });
-          if (found == context->scheduledProcesses.end())
+          ScheduledProcess *found = findScheduledProcess(context, nativeToken);
+          if (!found || !found->instance)
             return OBELISK_RT_INVALID_HANDLE;
           if (kind == OBELISK_RT_PROCESS_CONTROL_RESUME &&
               found->explicitlySuspended)
@@ -3949,7 +3914,7 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
     std::vector<uint8_t> frame;
   };
   OBELISK_RT_TRY {
-    std::vector<uint64_t> descendants;
+    std::unordered_set<uint64_t> descendants;
     std::vector<obelisk_rt_process_instance_v1 *> nativeInstances;
     std::vector<CancelledDesignTask> designTasks;
     std::vector<uint64_t> insertedNativeTerminations;
@@ -3962,34 +3927,12 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
       uint64_t root = context->activeLogicalProcessToken;
       if (root == 0)
         return OBELISK_RT_INVALID_LIFECYCLE;
-      descendants.reserve(
-          checkedSizeSum(checkedSizeSum(context->scheduledProcesses.size(),
-                                        context->scheduledDesignTasks.size()),
-                         1));
-      descendants.push_back(root);
+      bool rootLive = false;
+      descendants =
+          obelisk_rt_collect_process_tree_unlocked(context, root, rootLive);
       auto contains = [&](uint64_t token) {
-        return std::find(descendants.begin(), descendants.end(), token) !=
-               descendants.end();
+        return descendants.count(token) != 0;
       };
-      bool changed = true;
-      while (changed) {
-        changed = false;
-        for (const ScheduledProcess &process : context->scheduledProcesses) {
-          uint64_t token = (UINT64_C(1) << 63) | process.token;
-          if (process.instance && contains(process.parent) &&
-              !contains(token)) {
-            descendants.push_back(token);
-            changed = true;
-          }
-        }
-        for (const ScheduledDesignTask &task : context->scheduledDesignTasks)
-          if (!task.terminated && contains(task.parent) && !contains(task.id)) {
-            descendants.push_back(task.id);
-            changed = true;
-          }
-        changed |= obelisk_rt_add_finished_descendants_unlocked(
-            context, descendants, contains);
-      }
 
       size_t nativeActivationCount = 0;
       size_t designActivationCount = 0;
@@ -4285,8 +4228,7 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
       auto targetedControl =
           [&](const std::vector<uint64_t> &controls) -> std::optional<size_t> {
         for (size_t index = 0; index != controls.size(); ++index)
-          if (std::find(targets.begin(), targets.end(), controls[index]) !=
-              targets.end())
+          if (targetControls.count(controls[index]))
             return index;
         return std::nullopt;
       };
@@ -4339,8 +4281,7 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
       // its inherited stack instead of terminating its logical identity.
       size_t trim = context->activeControls.size();
       for (size_t index = 0; index != context->activeControls.size(); ++index)
-        if (std::find(targets.begin(), targets.end(),
-                      context->activeControls[index]) != targets.end()) {
+        if (targetControls.count(context->activeControls[index])) {
           trim = index;
           break;
         }

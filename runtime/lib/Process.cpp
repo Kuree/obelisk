@@ -3082,6 +3082,79 @@ void obelisk_rt_prune_finished_process_parents_unlocked(
     link = live.count(link->first) ? std::next(link) : links.erase(link);
 }
 
+std::unordered_set<uint64_t>
+obelisk_rt_collect_process_tree_unlocked(const obelisk_rt_context *context,
+                                         uint64_t root, bool &rootLive) {
+  const auto &links = context->finishedProcessParents;
+  const auto &parentMarks = context->logicalProcessParentsWithChildren;
+  uint64_t active = context->activeLogicalProcessToken;
+  // Only a live process marked as having spawned a child, or a finished one
+  // with a link, can be an ancestor. Remember the parents of the former.
+  std::unordered_map<uint64_t, uint64_t> liveParents;
+  rootLive = false;
+  auto noteLive = [&](uint64_t token, uint64_t parent) {
+    rootLive |= token == root;
+    if (parentMarks.count(token))
+      liveParents.emplace(token, parent);
+  };
+  for (const ScheduledProcess &process : context->scheduledProcesses)
+    if (process.instance)
+      noteLive(kNativeLogicalProcessTag | process.token, process.parent);
+  for (const ScheduledDesignTask &task : context->scheduledDesignTasks)
+    if (!task.terminated)
+      noteLive(task.id, task.parent);
+  // An executing design task has left the scheduler vector.
+  if (active != 0)
+    noteLive(active, context->activeLogicalProcessParent);
+
+  // Whether `node` is root or one of its descendants, memoized for every
+  // ancestor a walk passes so each is resolved once. Scheduler vector order
+  // is arbitrary (design tasks are swap-removed), so walking up the parent
+  // chain avoids repeated downward sweeps. Chains are acyclic because a
+  // parent exists before its child; the bound only stops a walk over
+  // corrupted links.
+  std::unordered_map<uint64_t, bool> descends{{root, true}};
+  std::vector<uint64_t> path;
+  size_t maxDepth = liveParents.size() + links.size() + 1;
+  auto inTree = [&](uint64_t node) {
+    path.clear();
+    bool result = false;
+    while (node != 0 && path.size() <= maxDepth) {
+      if (auto known = descends.find(node); known != descends.end()) {
+        result = known->second;
+        break;
+      }
+      path.push_back(node);
+      if (auto live = liveParents.find(node); live != liveParents.end())
+        node = live->second;
+      else if (auto link = links.find(node); link != links.end())
+        node = link->second;
+      else
+        break;
+    }
+    for (uint64_t walked : path)
+      descends.emplace(walked, result);
+    return result;
+  };
+
+  std::unordered_set<uint64_t> tree{root};
+  auto visit = [&](uint64_t token, uint64_t parent) {
+    if (parent != 0 && inTree(parent))
+      tree.insert(token);
+  };
+  for (const ScheduledProcess &process : context->scheduledProcesses)
+    if (process.instance)
+      visit(kNativeLogicalProcessTag | process.token, process.parent);
+  for (const ScheduledDesignTask &task : context->scheduledDesignTasks)
+    if (!task.terminated)
+      visit(task.id, task.parent);
+  for (const auto &[finished, parent] : links)
+    visit(finished, parent);
+  if (active != 0)
+    visit(active, context->activeLogicalProcessParent);
+  return tree;
+}
+
 obelisk_rt_status
 adoptScheduledSuspendUnlocked(obelisk_rt_context *context,
                               ScheduledProcess &scheduled,

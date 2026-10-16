@@ -7727,15 +7727,11 @@ TEST(Scheduler, TerminatedJoinNoneParentsPreserveDescendantAncestry) {
   EXPECT_EQ(context->finishedProcessParents[tag | 4], tag | 2);
 
   // Descendant collection from the parent reaches them through the link.
-  std::vector<uint64_t> tree{tag | 2};
-  auto contains = [&](uint64_t token) {
-    return std::find(tree.begin(), tree.end(), token) != tree.end();
-  };
-  EXPECT_TRUE(
-      obelisk_rt_add_finished_descendants_unlocked(context, tree, contains));
-  EXPECT_EQ(tree, (std::vector<uint64_t>{tag | 2, tag | 4}));
-  EXPECT_FALSE(
-      obelisk_rt_add_finished_descendants_unlocked(context, tree, contains));
+  bool rootLive = true;
+  EXPECT_EQ(
+      obelisk_rt_collect_process_tree_unlocked(context, tag | 2, rootLive),
+      (std::unordered_set<uint64_t>{tag | 2, tag | 4, tag | 5, 7}));
+  EXPECT_FALSE(rootLive);
 
   // The link survives while anything descends from it.
   obelisk_rt_prune_finished_process_parents_unlocked(context);
@@ -7746,6 +7742,61 @@ TEST(Scheduler, TerminatedJoinNoneParentsPreserveDescendantAncestry) {
   context->scheduledDesignTasks[0].terminated = true;
   obelisk_rt_prune_finished_process_parents_unlocked(context);
   EXPECT_TRUE(context->finishedProcessParents.empty());
+  context->scheduledProcesses.clear();
+  context->scheduledDesignTasks.clear();
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, ProcessTreeCollectionFollowsChainsInAnyOrder) {
+  // IEEE 1800-2023 9.6.3 and 9.7: descendants include those reached through
+  // finished processes and the executing activation, in any vector order.
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  constexpr uint64_t tag = OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+  auto live = reinterpret_cast<obelisk_rt_process_instance_v1 *>(
+      static_cast<uintptr_t>(1));
+  auto addNative = [&](uint64_t token, uint64_t parent) {
+    ScheduledProcess process;
+    process.instance = live;
+    process.token = token;
+    process.parent = parent;
+    context->scheduledProcesses.push_back(std::move(process));
+  };
+  auto addTask = [&](uint64_t id, uint64_t parent) {
+    ScheduledDesignTask task;
+    task.id = id;
+    task.parent = parent;
+    context->scheduledDesignTasks.push_back(std::move(task));
+  };
+  // Native 1 -> task 10 -> finished native 2 -> executing task 11 -> native
+  // 3 -> task 12, with every child ahead of its parent. Native 4 descends
+  // from a finished process without a link; task 13 is top level.
+  addTask(12, tag | 3);
+  addNative(3, 11);
+  addNative(4, tag | 9);
+  addTask(10, tag | 1);
+  addTask(13, 0);
+  addNative(1, 0);
+  context->logicalProcessParentsWithChildren = {tag | 1, 10, 11, tag | 3};
+  context->finishedProcessParents[tag | 2] = 10;
+  context->activeLogicalProcessToken = 11;
+  context->activeLogicalProcessParent = tag | 2;
+
+  bool rootLive = false;
+  EXPECT_EQ(
+      obelisk_rt_collect_process_tree_unlocked(context, tag | 1, rootLive),
+      (std::unordered_set<uint64_t>{tag | 1, 10, tag | 2, 11, tag | 3, 12}));
+  EXPECT_TRUE(rootLive);
+  EXPECT_EQ(
+      obelisk_rt_collect_process_tree_unlocked(context, tag | 2, rootLive),
+      (std::unordered_set<uint64_t>{tag | 2, 11, tag | 3, 12}));
+  EXPECT_FALSE(rootLive);
+  EXPECT_EQ(obelisk_rt_collect_process_tree_unlocked(context, 11, rootLive),
+            (std::unordered_set<uint64_t>{11, tag | 3, 12}));
+  EXPECT_TRUE(rootLive);
+
+  context->activeLogicalProcessToken = 0;
+  context->activeLogicalProcessParent = 0;
   context->scheduledProcesses.clear();
   context->scheduledDesignTasks.clear();
   obelisk_rt_v1_context_destroy(context);
