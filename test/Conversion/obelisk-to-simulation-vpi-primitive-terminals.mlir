@@ -4,6 +4,8 @@
 // RUN: env OBELISK_TEST_INPUT=%t.o3.mlir %obj_root/test/obelisk-design-database-dump-test --gtest_filter=GeneratedDesignDatabase.PrimitiveTerminals
 // RUN: env OBELISK_TEST_INPUT=%t.mlir %obj_root/test/obelisk-design-database-dump-test --gtest_filter=GeneratedDesignDatabase.SourcePrimitiveDefinitions
 // RUN: env OBELISK_TEST_INPUT=%t.o3.mlir %obj_root/test/obelisk-design-database-dump-test --gtest_filter=GeneratedDesignDatabase.SourcePrimitiveDefinitions
+// RUN: env OBELISK_TEST_INPUT=%t.mlir %obj_root/test/obelisk-design-database-dump-test --gtest_filter=GeneratedDesignDatabase.SourcePrimitiveValues
+// RUN: env OBELISK_TEST_INPUT=%t.o3.mlir %obj_root/test/obelisk-design-database-dump-test --gtest_filter=GeneratedDesignDatabase.SourcePrimitiveValues
 
 !logic = !obelisk.integral<1, false, true, 0 : 0, logic>
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {

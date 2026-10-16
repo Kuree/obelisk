@@ -2157,7 +2157,8 @@ LogicalResult NativePipelineAnalysis::materialize() {
           continue;
         }
       }
-      if (isa<sim::SimVPIDefinitionDeclOp, sim::SimVPIDefinitionMemberDeclOp,
+      if (isa<sim::SimVPIDefinitionDeclOp, sim::SimVPIDefinitionBindingOp,
+              sim::SimVPIDefinitionMemberDeclOp,
               sim::SimVPIDefinitionSpecializationDeclOp,
               sim::SimVPIDefinitionMemberSpecializationOp,
               sim::SimVPIDefinitionMemberInstanceBindingOp,
@@ -2177,7 +2178,8 @@ LogicalResult NativePipelineAnalysis::materialize() {
               sim::SimVPIEnumConstDeclOp, sim::SimVPIClassMemberDeclOp,
               sim::SimVPIEventBindingOp, sim::SimVPIThreadOriginBindingOp,
               sim::SimVPICallDeclOp, sim::SimVPICodeUnitScopeBindingOp,
-              sim::SimVPIInitializerBindingOp, sim::SimVPIExpressionDeclOp,
+              sim::SimVPIInitializerBindingOp,
+              sim::SimVPITerminalDriverBindingOp, sim::SimVPIExpressionDeclOp,
               sim::SimVPIClassCallDispatchOp, sim::SimVPILocalDeclOp,
               sim::SimVPIForeachDeclOp, sim::SimVPIStaticLocalBindingOp,
               sim::SimVPICallableDeclOp, sim::SimVPIInterfaceMemberDeclOp,

@@ -1880,6 +1880,126 @@ LogicalResult SimVPITypespecDeclOp::verify() {
                                reflectionDefinitionLoc(*this));
 }
 
+LogicalResult SimVPITerminalDriverBindingOp::verify() {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("requires a simulation.design owner");
+  if (failed(verifyNonnegative(*this, getLowDriverIdAttr(), "low driver ID")) ||
+      failed(
+          verifyNonnegative(*this, getBitOffsetAttr(), "driver bit offset")) ||
+      (getHighDriverIdAttr() &&
+       failed(
+           verifyNonnegative(*this, getHighDriverIdAttr(), "high driver ID"))))
+    return failure();
+  if (getBitOffset() > UINT32_MAX)
+    return emitOpError("driver bit offset exceeds the 32-bit reflection field");
+  for (auto other : (*this)
+                        ->getParentOp()
+                        ->getRegion(0)
+                        .getOps<SimVPITerminalDriverBindingOp>())
+    if (other != *this && other.getTerminalAttr() == getTerminalAttr())
+      return emitOpError("duplicates a primitive output binding");
+  return success();
+}
+
+LogicalResult SimVPITerminalDriverBindingOp::verifySymbolUses(
+    SymbolTableCollection &symbols) {
+  auto terminal = symbols.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+      *this, getTerminalAttr());
+  using Kind = reflection::VPIObjectKind;
+  if (!terminal || terminal->getParentOp() != (*this)->getParentOp() ||
+      terminal.getVpiKind() != static_cast<uint32_t>(Kind::PrimTerm) ||
+      !terminal.getParentAttr())
+    return emitOpError(
+        "terminal must name a primitive terminal in this design");
+  auto primitive = symbols.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+      terminal, terminal.getParentAttr());
+  if (!primitive ||
+      (primitive.getVpiKind() != static_cast<uint32_t>(Kind::Gate) &&
+       primitive.getVpiKind() != static_cast<uint32_t>(Kind::Udp)))
+    return emitOpError("requires a gate or UDP output terminal");
+  bool output = false;
+  if (auto properties = reflectionProperties(terminal))
+    for (Attribute attribute : properties.getProperties()) {
+      auto property = cast<VPIPropertyAttr>(attribute);
+      if (property.getSelector().getValue().getZExtValue() == 20)
+        if (auto direction = dyn_cast<IntegerAttr>(property.getValue()))
+          output = direction.getValue().getZExtValue() == 2;
+    }
+  if (!output)
+    return emitOpError("terminal must retain output direction");
+  // The retained primitive subtype determines whether one logical output uses
+  // an ordinary driver or the two complementary conditional-gate banks.
+  uint32_t primitiveType = 0;
+  if (primitive.getVpiKind() == static_cast<uint32_t>(Kind::Gate)) {
+    if (auto properties = reflectionProperties(primitive))
+      for (Attribute attribute : properties.getProperties()) {
+        auto property = cast<VPIPropertyAttr>(attribute);
+        if (property.getSelector().getValue().getZExtValue() == 33)
+          if (auto value = dyn_cast<IntegerAttr>(property.getValue()))
+            primitiveType = value.getValue().getZExtValue();
+      }
+    for (auto binding : (*this)
+                            ->getParentOp()
+                            ->getRegion(0)
+                            .getOps<SimVPIDefinitionBindingOp>())
+      if (binding.getSource() == primitive.getSymName()) {
+        auto definition =
+            symbols.lookupNearestSymbolFrom<SimVPIDefinitionDeclOp>(
+                binding, binding.getDefinitionAttr());
+        if (definition)
+          primitiveType = definition.getPrimitiveType().value_or(0);
+      }
+    const auto *descriptor = reflection::findVPIBuiltinPrimitive(primitiveType);
+    if (!descriptor ||
+        descriptor->objectKind != static_cast<uint32_t>(Kind::Gate))
+      return emitOpError("requires the exact retained gate primitive type");
+  }
+  bool conditional = primitiveType >= 9 && primitiveType <= 12;
+  if (conditional != bool(getHighDriverId()))
+    return emitOpError("driver bank count must match the primitive subtype");
+  SimDriverDeclOp low, high;
+  for (auto driver :
+       (*this)->getParentOp()->getRegion(0).getOps<SimDriverDeclOp>()) {
+    if (driver.getId() == getLowDriverId())
+      low = driver;
+    if (getHighDriverId() && driver.getId() == *getHighDriverId())
+      high = driver;
+  }
+  auto valid = [&](SimDriverDeclOp driver) {
+    auto width = driver ? getPackedWidth(driver.getType()) : std::nullopt;
+    uint64_t begin = driver ? driver.getDrivenLow().value_or(0) : 0;
+    uint64_t extent =
+        driver ? driver.getDrivenWidth().value_or(width.value_or(0)) : 0;
+    return driver && width && driver.getLifetime() == Lifetime::Design &&
+           driver.getScopeId() == terminal.getEnclosingScopeId() &&
+           getBitOffset() < *width && getBitOffset() >= begin &&
+           getBitOffset() - begin < extent;
+  };
+  if (!valid(low) || (getHighDriverId() && (!valid(high) || low == high)))
+    return emitOpError("drivers must contain the selected bit in the "
+                       "terminal's physical scope");
+  auto lowBank = get<metadata::StrengthBank>(low);
+  auto lowGroup = get<metadata::StrengthGroup>(low);
+  if (!getHighDriverId()) {
+    if (lowBank || lowGroup)
+      return emitOpError(
+          "a polarity bank requires its exact complementary driver");
+  } else {
+    auto highBank = get<metadata::StrengthBank>(high);
+    auto highGroup = get<metadata::StrengthGroup>(high);
+    if (!lowBank || !highBank || !lowGroup || !highGroup ||
+        lowBank.getInt() != 0 || highBank.getInt() != 1 ||
+        lowGroup != highGroup || low.getType() != high.getType() ||
+        low.getNetId() != high.getNetId() ||
+        low.getDrivenLow() != high.getDrivenLow() ||
+        low.getDrivenWidth() != high.getDrivenWidth() ||
+        low.getStrength1() != Strength::HighZ ||
+        high.getStrength0() != Strength::HighZ)
+      return emitOpError("drivers must be one exact low/high polarity pair");
+  }
+  return success();
+}
+
 LogicalResult SimVPIEventBindingOp::verify() {
   if (!isa<SimDesignOp>((*this)->getParentOp()))
     return emitOpError("requires a simulation.design owner");

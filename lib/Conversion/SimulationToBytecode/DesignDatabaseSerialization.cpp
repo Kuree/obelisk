@@ -248,6 +248,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint64_t id;
   };
   SmallVector<EventBindingRecord> eventBindings;
+  struct TerminalDriverBindingRecord {
+    uint32_t terminal, low, high, bit;
+  };
+  SmallVector<TerminalDriverBindingRecord> terminalDriverBindings;
   struct EventArrayStorageBindingRecord {
     uint32_t array = 0;
     uint32_t storage = 0;
@@ -1907,6 +1911,36 @@ SmallVector<uint8_t> serializeDesignDatabase(
       if (semantic)
         eventArraySemantics[anchor] = semantic;
     }
+    DenseMap<uint64_t, uint32_t> terminalDriverObjects;
+    for (auto [index, object] : llvm::enumerate(objects))
+      if (auto driver = dyn_cast<sim::SimDriverDeclOp>(object.identity))
+        terminalDriverObjects[driver.getId()] = index;
+    for (auto binding : design.getOps<sim::SimVPITerminalDriverBindingOp>()) {
+      auto terminal = anchorsBySymbol.find(binding.getTerminal());
+      auto low = terminalDriverObjects.find(binding.getLowDriverId());
+      auto high = binding.getHighDriverId()
+                      ? terminalDriverObjects.find(*binding.getHighDriverId())
+                      : terminalDriverObjects.end();
+      if (terminal == anchorsBySymbol.end() ||
+          low == terminalDriverObjects.end() ||
+          (binding.getHighDriverId() && high == terminalDriverObjects.end())) {
+        binding.emitOpError("terminal or driver was not serialized");
+        return {};
+      }
+      auto target = anchorRefs.lookup(terminal->second);
+      uint32_t packed = 0;
+      if (!tryPackTableIndex(target.table, target.index, packed)) {
+        binding.emitOpError("primitive terminal index cannot be packed");
+        return {};
+      }
+      terminalDriverBindings.push_back(
+          {packed, low->second,
+           high == terminalDriverObjects.end() ? UINT32_MAX : high->second,
+           static_cast<uint32_t>(binding.getBitOffset())});
+    }
+    llvm::sort(terminalDriverBindings, [](const auto &left, const auto &right) {
+      return left.terminal < right.terminal;
+    });
     for (auto binding :
          design.getBody().front().getOps<sim::SimVPIEventBindingOp>()) {
       auto found = anchorsBySymbol.find(binding.getEventAttr().getValue());
@@ -6001,9 +6035,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
   uint64_t expressionLeafShapeOffset =
       expressionBoundMemberOffset +
       expressionBoundMembers.size() * ExpressionBoundMemberLayout.size;
-  uint64_t relationIndexOffset =
+  uint64_t terminalDriverBindingOffset =
       expressionLeafShapeOffset +
       expressionLeafShapes.size() * ExpressionLeafShapeLayout.size;
+  uint64_t relationIndexOffset =
+      terminalDriverBindingOffset +
+      terminalDriverBindings.size() * TerminalDriverBindingLayout.size;
   uint64_t relationIndexDimensionOffset =
       relationIndexOffset + relationIndices.size() * RelationIndexLayout.size;
   uint64_t relationIndexKeyOffset =
@@ -6376,6 +6413,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setExpressionBoundMemberCount(expressionBoundMembers.size());
     writer.setExpressionLeafShapeOffset(expressionLeafShapeOffset);
     writer.setExpressionLeafShapeCount(expressionLeafShapes.size());
+    writer.setTerminalDriverBindingOffset(terminalDriverBindingOffset);
+    writer.setTerminalDriverBindingCount(terminalDriverBindings.size());
 
     writer.setRelationIndexOffset(relationIndexOffset);
     writer.setRelationIndexCount(relationIndices.size());
@@ -6819,6 +6858,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
         output.data() + definitionMemberInstanceRelationInverseOffset +
         index * DefinitionMemberInstanceRelationInverseLayout.size);
     writer.setTarget(inverse.target);
+  }
+  for (auto [index, binding] : llvm::enumerate(terminalDriverBindings)) {
+    TerminalDriverBindingWriter writer(
+        output.data() + terminalDriverBindingOffset +
+        index * TerminalDriverBindingLayout.size);
+    writer.setTerminalIndexAndTable(binding.terminal);
+    writer.setLowDriverIndex(binding.low);
+    writer.setHighDriverIndex(binding.high);
+    writer.setBitOffset(binding.bit);
   }
   for (auto [index, root] : llvm::enumerate(expressionRoots)) {
     ExpressionRootBindingWriter writer(

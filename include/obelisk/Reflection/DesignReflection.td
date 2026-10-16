@@ -863,7 +863,12 @@ def SemanticDirectoryExpressionLeafShapeOffset
 def SemanticDirectoryExpressionLeafShapeCount
     : ReflectionField<"ExpressionLeafShapeCount", 872, U64LE>;
 
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 880,
+def SemanticDirectoryTerminalDriverBindingOffset
+    : ReflectionField<"TerminalDriverBindingOffset", 880, U64LE>;
+def SemanticDirectoryTerminalDriverBindingCount
+    : ReflectionField<"TerminalDriverBindingCount", 888, U64LE>;
+
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 896,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -970,7 +975,19 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 880,
    SemanticDirectoryExpressionBoundMemberOffset,
    SemanticDirectoryExpressionBoundMemberCount,
    SemanticDirectoryExpressionLeafShapeOffset,
-   SemanticDirectoryExpressionLeafShapeCount]>;
+   SemanticDirectoryExpressionLeafShapeCount,
+   SemanticDirectoryTerminalDriverBindingOffset,
+   SemanticDirectoryTerminalDriverBindingCount]>;
+
+// One exact scalar primitive output selects existing driver planes. The
+// optional second descriptor is the explicitly paired high-polarity bank.
+def TerminalDriverBindingTerminal : ReflectionField<"TerminalIndexAndTable", 0, U32LE>;
+def TerminalDriverBindingLow : ReflectionField<"LowDriverIndex", 4, U32LE>;
+def TerminalDriverBindingHigh : ReflectionField<"HighDriverIndex", 8, U32LE>;
+def TerminalDriverBindingBit : ReflectionField<"BitOffset", 12, U32LE>;
+def TerminalDriverBinding : ReflectionLayout<"TerminalDriverBinding", 16,
+  [TerminalDriverBindingTerminal, TerminalDriverBindingLow,
+   TerminalDriverBindingHigh, TerminalDriverBindingBit]>;
 
 // Exact compatible implementations derived from typed class dispatch. Rows
 // are sorted by (CallID, CodeUnitID); every row in one call group carries the

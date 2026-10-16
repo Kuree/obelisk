@@ -687,6 +687,24 @@ def SimVPIObjectAnchorOp : SimOp<"vpi_object.anchor", [
   let hasVerifier = 1;
 }
 
+def SimVPITerminalDriverBindingOp : SimOp<"vpi_terminal_driver.bind", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "exact published driver state of a scalar primitive output";
+  let description = [{
+    Retains an output occurrence's own delayed driver state independently of
+    the resolved connected net. The optional high driver must be the exact
+    complementary polarity bank of the low driver. This inventory creates no
+    state, and both selectors use the same bit offset within their descriptors.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$terminal, I64Attr:$low_driver_id,
+                       OptionalAttr<I64Attr>:$high_driver_id,
+                       I64Attr:$bit_offset);
+  let assemblyFormat = "$terminal `low` $low_driver_id (`high` $high_driver_id^)? `bit` $bit_offset attr-dict";
+  let hasVerifier = 1;
+}
+
 def SimVPIEventBindingOp : SimOp<"vpi_event_binding", [
     DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemWrite<SimInventoryResource>]>

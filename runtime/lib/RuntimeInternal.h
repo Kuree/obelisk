@@ -1784,6 +1784,8 @@ struct DesignDatabaseCache {
   uint64_t expressionBoundMemberCount = 0;
   uint64_t expressionLeafShapes = 0;
   uint64_t expressionLeafShapeCount = 0;
+  uint64_t terminalDriverBindings = 0;
+  uint64_t terminalDriverBindingCount = 0;
 
   uint64_t relationIndices = 0;
   uint64_t relationIndexCount = 0;
@@ -4224,5 +4226,16 @@ obelisk_rt_cached_vpi_statement_is_scope(const obelisk_rt_context *context,
 obelisk_rt_status obelisk_rt_cached_vpi_statement_is_protected(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
     bool *outIsProtected) noexcept;
+
+// Exact output contribution. Missing binding returns EOF. Selected bit offsets
+// are checked against the physical Driver span; UINT64_MAX means no high bank.
+struct VPITerminalDriverBinding {
+  uint64_t lowStateOffset = 0;
+  uint64_t highStateOffset = UINT64_MAX;
+};
+obelisk_rt_status
+obelisk_rt_cached_vpi_terminal_driver(const obelisk_rt_context *,
+                                      obelisk_rt_design_cursor_v1 terminal,
+                                      VPITerminalDriverBinding *) noexcept;
 
 #endif // OBELISK_RUNTIME_LIB_RUNTIMEINTERNAL_H

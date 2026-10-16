@@ -186,6 +186,10 @@ TEST(GeneratedDesignDatabase, PrimitiveTerminals) {
         terminalReference(relation.getTarget()))
       erase.push_back(relation);
   }
+  for (auto binding :
+       withoutDesign.getOps<obelisk::sim::SimVPITerminalDriverBindingOp>())
+    if (llvm::is_contained(terminalSymbols, binding.getTerminal()))
+      erase.push_back(binding);
   for (auto *operation : erase)
     operation->erase();
   auto without = obelisk::encodeSimulationDesign(withoutDesign, options);
@@ -203,6 +207,9 @@ TEST(GeneratedDesignDatabase, PrimitiveTerminals) {
   uint64_t actualGrowth = image.size() - without->designDatabase.size();
   uint64_t compactGrowth =
       terminalCount * (StaticObjectLayout.size + FixedPropertyLayout.size) +
+      (directory.getTerminalDriverBindingCount() -
+       withoutDirectory.getTerminalDriverBindingCount()) *
+          TerminalDriverBindingLayout.size +
       (header.getRelationCount() - withoutHeader.getRelationCount()) *
           RelationLayout.size;
   EXPECT_EQ(header.getIndexCount(), withoutHeader.getIndexCount());

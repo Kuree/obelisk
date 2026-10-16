@@ -78,7 +78,7 @@ static_assert(field::StaticObjectSourceLine == 20);
 static_assert(field::StaticObjectSourceColumn == 24);
 static_assert(field::StaticObjectVPIKind == 28);
 static_assert(field::StaticObjectFlags == 30);
-static_assert(SemanticDirectoryLayout.size == 880);
+static_assert(SemanticDirectoryLayout.size == 896);
 static_assert(FrameLocalBindingLayout.size == 24);
 static_assert(InterfaceCallableLayout.size == 24);
 static_assert(InterfaceInstanceLayout.size == 8);
@@ -254,3 +254,5 @@ static_assert(obelisk::reflection::ExpressionOperandLayout.size == 4);
 static_assert(obelisk::reflection::ExpressionLeafLayout.size == 4);
 static_assert(obelisk::reflection::ExpressionBoundMemberLayout.size == 8);
 static_assert(obelisk::reflection::ExpressionLeafShapeLayout.size == 12);
+
+static_assert(obelisk::reflection::TerminalDriverBindingLayout.size == 16);

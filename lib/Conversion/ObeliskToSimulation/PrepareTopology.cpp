@@ -923,7 +923,9 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     const PreparedScopeDeclarations &scopes,
     const PreparedClassDeclarations &classes, uint64_t designPrecisionFs,
     bool preserveVPIMethodBindings, bool preserveVPIBoxBindings,
-    PreparedProceduralTypes &proceduralTypes, OpBuilder &builder) {
+    PreparedProceduralTypes &proceduralTypes,
+    llvm::DenseMap<Operation *, FlatSymbolRefAttr> &primitiveTerminals,
+    OpBuilder &builder) {
   OpBuilder::InsertionGuard insertionGuard(builder);
   builder.setInsertionPointToEnd(&design.getBody().front());
   llvm::StringMap<DescriptorInfo> descriptors;
@@ -5703,6 +5705,11 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
           DenseI64ArrayAttr{}, DenseI64ArrayAttr{}, IntegerAttr{},
           sim::VPITypeSemanticsAttr{}, sim::FrozenConstantAttr{}, UnitAttr{},
           FlatSymbolRefAttr{}, UnitAttr{}, StringAttr{}, UnitAttr{});
+      if (direction == 2 &&
+          (parent.getVpiKind() == static_cast<uint32_t>(VPIKind::Gate) ||
+           parent.getVpiKind() == static_cast<uint32_t>(VPIKind::Udp)))
+        primitiveTerminals[terminalSource] =
+            FlatSymbolRefAttr::get(terminal.getSymNameAttr());
       SmallVector<Attribute> properties;
       for (auto [selector, value] :
            {std::pair<uint32_t, uint32_t>{20, direction}})

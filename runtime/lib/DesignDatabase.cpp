@@ -91,6 +91,8 @@ constexpr uint64_t kExpressionBoundMemberSize =
     obelisk::reflection::ExpressionBoundMemberLayout.size;
 constexpr uint64_t kExpressionLeafShapeSize =
     obelisk::reflection::ExpressionLeafShapeLayout.size;
+constexpr uint64_t kTerminalDriverBindingSize =
+    obelisk::reflection::TerminalDriverBindingLayout.size;
 
 constexpr uint64_t kEventBindingSize =
     obelisk::reflection::EventBindingLayout.size;
@@ -339,6 +341,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
   uint64_t expressionLeafOffset = 0, expressionLeafCount = 0;
   uint64_t expressionBoundMemberOffset = 0, expressionBoundMemberCount = 0;
   uint64_t expressionLeafShapeOffset = 0, expressionLeafShapeCount = 0;
+  uint64_t terminalDriverBindingOffset = 0, terminalDriverBindingCount = 0;
 
   uint64_t relationIndexOffset = 0, relationIndexCount = 0;
   uint64_t relationIndexDimensionOffset = 0, relationIndexDimensionCount = 0;
@@ -493,6 +496,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     expressionBoundMemberCount = reader.getExpressionBoundMemberCount();
     expressionLeafShapeOffset = reader.getExpressionLeafShapeOffset();
     expressionLeafShapeCount = reader.getExpressionLeafShapeCount();
+    terminalDriverBindingOffset = reader.getTerminalDriverBindingOffset();
+    terminalDriverBindingCount = reader.getTerminalDriverBindingCount();
   }
   database = {data,
               execution->design_database_size,
@@ -578,6 +583,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               expressionBoundMemberCount,
               expressionLeafShapeOffset,
               expressionLeafShapeCount,
+              terminalDriverBindingOffset,
+              terminalDriverBindingCount,
 
               relationIndexOffset,
               relationIndexCount,
@@ -706,6 +713,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
          kExpressionBoundMemberSize},
         {database.expressionLeafShapes, database.expressionLeafShapeCount,
          kExpressionLeafShapeSize},
+        {database.terminalDriverBindings, database.terminalDriverBindingCount,
+         kTerminalDriverBindingSize},
 
         {database.relationIndices, database.relationIndexCount,
          kRelationIndexSize},
@@ -807,6 +816,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         database.expressionLeafCount != 0 ||
         database.expressionBoundMemberCount != 0 ||
         database.expressionLeafShapeCount != 0 ||
+        database.terminalDriverBindingCount != 0 ||
 
         database.relationIndexCount != 0 ||
         database.relationIndexDimensionCount != 0 ||
@@ -926,6 +936,9 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       !validRange(database.expressionLeafShapes,
                   database.expressionLeafShapeCount, kExpressionLeafShapeSize,
                   database.size) ||
+      !validRange(database.terminalDriverBindings,
+                  database.terminalDriverBindingCount,
+                  kTerminalDriverBindingSize, database.size) ||
 
       !validRange(database.relationIndices, database.relationIndexCount,
                   kRelationIndexSize, database.size) ||
@@ -1053,6 +1066,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        database.expressionBoundMembers < kHeaderSize) ||
       (database.expressionLeafShapeCount != 0 &&
        database.expressionLeafShapes < kHeaderSize) ||
+      (database.terminalDriverBindingCount != 0 &&
+       database.terminalDriverBindings < kHeaderSize) ||
 
       (database.semanticRootBindingCount != 0 &&
        database.semanticRootBindings < kHeaderSize) ||
@@ -1154,6 +1169,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       database.expressionLeafCount >= UINT32_MAX ||
       database.expressionBoundMemberCount >= (UINT32_C(1) << 30) ||
       database.expressionLeafShapeCount >= UINT32_MAX ||
+      database.terminalDriverBindingCount > UINT32_MAX ||
 
       database.relationIndexCount > UINT32_MAX ||
       database.relationIndexDimensionCount > UINT32_MAX ||
@@ -1425,6 +1441,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        kExpressionBoundMemberSize},
       {database.expressionLeafShapes, database.expressionLeafShapeCount,
        kExpressionLeafShapeSize},
+      {database.terminalDriverBindings, database.terminalDriverBindingCount,
+       kTerminalDriverBindingSize},
 
       {database.relationIndices, database.relationIndexCount,
        kRelationIndexSize},
@@ -3985,7 +4003,7 @@ bool validateDatabaseImpl(const Database &database) {
       unresolvedAliasScopes, unresolvedAliasTargets;
   std::unordered_set<uint32_t> unresolvedValueParameters;
   std::unordered_set<uint32_t> primitiveTerminals;
-  std::unordered_map<uint32_t, uint32_t> terminalDirections;
+  std::unordered_map<uint32_t, uint32_t> terminalDirections, primitiveTypes;
   std::unordered_map<uint32_t, uint32_t> terminalOwners, terminalPrimitives;
   std::unordered_set<uint32_t> foreachNulls, foreachNullProperties;
   std::unordered_set<uint32_t> sourceExpressionObjects;
@@ -4331,6 +4349,8 @@ bool validateDatabaseImpl(const Database &database) {
       break;
     }
     }
+    if (selector == 33)
+      primitiveTypes.emplace(packedSource, static_cast<uint32_t>(payload));
     if (exactKind == static_cast<uint32_t>(
                          obelisk::reflection::VPIObjectKind::PrimTerm) &&
         selector == 20) {
@@ -7174,6 +7194,8 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
       ++fixedPropertyIndex;
     }
+    if (primitive)
+      primitiveTypes.emplace(packedSource, read16(definition + 2));
     boundDefinitions[definitionIndex] = true;
   }
   if (database.definitionCount != 0 &&
@@ -8433,6 +8455,73 @@ bool validateDatabaseImpl(const Database &database) {
         read64(database.data + offset + 56) != count)
       return false;
   }
+  // Bindings select the primitive's own immutable Driver records. Their
+  // execution spans and complementary-bank pairing are checked again by the
+  // bytecode inventory helper when a value is read.
+  uint32_t previousTerminal = 0;
+  for (uint64_t index = 0; index != database.terminalDriverBindingCount;
+       ++index) {
+    obelisk::reflection::TerminalDriverBindingView binding(
+        database.data + database.terminalDriverBindings +
+        index * kTerminalDriverBindingSize);
+    uint32_t terminal = binding.getTerminalIndexAndTable();
+    if ((index && terminal <= previousTerminal) ||
+        !primitiveTerminals.count(terminal) ||
+        terminalDirections.at(terminal) != 2)
+      return false;
+    previousTerminal = terminal;
+    uint64_t primitiveOffset = 0;
+    if (!packedObjectReferenceOffset(database, terminalOwners.at(terminal),
+                                     primitiveOffset))
+      return false;
+    using Kind = obelisk::reflection::VPIObjectKind;
+    uint32_t kind = objectReferenceVPIKind(database, primitiveOffset);
+    if (kind != uint32_t(Kind::Gate) && kind != uint32_t(Kind::Udp))
+      return false;
+    uint32_t primitiveType = 0;
+    if (kind == uint32_t(Kind::Gate)) {
+      auto retained = primitiveTypes.find(terminalOwners.at(terminal));
+      if (retained == primitiveTypes.end())
+        return false;
+      primitiveType = retained->second;
+      const auto *descriptor =
+          obelisk::reflection::findVPIBuiltinPrimitive(primitiveType);
+      if (!descriptor || descriptor->objectKind != uint32_t(Kind::Gate))
+        return false;
+    }
+    bool conditional = primitiveType >= 9 && primitiveType <= 12;
+    if (conditional != (binding.getHighDriverIndex() != UINT32_MAX))
+      return false;
+    uint64_t scope = read64(database.data + primitiveOffset + 16);
+    auto driver = [&](uint32_t object) -> const uint8_t * {
+      if (object >= database.objectCount)
+        return nullptr;
+      const uint8_t *record =
+          database.data + database.objects + uint64_t{object} * kObjectSize;
+      uint64_t type = read64(record + 48);
+      if (recordKind(record) != OBELISK_RT_DESIGN_RECORD_DRIVER ||
+          read64(record + 16) != scope || !isTypeOffset(database, type) ||
+          binding.getBitOffset() >= read64(record + 56))
+        return nullptr;
+      const uint8_t *physical = database.data + type;
+      uint32_t encodedType = read32(physical + 4);
+      if ((encodedType & UINT32_C(0xff)) != OBELISK_RT_DESIGN_TYPE_SCALAR &&
+          !((encodedType >> 8) & OBELISK_RT_DESIGN_TYPE_PACKED))
+        return nullptr;
+      return record;
+    };
+    const uint8_t *low = driver(binding.getLowDriverIndex());
+    if (!low)
+      return false;
+    uint32_t highIndex = binding.getHighDriverIndex();
+    if (highIndex != UINT32_MAX) {
+      const uint8_t *high = driver(highIndex);
+      if (!high || highIndex == binding.getLowDriverIndex() ||
+          read64(low + 48) != read64(high + 48) ||
+          read64(low + 56) != read64(high + 56))
+        return false;
+    }
+  }
   // Rootless typedefs retain a distinct identity and terminate at an unresolved
   // parameter of the same lexical class. Memoized iterative walks reject cycles
   // without recursively consuming the host stack on an untrusted image.
@@ -9228,6 +9317,8 @@ bool sameDatabase(const Database &left, const Database &right) noexcept {
          left.expressionBoundMemberCount == right.expressionBoundMemberCount &&
          left.expressionLeafShapes == right.expressionLeafShapes &&
          left.expressionLeafShapeCount == right.expressionLeafShapeCount &&
+         left.terminalDriverBindings == right.terminalDriverBindings &&
+         left.terminalDriverBindingCount == right.terminalDriverBindingCount &&
 
          left.relationIndices == right.relationIndices &&
          left.relationIndexCount == right.relationIndexCount &&
@@ -13674,5 +13765,58 @@ obelisk_rt_status obelisk_rt_cached_vpi_expression_operand_identifier(
     return OBELISK_RT_INVALID_DESIGN;
   *outData = reinterpret_cast<const uint8_t *>(identifier.data());
   *outSize = identifier.size();
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status obelisk_rt_cached_vpi_terminal_driver(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 terminal,
+    VPITerminalDriverBinding *outBinding) noexcept {
+  if (!context || !outBinding)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outBinding = {};
+  const auto *database = cachedDatabase(context);
+  if (!database)
+    return OBELISK_RT_INVALID_DESIGN;
+  uint32_t packed = 0;
+  if (!packedObjectReferenceForCursor(*database, terminal.offset, packed))
+    return OBELISK_RT_EOF;
+  uint64_t low = 0, high = database->terminalDriverBindingCount;
+  auto row = [&](uint64_t index) {
+    return obelisk::reflection::TerminalDriverBindingView(
+        database->data + database->terminalDriverBindings +
+        index * kTerminalDriverBindingSize);
+  };
+  while (low != high) {
+    uint64_t middle = low + (high - low) / 2;
+    if (row(middle).getTerminalIndexAndTable() < packed)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == database->terminalDriverBindingCount ||
+      row(low).getTerminalIndexAndTable() != packed)
+    return OBELISK_RT_EOF;
+  auto binding = row(low);
+  auto selectedOffset = [&](uint32_t index, uint64_t &offset) {
+    if (index >= database->objectCount || !context->execution)
+      return false;
+    const uint8_t *driver =
+        database->data + database->objects + uint64_t{index} * kObjectSize;
+    uint64_t base = read64(driver + 80);
+    uint64_t width = read64(driver + 56);
+    if (recordKind(driver) != OBELISK_RT_DESIGN_RECORD_DRIVER ||
+        binding.getBitOffset() >= width ||
+        base > context->execution->state_bit_count ||
+        width > context->execution->state_bit_count - base)
+      return false;
+    offset = base + binding.getBitOffset();
+    return true;
+  };
+  VPITerminalDriverBinding result{};
+  if (!selectedOffset(binding.getLowDriverIndex(), result.lowStateOffset) ||
+      (binding.getHighDriverIndex() != UINT32_MAX &&
+       !selectedOffset(binding.getHighDriverIndex(), result.highStateOffset)))
+    return OBELISK_RT_INVALID_DESIGN;
+  *outBinding = result;
   return OBELISK_RT_OK;
 }

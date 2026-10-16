@@ -1527,8 +1527,12 @@ struct VPIValueSource {
   uint64_t selectionBitOffset = 0;
   uint32_t exactType = 0;
   bool hasSemanticCursor = false;
+  bool primitiveValue = false;
+  uint16_t primitiveStrength = 0;
   const obelisk::reflection::VPIValuePolicyDescriptor *policy = nullptr;
 };
+
+bool preparePrimitiveValue(__vpiHandle *handle, VPIValueSource &source);
 
 bool valueSourceFor(
     __vpiHandle *handle,
@@ -1546,6 +1550,10 @@ bool valueSourceFor(
   } else if (!infoFor(handle, source.info)) {
     return false;
   }
+
+  if (source.exactType == vpiPrimTerm || source.exactType == vpiGate ||
+      source.exactType == vpiUdp || source.exactType == vpiSwitch)
+    return preparePrimitiveValue(handle, source);
 
   if (queryPolicy.readSemantics ==
       obelisk::reflection::VPIValueReadSemantics::EvaluateActual) {
@@ -1596,8 +1604,11 @@ bool valueSourceFor(
 }
 
 bool valueRequirementsSatisfied(
-    __vpiHandle *handle, const obelisk_rt_design_info_v1 &objectInfo,
+    __vpiHandle *handle, const VPIValueSource &source,
     const obelisk::reflection::VPIValuePolicyDescriptor &policy) {
+  const auto &objectInfo = source.info;
+  if (source.primitiveValue)
+    return true;
   using Requirement = obelisk::reflection::VPIValueRequirement;
   if (handle->form == VPIObjectForm::IntegralConstant ||
       handle->form == VPIObjectForm::SnapshotValue)
@@ -1657,6 +1668,10 @@ bool valueRequirementsSatisfied(
 bool resolveObjectTypeValueFormat(__vpiHandle *handle,
                                   const VPIValueSource &source,
                                   PLI_INT32 &format) {
+  if (source.primitiveValue) {
+    format = vpiScalarVal;
+    return true;
+  }
   using Default = obelisk::reflection::VPIValueDefaultFormat;
   switch (source.policy->defaultFormat) {
   case Default::Integer:
@@ -5333,6 +5348,35 @@ bool readManagedSelectionWord(__vpiHandle *source,
 bool readValue(__vpiHandle *, const VPIValueSource &, std::vector<uint64_t> &,
                std::vector<uint64_t> &);
 
+bool knownExpressionInteger(__vpiHandle *handle,
+                            obelisk_rt_design_cursor_v1 semanticCursor,
+                            uint64_t width, const std::vector<uint64_t> &value,
+                            const std::vector<uint64_t> &unknown,
+                            int64_t &out) {
+  if (!width || value.empty())
+    return false;
+  for (uint64_t word : unknown)
+    if (word)
+      return false;
+  obelisk_rt_design_semantic_type_info_v1 semantic{};
+  if (obelisk_rt_cached_design_semantic_type_info(
+          handle->owner->context, semanticCursor, &semantic) != OBELISK_RT_OK)
+    return false;
+  bool signedValue = (semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0;
+  bool negative =
+      signedValue && ((value[(width - 1) / 64] >> ((width - 1) % 64)) & 1);
+  for (uint64_t bit = 64; bit < width; ++bit)
+    if (bool((value[bit / 64] >> (bit % 64)) & 1) != negative)
+      return false;
+  uint64_t bits = value[0];
+  if (width < 64 && negative)
+    bits |= UINT64_MAX << width;
+  if ((bits >> 63) != uint64_t(negative))
+    return false;
+  out = static_cast<int64_t>(bits);
+  return true;
+}
+
 bool readExpressionValue(__vpiHandle *handle, const VPIExpressionInfo &rootInfo,
                          std::vector<uint64_t> &value,
                          std::vector<uint64_t> &unknown) {
@@ -5384,7 +5428,7 @@ bool readExpressionValue(__vpiHandle *handle, const VPIExpressionInfo &rootInfo,
       VPIValueSource source{};
       Evaluated result;
       if (!policy || !valueSourceFor(&leaf, *policy, source) ||
-          !valueRequirementsSatisfied(&leaf, source.info, *policy) ||
+          !valueRequirementsSatisfied(&leaf, source, *policy) ||
           !readValue(&leaf, source, result.value, result.unknown))
         return false;
       result.width = source.info.bit_width;
@@ -5395,32 +5439,8 @@ bool readExpressionValue(__vpiHandle *handle, const VPIExpressionInfo &rootInfo,
       return true;
     };
     auto integer = [&](const Evaluated &operand, int64_t &out) {
-      if (!operand.width || operand.value.empty())
-        return false;
-      for (uint64_t word : operand.unknown)
-        if (word)
-          return false;
-      obelisk_rt_design_semantic_type_info_v1 semantic{};
-      if (obelisk_rt_cached_design_semantic_type_info(
-              handle->owner->context, operand.semantic, &semantic) !=
-          OBELISK_RT_OK)
-        return false;
-      bool signedValue =
-          (semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0;
-      bool negative =
-          signedValue && ((operand.value[(operand.width - 1) / 64] >>
-                           ((operand.width - 1) % 64)) &
-                          1);
-      for (uint64_t bit = 64; bit < operand.width; ++bit)
-        if (bool((operand.value[bit / 64] >> (bit % 64)) & 1) != negative)
-          return false;
-      uint64_t bits = operand.value[0];
-      if (operand.width < 64 && negative)
-        bits |= UINT64_MAX << operand.width;
-      if ((bits >> 63) != uint64_t(negative))
-        return false;
-      out = static_cast<int64_t>(bits);
-      return true;
+      return knownExpressionInteger(handle, operand.semantic, operand.width,
+                                    operand.value, operand.unknown, out);
     };
     while (!pending.empty()) {
       Pending &current = pending.back();
@@ -5570,6 +5590,27 @@ bool readExpressionValue(__vpiHandle *handle, const VPIExpressionInfo &rootInfo,
 
 bool readValue(__vpiHandle *handle, const VPIValueSource &source,
                std::vector<uint64_t> &value, std::vector<uint64_t> &unknown) {
+  if (source.primitiveValue) {
+    constexpr uint16_t negative = (uint16_t{1} << 7) - 1;
+    constexpr uint16_t zero = uint16_t{1} << 7;
+    constexpr uint16_t positive =
+        ((uint16_t{1} << 15) - 1) & ~(negative | zero);
+    bool hasNegative = source.primitiveStrength & negative;
+    bool hasZero = source.primitiveStrength & zero;
+    bool hasPositive = source.primitiveStrength & positive;
+    bool z = hasZero && !hasNegative && !hasPositive;
+    bool u = z || (hasNegative + hasZero + hasPositive) != 1;
+    OBELISK_RT_TRY {
+      value.assign(1, z || (!u && hasPositive));
+      unknown.assign(1, u);
+      return true;
+    }
+    OBELISK_RT_CATCH_ALL {
+      setError(handle->owner, "VPI primitive value buffer is out of memory",
+               vpiSystem);
+      return false;
+    }
+  }
   VPIExpressionInfo expression{};
   if (source.form == VPIObjectForm::Design &&
       obelisk_rt_cached_vpi_expression(handle->owner->context, source.cursor,
@@ -6077,6 +6118,15 @@ void decodeStrengthRange(uint16_t range, PLI_INT32 &strength0,
   strength1 = strengthCode(high <= 7 ? 7 - high : high - 7);
 }
 
+bool useDirectStateForValue(const obelisk_rt_context *context) {
+  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+  return plan && !context->vpiObservationDemand &&
+         (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE) != 0 &&
+         !context->nativeScheduleDeoptimized && context->execution &&
+         plan->state_bit_count == context->execution->state_bit_count &&
+         plan->state_value && plan->state_unknown;
+}
+
 bool readNetStrength(__vpiHandle *handle, obelisk_rt_design_cursor_v1 cursor,
                      uint64_t bitOffset, uint16_t &range) {
   uint64_t stateOffset = 0;
@@ -6086,19 +6136,216 @@ bool readNetStrength(__vpiHandle *handle, obelisk_rt_design_cursor_v1 cursor,
              vpiInternal);
     return false;
   }
-  const obelisk_rt_context *context = handle->owner->context;
-  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
-  const bool useDirectState =
-      plan && !context->vpiObservationDemand &&
-      (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE) != 0 &&
-      !context->nativeScheduleDeoptimized && context->execution &&
-      plan->state_bit_count == context->execution->state_bit_count &&
-      plan->state_value && plan->state_unknown;
+  const bool useDirectState = useDirectStateForValue(handle->owner->context);
   if (obelisk_rt_design_net_strength(handle->owner->context, stateOffset,
                                      &range, useDirectState) == OBELISK_RT_OK)
     return true;
   setError(handle->owner, "could not retrieve VPI net strength", vpiInternal);
   return false;
+}
+
+// Pure selections preserve the underlying net bit's resolved strength. Other
+// expressions have ordinary value strength; they are not aliases to a net.
+obelisk_rt_status readSelectedNetStrength(__vpiHandle *handle,
+                                          const VPIValueSource &initial,
+                                          uint16_t &strength) {
+  auto *context = handle->owner->context;
+  __vpiHandle selected;
+  selected.owner = handle->owner;
+  selected.cursor = handle->cursor;
+  selected.exactVpiType = handle->exactVpiType;
+  selected.frameActivation = handle->frameActivation;
+  selected.dynamicObject = handle->dynamicObject;
+  selected.dynamicIdentity = handle->dynamicIdentity;
+  VPIValueSource source = initial;
+  uint64_t offset = 0;
+  auto operand = [&](uint32_t index, __vpiHandle &child) {
+    child.owner = handle->owner;
+    child.frameActivation = handle->frameActivation;
+    child.dynamicObject = handle->dynamicObject;
+    child.dynamicIdentity = handle->dynamicIdentity;
+    return obelisk_rt_cached_vpi_expression_operand(
+               context, selected.cursor, index, &child.cursor,
+               &child.exactVpiType) == OBELISK_RT_OK;
+  };
+  auto integer = [&](uint32_t index, int64_t &result) {
+    __vpiHandle child;
+    if (!operand(index, child))
+      return false;
+    const auto *policy = valuePolicyFor(&child);
+    VPIValueSource childSource{};
+    std::vector<uint64_t> value, unknown;
+    return policy && valueSourceFor(&child, *policy, childSource) &&
+           valueRequirementsSatisfied(&child, childSource, *policy) &&
+           readValue(&child, childSource, value, unknown) &&
+           knownExpressionInteger(&child, childSource.semanticCursor,
+                                  childSource.info.bit_width, value, unknown,
+                                  result);
+  };
+  for (;;) {
+    if (source.info.kind == OBELISK_RT_DESIGN_RECORD_NET) {
+      uint64_t base =
+          source.form == VPIObjectForm::Indexed ? source.selectionBitOffset : 0;
+      if (offset >= source.info.bit_width || offset > UINT64_MAX - base)
+        return OBELISK_RT_EOF;
+      return readNetStrength(handle, source.cursor, base + offset, strength)
+                 ? OBELISK_RT_OK
+                 : OBELISK_RT_INVALID_HANDLE;
+    }
+    VPIExpressionInfo expression{};
+    if (obelisk_rt_cached_vpi_expression(context, selected.cursor,
+                                         &expression) != OBELISK_RT_OK)
+      return OBELISK_RT_EOF;
+    // A one-bit concatenation can contain exactly one positive-width data
+    // operand. Preserve its structural net connection, including {1{net}}.
+    if (expression.kind == vpiOperation && expression.bitWidth == 1) {
+      bool concat =
+          expression.code == vpiConcatOp && expression.operandCount == 1;
+      int64_t repetitions = 0;
+      bool repeat = expression.code == vpiMultiConcatOp &&
+                    expression.operandCount == 2 && integer(0, repetitions) &&
+                    repetitions == 1;
+      if (concat || repeat) {
+        __vpiHandle child;
+        if (!operand(repeat ? 1 : 0, child))
+          return OBELISK_RT_INVALID_DESIGN;
+        const auto *policy = valuePolicyFor(&child);
+        if (!policy || !valueSourceFor(&child, *policy, source))
+          return OBELISK_RT_INVALID_HANDLE;
+        selected.cursor = child.cursor;
+        selected.exactVpiType = child.exactVpiType;
+        continue;
+      }
+    }
+    if (expression.kind != vpiPartSelect &&
+        expression.kind != vpiIndexedPartSelect)
+      return OBELISK_RT_EOF;
+    __vpiHandle parent;
+    if (!operand(0, parent))
+      return OBELISK_RT_INVALID_DESIGN;
+    const auto *policy = valuePolicyFor(&parent);
+    VPIValueSource parentSource{};
+    obelisk_rt_design_semantic_type_info_v1 semantic{};
+    if (!policy || !valueSourceFor(&parent, *policy, parentSource) ||
+        obelisk_rt_cached_design_semantic_type_info(
+            context, parentSource.semanticCursor, &semantic) != OBELISK_RT_OK)
+      return OBELISK_RT_INVALID_DESIGN;
+    bool indexed = expression.kind == vpiIndexedPartSelect;
+    bool ascending = semantic.range_left < semantic.range_right;
+    int64_t bound = 0;
+    if (!integer(indexed ? 1 : 2, bound))
+      return handle->owner->errorLevel ? OBELISK_RT_INVALID_HANDLE
+                                       : OBELISK_RT_EOF;
+    __int128 first = bound;
+    if (indexed && expression.code == 1 && ascending)
+      first += expression.bitWidth - 1;
+    if (indexed && expression.code == 2 && !ascending)
+      first -= expression.bitWidth - 1;
+    __int128 index = ascending ? first - offset : first + offset;
+    __int128 parentOffset =
+        ascending ? static_cast<__int128>(semantic.range_right) - index
+                  : index - static_cast<__int128>(semantic.range_right);
+    if (parentOffset < 0 || parentOffset >= parentSource.info.bit_width)
+      return OBELISK_RT_EOF;
+    offset = static_cast<uint64_t>(parentOffset);
+    selected.cursor = parent.cursor;
+    selected.exactVpiType = parent.exactVpiType;
+    source = parentSource;
+  }
+}
+
+bool preparePrimitiveValue(__vpiHandle *handle, VPIValueSource &source) {
+  auto *context = handle->owner->context;
+  auto unavailable = [&]() {
+    setError(handle->owner, "primitive value has no exact retained source",
+             vpiNotice);
+    return false;
+  };
+  auto direction = [&](obelisk_rt_design_cursor_v1 terminal) -> uint32_t {
+    VPIFixedPropertyValue value{};
+    if (obelisk_rt_cached_vpi_fixed_property(context, terminal, vpiDirection,
+                                             &value) != OBELISK_RT_OK)
+      return 0;
+    return static_cast<uint32_t>(value.payload);
+  };
+  obelisk_rt_design_cursor_v1 terminal = source.cursor;
+  if (source.exactType != vpiPrimTerm) {
+    VPIRelationRange terminals{};
+    if (obelisk_rt_cached_vpi_relation_range(context, source.cursor,
+                                             vpiPrimTerm, true,
+                                             &terminals) != OBELISK_RT_OK)
+      return unavailable();
+    uint32_t outputs = 0;
+    for (uint64_t index = 0; index != terminals.count; ++index) {
+      obelisk_rt_design_cursor_v1 candidate{};
+      uint32_t kind = 0;
+      bool statement = false;
+      if (obelisk_rt_cached_vpi_relation_target(
+              context, terminals.first + index, &candidate, &kind,
+              &statement) != OBELISK_RT_OK ||
+          statement || kind != vpiPrimTerm)
+        return unavailable();
+      if (direction(candidate) == vpiOutput) {
+        terminal = candidate;
+        ++outputs;
+      }
+    }
+    // Multiple-output primitives need a publication-equivalence proof: output
+    // specify paths can differ even when the primitive truth function is
+    // shared.
+    if (outputs != 1)
+      return unavailable();
+  }
+  uint16_t strength = 0;
+  if (direction(terminal) == vpiOutput) {
+    VPITerminalDriverBinding binding{};
+    if (obelisk_rt_cached_vpi_terminal_driver(context, terminal, &binding) !=
+            OBELISK_RT_OK ||
+        obelisk_rt_design_driver_strength(
+            context, binding.lowStateOffset, binding.highStateOffset, &strength,
+            useDirectStateForValue(context)) != OBELISK_RT_OK)
+      return unavailable();
+  } else if (source.exactType == vpiPrimTerm &&
+             direction(terminal) == vpiInput) {
+    VPIRelationRange expressions{};
+    __vpiHandle expression;
+    expression.owner = handle->owner;
+    bool statement = false;
+    if (obelisk_rt_cached_vpi_relation_range(context, terminal, vpiExpr, false,
+                                             &expressions) != OBELISK_RT_OK ||
+        expressions.count != 1 ||
+        obelisk_rt_cached_vpi_relation_target(
+            context, expressions.first, &expression.cursor,
+            &expression.exactVpiType, &statement) != OBELISK_RT_OK ||
+        statement)
+      return unavailable();
+    const auto *policy = valuePolicyFor(&expression);
+    VPIValueSource actual{};
+    if (!policy || !valueSourceFor(&expression, *policy, actual) ||
+        actual.info.bit_width != 1 ||
+        !valueRequirementsSatisfied(&expression, actual, *policy))
+      return unavailable();
+    auto netStrength = readSelectedNetStrength(&expression, actual, strength);
+    if (netStrength != OBELISK_RT_OK && netStrength != OBELISK_RT_EOF)
+      return unavailable();
+    if (netStrength == OBELISK_RT_EOF) {
+      std::vector<uint64_t> value, unknown;
+      if (!readValue(&expression, actual, value, unknown))
+        return false;
+      bool v = (value[0] & 1) != 0;
+      bool u = (unknown[0] & 1) != 0;
+      constexpr uint16_t strong0 = uint16_t{1} << 1;
+      constexpr uint16_t strong1 = uint16_t{1} << 13;
+      strength = u ? (v ? uint16_t{1} << 7 : strong0 | strong1)
+                   : (v ? strong1 : strong0);
+    }
+  } else {
+    return unavailable();
+  }
+  source.primitiveValue = true;
+  source.primitiveStrength = strength;
+  source.info.bit_width = 1;
+  return true;
 }
 
 bool decodeValue(__vpiHandle *handle, const s_vpi_value *source, uint64_t width,
@@ -12409,9 +12656,9 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
              vpiNotice);
     return;
   }
-  if (!valueRequirementsSatisfied(handle, source.info, *policy) ||
+  if (!valueRequirementsSatisfied(handle, source, *policy) ||
       (source.policy != policy &&
-       !valueRequirementsSatisfied(handle, source.info, *source.policy)))
+       !valueRequirementsSatisfied(handle, source, *source.policy)))
     return;
   const PLI_INT32 exactType = static_cast<PLI_INT32>(source.exactType);
   const bool managedStringSource =
@@ -12606,13 +12853,16 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
       bool v = width != 0 && logicBit(value, 0);
       bool u = width != 0 && logicBit(unknown, 0);
       destination->value.scalar = !u ? (v ? vpi1 : vpi0) : (v ? vpiZ : vpiX);
-      if (width != 0 && source.info.kind == OBELISK_RT_DESIGN_RECORD_NET && u &&
-          !v) {
+      if (width != 0 &&
+          (source.info.kind == OBELISK_RT_DESIGN_RECORD_NET ||
+           source.primitiveValue) &&
+          u && !v) {
         const uint64_t offset = source.form == VPIObjectForm::Indexed
                                     ? source.selectionBitOffset
                                     : 0;
-        uint16_t range = 0;
-        if (!readNetStrength(handle, source.cursor, offset, range))
+        uint16_t range = source.primitiveStrength;
+        if (!source.primitiveValue &&
+            !readNetStrength(handle, source.cursor, offset, range))
           return;
         constexpr uint16_t lowMask = (uint16_t{1} << 7) - 1;
         constexpr uint16_t highZ = uint16_t{1} << 7;
@@ -12715,7 +12965,10 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
         strength.logic = !u ? (v ? vpi1 : vpi0) : (v ? vpiZ : vpiX);
         strength.s0 = vpiStrongDrive;
         strength.s1 = vpiStrongDrive;
-        if (net) {
+        if (source.primitiveValue) {
+          decodeStrengthRange(source.primitiveStrength, strength.s0,
+                              strength.s1);
+        } else if (net) {
           uint16_t range = 0;
           const uint64_t base = source.form == VPIObjectForm::Indexed
                                     ? source.selectionBitOffset

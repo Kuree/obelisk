@@ -2669,11 +2669,12 @@ void ObeliskSimPreparePass::runOnOperation() {
     return abort();
 
   PreparedProceduralTypes proceduralTypes;
+  llvm::DenseMap<Operation *, FlatSymbolRefAttr> primitiveTerminals;
   FailureOr<llvm::StringMap<DescriptorInfo>> preparedDescriptors =
       materializeDesignDescriptors(
           module, design, semanticRoot, *portAliases, *scopes, *classes,
           designPrecisionFs, preserveVPIMethodBindings, preserveVPIBoxBindings,
-          proceduralTypes, builder);
+          proceduralTypes, primitiveTerminals, builder);
   if (failed(preparedDescriptors))
     return abort();
   llvm::StringMap<DescriptorInfo> &descriptors = *preparedDescriptors;
@@ -2894,6 +2895,48 @@ void ObeliskSimPreparePass::runOnOperation() {
   if (failed(preparedNetTopology))
     return abort();
   ContinuousDriverMap &continuousDrivers = *preparedNetTopology;
+
+  // Source terminal occurrences survive net collapsing and paired-bank driver
+  // planning. Bind only a complete scalar contribution; no ordinal or display
+  // path is used to infer which physical driver belongs to an output.
+  llvm::DenseMap<Operation *, SmallVector<const DriverInfo *>> terminalDrivers;
+  for (const auto &entry : continuousDrivers)
+    for (const DriverInfo &driver : entry.second)
+      if (driver.primitiveTerminalSource)
+        terminalDrivers[driver.primitiveTerminalSource].push_back(&driver);
+  SmallVector<std::pair<Operation *, FlatSymbolRefAttr>> terminalOrder(
+      primitiveTerminals.begin(), primitiveTerminals.end());
+  llvm::sort(terminalOrder, [](const auto &left, const auto &right) {
+    return left.second.getValue() < right.second.getValue();
+  });
+  for (const auto &terminal : terminalOrder) {
+    auto found = terminalDrivers.find(terminal.first);
+    if (found == terminalDrivers.end())
+      continue;
+    auto &drivers = found->second;
+    if (drivers.empty() || drivers.size() > 2 ||
+        drivers.front()->drivenWidth != 1 ||
+        drivers.front()->drivenLow > UINT32_MAX)
+      continue;
+    const DriverInfo *low = drivers.front(), *high = nullptr;
+    if (drivers.size() == 2) {
+      if (low->strengthBank == 1)
+        std::swap(drivers[0], drivers[1]);
+      low = drivers[0];
+      high = drivers[1];
+      if (low->strengthBank != 0 || high->strengthBank != 1 ||
+          high->drivenLow != low->drivenLow || high->drivenWidth != 1)
+        continue;
+    } else if (low->strengthBank)
+      continue;
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToEnd(&design.getBody().front());
+    sim::SimVPITerminalDriverBindingOp::create(
+        builder, getSemanticLocation(terminal.first), terminal.second,
+        builder.getI64IntegerAttr(low->descriptor.id),
+        high ? builder.getI64IntegerAttr(high->descriptor.id) : IntegerAttr{},
+        builder.getI64IntegerAttr(low->drivenLow));
+  }
 
   // IEEE 1800-2017 Clause 30 module paths delay changes produced by a path's
   // source before publishing them at its destination. Unconditional paths

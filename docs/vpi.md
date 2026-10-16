@@ -345,6 +345,17 @@ canonical Pull for that unused polarity, matching its executable driver
 representation. Switch strengths depend on their inputs and remain unavailable
 through these static queries.
 
+Scalar gate and UDP output terminals read their own published driver values,
+including conditional-gate L/H strength ranges, independently of the connected
+resolved net. A sparse 16-byte binding identifies each output's exact driver or
+complementary driver pair. Input terminals evaluate their retained scalar
+expression using the shared expression reader. Structural scalar net selections
+and concatenations preserve the selected net bit’s resolved strength. A primitive with one output
+exposes that output's value; multiple-output primitive values and bidirectional
+switch values remain unavailable until their output semantics are proved.
+Missing bindings or expressions report a notice. Terminal identities remain
+compact and input terminals need no driver-binding rows.
+
 SystemVerilog trireg execution itself, including charge strength, retention,
 decay, and connected charge sharing, is implemented independently of VPI.
 Unsupported registration calls made from a startup table produce a clear

@@ -127,7 +127,10 @@ mlir::FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     const PreparedScopeDeclarations &scopes,
     const PreparedClassDeclarations &classes, uint64_t designPrecisionFs,
     bool preserveVPIMethodBindings, bool preserveVPIBoxBindings,
-    PreparedProceduralTypes &proceduralTypes, mlir::OpBuilder &builder);
+    PreparedProceduralTypes &proceduralTypes,
+    llvm::DenseMap<mlir::Operation *, mlir::FlatSymbolRefAttr>
+        &primitiveTerminals,
+    mlir::OpBuilder &builder);
 
 } // namespace obelisk::simlowering
 

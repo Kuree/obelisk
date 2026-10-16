@@ -154,6 +154,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     uint64_t width;
     std::string path;
     std::optional<uint64_t> nodeId;
+    Operation *primitiveTerminalSource = nullptr;
   };
   auto appendInterconnectLeaves = [&](StringRef root,
                                       SmallVectorImpl<NetRun> &runs) {
@@ -1312,7 +1313,10 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
           invalid = true;
           break;
         }
+        size_t first = sinks.size();
         collectDriverRuns(children.front(), sinks);
+        for (NetRun &sink : MutableArrayRef<NetRun>(sinks).drop_front(first))
+          sink.primitiveTerminalSource = root;
       }
       if (invalid)
         continue;
@@ -1354,7 +1358,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
         info.delayedNet = sink.descriptor.delayedNet;
         continuousDrivers[unit].push_back(
             {sink.path, info, sink.nodeId, sink.offset, sink.width,
-             strengthBanks ? std::optional<unsigned>(bank) : std::nullopt});
+             strengthBanks ? std::optional<unsigned>(bank) : std::nullopt,
+             sink.primitiveTerminalSource});
         auto driver = sim::SimDriverDeclOp::create(
             builder, getSemanticLocation(unit), id, scopeId, sink.descriptor.id,
             sink.descriptor.type, sim::Lifetime::Design,

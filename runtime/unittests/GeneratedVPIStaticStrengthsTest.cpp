@@ -55,6 +55,16 @@ void checkStaticStrengths(bool missingDefinition) {
              design.getOps<sim::SimVPIDefinitionBindingOp>()))
       if (binding.getSourceAttr() == target)
         binding.erase();
+    // Driver bindings need the primitive subtype to validate their polarity
+    // banks. Omit them too when deliberately testing a missing definition.
+    for (auto binding : llvm::make_early_inc_range(
+             design.getOps<sim::SimVPITerminalDriverBindingOp>())) {
+      auto terminal = mlir::SymbolTable::lookupNearestSymbolFrom<
+          sim::SimVPIObjectAnchorOp>(binding, binding.getTerminalAttr());
+      ASSERT_TRUE(terminal);
+      if (terminal.getParentAttr() == target)
+        binding.erase();
+    }
   }
   SimulationBytecodeOptions options;
   options.vpi = "read";
