@@ -1448,9 +1448,17 @@ def ScopeVirtualInterfaces : VPITraversalEdge<
     [Package, Module, Interface, Program]>,
   VirtualInterfaceVar, IterateMode, VirtualInterfaceObjects, NoOrder,
   "37.12">;
-def ScopeParameters : VPITraversalEdge<NonInstanceScopeObjects, Parameter,
-  IterateMode, ParameterIterationObjects, NoOrder, "37.12; 37.85", 0,
-  AutomaticDirectChild>;
+def ScopeParameters
+    : VPITraversalEdge<VPIObjectSet<"DirectParameterScopes", [], [ScopeFamily],
+                                    [Package, Module, Interface, Program,
+                                     ForeachStmt, ClassTypespec]>,
+                       Parameter, IterateMode, ParameterIterationObjects,
+                       NoOrder, "37.12; 37.85", 0, AutomaticDirectChild>;
+// A lexical class type references the defining class's exact declarations;
+// a specialization owns its effective parameter declarations (37.32d1,d12).
+def ClassTypespecParameters
+    : VPITraversalEdge<ClassTypespecObjects, Parameter, IterateMode,
+                       ParameterIterationObjects, NoOrder, "37.32">;
 def ScopeInternalScopes : VPITraversalEdge<ScopeWithoutModuleObjects,
   InternalScopeRel,
   IterateMode, ScopeObjects, NoOrder, "37.12; 37.85", 0,

@@ -2456,6 +2456,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
             {packed, source.index, anchor.getDebugName().str()});
       }
       uint32_t lexicalSelector = target.vpiKind;
+      if (source.vpiKind ==
+              static_cast<uint32_t>(VPIObjectKind::ClassTypespec) &&
+          vpiObjectSetContains(VPIObjectSetID::ParameterIterationObjects,
+                               target.vpiKind))
+        lexicalSelector = static_cast<uint32_t>(VPIObjectKind::Parameter);
       const VPIIndexedAccessDescriptor *indexed =
           findVPIIndexedAccess(source.vpiKind);
       if (indexed &&
@@ -2727,6 +2732,18 @@ SmallVector<uint8_t> serializeDesignDatabase(
                 VPITraversalMode::Handle,
                 sourceSymbolRef(type.getOwnerAttr()))))
           return {};
+        uint32_t parameterOrdinal = 0;
+        for (auto parameter : anchors) {
+          if (parameter.getParentAttr() != type.getDefinitionAttr() ||
+              !vpiObjectSetContains(VPIObjectSetID::ParameterIterationObjects,
+                                    parameter.getVpiKind()))
+            continue;
+          if (failed(inheritanceRelation(
+                  type, self, static_cast<uint32_t>(VPIObjectKind::Parameter),
+                  VPITraversalMode::Iterate, anchorRefs.lookup(parameter),
+                  parameterOrdinal++)))
+            return {};
+        }
         FlatSymbolRefAttr inheritedType;
         if (auto base = sourceExtendsByOwner.lookup(type.getDefinitionAttr()))
           inheritedType = base.getBaseTypespecAttr();

@@ -157,3 +157,21 @@ module {
     simulation.vpi_relation.decl <kind = symbol, symbol = @a> selector 77 handle ordinal 0 to <kind = symbol, symbol = @t>
   }
 }
+
+// -----
+
+module {
+  simulation.design @d {
+    simulation.scope.decl 0
+    simulation.vpi_object.anchor @pkg id 0 type 600 in 0 ordinal 0 hierarchy "pkg" debug "pkg"
+    simulation.vpi_object.anchor @c id 1 type 652 in 0 parent @pkg ordinal 0 hierarchy "pkg::C" debug "C"
+    simulation.class.decl @class id 1 {debug_name = "C", is_abstract = false, is_final = false, is_interface = false}
+    simulation.vpi_typespec.decl @specialization id 0 in 0 owner @c hierarchy "pkg::C$int" debug "C" {
+      origin = 3 : i32,
+      target_type = #simulation.vpi_type<kind = class, isSigned = false, isFourState = false, symbol = @class, range = [], children = [], childNames = []>
+    }
+    simulation.vpi_object.anchor @t id 2 type 609 in 0 parent @c ordinal 0 hierarchy "pkg::C::T" debug "T" {unresolved_type_parameter}
+    // expected-error @+1 {{class parameter inventory is supplied by exact declaration owners}}
+    simulation.vpi_relation.decl <kind = symbol, symbol = @specialization> selector 41 iterate ordinal 0 to <kind = symbol, symbol = @t>
+  }
+}

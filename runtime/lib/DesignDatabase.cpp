@@ -2686,11 +2686,13 @@ bool validateLexicalInheritance(
           (!many && (selector == static_cast<uint32_t>(Kind::ClassDefn) ||
                      selector == static_cast<uint32_t>(Rel::ScopeRel) ||
                      selector == static_cast<uint32_t>(Rel::ExtendsRel))) ||
-          (many && selector == static_cast<uint32_t>(Kind::ParamAssign));
+          (many && (selector == static_cast<uint32_t>(Kind::ParamAssign) ||
+                    selector == static_cast<uint32_t>(Kind::Parameter)));
       if (!allowed)
         return false;
-      if (many && (!assignments.count(to) ||
-                   !assignmentOwners.emplace(to, from).second))
+      if (many && selector == static_cast<uint32_t>(Kind::ParamAssign) &&
+          (!assignments.count(to) ||
+           !assignmentOwners.emplace(to, from).second))
         return false;
     }
     if (types.count(to)) {
@@ -2757,6 +2759,8 @@ bool validateLexicalInheritance(
       return false;
     auto actuals = iterate(type, static_cast<uint32_t>(Kind::ParamAssign));
     auto formals = iterate(definition, static_cast<uint32_t>(Kind::Parameter));
+    if (iterate(type, static_cast<uint32_t>(Kind::Parameter)) != formals)
+      return false;
     formals.erase(
         std::remove_if(formals.begin(), formals.end(), isLocalParameter),
         formals.end());
@@ -6381,10 +6385,22 @@ bool validateDatabaseImpl(const Database &database) {
         targetTable == obelisk::reflection::TableKind::StaticObject ||
         (targetTable == obelisk::reflection::TableKind::Object &&
          relationBacked(target));
+    bool classParameterInventory =
+        iterate &&
+        sourceKind == static_cast<uint32_t>(
+                          obelisk::reflection::VPIObjectKind::ClassTypespec) &&
+        selector == static_cast<uint32_t>(
+                        obelisk::reflection::VPIObjectKind::Parameter);
+    bool lexicalParameterReference =
+        classParameterInventory &&
+        sourceTable == obelisk::reflection::TableKind::Object &&
+        (read32(sourceRecord + 4) &
+         OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC) != 0;
     bool lexicalForward =
-        selector == targetKind ||
-        edge->automaticRelation ==
-            obelisk::reflection::VPIAutomaticRelation::DirectChild;
+        !lexicalParameterReference &&
+        (selector == targetKind || classParameterInventory ||
+         edge->automaticRelation ==
+             obelisk::reflection::VPIAutomaticRelation::DirectChild);
     // Relation-backed lexical containment is independent of the physical
     // record chain. Pair each real declaration edge with the generated
     // reverse vpiScope relation so malformed images cannot disagree by query
@@ -6534,7 +6550,7 @@ bool validateDatabaseImpl(const Database &database) {
                         obelisk::reflection::VPIRelationKind::ExprRel) &&
         unavailableParameterDefaults.count(sourceEndpoint) != 0)
       return false;
-    if (iterate &&
+    if (iterate && !lexicalParameterReference &&
         selector == static_cast<uint32_t>(
                         obelisk::reflection::VPIObjectKind::Parameter) &&
         targetKind == static_cast<uint32_t>(

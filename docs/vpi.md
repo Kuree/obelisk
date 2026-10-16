@@ -302,6 +302,6 @@ inventory. Explicit class actuals and constructor arguments retain unavailable
 source evidence and report a notice until their expression forms are supported.
 Dependent or imported base names without exact source proof keep an Extends
 occurrence and report a notice for the unresolved base type. Lexical class types
-do not expose specialization member inventories; lexical parameter iteration
-through this typespec remains unavailable, while each default assignment's Lhs
-retains the exact lexical parameter declaration.
+do not expose specialization member inventories. Their parameter iteration
+reuses the exact defining class declarations, including body localparams,
+preserving declaration scope, original defaults, and ParamAssign Lhs identity.

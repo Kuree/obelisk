@@ -5322,6 +5322,13 @@ LogicalResult SimDesignOp::verifyRegions() {
         mode == reflection::VPITraversalMode::Iterate)
       return relation.emitOpError(
           "unresolved typedef is not a parameter declaration");
+    if (*sourceKind ==
+            static_cast<uint32_t>(reflection::VPIObjectKind::ClassTypespec) &&
+        relation.getSelector() ==
+            static_cast<uint32_t>(reflection::VPIObjectKind::Parameter) &&
+        mode == reflection::VPITraversalMode::Iterate)
+      return relation.emitOpError(
+          "class parameter inventory is supplied by exact declaration owners");
     const auto *edge =
         reflection::findVPITraversal(*sourceKind, relation.getSelector(), mode);
     bool declaredNetConnection =

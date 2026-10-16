@@ -92,9 +92,8 @@ TEST(GeneratedDesignDatabase, LexicalInheritance) {
   EXPECT_EQ(vpi_get(vpiClassType, lexical), vpiUserDefinedClass);
   EXPECT_EQ(vpi_compare_objects(relation(vpiClassDefn, lexical), base), 1);
   EXPECT_EQ(vpi_compare_objects(relation(vpiScope, lexical), mid), 1);
-  for (int selector :
-       {vpiVariables, vpiMethods, vpiConstraint, vpiNamedEvent,
-        vpiNamedEventArray, vpiTypedef, vpiInternalScope, vpiParameter}) {
+  for (int selector : {vpiVariables, vpiMethods, vpiConstraint, vpiNamedEvent,
+                       vpiNamedEventArray, vpiTypedef, vpiInternalScope}) {
     EXPECT_EQ(vpi_iterate(selector, lexical), nullptr);
     notice();
   }
@@ -122,6 +121,24 @@ TEST(GeneratedDesignDatabase, LexicalInheritance) {
     parameters.emplace(vpi_get_str(vpiName, parameter), parameter);
   }
   ASSERT_EQ(parameters.size(), 5u);
+  for (auto type : {lexical, relation(vpiClassTypespec,
+                                      relation(vpiExtends, explicitClass))}) {
+    iterator = vpi_iterate(vpiParameter, type);
+    ASSERT_NE(iterator, nullptr);
+    EXPECT_EQ(vpi_compare_objects(relation(vpiUse, iterator), type), 1);
+    for (const char *name : {"T", "P", "Local", "Unsupported", "Required"}) {
+      auto parameter = keep(vpi_scan(iterator));
+      ASSERT_NE(parameter, nullptr);
+      EXPECT_EQ(vpi_compare_objects(parameter, parameters.at(name)), 1);
+      EXPECT_EQ(vpi_compare_objects(relation(vpiScope, parameter), base), 1);
+      EXPECT_EQ(vpi_get(vpiLocalParam, parameter),
+                std::string(name) == "Local");
+    }
+    EXPECT_EQ(vpi_scan(iterator), nullptr);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  }
+  EXPECT_EQ(vpi_iterate(vpiParameter, derivedType), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
   std::vector<vpiHandle> assignments;
   iterator = vpi_iterate(vpiParamAssign, lexical);
   ASSERT_NE(iterator, nullptr);
@@ -287,6 +304,25 @@ TEST(GeneratedDesignDatabase, LexicalInheritance) {
   ASSERT_NE(classDefinition, 0u);
   EXPECT_EQ(RelationView(image.data() + rhs).getTargetIndexAndTable(),
             packed(originalCursor));
+  auto firstParameter = relationRow(packed(typeCursor), vpiParameter);
+  ASSERT_NE(firstParameter, 0u);
+  // Swapping two legal targets keeps the inventory reachable and unique,
+  // but violates the exact referenced declaration order.
+  rejects([&](auto &bytes) {
+    RelationWriter(bytes.data() + firstParameter)
+        .setTargetIndexAndTable(packed(pCursor));
+    RelationWriter(bytes.data() + firstParameter + RelationLayout.size)
+        .setTargetIndexAndTable(packed(tCursor));
+  });
+  // An otherwise well-formed shorter group must not omit any declaration.
+  rejects([&](auto &bytes) {
+    uint64_t last = firstParameter + 4 * RelationLayout.size;
+    std::copy(bytes.begin() + last + RelationLayout.size,
+              bytes.begin() + header.getRelationOffset() +
+                  header.getRelationCount() * RelationLayout.size,
+              bytes.begin() + last);
+    HeaderWriter(bytes.data()).setRelationCount(header.getRelationCount() - 1);
+  });
   // Type-compatible but not the exact base parameter or original default.
   rejects([&](auto &bytes) {
     RelationWriter(bytes.data() + rhs).setTargetIndexAndTable(packed(tCursor));

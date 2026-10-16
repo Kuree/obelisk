@@ -1443,7 +1443,7 @@ bool rejectUnavailableInheritanceRelation(__vpiHandle *handle,
            (selector == vpiVariables || selector == vpiMethods ||
             selector == vpiConstraint || selector == vpiNamedEvent ||
             selector == vpiNamedEventArray || selector == vpiTypedef ||
-            selector == vpiInternalScope || selector == vpiParameter))
+            selector == vpiInternalScope))
     message =
         "lexical class type does not provide this specialization inventory";
   auto targetFor = [&](obelisk_rt_design_cursor_v1 source, uint32_t relation,
@@ -9205,8 +9205,15 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
   }
   const bool classSource =
       sourceType == vpiClassObj || sourceType == vpiClassTypespec;
+  // A lexical typespec shares the declarations in its exact ClassDefn;
+  // inherited source formals belong to the separate base type occurrence.
+  const bool lexicalParameters =
+      type == vpiParameter && sourceType == vpiClassTypespec &&
+      referenceHandle &&
+      (sourceInheritanceCapabilities(referenceHandle) &
+       OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC);
   const bool classInventory =
-      classSource &&
+      classSource && !lexicalParameters &&
       (type == vpiVariables || type == vpiMethods || type == vpiNamedEvent ||
        type == vpiNamedEventArray || type == vpiParameter || type == vpiReg ||
        type == vpiRegArray || type == vpiMemory);

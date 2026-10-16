@@ -155,9 +155,11 @@ add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), vpiParameter,
     Mode::Iterate, S({vpiParameter, vpiTypeParameter}), Order::None);
 add("37.12; 37.85",
     S({vpiBegin, vpiFor, vpiFork, vpiFunction, vpiNamedBegin, vpiNamedFork,
-       vpiTask, vpiGenScope, vpiClassTypespec, vpiClockingBlock, vpiClassDefn}),
+       vpiTask, vpiGenScope, vpiClockingBlock, vpiClassDefn}),
     vpiParameter, Mode::Iterate, S({vpiParameter, vpiTypeParameter}),
     Order::None);
+add("37.32", S({vpiClassTypespec}), vpiParameter, Mode::Iterate,
+    S({vpiParameter, vpiTypeParameter}), Order::None);
 add("37.33", S({vpiClassObj}), vpiParameter, Mode::Iterate,
     S({vpiParameter, vpiTypeParameter}), Order::None);
 add("37.17",
