@@ -67,7 +67,8 @@ definitions. Equal syntax in separate assignment occurrences keeps distinct
 identity. Interface-parent, instance-array, generate-owned, defparam, and
 configuration override inventories remain incomplete.
 
-Retained expression slots include integral literals, concatenations,
+Retained expression slots include integral literals (including contextual
+`'0`, `'1`, `'x`, and `'z`), concatenations,
 replications, and bit/part-selects of scalar bits or one-bit packed-array elements.
 Exact bit selections retain `NetBit`, `RegBit`, or parameter `BitSelect` identity,
 the source `Index`, and syntactic `ConstantSelect`. Existing-object names and

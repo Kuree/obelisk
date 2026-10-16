@@ -299,7 +299,8 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
       children = getChildren(source);
       if (children.size() < 2)
         return unsupported();
-    } else if (isa<semantic::SVIntegerLiteralOp>(source)) {
+    } else if (isa<semantic::SVIntegerLiteralOp,
+                   semantic::SVUnbasedUnsizedIntegerLiteralOp>(source)) {
       if (!source->hasAttr("constant_value"))
         return unsupported();
       kind = uint32_t(Kind::Constant);
