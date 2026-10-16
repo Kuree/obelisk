@@ -2159,6 +2159,7 @@ LogicalResult NativePipelineAnalysis::materialize() {
       }
       if (isa<sim::SimVPIDefinitionDeclOp, sim::SimVPIDefinitionBindingOp,
               sim::SimVPIDefinitionMemberDeclOp,
+              sim::SimVPIDefinitionTypeDefaultOp,
               sim::SimVPIDefinitionSpecializationDeclOp,
               sim::SimVPIDefinitionMemberSpecializationOp,
               sim::SimVPIDefinitionMemberInstanceBindingOp,

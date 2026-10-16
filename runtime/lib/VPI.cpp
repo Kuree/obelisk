@@ -196,6 +196,8 @@ struct __vpiHandle {
   bool statement = false;
   bool protectedObject = false;
   bool suppressSemanticAlias = false;
+  // Source provenance only; semantic/base identity remains unchanged.
+  bool originalTypeDefault = false;
   bool suppressSemanticDimension = false;
   bool liveInterfaceRange = false;
   // IEEE 1800-2023 37.29 detail 2 restricts value access based on the
@@ -929,7 +931,8 @@ void projectScalarBitTypespec(obelisk_rt_design_semantic_type_info_v1 &info) {
 vpiHandle makeTypespecHandle(VPIState *state, obelisk_rt_design_cursor_v1 base,
                              obelisk_rt_design_cursor_v1 semanticCursor,
                              bool honorAlias = true,
-                             bool suppressDimension = false) {
+                             bool suppressDimension = false,
+                             bool originalDefault = false) {
   obelisk_rt_design_semantic_type_info_v1 info{};
   if (!state || obelisk_rt_cached_design_semantic_type_info(
                     state->context, semanticCursor, &info) != OBELISK_RT_OK)
@@ -983,6 +986,7 @@ vpiHandle makeTypespecHandle(VPIState *state, obelisk_rt_design_cursor_v1 base,
     handle->protectedObject = isProtected;
     handle->suppressSemanticAlias = !honorAlias;
     handle->suppressSemanticDimension = suppressDimension;
+    handle->originalTypeDefault = originalDefault;
     return keepHandle(state, std::move(handle));
   }
   OBELISK_RT_CATCH_ALL {
@@ -9451,6 +9455,17 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       return nullptr;
     }
   }
+  if (type == vpiExpr && sourceType == vpiTypeParameter &&
+      handle->form == VPIObjectForm::Design) {
+    VPITypeDefaultInfo original{};
+    auto status = obelisk_rt_cached_vpi_type_default(handle->owner->context,
+                                                     handle->cursor, &original);
+    if (status == OBELISK_RT_OK)
+      return makeTypespecHandle(handle->owner, handle->cursor,
+                                original.semantic, true, false, true);
+    if (status != OBELISK_RT_EOF)
+      return nullptr;
+  }
   if (handle->form == VPIObjectForm::Frame) {
     ContextMutexLock lock(handle->owner->context);
     const auto found = handle->owner->frames.find(handle->frameActivation);
@@ -11754,6 +11769,14 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
                : static_cast<PLI_INT32>(shape == VPIValueShape::Vector);
   }
   if (property == vpiLineNo) {
+    if (handle->originalTypeDefault) {
+      VPITypeDefaultInfo original{};
+      if (obelisk_rt_cached_vpi_type_default(handle->owner->context,
+                                             handle->cursor,
+                                             &original) != OBELISK_RT_OK)
+        return vpiUndefined;
+      return original.line;
+    }
     const uint8_t *file = nullptr;
     uint64_t fileSize = 0;
     uint32_t line = 0, column = 0;
@@ -12731,6 +12754,17 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     return scratch.data();
   }
   if (property == vpiFile) {
+    if (handle->originalTypeDefault) {
+      VPITypeDefaultInfo original{};
+      if (obelisk_rt_cached_vpi_type_default(handle->owner->context,
+                                             handle->cursor,
+                                             &original) != OBELISK_RT_OK ||
+          !original.fileSize)
+        return nullptr;
+      scratch.assign(reinterpret_cast<const char *>(original.file),
+                     original.fileSize);
+      return scratch.data();
+    }
     const uint8_t *file = nullptr;
     uint64_t size = 0;
     uint32_t line = 0, column = 0;

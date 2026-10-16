@@ -688,11 +688,15 @@ verifyExecutableSubtree(Operation *root, ModuleOp module,
                       getSpecializationAttrName(op->getName()))) &&
             reference.getNestedReferences().empty();
         bool definitionMemberReference =
-            isa<sim::SimVPIDefinitionMemberSpecializationOp,
+            isa<sim::SimVPIDefinitionTypeDefaultOp,
+                sim::SimVPIDefinitionMemberSpecializationOp,
                 sim::SimVPIDefinitionMemberInstanceBindingOp,
                 sim::SimVPIDefinitionMemberInstanceRelationOp>(op) &&
             named.getName() ==
-                (isa<sim::SimVPIDefinitionMemberSpecializationOp>(op)
+                (isa<sim::SimVPIDefinitionTypeDefaultOp>(op)
+                     ? sim::SimVPIDefinitionTypeDefaultOp::getMemberAttrName(
+                           op->getName())
+                 : isa<sim::SimVPIDefinitionMemberSpecializationOp>(op)
                      ? sim::SimVPIDefinitionMemberSpecializationOp::
                            getMemberAttrName(op->getName())
                  : isa<sim::SimVPIDefinitionMemberInstanceBindingOp>(op)
@@ -795,9 +799,10 @@ void ObeliskSimFinalizePass::runOnOperation() {
              sim::SimVPIThreadOriginBindingOp, sim::SimVPICallDeclOp,
              sim::SimVPICodeUnitScopeBindingOp, sim::SimVPIInitializerBindingOp,
              sim::SimVPITerminalDriverBindingOp, sim::SimVPIExpressionDeclOp,
-             sim::SimVPIClassCallDispatchOp, sim::SimVPILocalDeclOp,
-             sim::SimVPIForeachDeclOp, sim::SimVPIStaticLocalBindingOp,
-             sim::SimVPICallableDeclOp, sim::SimVPIInterfaceMemberDeclOp,
+             sim::SimVPIDefinitionTypeDefaultOp, sim::SimVPIClassCallDispatchOp,
+             sim::SimVPILocalDeclOp, sim::SimVPIForeachDeclOp,
+             sim::SimVPIStaticLocalBindingOp, sim::SimVPICallableDeclOp,
+             sim::SimVPIInterfaceMemberDeclOp,
              sim::SimVPIInterfaceInstanceBindingOp,
              sim::SimVPIInterfaceCallDispatchOp, sim::SimClassDeclOp,
              sim::SimClassFieldDeclOp, sim::SimClassMethodDeclOp,

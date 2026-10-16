@@ -131,6 +131,23 @@ def SimVPIDefinitionMemberDeclOp : SimOp<"vpi_definition_member.decl", [
   let hasVerifier = 1;
 }
 
+def SimVPIDefinitionTypeDefaultOp : SimOp<"vpi_definition_type_default", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "original builtin typespec default of a shared type parameter";
+  let description = [{
+    Stores the source default independently of effective specialization types.
+    The exact member must be a TypeParameter with has_original_default. This
+    bounded form admits anonymous builtin leaf types, without nominal or alias
+    identity. A preceding type parameter uses an exact Expr relation instead.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$member,
+                       SimVPITypeSemanticsAttr:$original_type);
+  let assemblyFormat = "$member `type` $original_type attr-dict";
+  let hasVerifier = 1;
+}
+
 def SimVPIDefinitionSpecializationDeclOp
     : SimOp<"vpi_definition_specialization.decl", [
         Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,

@@ -393,6 +393,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint32_t owner, templateIndex, firstLeaf;
     uint16_t selector, mode;
     uint32_t ordinal;
+    Source source;
   };
   struct ExpressionTemplateRecord {
     uint32_t definition, firstNode, nodeCount, firstOperand, operandCount;
@@ -5338,11 +5339,33 @@ SmallVector<uint8_t> serializeDesignDatabase(
             "expression leaf bindings exceed the compact limit");
         return {};
       }
-      expressionRoots.push_back({packedOwner, templateIndex,
+      expressionRoots.push_back({packedOwner,
+                                 templateIndex,
                                  uint32_t(expressionLeaves.size()),
-                                 uint16_t(relation.getSelector()), rootMode,
-                                 uint32_t(relation.getOrdinal())});
+                                 uint16_t(relation.getSelector()),
+                                 rootMode,
+                                 uint32_t(relation.getOrdinal()),
+                                 {}});
       llvm::append_range(expressionLeaves, leaves);
+    }
+    for (auto original : design.getOps<sim::SimVPIDefinitionTypeDefaultOp>()) {
+      auto member =
+          classMemberSymbols.lookupSymbolIn<sim::SimVPIDefinitionMemberDeclOp>(
+              design, original.getMemberAttr());
+      auto semantic = addSemanticType(original.getOriginalType());
+      if (!member || !definitionMemberIndices.count(member) || !semantic ||
+          expressionRoots.size() >= expressionCursorLimit) {
+        original.emitOpError(
+            "original type default has no compact source root");
+        return {};
+      }
+      Source source = sourceFor(original);
+      expressionRoots.push_back({definitionMemberIndices.lookup(member),
+                                 *semantic, 0,
+                                 uint16_t(VPIRelationKind::ExprRel),
+                                 uint16_t(expressionRootDefinitionMember |
+                                          expressionRootConcreteTypeDefault),
+                                 uint32_t(source.lineColumn >> 32), source});
     }
     llvm::sort(expressionRoots, [](const auto &left, const auto &right) {
       return std::tie(left.owner, left.selector, left.mode, left.ordinal) <
@@ -5960,6 +5983,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
   for (const auto &node : expressionNodes)
     if (!node.source.file.empty())
       intern(node.source.file);
+  for (const auto &root : expressionRoots)
+    if (!root.source.file.empty())
+      intern(root.source.file);
   uint64_t scopeOffset = output.size();
   DenseMap<uint64_t, uint64_t> scopeOffsets;
   for (auto [index, scope] : llvm::enumerate(scopes))
@@ -6909,7 +6935,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
         index * ExpressionRootBindingLayout.size);
     writer.setOwnerIndexAndTable(root.owner);
     writer.setTemplateIndex(root.templateIndex);
-    writer.setFirstLeaf(root.firstLeaf);
+    writer.setFirstLeaf(root.mode & expressionRootConcreteTypeDefault
+                            ? (root.source.file.empty()
+                                   ? UINT32_MAX
+                                   : uint32_t(intern(root.source.file)))
+                            : root.firstLeaf);
     writer.setSelector(root.selector);
     writer.setMode(root.mode);
     writer.setOrdinal(root.ordinal);

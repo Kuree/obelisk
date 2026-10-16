@@ -150,6 +150,13 @@ LogicalResult verifyDefinitionDefaults(SimDesignOp design) {
   };
   DenseMap<Operation *, SmallVector<SimVPIRelationDeclOp>> incoming, outgoing;
   DenseMap<Operation *, SimVPIDefinitionMemberDeclOp> roots;
+  DenseSet<Operation *> concreteDefaults;
+  for (auto source : design.getOps<SimVPIDefinitionTypeDefaultOp>()) {
+    auto member = symbols.lookupSymbolIn<SimVPIDefinitionMemberDeclOp>(
+        design, source.getMemberAttr());
+    if (!member || !concreteDefaults.insert(member).second)
+      return source.emitOpError("duplicates a concrete type default root");
+  }
   SmallVector<SimVPIExpressionDeclOp> expressions;
   for (auto expression : design.getOps<SimVPIExpressionDeclOp>())
     if (expression.getDefinitionAttr())
@@ -181,28 +188,33 @@ LogicalResult verifyDefinitionDefaults(SimDesignOp design) {
     outgoing[source].push_back(relation);
     if (!member)
       continue;
-    if (member.getVpiKind() != uint32_t(Kind::Parameter) ||
+    if ((member.getVpiKind() != uint32_t(Kind::Parameter) &&
+         member.getVpiKind() != uint32_t(Kind::TypeParameter)) ||
         member.getUnavailableDefault() || !member.getHasOriginalDefault() ||
         relation.getSelector() != uint32_t(Relation::ExprRel) ||
         relation.getMode() != VPIRelationMode::Handle || relation.getOrdinal())
       return relation.emitOpError(
-          "definition default requires one available Parameter Expr slot");
+          "definition default requires one available parameter Expr slot");
     if (outgoing[source].size() != 1)
       return relation.emitOpError("duplicates a definition default root");
-    if (targetComputed)
+    if (targetComputed) {
+      if (member.getVpiKind() != uint32_t(Kind::Parameter))
+        return relation.emitOpError(
+            "type parameter default cannot be a value expression");
       roots[target] = member;
-    else {
+    } else {
       auto leaf = cast<SimVPIDefinitionMemberDeclOp>(target);
-      if (leaf.getVpiKind() != uint32_t(Kind::Parameter) ||
+      if (leaf.getVpiKind() != member.getVpiKind() ||
           leaf.getDefinitionAttr() != member.getDefinitionAttr() ||
           leaf.getOrdinal() >= member.getOrdinal())
-        return relation.emitOpError(
-            "default leaf must be an exact preceding value parameter");
+        return relation.emitOpError("default leaf must be an exact preceding "
+                                    "parameter of the same kind");
     }
   }
   for (auto member : design.getOps<SimVPIDefinitionMemberDeclOp>())
-    if (bool(member.getHasOriginalDefaultAttr()) !=
-        (outgoing[member].size() == 1))
+    if (outgoing[member].size() + concreteDefaults.count(member) > 1 ||
+        bool(member.getHasOriginalDefaultAttr()) !=
+            (outgoing[member].size() + concreteDefaults.count(member) == 1))
       return member.emitOpError(
           "original default fact requires exactly one source root");
   // Resolve the unique declaration root iteratively. Ownership remains a tree;
@@ -284,6 +296,30 @@ LogicalResult verifyDefinitionDefaults(SimDesignOp design) {
 }
 
 } // namespace
+
+LogicalResult SimVPIDefinitionTypeDefaultOp::verify() {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("requires a simulation.design owner");
+  if (!isVPIOriginalBuiltinTypeDefault(getOriginalType()))
+    return emitOpError("requires an original anonymous builtin leaf typespec");
+  if (auto location = getLoc()->findInstanceOf<FileLineColLoc>())
+    if (location.getFilename().getValue().empty() ||
+        location.getFilename().getValue().contains('\0') ||
+        !location.getLine() || location.getLine() > INT32_MAX)
+      return emitOpError("requires a valid original type source location");
+  return success();
+}
+
+LogicalResult SimVPIDefinitionTypeDefaultOp::verifySymbolUses(
+    SymbolTableCollection &symbols) {
+  auto member = symbols.lookupNearestSymbolFrom<SimVPIDefinitionMemberDeclOp>(
+      *this, getMemberAttr());
+  if (!member || member.getVpiKind() != uint32_t(Kind::TypeParameter) ||
+      !member.getHasOriginalDefault() || member.getUnavailableDefault())
+    return emitOpError(
+        "requires an available TypeParameter original default member");
+  return success();
+}
 
 LogicalResult SimVPIExpressionDeclOp::verify() {
   if (!isa<SimDesignOp>((*this)->getParentOp()))

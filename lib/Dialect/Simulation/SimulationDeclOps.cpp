@@ -375,10 +375,8 @@ LogicalResult SimVPIDefinitionMemberDeclOp::verify() {
   } else if (kind == Kind::Parameter || kind == Kind::TypeParameter) {
     if (getDirectionAttr())
       return emitOpError("parameter declaration cannot carry an IO direction");
-    if (getHasOriginalDefaultAttr() &&
-        (kind != Kind::Parameter || getUnavailableDefaultAttr()))
-      return emitOpError(
-          "original value default is exclusive with unavailability");
+    if (getHasOriginalDefaultAttr() && getUnavailableDefaultAttr())
+      return emitOpError("original default is exclusive with unavailability");
     if (kind == Kind::TypeParameter && getHasExplicitParameterRangeAttr())
       return emitOpError("type parameter cannot carry a value range");
   } else {

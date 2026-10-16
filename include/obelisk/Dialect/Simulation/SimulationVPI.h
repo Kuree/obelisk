@@ -34,6 +34,9 @@ verifyVPIDefinitionMemberRef(mlir::Operation *use, SimDesignOp design,
 
 mlir::LogicalResult verifyVPIExpressionInventory(SimDesignOp design);
 
+/// Original builtin source types with no independently named declaration.
+bool isVPIOriginalBuiltinTypeDefault(VPITypeSemanticsAttr type);
+
 bool isVPIVisibleCodeUnit(SimCodeUnitDeclOp codeUnit);
 /// The source callable kind may differ from its executable ABI entry kind:
 /// imported tasks run through synchronous function thunks.

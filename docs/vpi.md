@@ -45,8 +45,13 @@ instance and resolve declaration leaves to its effective parameters; source
 operations remain unevaluated. Identical syntax in different declarations keeps
 separate occurrence identity. Missing defaults are absent, while unsupported
 whole expressions report a notice. Four default recipes add 416 image bytes at
-1, 32, and 128 instances in the differential test. Type-parameter defaults,
-override-assignment relations, and nonpacked value parameters remain incomplete.
+1, 32, and 128 instances in the differential test. Type-parameter `vpiExpr`
+retains original builtin leaf type defaults (numeric, string, chandle, and void)
+and exact preceding type parameter references. `vpiTypespec` remains the effective elaborated type;
+original source File/Line stays attached to the typespec default. These defaults
+share one definition-owned root without per-instance syntax rows. Original
+aliases, nominal and aggregate type defaults, override-assignment relations,
+and nonpacked value parameters remain incomplete.
 
 Retained expression slots include integral literals, concatenations,
 replications, and part-selects of scalar bits or one-bit packed-array elements.

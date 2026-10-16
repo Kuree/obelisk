@@ -1890,6 +1890,17 @@ struct VPIFixedPropertyValue {
   uint64_t stringSize = 0;
 };
 
+struct VPITypeDefaultInfo {
+  obelisk_rt_design_cursor_v1 semantic{};
+  const uint8_t *file = nullptr;
+  uint64_t fileSize = 0;
+  uint32_t line = 0;
+};
+obelisk_rt_status
+obelisk_rt_cached_vpi_type_default(const obelisk_rt_context *,
+                                   obelisk_rt_design_cursor_v1,
+                                   VPITypeDefaultInfo *) noexcept;
+
 struct VPIExpressionInfo {
   uint32_t kind = 0, code = 0, operandCount = 0;
   uint64_t bitWidth = 0;

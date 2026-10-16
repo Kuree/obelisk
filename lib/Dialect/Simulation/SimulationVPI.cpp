@@ -311,6 +311,35 @@ uint32_t vpiKindForNet(VPITypeSemanticsAttr type) {
   llvm_unreachable("unhandled VPI semantic type kind");
 }
 
+bool isVPIOriginalBuiltinTypeDefault(VPITypeSemanticsAttr type) {
+  if (!type || type.getName() || type.getSymbol() || type.getModport() ||
+      !type.getChildren().empty() ||
+      (type.getTypedefAliases() && !type.getTypedefAliases().empty()))
+    return false;
+  switch (type.getKind()) {
+  case VPITypeKind::Bit:
+  case VPITypeKind::Logic:
+  case VPITypeKind::Reg:
+    return type.getRange().size() == 2 && type.getRange()[0] == 0 &&
+           type.getRange()[1] == 0;
+  case VPITypeKind::Byte:
+  case VPITypeKind::ShortInt:
+  case VPITypeKind::Int:
+  case VPITypeKind::LongInt:
+  case VPITypeKind::Integer:
+  case VPITypeKind::Time:
+  case VPITypeKind::ShortReal:
+  case VPITypeKind::Real:
+  case VPITypeKind::Realtime:
+  case VPITypeKind::String:
+  case VPITypeKind::Chandle:
+  case VPITypeKind::Void:
+    return true;
+  default:
+    return false;
+  }
+}
+
 std::optional<uint32_t> vpiKindForTypespec(VPITypeSemanticsAttr type) {
   using Kind = VPITypeKind;
   using VPIKind = reflection::VPIObjectKind;

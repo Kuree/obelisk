@@ -2868,7 +2868,7 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
   if (invalid)
     return failure();
 
-  // Preserve each definition's original value defaults once. All effective
+  // Preserve each definition's original defaults once. All effective
   // instances were compared above; no selected specialization supplies syntax.
   DenseSet<Attribute> defaultsMaterialized;
   uint64_t nextSharedExpressionId = 0;
@@ -2882,6 +2882,52 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     auto &definitionPlan =
         definitionMemberPlans[instance.definition.getValue()];
     for (auto [memberOrdinal, source] : llvm::enumerate(instance.members)) {
+      if (isa<semantic::SVTypeParameterSymbolOp>(source)) {
+        auto member =
+            defaultSymbols.lookupSymbolIn<sim::SimVPIDefinitionMemberDeclOp>(
+                design, definitionPlan.memberSymbols[memberOrdinal]);
+        bool retained = false;
+        for (Operation *child : getChildren(source)) {
+          if (auto reference =
+                  dyn_cast<semantic::SVSourceTypeReferenceDefaultOp>(child)) {
+            Operation *target = defaultSymbols.lookupNearestSymbolFrom(
+                reference, reference.getParameterAttr());
+            auto found = llvm::find(instance.members, target);
+            if (found == instance.members.end() ||
+                !isa_and_nonnull<semantic::SVTypeParameterSymbolOp>(target) ||
+                size_t(found - instance.members.begin()) >= memberOrdinal)
+              continue;
+            auto leaf =
+                definitionPlan.memberSymbols[found - instance.members.begin()];
+            sim::SimVPIRelationDeclOp::create(
+                builder, getSemanticLocation(reference),
+                sim::VPIObjectRefAttr::get(builder.getContext(),
+                                           FlatSymbolRefAttr::get(member)),
+                uint32_t(reflection::VPIRelationKind::ExprRel),
+                sim::VPIRelationMode::Handle, 0,
+                sim::VPIObjectRefAttr::get(builder.getContext(), leaf));
+            retained = true;
+          } else if (auto concrete =
+                         dyn_cast<semantic::SVSourceTypeDefaultOp>(child)) {
+            auto semantic = makeVPITypeSemantics(
+                concrete.getSemanticType(), getSemanticLocation(concrete),
+                typedefLayersFor(concrete), concrete);
+            if (failed(semantic))
+              return failure();
+            if (!sim::isVPIOriginalBuiltinTypeDefault(*semantic))
+              continue;
+            sim::SimVPIDefinitionTypeDefaultOp::create(
+                builder, getSemanticLocation(concrete),
+                FlatSymbolRefAttr::get(member), *semantic);
+            retained = true;
+          }
+        }
+        if (retained) {
+          member.removeUnavailableDefaultAttr();
+          member.setHasOriginalDefaultAttr(builder.getUnitAttr());
+        }
+        continue;
+      }
       if (!isa<semantic::SVParameterSymbolOp>(source))
         continue;
       Operation *defaultSource = nullptr;

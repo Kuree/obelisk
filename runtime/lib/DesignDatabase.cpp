@@ -3260,8 +3260,14 @@ const uint8_t *expressionRoot(const Database &database, uint32_t index) {
                    uint64_t{index} * kExpressionRootBindingSize
              : nullptr;
 }
+bool isConcreteTypeDefault(const uint8_t *root) {
+  return (read16(root + 14) &
+          obelisk::reflection::expressionRootConcreteTypeDefault) != 0;
+}
 const uint8_t *expressionTemplate(const Database &database,
                                   const uint8_t *root) {
+  if (isConcreteTypeDefault(root))
+    return nullptr;
   uint32_t index = read32(root + 4);
   return index < database.expressionTemplateCount
              ? database.data + database.expressionTemplates +
@@ -3640,6 +3646,46 @@ bool expressionOperandTarget(const Database &database, uint32_t rootIndex,
   return true;
 }
 
+bool originalBuiltinTypeDefault(const Database &database, uint32_t index,
+                                uint32_t &publicKind) {
+  if (index >= database.semanticTypeCount)
+    return false;
+  const uint8_t *type = database.data + database.semanticTypes +
+                        uint64_t{index} * kSemanticTypeSize;
+  uint32_t encoded = read32(type);
+  if (read32(type + 8) || read32(type + 12) != UINT32_MAX ||
+      read32(type + 16) != UINT32_MAX || read32(type + 20) || read32(type + 24))
+    return false;
+  uint32_t kind = encoded & UINT32_C(0xff);
+  if ((kind == OBELISK_RT_DESIGN_SEMANTIC_BIT ||
+       kind == OBELISK_RT_DESIGN_SEMANTIC_LOGIC ||
+       kind == OBELISK_RT_DESIGN_SEMANTIC_REG) &&
+      (readI64(type + 32) != 0 || readI64(type + 40) != 0))
+    return false;
+  switch (kind) {
+  case OBELISK_RT_DESIGN_SEMANTIC_BIT:
+  case OBELISK_RT_DESIGN_SEMANTIC_LOGIC:
+  case OBELISK_RT_DESIGN_SEMANTIC_REG:
+  case OBELISK_RT_DESIGN_SEMANTIC_BYTE:
+  case OBELISK_RT_DESIGN_SEMANTIC_SHORT_INT:
+  case OBELISK_RT_DESIGN_SEMANTIC_INT:
+  case OBELISK_RT_DESIGN_SEMANTIC_LONG_INT:
+  case OBELISK_RT_DESIGN_SEMANTIC_INTEGER:
+  case OBELISK_RT_DESIGN_SEMANTIC_TIME:
+  case OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL:
+  case OBELISK_RT_DESIGN_SEMANTIC_REAL:
+  case OBELISK_RT_DESIGN_SEMANTIC_REALTIME:
+  case OBELISK_RT_DESIGN_SEMANTIC_STRING:
+  case OBELISK_RT_DESIGN_SEMANTIC_CHANDLE:
+  case OBELISK_RT_DESIGN_SEMANTIC_VOID:
+    publicKind = (encoded & OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) >>
+                 OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT;
+    return true;
+  default:
+    return false;
+  }
+}
+
 bool validateExpressions(const Database &database,
                          std::vector<uint8_t> &frozenReferenced) {
   using Kind = obelisk::reflection::VPIObjectKind;
@@ -3674,7 +3720,7 @@ bool validateExpressions(const Database &database,
     uint32_t owner = read32(root), recipe = read32(root + 4);
     if (owner >= database.definitionMemberCount || defaultRoots[owner]++)
       return false;
-    if (recipe != UINT32_MAX) {
+    if (!isConcreteTypeDefault(root) && recipe != UINT32_MAX) {
       if (recipe >= database.expressionTemplateCount ||
           defaultTemplateOwner[recipe] != UINT32_MAX)
         return false;
@@ -3876,8 +3922,10 @@ bool validateExpressions(const Database &database,
     uint32_t scope = 0, ownerKind = 0;
     uint64_t owner = 0;
     bool definitionDefault = isDefinitionDefault(root);
+    bool concreteType = isConcreteTypeDefault(root);
     uint16_t mode = read16(root + 14) &
-                    ~obelisk::reflection::expressionRootDefinitionMember;
+                    ~(obelisk::reflection::expressionRootDefinitionMember |
+                      obelisk::reflection::expressionRootConcreteTypeDefault);
     bool iterate = mode == uint16_t(Mode::Iterate);
     uint32_t ownerDefinition = UINT32_MAX;
     if (definitionDefault) {
@@ -3888,7 +3936,8 @@ bool validateExpressions(const Database &database,
                               uint64_t{memberIndex} * kDefinitionMemberSize;
       ownerKind = read16(member + 16);
       ownerDefinition = memberDefinitions[memberIndex];
-      if (ownerKind != uint32_t(Kind::Parameter) ||
+      if ((ownerKind != uint32_t(Kind::Parameter) &&
+           ownerKind != uint32_t(Kind::TypeParameter)) ||
           !(read16(member + 18) & kDefinitionParameterOriginalDefault) ||
           (read16(member + 18) & kDefinitionParameterDefaultUnavailable) ||
           mode != uint16_t(Mode::Handle) ||
@@ -3901,7 +3950,8 @@ bool validateExpressions(const Database &database,
     uint64_t expectedOrdinal =
         sameGroup ? uint64_t(std::get<3>(previous)) + 1 : 0;
     if ((index && key <= previous) || mode > uint16_t(Mode::Iterate) ||
-        read32(root + 16) != expectedOrdinal || (!iterate && sameGroup) ||
+        (!concreteType && read32(root + 16) != expectedOrdinal) ||
+        (!iterate && sameGroup) ||
         (!definitionDefault &&
          !expressionContext(database, root, scope, &ownerKind, &owner)))
       return false;
@@ -3914,6 +3964,24 @@ bool validateExpressions(const Database &database,
     if (!edge || edge->statementContainment ||
         edge->automaticRelation !=
             obelisk::reflection::VPIAutomaticRelation::None)
+      return false;
+    if (concreteType) {
+      uint32_t publicKind = 0;
+      uint32_t file = read32(root + 8), line = read32(root + 16);
+      std::string_view filename;
+      if (!definitionDefault || ownerKind != uint32_t(Kind::TypeParameter) ||
+          !originalBuiltinTypeDefault(database, read32(root + 4), publicKind) ||
+          !obelisk::reflection::vpiObjectSetContains(edge->targets,
+                                                     publicKind) ||
+          (file == UINT32_MAX
+               ? line != 0
+               : !line || line > INT32_MAX ||
+                     !getString(database, database.strings + file, filename) ||
+                     filename.empty()))
+        return false;
+      continue;
+    }
+    if (ownerKind == uint32_t(Kind::TypeParameter) && recipe)
       return false;
     auto table = obelisk::reflection::unpackTableIndexKind(read32(root));
     if (!definitionDefault &&
@@ -3962,7 +4030,7 @@ bool validateExpressions(const Database &database,
                                 uint64_t{target} * kDefinitionMemberSize;
         leaf.kind = read16(member + 16);
         leaf.semantic = UINT32_MAX;
-        if (leaf.kind != uint32_t(Kind::Parameter))
+        if (leaf.kind != ownerKind)
           return false;
         if (recipe) {
           const uint8_t *shape = database.data + database.expressionLeafShapes +
@@ -7030,7 +7098,8 @@ bool validateDatabaseImpl(const Database &database) {
                     kDefinitionParameterOriginalDefault)) != 0
            : memberKind == static_cast<uint16_t>(Kind::TypeParameter)
                ? (memberFlags & ~(kDefinitionParameterLocal |
-                                  kDefinitionParameterDefaultUnavailable)) != 0
+                                  kDefinitionParameterDefaultUnavailable |
+                                  kDefinitionParameterOriginalDefault)) != 0
                : true) ||
           ((memberFlags & kDefinitionParameterDefaultUnavailable) &&
            (memberFlags & kDefinitionParameterOriginalDefault)) ||
@@ -10897,7 +10966,10 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
       return OBELISK_RT_OK;
     }
     if (!virtualRefObject && !iterate &&
-        sourceType == uint32_t(obelisk::reflection::VPIObjectKind::Parameter) &&
+        (sourceType ==
+             uint32_t(obelisk::reflection::VPIObjectKind::Parameter) ||
+         sourceType ==
+             uint32_t(obelisk::reflection::VPIObjectKind::TypeParameter)) &&
         selector == uint32_t(obelisk::reflection::VPIRelationKind::ExprRel)) {
       uint32_t low = 0, high = database.expressionRootBindingCount;
       auto wanted = std::make_tuple(
@@ -10916,7 +10988,8 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
       }
       const uint8_t *candidate = expressionRoot(database, low);
       if (!candidate || read32(candidate) != virtualMember ||
-          read16(candidate + 12) != selector || !isDefinitionDefault(candidate))
+          read16(candidate + 12) != selector ||
+          !isDefinitionDefault(candidate) || isConcreteTypeDefault(candidate))
         return OBELISK_RT_EOF;
       // Upper zero is reserved for CaseItem groups. Binding+1 keeps their
       // root-group tokens disjoint from contextual default root tokens.
@@ -13844,6 +13917,58 @@ obelisk_rt_v1_design_release(obelisk_rt_context *context,
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (context->schedulerStatus != OBELISK_RT_OK)
       return context->schedulerStatus;
+  }
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status
+obelisk_rt_cached_vpi_type_default(const obelisk_rt_context *context,
+                                   obelisk_rt_design_cursor_v1 cursor,
+                                   VPITypeDefaultInfo *outInfo) noexcept {
+  if (!context || !outInfo)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outInfo = {};
+  const auto *database = cachedDatabase(context);
+  if (!database)
+    return OBELISK_RT_INVALID_DESIGN;
+  uint32_t scope = 0, memberIndex = 0;
+  const uint8_t *member = nullptr;
+  bool refObject = false;
+  if (!virtualMemberForCursor(*database, cursor.offset, scope, memberIndex,
+                              member, nullptr, nullptr, &refObject) ||
+      refObject ||
+      read16(member + 16) !=
+          uint32_t(obelisk::reflection::VPIObjectKind::TypeParameter))
+    return OBELISK_RT_EOF;
+  constexpr uint16_t mode =
+      obelisk::reflection::expressionRootDefinitionMember |
+      obelisk::reflection::expressionRootConcreteTypeDefault;
+  auto wanted = std::make_tuple(
+      memberIndex, uint16_t(obelisk::reflection::VPIRelationKind::ExprRel),
+      mode);
+  uint32_t low = 0, high = database->expressionRootBindingCount;
+  while (low != high) {
+    uint32_t middle = low + (high - low) / 2;
+    const uint8_t *candidate = expressionRoot(*database, middle);
+    auto key = std::make_tuple(read32(candidate), read16(candidate + 12),
+                               read16(candidate + 14));
+    if (key < wanted)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  const uint8_t *root = expressionRoot(*database, low);
+  if (!root || std::make_tuple(read32(root), read16(root + 12),
+                               read16(root + 14)) != wanted)
+    return OBELISK_RT_EOF;
+  outInfo->semantic.offset = uint64_t{read32(root + 4)} + 1;
+  outInfo->line = read32(root + 16);
+  if (read32(root + 8) != UINT32_MAX) {
+    std::string_view file;
+    if (!getString(*database, database->strings + read32(root + 8), file))
+      return OBELISK_RT_INVALID_DESIGN;
+    outInfo->file = reinterpret_cast<const uint8_t *>(file.data());
+    outInfo->fileSize = file.size();
   }
   return OBELISK_RT_OK;
 }

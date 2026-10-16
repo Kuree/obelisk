@@ -558,6 +558,9 @@ def ExpressionRootBindingFirstLeaf : ReflectionField<"FirstLeaf", 8, U32LE>;
 def ExpressionRootBindingSelector : ReflectionField<"Selector", 12, U16LE>;
 // Low bit is Handle/Iterate; bit 1 selects a definition-member default owner.
 // The latter carries a raw DefinitionMember index, never a packed table tag.
+// Bit 2 additionally selects a concrete original TypeParameter default:
+// TemplateIndex is SemanticTypeIndex, FirstLeaf is File (UINT32_MAX if absent),
+// and Ordinal is Line. This mode has no template, operand, or leaf payload.
 def ExpressionRootBindingMode : ReflectionField<"Mode", 14, U16LE>;
 def ExpressionRootBindingOrdinal : ReflectionField<"Ordinal", 16, U32LE>;
 def ExpressionRootBinding : ReflectionLayout<"ExpressionRootBinding", 20,
