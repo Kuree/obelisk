@@ -351,6 +351,18 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
       children.append(operands);
       if (children.size() < 2)
         return unsupported();
+    } else if (isa<semantic::SVElementSelectExpressionOp>(source)) {
+      children = getChildren(source);
+      if (children.size() != 2)
+        return unsupported();
+      auto parent = declarations.resolve(children[0]);
+      auto parentType = children[0]->getAttrOfType<TypeAttr>("semantic_type");
+      auto layout = parentType
+                        ? getSemanticSelectionLayout(parentType.getValue())
+                        : std::nullopt;
+      if (!parent || !layout || layout->elementWidth != 1 ||
+          !(kind = reflection::vpiScalarBitSelectionKind(parent->kind)))
+        return unsupported();
     } else if (auto range =
                    dyn_cast<semantic::SVRangeSelectExpressionOp>(source)) {
       children = getChildren(source);
@@ -425,6 +437,8 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
       return uint32_t(Rel::OperandRel);
     if (child == 0)
       return uint32_t(Rel::ParentRel);
+    if (reflection::isVPIBitSelection(node.kind))
+      return uint32_t(Rel::IndexRel);
     bool part = node.kind == uint32_t(Kind::PartSelect);
     return uint32_t(child == 1
                         ? (part ? Rel::LeftRangeRel : Rel::BaseExprRel)

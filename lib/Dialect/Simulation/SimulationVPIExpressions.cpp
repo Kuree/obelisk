@@ -355,7 +355,8 @@ LogicalResult SimVPIExpressionDeclOp::verify() {
   }
   auto kind = static_cast<Kind>(getVpiKind());
   if (kind != Kind::Constant && kind != Kind::Operation &&
-      kind != Kind::PartSelect && kind != Kind::IndexedPartSelect)
+      kind != Kind::PartSelect && kind != Kind::IndexedPartSelect &&
+      !reflection::isVPIBitSelection(getVpiKind()))
     return emitOpError("unsupported exact expression kind");
   if ((kind == Kind::Constant) != bool(getImmutableValueAttr()) ||
       (kind == Kind::Operation) != bool(getOpTypeAttr()) ||
@@ -761,6 +762,28 @@ LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
           expression.getVpiTypeAttr().getIsFourState() != fourState)
         return expression.emitOpError("concatenation requires unsigned result "
                                       "and exact operand state domain");
+      break;
+    }
+    case Kind::NetBit:
+    case Kind::RegBit:
+    case Kind::BitSelect: {
+      auto parent = one(Relation::ParentRel);
+      auto index = one(Relation::IndexRel);
+      if (children.size() != 2 || !parent || !index || width != 1 ||
+          reflection::vpiScalarBitSelectionKind(parent->kind) !=
+              expression.getVpiKind())
+        return expression.emitOpError("bit selection requires its exact "
+                                      "declaration kind and source index");
+      bool unitStride =
+          parent->semantic.getKind() != VPITypeKind::PackedArray ||
+          (parent->semantic.getChildren().size() == 1 &&
+           integralWidth(cast<VPITypeSemanticsAttr>(
+               parent->semantic.getChildren()[0])) == 1);
+      if (!unitStride || expression.getVpiTypeAttr().getIsSigned() ||
+          expression.getVpiTypeAttr().getIsFourState() !=
+              parent->semantic.getIsFourState())
+        return expression.emitOpError("bit selection requires an unsigned "
+                                      "scalar in the parent state domain");
       break;
     }
     case Kind::PartSelect:

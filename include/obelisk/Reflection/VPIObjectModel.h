@@ -177,6 +177,29 @@ validVPIIntegralOperator(uint32_t code, VPIIntegralExpressionShape result,
   }
   return true;
 }
+// The public bit-object class follows its declaration, not index constancy.
+// This bounded scalar contract excludes wider packed elements and aggregates.
+inline constexpr uint32_t vpiScalarBitSelectionKind(uint32_t parent) {
+  using Kind = VPIObjectKind;
+  switch (static_cast<Kind>(parent)) {
+  case Kind::Net:
+  case Kind::BitNet:
+    return uint32_t(Kind::NetBit);
+  case Kind::Reg:
+  case Kind::BitVar:
+    return uint32_t(Kind::RegBit);
+  case Kind::Parameter:
+  case Kind::SpecParam:
+    return uint32_t(Kind::BitSelect);
+  default:
+    return 0;
+  }
+}
+inline constexpr bool isVPIBitSelection(uint32_t kind) {
+  return kind == uint32_t(VPIObjectKind::NetBit) ||
+         kind == uint32_t(VPIObjectKind::RegBit) ||
+         kind == uint32_t(VPIObjectKind::BitSelect);
+}
 } // namespace obelisk::reflection
 
 #endif // OBELISK_REFLECTION_VPIOBJECTMODEL_H

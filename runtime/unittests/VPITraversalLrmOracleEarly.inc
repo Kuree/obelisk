@@ -5590,8 +5590,8 @@ add("37.24", S({vpiInterconnectNet}), vpiMember, Mode::Iterate,
 // This is test source, not an obelisk-tblgen output or build artifact.
 
 // 37.10 details2-3 apply to retained source expression occurrences.
-add("37.10", S({vpiConstant, vpiOperation, vpiPartSelect, vpiIndexedPartSelect}),
+add("37.10", S({vpiConstant, vpiOperation, vpiBitSelect, vpiPartSelect, vpiIndexedPartSelect}),
     vpiModule, Mode::Handle, S({vpiModule}), Order::None);
-add("37.10", S({vpiConstant, vpiOperation, vpiPartSelect, vpiIndexedPartSelect}),
+add("37.10", S({vpiConstant, vpiOperation, vpiBitSelect, vpiPartSelect, vpiIndexedPartSelect}),
     vpiInstance, Mode::Handle, S({vpiPackage, vpiModule, vpiInterface, vpiProgram}),
     Order::None);

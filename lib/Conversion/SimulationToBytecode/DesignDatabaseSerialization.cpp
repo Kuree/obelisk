@@ -5233,7 +5233,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
               return uint64_t(child.getOrdinal());
             if (selector == uint32_t(VPIRelationKind::ParentRel))
               return uint64_t{0};
-            if (selector == uint32_t(VPIRelationKind::LeftRangeRel) ||
+            if (selector == uint32_t(VPIRelationKind::IndexRel) ||
+                selector == uint32_t(VPIRelationKind::LeftRangeRel) ||
                 selector == uint32_t(VPIRelationKind::BaseExprRel))
               return uint64_t{1};
             return uint64_t{2};
@@ -5651,10 +5652,33 @@ SmallVector<uint8_t> serializeDesignDatabase(
         if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
                                     member.getDebugNameAttr())))
           return failure();
+      // Most declaration names are the final hierarchy component. Keep a
+      // sparse exact override only when that legacy derivation loses an
+      // authoritative identifier (for example an escaped dotted name).
+      auto needsExactName = [](StringAttr debugName,
+                               std::optional<StringRef> hierarchy) {
+        if (!debugName || debugName.getValue().empty())
+          return false;
+        StringRef leaf = hierarchy.value_or(debugName.getValue());
+        size_t dot = leaf.rfind('.'), colon = leaf.rfind("::");
+        if (colon != StringRef::npos && (dot == StringRef::npos || colon > dot))
+          leaf = leaf.drop_front(colon + 2);
+        else if (dot != StringRef::npos)
+          leaf = leaf.drop_front(dot + 1);
+        return leaf != debugName.getValue();
+      };
       if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation);
-          storage && staticLocalBindings.contains(storage.getId()))
+          storage && (staticLocalBindings.contains(storage.getId()) ||
+                      needsExactName(storage.getDebugNameAttr(),
+                                     storage.getHierarchicalName())))
         if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
                                     storage.getDebugNameAttr())))
+          return failure();
+      if (auto net = dyn_cast<sim::SimNetDeclOp>(operation);
+          net &&
+          needsExactName(net.getDebugNameAttr(), net.getHierarchicalName()))
+        if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
+                                    net.getDebugNameAttr())))
           return failure();
       if (isa<sim::SimVPIForeachDeclOp>(operation))
         if (failed(addFixedProperty(operation, packedSource, exactKind, 39,

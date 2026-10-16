@@ -3556,6 +3556,53 @@ bool expressionFrozen(const Database &database, uint32_t index,
   out.payloadSize = read64(record + 24);
   return true;
 }
+// Elaboration constancy is a syntactic property. Unknown/out-of-range constant
+// indices remain constant even when they do not currently denote an object.
+bool expressionOperandIsConstant(const Database &database, const uint8_t *root,
+                                 const uint8_t *recipe, uint32_t operand) {
+  OBELISK_RT_TRY {
+    std::vector<uint32_t> pending{operand};
+    while (!pending.empty()) {
+      uint32_t current = pending.back();
+      pending.pop_back();
+      if (current & kExpressionOperandLeafFlag) {
+        ExpressionLeafInfo leaf;
+        if (!expressionLeaf(database, root,
+                            current & ~kExpressionOperandLeafFlag, leaf) ||
+            (leaf.kind !=
+                 uint32_t(obelisk::reflection::VPIObjectKind::Parameter) &&
+             leaf.kind !=
+                 uint32_t(obelisk::reflection::VPIObjectKind::SpecParam) &&
+             leaf.kind !=
+                 uint32_t(obelisk::reflection::VPIObjectKind::Constant) &&
+             leaf.kind !=
+                 uint32_t(obelisk::reflection::VPIObjectKind::EnumConst)))
+          return false;
+        continue;
+      }
+      const uint8_t *expression = expressionNode(database, recipe, current);
+      if (!expression)
+        return false;
+      auto kind =
+          static_cast<obelisk::reflection::VPIObjectKind>(read16(expression));
+      if (kind == obelisk::reflection::VPIObjectKind::Constant)
+        continue;
+      if ((kind != obelisk::reflection::VPIObjectKind::Operation &&
+           kind != obelisk::reflection::VPIObjectKind::PartSelect &&
+           kind != obelisk::reflection::VPIObjectKind::IndexedPartSelect &&
+           !obelisk::reflection::isVPIBitSelection(uint32_t(kind))) ||
+          read32(expression + 4) == UINT32_MAX)
+        return false;
+      uint64_t first = uint64_t{read32(recipe + 12)} + read32(expression + 8);
+      for (uint32_t child = 0; child != read32(expression + 12); ++child)
+        pending.push_back(read32(database.data + database.expressionOperands +
+                                 (first + child) * kExpressionOperandSize));
+    }
+    return true;
+  }
+  OBELISK_RT_CATCH_ALL { return false; }
+}
+
 bool expressionKnownInteger(const Database &database, const uint8_t *root,
                             const uint8_t *recipe, uint32_t operand,
                             int64_t &result) {
@@ -3816,7 +3863,10 @@ bool validateExpressions(const Database &database,
           }
         } else if (flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED)
           return false;
-        else if (kind == Kind::PartSelect) {
+        else if (obelisk::reflection::isVPIBitSelection(uint32_t(kind))) {
+          if (code || size != 2 || width != 1)
+            return false;
+        } else if (kind == Kind::PartSelect) {
           if (code || size != 3)
             return false;
         } else if (kind == Kind::IndexedPartSelect) {
@@ -3870,6 +3920,8 @@ bool validateExpressions(const Database &database,
         uint32_t selector =
             kind == Kind::Operation ? uint32_t(Rel::OperandRel)
             : child == 0            ? uint32_t(Rel::ParentRel)
+            : obelisk::reflection::isVPIBitSelection(uint32_t(kind))
+                ? uint32_t(Rel::IndexRel)
             : child == 1
                 ? uint32_t(kind == Kind::PartSelect ? Rel::LeftRangeRel
                                                     : Rel::BaseExprRel)
@@ -4167,6 +4219,24 @@ bool validateExpressions(const Database &database,
             return false;
         }
         fourState = (typeFlags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0;
+        if (obelisk::reflection::isVPIBitSelection(uint32_t(kind))) {
+          uint32_t parent = operandAt(0), parentKind = 0;
+          if (parent & kExpressionOperandLeafFlag) {
+            const uint8_t *shape = database.data +
+                                   database.expressionLeafShapes +
+                                   (uint64_t{read32(recipe + 24)} +
+                                    (parent & ~kExpressionOperandLeafFlag)) *
+                                       kExpressionLeafShapeSize;
+            parentKind = read16(shape + 4);
+          } else
+            parentKind = read16(expressionNode(database, recipe, parent));
+          if (width != 1 ||
+              obelisk::reflection::vpiScalarBitSelectionKind(parentKind) !=
+                  uint32_t(kind) ||
+              fourState != bool(flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE))
+            return false;
+          continue;
+        }
         int64_t last = 0;
         if (!expressionKnownInteger(database, root, recipe, operandAt(2), last))
           return false;
@@ -10905,11 +10975,32 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
       outRange->count = 1;
       return OBELISK_RT_OK;
     }
+    if (!iterate && selector == uint32_t(Rel::ScopeRel) &&
+        obelisk::reflection::isVPIBitSelection(uint32_t(kind)) &&
+        obelisk::reflection::findVPITraversal(uint32_t(kind), selector, mode)) {
+      uint64_t first = uint64_t{read32(recipe + 12)} + read32(node + 8);
+      uint32_t parent = read32(database.data + database.expressionOperands +
+                               first * kExpressionOperandSize);
+      obelisk_rt_design_cursor_v1 declaration{};
+      uint32_t parentKind = 0;
+      if (!expressionOperandTarget(database, expressionRootIndex, parent,
+                                   declaration.offset, parentKind))
+        return OBELISK_RT_INVALID_DESIGN;
+      return designVPIRelationRange(database, declaration, selector, false,
+                                    outRange);
+    }
     uint32_t child = UINT32_MAX, count = 1;
     if (selector == uint32_t(Rel::OperandRel) && iterate &&
         kind == Kind::Operation) {
       child = 0;
       count = read32(node + 12);
+    } else if (obelisk::reflection::isVPIBitSelection(uint32_t(kind))) {
+      const auto *edge =
+          obelisk::reflection::findVPITraversal(uint32_t(kind), selector, mode);
+      if (edge && selector == uint32_t(Rel::ParentRel) && !iterate)
+        child = 0;
+      else if (edge && selector == uint32_t(Rel::IndexRel))
+        child = 1;
     } else if (!iterate &&
                (kind == Kind::PartSelect || kind == Kind::IndexedPartSelect)) {
       if (selector == uint32_t(Rel::ParentRel))
@@ -14004,17 +14095,18 @@ obelisk_rt_cached_vpi_expression(const obelisk_rt_context *context,
     return OBELISK_RT_INVALID_DESIGN;
   outInfo->constantSelect = true;
   const uint8_t *selection = node;
-  while (read16(selection) ==
+  while (obelisk::reflection::isVPIBitSelection(read16(selection)) ||
+         read16(selection) ==
              uint32_t(obelisk::reflection::VPIObjectKind::PartSelect) ||
          read16(selection) ==
              uint32_t(obelisk::reflection::VPIObjectKind::IndexedPartSelect)) {
     uint64_t first = uint64_t{read32(recipe + 12)} + read32(selection + 8);
-    if (read16(selection) ==
-        uint32_t(obelisk::reflection::VPIObjectKind::IndexedPartSelect)) {
-      int64_t ignored = 0;
+    if (obelisk::reflection::isVPIBitSelection(read16(selection)) ||
+        read16(selection) ==
+            uint32_t(obelisk::reflection::VPIObjectKind::IndexedPartSelect)) {
       uint32_t base = read32(database->data + database->expressionOperands +
                              (first + 1) * kExpressionOperandSize);
-      if (!expressionKnownInteger(*database, root, recipe, base, ignored))
+      if (!expressionOperandIsConstant(*database, root, recipe, base))
         outInfo->constantSelect = false;
     }
     uint32_t parent = read32(database->data + database->expressionOperands +
@@ -14133,6 +14225,94 @@ obelisk_rt_status obelisk_rt_cached_vpi_expression_use_ranges(
     ranges.clear();
     return OBELISK_RT_INVALID_DESIGN;
   }
+}
+
+obelisk_rt_status obelisk_rt_cached_vpi_selected_use_candidates(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 source,
+    uint32_t selectedKind,
+    std::vector<VPISelectedUseCandidate> &candidates) noexcept {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  candidates.clear();
+  const auto *database = cachedDatabase(context);
+  if (!database)
+    return OBELISK_RT_INVALID_DESIGN;
+  using Kind = obelisk::reflection::VPIObjectKind;
+  using Rel = obelisk::reflection::VPIRelationKind;
+  const auto *edge = obelisk::reflection::findVPITraversal(
+      selectedKind, uint32_t(Rel::UseRel),
+      obelisk::reflection::VPITraversalMode::Iterate);
+  if (!edge)
+    return OBELISK_RT_EOF;
+  OBELISK_RT_TRY {
+    VPIRelationRange physical{};
+    auto status = designVPIRelationRange(
+        *database, source, uint32_t(Rel::UseRel), true, &physical);
+    if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF)
+      return status;
+    if (status == OBELISK_RT_OK)
+      candidates.push_back({physical, {}});
+    for (uint32_t index = 0; index != database->expressionRootBindingCount;
+         ++index) {
+      const uint8_t *root = expressionRoot(*database, index);
+      if (isDefinitionDefault(root))
+        continue;
+      uint32_t ownerKind = 0;
+      uint64_t owner = 0;
+      if (!expressionUseOwner(*database, root, ownerKind, owner))
+        return OBELISK_RT_INVALID_DESIGN;
+      if (!obelisk::reflection::vpiObjectSetContains(edge->targets, ownerKind))
+        continue;
+      const uint8_t *recipe = expressionTemplate(*database, root);
+      uint32_t leafCount = recipe ? read32(recipe + 20) : 1;
+      for (uint32_t ordinal = 0; ordinal != leafCount; ++ordinal) {
+        ExpressionLeafInfo leaf;
+        if (!expressionLeaf(*database, root, ordinal, leaf))
+          return OBELISK_RT_INVALID_DESIGN;
+        if (leaf.cursor != source.offset)
+          continue;
+        uint64_t selection = 0;
+        if (recipe) {
+          uint32_t current = kExpressionOperandLeafFlag | ordinal;
+          // Only Parent slots narrow a declaration use. Index/bound operands
+          // and ordinary operator operands remain uses of the whole leaf.
+          for (;;) {
+            bool advanced = false;
+            for (uint32_t nodeOrdinal = 0; nodeOrdinal != read32(recipe + 8);
+                 ++nodeOrdinal) {
+              const uint8_t *node =
+                  expressionNode(*database, recipe, nodeOrdinal);
+              uint32_t kind = read16(node);
+              if (kind != uint32_t(Kind::PartSelect) &&
+                  kind != uint32_t(Kind::IndexedPartSelect) &&
+                  !obelisk::reflection::isVPIBitSelection(kind))
+                continue;
+              uint64_t first = uint64_t{read32(recipe + 12)} + read32(node + 8);
+              if (read32(database->data + database->expressionOperands +
+                         first * kExpressionOperandSize) != current)
+                continue;
+              current = nodeOrdinal;
+              uint32_t targetKind = 0;
+              if (!expressionOperandTarget(*database, index, current, selection,
+                                           targetKind))
+                return OBELISK_RT_INVALID_DESIGN;
+              advanced = true;
+              break;
+            }
+            if (!advanced)
+              break;
+          }
+        }
+        candidates.push_back({{virtualToken(kVirtualMemberTag, index,
+                                            kExpressionUseOwnerRelation),
+                               1},
+                              {selection}});
+      }
+    }
+    return candidates.empty() ? OBELISK_RT_EOF : OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
 }
 
 obelisk_rt_status obelisk_rt_cached_vpi_expression_operand_identifier(

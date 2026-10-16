@@ -1924,6 +1924,16 @@ obelisk_rt_status obelisk_rt_cached_vpi_expression_use_ranges(
     const obelisk_rt_context *, obelisk_rt_design_cursor_v1,
     std::vector<VPIRelationRange> &) noexcept;
 
+// A zero selection denotes a whole-declaration use. Nonzero cursors retain
+// exact source selection syntax; the VPI layer filters their current spans.
+struct VPISelectedUseCandidate {
+  VPIRelationRange owners;
+  obelisk_rt_design_cursor_v1 selection;
+};
+obelisk_rt_status obelisk_rt_cached_vpi_selected_use_candidates(
+    const obelisk_rt_context *, obelisk_rt_design_cursor_v1,
+    uint32_t selectedKind, std::vector<VPISelectedUseCandidate> &) noexcept;
+
 struct VPIFrozenValue {
   uint32_t kindAndFlags = 0;
   uint64_t bitWidth = 0;

@@ -5604,13 +5604,19 @@ bool readExpressionValue(__vpiHandle *handle, const VPIExpressionInfo &rootInfo,
                 handle->owner->context, parent.semantic, &semantic) !=
             OBELISK_RT_OK)
           return false;
-        bool ascending = semantic.range_left < semantic.range_right;
+        bool hasRange =
+            (semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0;
+        bool ascending = hasRange && semantic.range_left < semantic.range_right;
+        int64_t right = hasRange ? semantic.range_right : 0;
+        bool bitSelect =
+            obelisk::reflection::isVPIBitSelection(current.info.kind);
         int64_t base = 0, rightBound = 0;
-        bool available =
-            integer(child(1), base) && integer(child(2), rightBound);
+        bool available = integer(child(1), base) &&
+                         (bitSelect || integer(child(2), rightBound));
         bool indexed = current.info.kind == vpiIndexedPartSelect;
-        __int128 first = indexed ? static_cast<__int128>(base)
-                                 : static_cast<__int128>(rightBound);
+        __int128 first = indexed || bitSelect
+                             ? static_cast<__int128>(base)
+                             : static_cast<__int128>(rightBound);
         if (indexed && current.info.code == 1 && ascending)
           first += result.width - 1;
         if (indexed && current.info.code == 2 && !ascending)
@@ -5619,10 +5625,9 @@ bool readExpressionValue(__vpiHandle *handle, const VPIExpressionInfo &rootInfo,
             (semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0;
         for (uint64_t bit = 0; bit != result.width; ++bit) {
           __int128 sourceIndex = ascending ? first - bit : first + bit;
-          __int128 offset =
-              ascending
-                  ? static_cast<__int128>(semantic.range_right) - sourceIndex
-                  : sourceIndex - static_cast<__int128>(semantic.range_right);
+          __int128 offset = ascending
+                                ? static_cast<__int128>(right) - sourceIndex
+                                : sourceIndex - static_cast<__int128>(right);
           if (!available || offset < 0 || offset >= parent.width) {
             if (fourState)
               result.unknown[bit / 64] |= UINT64_C(1) << (bit % 64);
@@ -6291,7 +6296,8 @@ obelisk_rt_status selectedObjectSpan(__vpiHandle *handle,
         continue;
       }
     }
-    if (expression.kind != vpiPartSelect &&
+    if (!obelisk::reflection::isVPIBitSelection(expression.kind) &&
+        expression.kind != vpiPartSelect &&
         expression.kind != vpiIndexedPartSelect)
       return OBELISK_RT_EOF;
     __vpiHandle parent;
@@ -6310,7 +6316,11 @@ obelisk_rt_status selectedObjectSpan(__vpiHandle *handle,
     bool ascending = hasRange && semantic.range_left < semantic.range_right;
     int64_t right = hasRange ? semantic.range_right : 0;
     int64_t bound = 0;
-    if (!integer(indexed ? 1 : 2, bound))
+    if (!integer(indexed ||
+                         obelisk::reflection::isVPIBitSelection(expression.kind)
+                     ? 1
+                     : 2,
+                 bound))
       return handle->owner->errorLevel ? OBELISK_RT_INVALID_HANDLE
                                        : OBELISK_RT_EOF;
     __int128 first = bound;
@@ -6355,7 +6365,8 @@ bool isSourceSelection(__vpiHandle *handle) {
   return obelisk_rt_cached_vpi_expression(handle->owner->context,
                                           handle->cursor,
                                           &expression) == OBELISK_RT_OK &&
-         (expression.kind == vpiPartSelect ||
+         (obelisk::reflection::isVPIBitSelection(expression.kind) ||
+          expression.kind == vpiPartSelect ||
           expression.kind == vpiIndexedPartSelect);
 }
 
@@ -6400,6 +6411,74 @@ bool selectedObjectIdentity(__vpiHandle *handle,
   // Weak automatic/class storage needs its exact live binding. A recipe
   // cursor alone cannot prove that a selected simulation object exists.
   return false;
+}
+
+// 37.58d2: a selected bit/span sees whole-parent uses and overlapping
+// selections, not uses confined to unrelated bits. Candidate recipes are
+// immutable; their indices are evaluated at this query's observation point.
+obelisk_rt_status selectedUseRanges(__vpiHandle *handle,
+                                    std::vector<VPIRelationRange> &ranges) {
+  const auto *policy = valuePolicyFor(handle);
+  VPIValueSource source{};
+  VPISelectedSpan span{};
+  if (!policy || !valueSourceFor(handle, *policy, source))
+    return OBELISK_RT_INVALID_HANDLE;
+  auto status =
+      selectedObjectSpan(handle, source, source.info.bit_width, false, span);
+  if (status != OBELISK_RT_OK)
+    return status;
+  std::vector<VPISelectedUseCandidate> candidates;
+  status = obelisk_rt_cached_vpi_selected_use_candidates(
+      handle->owner->context, span.cursor, source.exactType, candidates);
+  if (status != OBELISK_RT_OK)
+    return status;
+  std::unordered_set<uint64_t> seen;
+  const auto *edge = obelisk::reflection::findVPITraversal(
+      source.exactType, vpiUse, obelisk::reflection::VPITraversalMode::Iterate);
+  if (!edge)
+    return OBELISK_RT_EOF;
+  for (const auto &candidate : candidates) {
+    if (candidate.selection.offset) {
+      __vpiHandle selected;
+      selected.owner = handle->owner;
+      selected.cursor = candidate.selection;
+      if (obelisk_rt_cached_vpi_type(handle->owner->context, selected.cursor,
+                                     &selected.exactVpiType) != OBELISK_RT_OK)
+        return OBELISK_RT_INVALID_DESIGN;
+      inheritExpressionContext(selected, *handle);
+      const auto *candidatePolicy = valuePolicyFor(&selected);
+      VPIValueSource candidateSource{};
+      VPISelectedSpan candidateSpan{};
+      if (!candidatePolicy ||
+          !valueSourceFor(&selected, *candidatePolicy, candidateSource))
+        return OBELISK_RT_INVALID_HANDLE;
+      status = selectedObjectSpan(&selected, candidateSource,
+                                  candidateSource.info.bit_width, false,
+                                  candidateSpan);
+      if (status == OBELISK_RT_EOF)
+        continue;
+      if (status != OBELISK_RT_OK)
+        return status;
+      if (candidateSpan.cursor.offset != span.cursor.offset ||
+          candidateSpan.offset >= span.offset + span.width ||
+          span.offset >= candidateSpan.offset + candidateSpan.width)
+        continue;
+    }
+    for (uint64_t index = 0; index != candidate.owners.count; ++index) {
+      obelisk_rt_design_cursor_v1 owner{};
+      uint32_t kind = 0;
+      bool statement = false;
+      uint64_t token = candidate.owners.first + index;
+      if (obelisk_rt_cached_vpi_relation_target(handle->owner->context, token,
+                                                &owner, &kind,
+                                                &statement) != OBELISK_RT_OK)
+        return OBELISK_RT_INVALID_DESIGN;
+      if (obelisk::reflection::vpiObjectSetContains(edge->targets, kind) &&
+          seen.insert(owner.offset).second)
+        ranges.push_back({token, 1});
+    }
+  }
+  return ranges.empty() ? OBELISK_RT_EOF : OBELISK_RT_OK;
 }
 
 bool preparePrimitiveValue(__vpiHandle *handle, VPIValueSource &source) {
@@ -9648,7 +9727,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
         handle->owner, VPIObjectForm::IntegralConstant, handle->cursor,
         step.semanticType, step.selectionOrdinal, vpiConstant, step.index);
   }
-  if (handle->form == VPIObjectForm::Design && type == vpiIndex) {
+  if (handle->form == VPIObjectForm::Design && type == vpiIndex &&
+      !isSourceSelection(handle)) {
     const auto *edge = obelisk::reflection::findVPITraversal(
         sourceType, vpiIndex, obelisk::reflection::VPITraversalMode::Handle);
     std::vector<VPISelectionStep> indices;
@@ -10209,8 +10289,9 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       return nullptr;
     if (sourceType == vpiNamedEvent && type == vpiWaitingProcesses)
       return namedEventWaitingProcesses(handle);
-    if (type == vpiIndex && (handle->form == VPIObjectForm::Indexed ||
-                             handle->form == VPIObjectForm::Design)) {
+    if (type == vpiIndex && !isSourceSelection(handle) &&
+        (handle->form == VPIObjectForm::Indexed ||
+         handle->form == VPIObjectForm::Design)) {
       const auto *edge = obelisk::reflection::findVPITraversal(
           sourceType, vpiIndex, obelisk::reflection::VPITraversalMode::Iterate);
       if (!edge || !supportsIndexQuery(handle, sourceType))
@@ -10351,11 +10432,17 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       return nullptr;
     }
   }
-  if (reference && sourceDesign && type == vpiUse) {
+  if (reference && type == vpiUse &&
+      (sourceDesign ||
+       (referenceHandle->form == VPIObjectForm::Indexed &&
+        (sourceType == vpiNetBit || sourceType == vpiRegBit)))) {
     OBELISK_RT_TRY {
       std::vector<VPIRelationRange> ranges;
-      auto status = obelisk_rt_cached_vpi_expression_use_ranges(state->context,
-                                                                parent, ranges);
+      bool selected = isSourceSelection(referenceHandle) ||
+                      referenceHandle->form == VPIObjectForm::Indexed;
+      auto status = selected ? selectedUseRanges(referenceHandle, ranges)
+                             : obelisk_rt_cached_vpi_expression_use_ranges(
+                                   state->context, parent, ranges);
       if (status == OBELISK_RT_OK) {
         auto iterator = std::make_unique<__vpiHandle>();
         iterator->owner = state;
@@ -10368,6 +10455,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
         iterator->classDefinitionOrigin = sourceClassDefinitionOrigin;
         return keepHandle(state, std::move(iterator));
       }
+      if (selected && status == OBELISK_RT_EOF)
+        return nullptr;
       if (status != OBELISK_RT_EOF) {
         setError(state, "could not resolve expression uses",
                  status == OBELISK_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
@@ -12270,10 +12359,12 @@ bool decompileRetainedExpression(__vpiHandle *handle, std::string &result) {
         ordered.push_back(std::move(children[0]));
         ordered.push_back(token(" [ "));
         ordered.push_back(std::move(children[1]));
-        ordered.push_back(token(item.kind == vpiPartSelect ? " : "
-                                : expression.code == 1     ? " +: "
-                                                           : " -: "));
-        ordered.push_back(std::move(children[2]));
+        if (!obelisk::reflection::isVPIBitSelection(item.kind)) {
+          ordered.push_back(token(item.kind == vpiPartSelect ? " : "
+                                  : expression.code == 1     ? " +: "
+                                                             : " -: "));
+          ordered.push_back(std::move(children[2]));
+        }
         ordered.push_back(token(" ]"));
       }
       if (parenthesize)
@@ -12410,15 +12501,33 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
   if (property == vpiName)
     imageDescriptor = obelisk::reflection::findVPIProperty(
         static_cast<uint32_t>(vpiTypeForHandle(handle)), property);
+  const bool selectedName =
+      property == vpiName && handle->form == VPIObjectForm::Indexed &&
+      (handle->exactVpiType == vpiNetBit ||
+       handle->exactVpiType == vpiRegBit) &&
+      std::all_of(handle->selectionSteps.begin(), handle->selectionSteps.end(),
+                  [](const VPISelectionStep &step) {
+                    return !step.memberSelection && !step.associativeKey;
+                  });
+  __vpiHandle exactNameSource;
+  if (selectedName) {
+    exactNameSource.owner = handle->owner;
+    exactNameSource.cursor = handle->cursor;
+    exactNameSource.exactVpiType = handle->selectionRootType;
+    inheritExpressionContext(exactNameSource, *handle);
+  }
   VPIFixedPropertyValue optional{};
-  const auto optionalStatus =
-      optionalPropertyFor(handle, imageDescriptor, optional);
+  const auto optionalStatus = optionalPropertyFor(
+      selectedName ? &exactNameSource : handle, imageDescriptor, optional);
   if (optionalStatus == OBELISK_RT_OK) {
     OBELISK_RT_TRY {
       if (imageDescriptor->valueKind ==
           obelisk::reflection::VPIPropertyValueKind::String) {
         scratch.assign(reinterpret_cast<const char *>(optional.stringData),
                        static_cast<size_t>(optional.stringSize));
+        if (selectedName)
+          for (const auto &step : handle->selectionSteps)
+            scratch += "[" + std::to_string(step.index) + "]";
         return scratch.data();
       }
       const auto *symbolic = obelisk::reflection::findVPIIntegerPropertyValue(
@@ -12687,6 +12796,57 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     }
   }
   if (property == vpiName || property == vpiFullName) {
+    if ((objectType == vpiNetBit || objectType == vpiRegBit) &&
+        isSourceSelection(handle)) {
+      const auto *policy = valuePolicyFor(handle);
+      VPIValueSource source{};
+      VPISelectedSpan span{};
+      if (!policy || !valueSourceFor(handle, *policy, source) ||
+          selectedObjectSpan(handle, source, 1, false, span) != OBELISK_RT_OK) {
+        setError(handle->owner, "selected bit has no current existing name",
+                 vpiNotice);
+        return nullptr;
+      }
+      __vpiHandle parent;
+      parent.owner = handle->owner;
+      parent.cursor = span.cursor;
+      parent.exactVpiType = span.exactType;
+      inheritExpressionContext(parent, *handle);
+      obelisk_rt_design_cursor_v1 semanticCursor{};
+      obelisk_rt_design_semantic_type_info_v1 semantic{};
+      if (!semanticCursorFor(&parent, semanticCursor) ||
+          obelisk_rt_cached_design_semantic_type_info(
+              handle->owner->context, semanticCursor, &semantic) !=
+              OBELISK_RT_OK ||
+          !nameFor(&parent, scratch))
+        return nullptr;
+      bool hasRange =
+          (semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0;
+      bool ascending = hasRange && semantic.range_left < semantic.range_right;
+      __int128 index = hasRange ? semantic.range_right : 0;
+      index += ascending ? -static_cast<__int128>(span.offset) : span.offset;
+      if (index < INT64_MIN || index > INT64_MAX)
+        return nullptr;
+      if (property == vpiName) {
+        VPIFixedPropertyValue exact{};
+        auto nameStatus = obelisk_rt_cached_vpi_fixed_property(
+            handle->owner->context, parent.cursor, vpiName, &exact);
+        if (nameStatus == OBELISK_RT_OK) {
+          scratch.assign(reinterpret_cast<const char *>(exact.stringData),
+                         static_cast<size_t>(exact.stringSize));
+        } else if (nameStatus == OBELISK_RT_EOF) {
+          size_t dot = scratch.rfind('.'), colon = scratch.rfind("::");
+          if (colon != std::string::npos &&
+              (dot == std::string::npos || colon > dot))
+            scratch.erase(0, colon + 2);
+          else if (dot != std::string::npos)
+            scratch.erase(0, dot + 1);
+        } else
+          return nullptr;
+      }
+      scratch += "[" + std::to_string(static_cast<int64_t>(index)) + "]";
+      return scratch.data();
+    }
     if (property == vpiName && objectType == vpiModport) {
       VPIModportBinding binding{};
       if (obelisk_rt_cached_vpi_modport_binding(handle->owner->context,
@@ -13158,6 +13318,14 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
         if (source.primitiveValue) {
           decodeStrengthRange(source.primitiveStrength, strength.s0,
                               strength.s1);
+        } else if (source.exactType == vpiNetBit && isSourceSelection(handle)) {
+          uint16_t range = 0;
+          if (readSelectedNetStrength(handle, source, range) != OBELISK_RT_OK) {
+            setError(handle->owner, "selected net bit strength is unavailable",
+                     vpiNotice);
+            return;
+          }
+          decodeStrengthRange(range, strength.s0, strength.s1);
         } else if (net) {
           uint16_t range = 0;
           const uint64_t base = source.form == VPIObjectForm::Indexed

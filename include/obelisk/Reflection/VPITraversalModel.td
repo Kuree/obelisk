@@ -1641,7 +1641,7 @@ include "VPITraversalLate.td"
 // 37.10 details 2-3 apply to retained expression occurrences as well as
 // declarations. Their exact source instance comes from the occurrence binding.
 def RetainedComputedExpressions : VPIObjectSet<"RetainedComputedExpressions",
-  [Constant, Operation, PartSelect, IndexedPartSelect]>;
+  [Constant, Operation, BitSelect, PartSelect, IndexedPartSelect]>;
 def RetainedExpressionModule : VPITraversalEdge<RetainedComputedExpressions,
   Module, HandleMode, ModuleTarget, NoOrder, "37.10">;
 def RetainedExpressionInstance : VPITraversalEdge<RetainedComputedExpressions,

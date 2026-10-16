@@ -54,7 +54,12 @@ aliases, nominal and aggregate type defaults, override-assignment relations,
 and nonpacked value parameters remain incomplete.
 
 Retained expression slots include integral literals, concatenations,
-replications, and part-selects of scalar bits or one-bit packed-array elements.
+replications, and bit/part-selects of scalar bits or one-bit packed-array elements.
+Exact bit selections retain `NetBit`, `RegBit`, or parameter `BitSelect` identity,
+the source `Index`, and syntactic `ConstantSelect`. Existing-object names and
+comparison follow the current index; unknown or out-of-range indices have no
+current object name. Selected `Use` queries include whole-parent and overlapping
+selection uses, with each owner returned once.
 The query layer preserves ordered operands, exact selected parents, contextual
 parameter identity, Module/Instance ancestry, and owning-statement `vpiUse`.
 Value reads observe current declaration values and preserve wide four-state
@@ -77,7 +82,7 @@ Port `vpiHighConn` relations also retain supported selected and compound
 expressions in the instantiating scope. Selected output connections preserve
 their source parent, while repeated connections retain distinct source range
 expressions and deduplicated declaration uses. `vpi_compare_objects` compares
-part-selects by their currently existing backing spans: equivalent ordinary and
+bit/part-selects by their currently existing backing spans: equivalent ordinary and
 indexed selections compare equal, including a whole-span or indexed-bit handle.
 Unknown or out-of-range selections compare unequal, including to themselves.
 Constant and Operation occurrences keep their source identities. These connections reuse the same
