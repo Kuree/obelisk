@@ -40,8 +40,22 @@ values, signedness, types, and explicitly declared ranges; type parameters retai
 typedef identity. Shared declarations do not add per-instance parameter records
 or unused IO endpoint slots. Original defaults and override-assignment relations
 for these shared instance parameters remain incomplete: a known original default
-reports a notice until its expression is retained. Nonpacked value parameters remain outside this inventory slice. General expression
-use edges for these shared parameters await contextual expression recipes.
+reports a notice until its expression is retained. Nonpacked value parameters remain outside this inventory slice.
+
+Procedural expression slots retain integral literals, concatenations,
+replications, and part-selects of scalar bits or one-bit packed-array elements.
+The query layer preserves ordered operands, exact selected parents, contextual
+parameter identity, Module/Instance ancestry, and owning-statement `vpiUse`.
+Value reads observe current declaration values and preserve wide four-state
+planes. Exact retained leaf identifiers support `vpiDecompile`; unsupported
+reference spellings report a notice. Computed expressions are read-only.
+
+Identical syntax templates share their node and type metadata across instances;
+small root and leaf bindings preserve distinct occurrence identities and values.
+Effective type or width differences split templates. Ordinary unary/binary
+operators, bit-object selection, hierarchical reference spelling, iterated
+expression-root lists, and selected/compound port or primitive source producers
+remain follow-ups to this bounded procedural slice.
 
 Elaborated generate scopes preserve packed parameters and localparams, including
 implicit genvar localparams, under their exact scope. Distinct declarations use

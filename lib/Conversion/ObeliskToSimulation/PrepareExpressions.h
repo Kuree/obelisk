@@ -35,6 +35,27 @@ private:
   llvm::DenseMap<uint64_t, sim::SimNetDeclOp> nets;
 };
 
+/// Retain an exact expression occurrence in an existing owner's relation slot.
+/// Planning is atomic: unsupported syntax returns no endpoint and emits no
+/// partial inventory. Declaration leaves keep their canonical identities.
+class VPIExpressionMaterializer {
+public:
+  VPIExpressionMaterializer(sim::SimDesignOp design,
+                            const llvm::StringMap<DescriptorInfo> &descriptors,
+                            mlir::OpBuilder &builder);
+  mlir::FailureOr<std::optional<VPIExpressionEndpoint>>
+  resolve(mlir::Operation *expression, sim::VPIObjectRefAttr owner,
+          uint32_t ownerKind, uint64_t scope, uint32_t selector,
+          sim::VPIRelationMode mode = sim::VPIRelationMode::Handle,
+          uint64_t ordinal = 0);
+
+private:
+  sim::SimDesignOp design;
+  VPIExpressionResolver declarations;
+  mlir::OpBuilder &builder;
+  uint64_t nextID = 0;
+};
+
 /// Materialize exact direct declaration operands after statement and local
 /// inventories exist, before source expressions are lowered or optimized.
 mlir::LogicalResult materializeProceduralExpressionRelations(

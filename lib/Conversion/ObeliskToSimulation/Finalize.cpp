@@ -697,9 +697,22 @@ verifyExecutableSubtree(Operation *root, ModuleOp module,
                      : sim::SimVPIDefinitionMemberInstanceRelationOp::
                            getMemberAttrName(op->getName())) &&
             reference.getNestedReferences().empty();
+        // Contextual definition members are exact typed inventory references,
+        // not executable callees. Their SymbolUser verifier proves the scope's
+        // definition matches the referenced member before finalization.
+        bool contextualMemberReference = false;
+        if (auto relation = dyn_cast<sim::SimVPIRelationDeclOp>(op))
+          if (named.getName() == relation.getSourceAttrName() ||
+              named.getName() == relation.getTargetAttrName())
+            if (auto endpoint =
+                    dyn_cast<sim::VPIObjectRefAttr>(named.getValue()))
+              contextualMemberReference =
+                  endpoint.getKind() == sim::VPIObjectRefKind::DefinitionMember &&
+                  endpoint.getSymbol() == reference;
         bool allowed = callTarget || observerTarget || graphReference ||
                        executableReference || definitionReference ||
-                       specializationReference || definitionMemberReference;
+                       specializationReference || definitionMemberReference ||
+                       contextualMemberReference;
         if (!allowed) {
           op->emitError() << "disallowed symbol reference " << reference;
           invalid = true;
@@ -762,9 +775,10 @@ void ObeliskSimFinalizePass::runOnOperation() {
              sim::SimVPIClassMemberDeclOp, sim::SimVPIEventBindingOp,
              sim::SimVPIThreadOriginBindingOp, sim::SimVPICallDeclOp,
              sim::SimVPICodeUnitScopeBindingOp, sim::SimVPIInitializerBindingOp,
-             sim::SimVPIClassCallDispatchOp, sim::SimVPILocalDeclOp,
-             sim::SimVPIForeachDeclOp, sim::SimVPIStaticLocalBindingOp,
-             sim::SimVPICallableDeclOp, sim::SimVPIInterfaceMemberDeclOp,
+             sim::SimVPIExpressionDeclOp, sim::SimVPIClassCallDispatchOp,
+             sim::SimVPILocalDeclOp, sim::SimVPIForeachDeclOp,
+             sim::SimVPIStaticLocalBindingOp, sim::SimVPICallableDeclOp,
+             sim::SimVPIInterfaceMemberDeclOp,
              sim::SimVPIInterfaceInstanceBindingOp,
              sim::SimVPIInterfaceCallDispatchOp, sim::SimClassDeclOp,
              sim::SimClassFieldDeclOp, sim::SimClassMethodDeclOp,

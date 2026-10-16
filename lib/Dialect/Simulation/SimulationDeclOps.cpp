@@ -847,7 +847,8 @@ SimVPIRelationDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     if (!isa<SimVPIObjectAnchorOp, SimVPITypespecDeclOp, SimVPINettypeDeclOp,
              SimVPIClassMemberDeclOp, SimVPIUnresolvedTypeAliasDeclOp,
              SimVPILexicalClassTypespecDeclOp, SimVPIClassExtendsDeclOp,
-             SimVPIClassParameterAssignDeclOp, SimVPILocalDeclOp>(declaration))
+             SimVPIClassParameterAssignDeclOp, SimVPILocalDeclOp,
+             SimVPIExpressionDeclOp>(declaration))
       return emitOpError()
              << endpoint << " VPI symbol " << reference.getSymbol()
              << " must name an object anchor, typespec, or nettype";
@@ -3857,6 +3858,8 @@ SimVPIClassCallDispatchOp::verifySymbolUses(SymbolTableCollection &symbols) {
 }
 
 LogicalResult SimDesignOp::verifyRegions() {
+  if (failed(verifyVPIExpressionInventory(*this)))
+    return failure();
   if (failed(verifyVPIInterfaceDispatch(*this)))
     return failure();
   // One cached table for the whole design walk below. The uncached lookups
@@ -5706,6 +5709,9 @@ LogicalResult SimDesignOp::verifyRegions() {
         // SymbolUserOpInterface validates the declaration category first.
         if (auto anchor = dyn_cast<SimVPIObjectAnchorOp>(declaration))
           kind = anchor.getVpiKind();
+        else if (auto expression =
+                     dyn_cast<SimVPIExpressionDeclOp>(declaration))
+          kind = expression.getVpiKind();
         else if (auto typespec = dyn_cast<SimVPITypespecDeclOp>(declaration))
           kind = vpiKindForTypespec(typespec.getTargetType()).value_or(0);
         else if (isa<SimVPILexicalClassTypespecDeclOp>(declaration))

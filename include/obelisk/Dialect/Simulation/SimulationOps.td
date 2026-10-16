@@ -568,6 +568,33 @@ def SimVPIRelationDeclOp : SimOp<"vpi_relation.decl", [
   let hasVerifier = 1;
 }
 
+def SimVPIExpressionDeclOp : SimOp<"vpi_expression.decl", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "exact typed occurrence in a source RTL expression";
+  let description = [{
+    Preserves one computed source occurrence independently of shared declaration
+    leaves. `owner`, `selector`, `mode`, and `ordinal` identify its exact incoming
+    relation slot. This structural ownership is separate from the public Parent
+    relation of a selection. Every occurrence has an exact packed result type;
+    integral Constants also have immutable planes. Operation and indexed-select
+    classifications are retained explicitly. These records neither allocate
+    simulation storage nor execute or schedule the expression.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
+      I32Attr:$vpi_kind, I64Attr:$scope_id, SimVPIObjectRefAttr:$owner,
+      I32Attr:$selector, SimVPIRelationMode:$mode, I64Attr:$ordinal,
+      TypeAttr:$type, SimVPITypeSemanticsAttr:$vpi_type,
+      OptionalAttr<SimFrozenConstantAttr>:$immutable_value,
+      OptionalAttr<I32Attr>:$op_type, OptionalAttr<I32Attr>:$indexed_direction);
+  let assemblyFormat = [{
+    $sym_name `id` $id `type` $vpi_kind `in` $scope_id `owned_by` $owner
+    `selector` $selector $mode `ordinal` $ordinal `:` $type attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
 def SimVPINetIdentityDeclOp : SimOp<"vpi_net_identity.decl", [
     DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemWrite<SimInventoryResource>]>

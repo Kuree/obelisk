@@ -774,12 +774,13 @@ static const llvm::StringMap<discardable::PayloadCheck> &declarations() {
       metadata::DescriptorPackedLow, metadata::DescriptorRootType,
       metadata::FlushedPrivateSlot, metadata::GcPollFree,
       metadata::HierarchicalName, metadata::Rematerialized, metadata::VpiAnchor,
-      metadata::VpiDefinitionMember, metadata::VpiStatementId,
-      metadata::VpiCallSite, metadata::VpiResolutionNet, metadata::VpiLocal,
-      metadata::VpiDeclaredType, metadata::VpiFrameInstrumentation,
-      metadata::VpiAutomatic, metadata::VpiCellInstance,
-      metadata::VpiDefinitionName, metadata::VpiIdentityDelegated,
-      metadata::VpiBoxType, metadata::VpiSourceTypeIdentity, metadata::VpiTop,
+      metadata::VpiDefinitionMember, metadata::VpiExpressionIdentifier,
+      metadata::VpiStatementId, metadata::VpiCallSite,
+      metadata::VpiResolutionNet, metadata::VpiLocal, metadata::VpiDeclaredType,
+      metadata::VpiFrameInstrumentation, metadata::VpiAutomatic,
+      metadata::VpiCellInstance, metadata::VpiDefinitionName,
+      metadata::VpiIdentityDelegated, metadata::VpiBoxType,
+      metadata::VpiSourceTypeIdentity, metadata::VpiTop,
       metadata::DumpportsScope, metadata::DynamicCastEnumValues,
       metadata::DynamicCastTask, metadata::EnumFormatNames,
       metadata::EnumFormatValues, metadata::EnumFormats,
@@ -802,6 +803,9 @@ static LogicalResult verifyDeclaredAttribute(Operation *operation,
   auto error = [&]() {
     return operation->emitOpError("attribute '") << name << "' ";
   };
+  if (name == VpiExpressionIdentifier::getNameStr() &&
+      !isa<SimVPIRelationDeclOp>(operation))
+    return error() << "requires an exact expression leaf relation";
   auto allOf = [&](auto pred) {
     return llvm::all_of(cast<ArrayAttr>(value), pred);
   };

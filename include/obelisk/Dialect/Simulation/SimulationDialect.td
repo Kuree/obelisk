@@ -577,7 +577,10 @@ def ObeliskSimulationDialect : Dialect {
     "::mlir::ArrayAttr":$enum_method_names,
     "::mlir::ArrayAttr":$enum_method_values,
     // Exact shared declaration together with its elaborated instance context.
-    "::obelisk::sim::VPIObjectRefAttr":$vpi_definition_member
+    "::obelisk::sim::VPIObjectRefAttr":$vpi_definition_member,
+    // Raw exact identifier of an unqualified source expression leaf. This is
+    // not a hierarchical path or pre-escaped text; absence means unavailable.
+    "::mlir::StringAttr":$vpi_expression_identifier
   );
 }
 

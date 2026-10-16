@@ -692,6 +692,8 @@ using Rematerialized = ObeliskSimulationDialect::RematerializedAttrHelper;
 using VpiAnchor = ObeliskSimulationDialect::VpiAnchorAttrHelper;
 using VpiDefinitionMember =
     ObeliskSimulationDialect::VpiDefinitionMemberAttrHelper;
+using VpiExpressionIdentifier =
+    ObeliskSimulationDialect::VpiExpressionIdentifierAttrHelper;
 using VpiStatementId = ObeliskSimulationDialect::VpiStatementIdAttrHelper;
 using VpiCallSite = ObeliskSimulationDialect::VpiCallSiteAttrHelper;
 using VpiResolutionNet = ObeliskSimulationDialect::VpiResolutionNetAttrHelper;

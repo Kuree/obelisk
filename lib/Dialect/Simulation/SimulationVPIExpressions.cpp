@@ -1,0 +1,543 @@
+//===- SimulationVPIExpressions.cpp - Exact source expression inventory
+//----===//
+
+#include "SimulationVerifiers.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Dialect/Simulation/SimulationVPI.h"
+#include "obelisk/Reflection/VPIObjectModel.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SmallVector.h"
+#include <limits>
+#include <map>
+#include <optional>
+#include <tuple>
+
+using namespace mlir;
+
+namespace obelisk::sim {
+namespace {
+using Kind = reflection::VPIObjectKind;
+using Relation = reflection::VPIRelationKind;
+constexpr uint32_t concatOp = 33, multiConcatOp = 34;
+
+bool isIntegral(VPITypeSemanticsAttr semantic) {
+  if (!semantic)
+    return false;
+  while (semantic.getKind() == VPITypeKind::PackedArray) {
+    if (semantic.getChildren().size() != 1)
+      return false;
+    semantic = cast<VPITypeSemanticsAttr>(semantic.getChildren()[0]);
+  }
+  switch (semantic.getKind()) {
+  case VPITypeKind::GenericIntegral:
+  case VPITypeKind::Bit:
+  case VPITypeKind::Logic:
+  case VPITypeKind::Reg:
+  case VPITypeKind::Byte:
+  case VPITypeKind::ShortInt:
+  case VPITypeKind::Int:
+  case VPITypeKind::LongInt:
+  case VPITypeKind::Integer:
+  case VPITypeKind::Time:
+    return true;
+  default:
+    return false;
+  }
+}
+
+std::optional<uint64_t> integralWidth(VPITypeSemanticsAttr semantic) {
+  if (!isIntegral(semantic))
+    return std::nullopt;
+  if (auto width = semantic.getBitWidth(); width && !width.getValue().isZero())
+    return width.getValue().getZExtValue();
+  uint64_t multiplier = 1;
+  while (semantic.getKind() == VPITypeKind::PackedArray) {
+    auto range = semantic.getRange().asArrayRef();
+    if (range.size() != 2)
+      return std::nullopt;
+    uint64_t distance = range[0] >= range[1]
+                            ? uint64_t(range[0]) - uint64_t(range[1])
+                            : uint64_t(range[1]) - uint64_t(range[0]);
+    if (distance == UINT64_MAX || multiplier > UINT64_MAX / (distance + 1))
+      return std::nullopt;
+    multiplier *= distance + 1;
+    semantic = cast<VPITypeSemanticsAttr>(semantic.getChildren()[0]);
+  }
+  auto range = semantic.getRange().asArrayRef();
+  uint64_t width = 0;
+  if (range.size() == 2) {
+    uint64_t distance = range[0] >= range[1]
+                            ? uint64_t(range[0]) - uint64_t(range[1])
+                            : uint64_t(range[1]) - uint64_t(range[0]);
+    if (distance == UINT64_MAX)
+      return std::nullopt;
+    width = distance + 1;
+  } else if (semantic.getKind() == VPITypeKind::Bit ||
+             semantic.getKind() == VPITypeKind::Logic ||
+             semantic.getKind() == VPITypeKind::Reg)
+    width = 1;
+  else {
+    switch (semantic.getKind()) {
+    case VPITypeKind::Byte:
+      width = 8;
+      break;
+    case VPITypeKind::ShortInt:
+      width = 16;
+      break;
+    case VPITypeKind::Int:
+    case VPITypeKind::Integer:
+      width = 32;
+      break;
+    case VPITypeKind::LongInt:
+    case VPITypeKind::Time:
+      width = 64;
+      break;
+    default:
+      return std::nullopt;
+    }
+  }
+  if (multiplier > UINT64_MAX / width)
+    return std::nullopt;
+  return multiplier * width;
+}
+
+struct Endpoint {
+  Operation *operation = nullptr;
+  uint32_t kind = 0;
+  uint64_t scope = 0;
+  Type type;
+  VPITypeSemanticsAttr semantic;
+  FrozenConstantAttr frozen;
+  uint64_t width = 0;
+  Endpoint() = default;
+  Endpoint(Operation *operation, uint32_t kind, uint64_t scope, Type type = {},
+           VPITypeSemanticsAttr semantic = {}, FrozenConstantAttr frozen = {})
+      : operation(operation), kind(kind), scope(scope), type(type),
+        semantic(semantic), frozen(frozen),
+        width(type ? getPackedWidth(type).value_or(0)
+                   : integralWidth(semantic).value_or(0)) {}
+};
+std::optional<int64_t> knownInteger(const Endpoint &endpoint) {
+  if (!endpoint.frozen)
+    return std::nullopt;
+  auto planes = dyn_cast<ArrayAttr>(endpoint.frozen.getValue());
+  if (!planes || planes.size() != 2)
+    return std::nullopt;
+  auto bits = dyn_cast<IntegerAttr>(planes[0]);
+  auto unknown = dyn_cast<IntegerAttr>(planes[1]);
+  if (!bits || !unknown || !unknown.getValue().isZero())
+    return std::nullopt;
+  const auto &value = bits.getValue();
+  if (endpoint.frozen.getIsSigned()) {
+    if (!value.isSignedIntN(64))
+      return std::nullopt;
+    return value.sextOrTrunc(64).getSExtValue();
+  }
+  if (value.getActiveBits() > 63)
+    return std::nullopt;
+  return static_cast<int64_t>(value.getZExtValue());
+}
+} // namespace
+
+LogicalResult SimVPIExpressionDeclOp::verify() {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("requires a simulation.design owner");
+  for (auto [attribute, label] :
+       {std::pair(getIdAttr(), "expression ID"),
+        std::pair(getScopeIdAttr(), "scope ID"),
+        std::pair(getSelectorAttr(), "owner selector"),
+        std::pair(getOrdinalAttr(), "owner ordinal")})
+    if (attribute.getValue().isNegative())
+      return emitOpError() << label << " must be nonnegative";
+  if (getSelector() > UINT16_MAX || getOrdinal() > UINT32_MAX ||
+      (getMode() == VPIRelationMode::Handle && getOrdinal() != 0))
+    return emitOpError("owner relation slot is not encodable");
+  if (!isIntegral(getVpiType()) || !getPackedScalarType(getType()) ||
+      !getPackedWidth(getType()).value_or(0))
+    return emitOpError("requires an exact fixed integral result type");
+  if (failed(verifyVPITypeSemantics([&] { return emitOpError(); }, getType(),
+                                    getVpiType())))
+    return failure();
+  auto kind = static_cast<Kind>(getVpiKind());
+  if (kind != Kind::Constant && kind != Kind::Operation &&
+      kind != Kind::PartSelect && kind != Kind::IndexedPartSelect)
+    return emitOpError("unsupported exact expression kind");
+  if ((kind == Kind::Constant) != bool(getImmutableValueAttr()) ||
+      (kind == Kind::Operation) != bool(getOpTypeAttr()) ||
+      (kind == Kind::IndexedPartSelect) != bool(getIndexedDirectionAttr()))
+    return emitOpError(
+        "literal, operator and selection metadata must match kind");
+  if (auto value = getImmutableValueAttr();
+      value && (value.getType() != getType() ||
+                value.getIsSigned() != getVpiType().getIsSigned()))
+    return emitOpError("literal planes must match the exact result type");
+  if (auto operation = getOpType();
+      operation && *operation != concatOp && *operation != multiConcatOp)
+    return emitOpError("unsupported exact expression operator");
+  if (auto direction = getIndexedDirection();
+      direction && *direction != 1 && *direction != 2)
+    return emitOpError(
+        "indexed selection direction must be positive or negative");
+  return success();
+}
+
+LogicalResult
+SimVPIExpressionDeclOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  if (getOwner().getKind() == VPIObjectRefKind::Symbol &&
+      !symbols.lookupNearestSymbolFrom(*this, getOwner().getSymbol()))
+    return emitOpError("references an unknown expression owner");
+  return success();
+}
+
+LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
+  SymbolTableCollection referenceSymbols;
+  for (auto relation : design.getOps<SimVPIRelationDeclOp>()) {
+    if (relation.getTarget().getKind() != VPIObjectRefKind::DefinitionMember ||
+        relation.getMode() == VPIRelationMode::Handle)
+      continue;
+    auto source = relation.getSource();
+    auto computed =
+        source.getKind() == VPIObjectRefKind::Symbol
+            ? referenceSymbols.lookupNearestSymbolFrom<SimVPIExpressionDeclOp>(
+                  relation, source.getSymbol())
+            : SimVPIExpressionDeclOp{};
+    if (!computed)
+      return relation.emitOpError(
+          "contextual declaration root requires a singular expression slot");
+  }
+  SmallVector<SimVPIExpressionDeclOp> expressions;
+  for (auto expression : design.getOps<SimVPIExpressionDeclOp>())
+    expressions.push_back(expression);
+  if (expressions.empty()) {
+    for (auto relation : design.getOps<SimVPIRelationDeclOp>())
+      if (get<metadata::VpiExpressionIdentifier>(relation))
+        return relation.emitOpError(
+            "expression identifier requires a computed source");
+    return success();
+  }
+  Builder builder(design.getContext());
+  DenseMap<Attribute, Endpoint> endpoints;
+  DenseMap<uint64_t, SimScopeDeclOp> scopes;
+  DenseSet<uint64_t> ids;
+  auto numeric = [&](VPIObjectRefKind kind, IntegerAttr id) {
+    return VPIObjectRefAttr::get(design.getContext(), kind, id);
+  };
+  auto symbolic = [&](StringAttr name) {
+    return VPIObjectRefAttr::get(design.getContext(),
+                                 FlatSymbolRefAttr::get(name));
+  };
+  for (Operation &operation : design.getBody().front()) {
+    if (auto scope = dyn_cast<SimScopeDeclOp>(operation))
+      scopes[scope.getId()] = scope;
+    else if (auto statement = dyn_cast<SimStatementDeclOp>(operation))
+      endpoints[numeric(VPIObjectRefKind::Statement, statement.getIdAttr())] = {
+          statement, statement.getVpiKind(), statement.getScopeId()};
+    else if (auto port = dyn_cast<SimPortDeclOp>(operation))
+      endpoints[numeric(VPIObjectRefKind::Port, port.getIdAttr())] = {
+          port, uint32_t(Kind::Port), port.getScopeId(), port.getType(),
+          port.getVpiTypeAttr()};
+    else if (auto storage = dyn_cast<SimStorageDeclOp>(operation))
+      endpoints[numeric(VPIObjectRefKind::Storage, storage.getIdAttr())] = {
+          storage, vpiKindForStorage(storage.getVpiTypeAttr()),
+          storage.getScopeId(), storage.getType(), storage.getVpiTypeAttr()};
+    else if (auto net = dyn_cast<SimNetDeclOp>(operation))
+      endpoints[numeric(VPIObjectRefKind::Net, net.getIdAttr())] = {
+          net, vpiKindForNet(net.getVpiTypeAttr()), net.getScopeId(),
+          net.getType(), net.getVpiTypeAttr()};
+    else if (auto net = dyn_cast<SimVPINetIdentityDeclOp>(operation))
+      endpoints[numeric(VPIObjectRefKind::NetIdentity, net.getIdAttr())] = {
+          net, vpiKindForNet(net.getVpiType()), net.getScopeId(), net.getType(),
+          net.getVpiType()};
+    else if (auto anchor = dyn_cast<SimVPIObjectAnchorOp>(operation)) {
+      auto frozen = anchor.getImmutableValueAttr();
+      endpoints[symbolic(anchor.getSymNameAttr())] = {
+          anchor,
+          anchor.getVpiKind(),
+          anchor.getEnclosingScopeId(),
+          frozen ? frozen.getType() : Type{},
+          anchor.getVpiTypeAttr(),
+          frozen};
+    } else if (auto local = dyn_cast<SimVPILocalDeclOp>(operation))
+      endpoints[symbolic(local.getSymNameAttr())] = {
+          local, vpiKindForClassMember(local.getVpiType()), local.getScopeId(),
+          local.getValueType(), local.getVpiType()};
+    else if (auto expression = dyn_cast<SimVPIExpressionDeclOp>(operation)) {
+      if (!ids.insert(expression.getId()).second)
+        return expression.emitOpError("duplicates an expression occurrence ID");
+      endpoints[symbolic(expression.getSymNameAttr())] = {
+          expression,
+          expression.getVpiKind(),
+          expression.getScopeId(),
+          expression.getType(),
+          expression.getVpiType(),
+          expression.getImmutableValueAttr()};
+    }
+  }
+  // Definition members retain their shared declaration and exact instance
+  // specialization. Never substitute the source default for the effective
+  // parameter value or allocate a duplicate per-instance declaration.
+  SymbolTableCollection symbols;
+  for (auto relation : design.getOps<SimVPIRelationDeclOp>()) {
+    for (auto reference : {relation.getSource(), relation.getTarget()}) {
+      if (reference.getKind() != VPIObjectRefKind::DefinitionMember ||
+          endpoints.contains(reference))
+        continue;
+      if (failed(verifyVPIDefinitionMemberRef(relation, design, reference,
+                                              symbols)))
+        return failure();
+      auto member = symbols.lookupSymbolIn<SimVPIDefinitionMemberDeclOp>(
+          design, reference.getSymbol());
+      auto scope = scopes.lookup(reference.getId().getValue().getZExtValue());
+      for (auto specialization :
+           design.getOps<SimVPIDefinitionMemberSpecializationOp>()) {
+        if (specialization.getSpecializationAttr() !=
+                scope.getVpiSpecializationAttr() ||
+            specialization.getMemberAttr() != reference.getSymbol())
+          continue;
+        endpoints[reference] = {
+            member,
+            member.getVpiKind(),
+            scope.getId(),
+            Type{},
+            specialization.getEffectiveType(),
+            specialization->getAttrOfType<FrozenConstantAttr>(
+                "immutable_value")};
+        break;
+      }
+      if (!endpoints.contains(reference))
+        return relation.emitOpError(
+            "expression member requires its exact effective specialization");
+    }
+  }
+  using Slot = std::tuple<const void *, uint32_t, uint32_t, uint64_t>;
+  std::map<Slot, SmallVector<SimVPIRelationDeclOp>> relations;
+  DenseMap<Attribute, SmallVector<SimVPIRelationDeclOp>> outgoing, incoming;
+  for (auto relation : design.getOps<SimVPIRelationDeclOp>()) {
+    if (auto name = get<metadata::VpiExpressionIdentifier>(relation)) {
+      auto source = endpoints.find(relation.getSource());
+      auto target = endpoints.find(relation.getTarget());
+      if (name.empty() ||
+          llvm::any_of(
+              name.getValue(),
+              [](unsigned char byte) { return byte <= 32 || byte == 127; }) ||
+          source == endpoints.end() || target == endpoints.end() ||
+          !isa<SimVPIExpressionDeclOp>(source->second.operation) ||
+          isa<SimVPIExpressionDeclOp>(target->second.operation))
+        return relation.emitOpError("expression identifier requires a raw "
+                                    "nonempty declaration-leaf name");
+    }
+    relations[{relation.getSource().getAsOpaquePointer(),
+               relation.getSelector(), uint32_t(relation.getMode()),
+               relation.getOrdinal()}]
+        .push_back(relation);
+    outgoing[relation.getSource()].push_back(relation);
+    incoming[relation.getTarget()].push_back(relation);
+  }
+  DenseMap<Attribute, Attribute> parents;
+  for (auto expression : expressions) {
+    auto self = symbolic(expression.getSymNameAttr());
+    auto owner = endpoints.find(expression.getOwner());
+    if (owner == endpoints.end() || !scopes.count(expression.getScopeId()))
+      return expression.emitOpError("requires exact retained owner and scope");
+    bool ownerExpression = isa<SimVPIExpressionDeclOp>(owner->second.operation);
+    bool ownerStatement = isa<SimStatementDeclOp>(owner->second.operation);
+    bool ownerPort = owner->second.kind == uint32_t(Kind::Port);
+    bool ownerTerminal = owner->second.kind == uint32_t(Kind::PrimTerm);
+    if (!ownerExpression && expression.getMode() != VPIRelationMode::Handle)
+      return expression.emitOpError(
+          "compact root currently requires a singular expression slot");
+    if (!ownerExpression && !ownerStatement && !ownerPort && !ownerTerminal)
+      return expression.emitOpError(
+          "owner must be an expression, statement, port or terminal");
+    uint64_t scope = owner->second.scope;
+    if (ownerPort &&
+        expression.getSelector() == uint32_t(Relation::HighConnRel)) {
+      auto instance = scopes.lookup(scope);
+      if (!instance || !instance.getParent())
+        return expression.emitOpError(
+            "higher connection requires an instantiating scope");
+      scope = *instance.getParent();
+    }
+    if (scope != expression.getScopeId())
+      return expression.emitOpError(
+          "expression scope disagrees with its source occurrence");
+    const auto *edge = reflection::findVPITraversal(
+        owner->second.kind, expression.getSelector(),
+        expression.getMode() == VPIRelationMode::Handle
+            ? reflection::VPITraversalMode::Handle
+            : reflection::VPITraversalMode::Iterate);
+    if (!edge || edge->statementContainment ||
+        edge->automaticRelation != reflection::VPIAutomaticRelation::None ||
+        !reflection::vpiObjectSetContains(edge->targets,
+                                          expression.getVpiKind()))
+      return expression.emitOpError(
+          "owner relation is not a legal expression slot");
+    auto &slot = relations[{
+        expression.getOwner().getAsOpaquePointer(), expression.getSelector(),
+        uint32_t(expression.getMode()), expression.getOrdinal()}];
+    if (slot.size() != 1 || slot[0].getTarget() != self)
+      return expression.emitOpError(
+          "requires one matching exact owner relation");
+    for (auto relation : incoming[self])
+      if (relation != slot[0] &&
+          !(relation.getSelector() == uint32_t(Relation::UseRel) &&
+            relation.getMode() == VPIRelationMode::Iterate))
+        return expression.emitOpError(
+            "computed occurrence cannot have multiple owners");
+    parents[self] =
+        ownerExpression ? Attribute(expression.getOwner()) : Attribute{};
+
+    DenseMap<uint32_t, SmallVector<Endpoint>> children;
+    auto ordered = outgoing[self];
+    llvm::sort(ordered, [](auto left, auto right) {
+      return std::tuple(left.getSelector(), left.getMode(), left.getOrdinal()) <
+             std::tuple(right.getSelector(), right.getMode(),
+                        right.getOrdinal());
+    });
+    for (auto relation : ordered) {
+      if (relation.getSelector() == uint32_t(Relation::UseRel))
+        continue;
+      auto target = endpoints.find(relation.getTarget());
+      if (target == endpoints.end() || !isIntegral(target->second.semantic) ||
+          !target->second.width)
+        return expression.emitOpError(
+            "expression operand requires an exact integral value");
+      bool operand = relation.getSelector() == uint32_t(Relation::OperandRel);
+      if (relation.getMode() !=
+          (operand ? VPIRelationMode::Iterate : VPIRelationMode::Handle))
+        return expression.emitOpError(
+            "expression child has the wrong access mode");
+      auto &group = children[relation.getSelector()];
+      if (relation.getOrdinal() != group.size())
+        return expression.emitOpError(
+            "expression children require dense source order");
+      group.push_back(target->second);
+    }
+    auto one = [&](Relation selector) -> const Endpoint * {
+      auto found = children.find(uint32_t(selector));
+      return found != children.end() && found->second.size() == 1
+                 ? &found->second.front()
+                 : nullptr;
+    };
+    uint64_t width = *getPackedWidth(expression.getType());
+    switch (static_cast<Kind>(expression.getVpiKind())) {
+    case Kind::Constant:
+      if (!children.empty())
+        return expression.emitOpError("constant cannot have value operands");
+      break;
+    case Kind::Operation: {
+      auto &operands = children[uint32_t(Relation::OperandRel)];
+      bool repeated = expression.getOpType() == multiConcatOp;
+      if (children.size() != 1 || operands.size() < (repeated ? 2 : 1))
+        return expression.emitOpError(
+            "concatenation requires its ordered operands");
+      uint64_t sum = 0, multiplier = 1;
+      if (repeated) {
+        auto value = knownInteger(operands.front());
+        if (!value || *value <= 0)
+          return expression.emitOpError(
+              "replication requires a positive constant multiplier");
+        multiplier = *value;
+      }
+      for (const auto &operand :
+           ArrayRef<Endpoint>(operands).drop_front(repeated)) {
+        uint64_t bits = operand.width;
+        if (bits > UINT64_MAX - sum)
+          return expression.emitOpError("concatenation result width overflows");
+        sum += bits;
+      }
+      if (sum > UINT64_MAX / multiplier || sum * multiplier != width)
+        return expression.emitOpError(
+            "concatenation result width disagrees with operands");
+      bool fourState =
+          llvm::any_of(ArrayRef<Endpoint>(operands).drop_front(repeated),
+                       [](const Endpoint &operand) {
+                         return operand.semantic.getIsFourState();
+                       });
+      if (expression.getVpiType().getIsSigned() ||
+          expression.getVpiType().getIsFourState() != fourState)
+        return expression.emitOpError("concatenation requires unsigned result "
+                                      "and exact operand state domain");
+      break;
+    }
+    case Kind::PartSelect:
+    case Kind::IndexedPartSelect: {
+      bool indexed =
+          expression.getVpiKind() == uint32_t(Kind::IndexedPartSelect);
+      auto parent = one(Relation::ParentRel);
+      auto first =
+          one(indexed ? Relation::BaseExprRel : Relation::LeftRangeRel);
+      auto last =
+          one(indexed ? Relation::WidthExprRel : Relation::RightRangeRel);
+      if (children.size() != 3 || !parent || !first || !last)
+        return expression.emitOpError(
+            "selection requires exact parent and range expressions");
+      auto right = knownInteger(*last);
+      if (!right)
+        return expression.emitOpError(
+            "selection width or bound must be constant");
+      uint64_t count = 0;
+      if (indexed) {
+        if (*right <= 0)
+          return expression.emitOpError(
+              "indexed selection width must be positive");
+        count = *right;
+      } else {
+        auto left = knownInteger(*first);
+        if (!left)
+          return expression.emitOpError("part-select bounds must be constant");
+        uint64_t distance = *left >= *right
+                                ? uint64_t(*left) - uint64_t(*right)
+                                : uint64_t(*right) - uint64_t(*left);
+        if (distance == UINT64_MAX)
+          return expression.emitOpError("part-select width overflows");
+        count = distance + 1;
+      }
+      // This slice selects scalar bits or one-bit packed-array elements.
+      // Wider packed elements require an exact element-stride projection.
+      bool unitStride =
+          parent->semantic.getKind() != VPITypeKind::PackedArray ||
+          (parent->semantic.getChildren().size() == 1 &&
+           integralWidth(cast<VPITypeSemanticsAttr>(
+               parent->semantic.getChildren()[0])) == 1);
+      if (!unitStride || count != width)
+        return expression.emitOpError(
+            "selection result requires the exact scalar integral width");
+      if (expression.getVpiType().getIsSigned() ||
+          expression.getVpiType().getIsFourState() !=
+              parent->semantic.getIsFourState())
+        return expression.emitOpError(
+            "selection requires unsigned result and the selected state domain");
+      if (!indexed) {
+        auto range = parent->semantic.getRange().asArrayRef();
+        auto left = *knownInteger(*first);
+        bool descending = range.size() == 2 ? range[0] >= range[1] : true;
+        if (left != *right &&
+            (range.size() != 2 || range[0] != range[1] || parent->width > 1) &&
+            (left > *right) != descending)
+          return expression.emitOpError(
+              "part-select direction disagrees with selected range");
+      }
+      break;
+    }
+    default:
+      return expression.emitOpError("unsupported expression kind");
+    }
+  }
+  DenseSet<Attribute> proven;
+  for (auto expression : expressions) {
+    Attribute cursor = symbolic(expression.getSymNameAttr());
+    DenseSet<Attribute> visiting;
+    SmallVector<Attribute> path;
+    while (cursor && !proven.count(cursor)) {
+      if (!visiting.insert(cursor).second)
+        return expression.emitOpError("expression ownership must be acyclic");
+      path.push_back(cursor);
+      cursor = parents.lookup(cursor);
+    }
+    proven.insert(path.begin(), path.end());
+  }
+  return success();
+}
+} // namespace obelisk::sim

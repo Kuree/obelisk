@@ -64,6 +64,15 @@ VPIExpressionResolver::resolve(Operation *expression) {
                                    sim::VPIObjectRefKind::Symbol, {}, symbol),
         kind};
   };
+  if (auto member = sim::get<sim::metadata::VpiDefinitionMember>(source)) {
+    if (failed(
+            sim::verifyVPIDefinitionMemberRef(source, design, member, symbols)))
+      return std::nullopt;
+    auto declaration =
+        symbols.lookupSymbolIn<sim::SimVPIDefinitionMemberDeclOp>(
+            design, member.getSymbol());
+    return VPIExpressionEndpoint{member, declaration.getVpiKind()};
+  }
   if (auto local = sim::get<sim::metadata::VpiLocal>(source))
     return symbolic(local);
   if (auto anchor = sim::get<sim::metadata::VpiAnchor>(source))
@@ -117,6 +126,265 @@ VPIExpressionResolver::resolve(Operation *expression) {
   return std::nullopt;
 }
 
+VPIExpressionMaterializer::VPIExpressionMaterializer(
+    sim::SimDesignOp design, const llvm::StringMap<DescriptorInfo> &descriptors,
+    OpBuilder &builder)
+    : design(design), declarations(design, descriptors), builder(builder) {
+  for (auto expression : design.getOps<sim::SimVPIExpressionDeclOp>())
+    nextID = std::max(nextID, uint64_t(expression.getId()) + 1);
+}
+
+FailureOr<std::optional<VPIExpressionEndpoint>>
+VPIExpressionMaterializer::resolve(Operation *expression,
+                                   sim::VPIObjectRefAttr owner,
+                                   uint32_t ownerKind, uint64_t scope,
+                                   uint32_t selector, sim::VPIRelationMode mode,
+                                   uint64_t ordinal) {
+  using Kind = reflection::VPIObjectKind;
+  using Rel = reflection::VPIRelationKind;
+  auto unsupported = []() -> std::optional<VPIExpressionEndpoint> {
+    return std::nullopt;
+  };
+  auto integral = [](Type type) {
+    for (;;) {
+      if (auto array = dyn_cast<semantic::RangedPackedArrayType>(type))
+        type = array.getElementType();
+      else if (auto array = dyn_cast<semantic::PackedArrayType>(type))
+        type = array.getElementType();
+      else
+        return isa<semantic::IntegralType, semantic::LogicType>(type);
+    }
+  };
+  struct Planned {
+    Operation *source;
+    std::optional<VPIExpressionEndpoint> endpoint;
+    uint32_t kind = 0, code = 0;
+    Type type;
+    sim::VPITypeSemanticsAttr semantic;
+    sim::FrozenConstantAttr frozen;
+    StringAttr identifier;
+    SmallVector<unsigned> children;
+  };
+  SmallVector<Planned> plan;
+  plan.push_back({expression, {}});
+  // The source AST is an owned tree. Each visit is a separate occurrence;
+  // even repeated declaration leaves occupy distinct ordered operand slots.
+  for (size_t index = 0; index != plan.size(); ++index) {
+    Operation *source = plan[index].source;
+    if (auto endpoint = declarations.resolve(source)) {
+      plan[index].endpoint = endpoint;
+      plan[index].kind = endpoint->kind;
+      if (isa<semantic::SVNamedValueExpressionOp>(source)) {
+        auto reference =
+            source->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+        SymbolTableCollection symbols;
+        auto module = source->getParentOfType<ModuleOp>();
+        auto *declaration = reference && module
+                                ? symbols.lookupSymbolIn(module, reference)
+                                : nullptr;
+        auto name = declaration ? declaration->getAttrOfType<StringAttr>("name")
+                                : StringAttr{};
+        // Only an exact unqualified reference to a lexical ancestor's direct
+        // declaration supplies a raw identifier. Imported/hierarchical names
+        // need their complete source reference syntax in a later extension.
+        bool lexical = false;
+        for (auto *parent = source->getParentOp(); parent;
+             parent = parent->getParentOp())
+          lexical |= declaration && declaration->getParentOp() == parent;
+        if (lexical && name && !name.empty())
+          plan[index].identifier = name;
+      }
+      continue;
+    }
+    SmallVector<Operation *> children;
+    uint32_t kind = 0, code = 0;
+    if (isa<semantic::SVIntegerLiteralOp>(source)) {
+      if (!source->hasAttr("constant_value"))
+        return unsupported();
+      kind = uint32_t(Kind::Constant);
+    } else if (isa<semantic::SVConcatenationExpressionOp>(source)) {
+      kind = uint32_t(Kind::Operation);
+      code = 33;
+      children = getChildren(source);
+      if (children.empty())
+        return unsupported();
+    } else if (isa<semantic::SVReplicationExpressionOp>(source)) {
+      kind = uint32_t(Kind::Operation);
+      code = 34;
+      auto syntax = getChildren(source);
+      if (syntax.size() != 2 ||
+          !isa<semantic::SVConcatenationExpressionOp>(syntax[1]))
+        return unsupported();
+      // 37.59 detail 1: multiplier followed by the expressions within the
+      // replicated concatenation, without a fabricated nested Concat node.
+      children.push_back(syntax[0]);
+      auto operands = getChildren(syntax[1]);
+      children.append(operands);
+      if (children.size() < 2)
+        return unsupported();
+    } else if (auto range =
+                   dyn_cast<semantic::SVRangeSelectExpressionOp>(source)) {
+      children = getChildren(source);
+      if (children.size() != 3)
+        return unsupported();
+      auto parentType = children[0]->getAttrOfType<TypeAttr>("semantic_type");
+      auto layout = parentType
+                        ? getSemanticSelectionLayout(parentType.getValue())
+                        : std::nullopt;
+      if (!layout || layout->elementWidth != 1)
+        return unsupported();
+      if (range.getSelectionKind() == semantic::SVRangeSelectionKind::Simple)
+        kind = uint32_t(Kind::PartSelect);
+      else {
+        kind = uint32_t(Kind::IndexedPartSelect);
+        code = range.getSelectionKind() ==
+                       semantic::SVRangeSelectionKind::IndexedUp
+                   ? 1
+                   : 2;
+      }
+    } else
+      return unsupported();
+    auto sourceType = source->getAttrOfType<TypeAttr>("semantic_type");
+    if (!sourceType || !integral(sourceType.getValue()))
+      return unsupported();
+    auto normalized = getNormalizedSemanticType(source);
+    auto semantic = makeVPITypeSemantics(
+        sourceType.getValue(), getSemanticLocation(source), {}, source);
+    if (failed(normalized) || failed(semantic))
+      return failure();
+    if (!sim::getPackedScalarType(*normalized) ||
+        !sim::getPackedWidth(*normalized).value_or(0))
+      return unsupported();
+    plan[index].kind = kind;
+    plan[index].code = code;
+    plan[index].type = *normalized;
+    plan[index].semantic = *semantic;
+    if (kind == uint32_t(Kind::Constant)) {
+      auto frozen = freezeSemanticConstant(source);
+      if (failed(frozen))
+        return failure();
+      plan[index].frozen = *frozen;
+    }
+    for (Operation *child : children) {
+      if (plan.size() >= std::numeric_limits<unsigned>::max()) {
+        source->emitError(
+            "VPI expression occurrence count exceeds the supported limit");
+        return failure();
+      }
+      unsigned childIndex = static_cast<unsigned>(plan.size());
+      plan.push_back({child, {}});
+      plan[index].children.push_back(childIndex);
+    }
+  }
+  auto legal = [](uint32_t sourceKind, uint32_t selector,
+                  sim::VPIRelationMode mode, uint32_t targetKind) {
+    const auto *edge = reflection::findVPITraversal(
+        sourceKind, selector,
+        mode == sim::VPIRelationMode::Handle
+            ? reflection::VPITraversalMode::Handle
+            : reflection::VPITraversalMode::Iterate);
+    return edge && !edge->statementContainment &&
+           edge->automaticRelation == reflection::VPIAutomaticRelation::None &&
+           reflection::vpiObjectSetContains(edge->targets, targetKind);
+  };
+  auto childSelector = [](const Planned &node, unsigned child) {
+    if (node.kind == uint32_t(Kind::Operation))
+      return uint32_t(Rel::OperandRel);
+    if (child == 0)
+      return uint32_t(Rel::ParentRel);
+    bool part = node.kind == uint32_t(Kind::PartSelect);
+    return uint32_t(child == 1
+                        ? (part ? Rel::LeftRangeRel : Rel::BaseExprRel)
+                        : (part ? Rel::RightRangeRel : Rel::WidthExprRel));
+  };
+  if (!legal(ownerKind, selector, mode, plan.front().kind))
+    return unsupported();
+  if (!plan.front().endpoint && mode != sim::VPIRelationMode::Handle)
+    return unsupported();
+  for (const auto &node : plan) {
+    auto childMode = node.kind == uint32_t(Kind::Operation)
+                         ? sim::VPIRelationMode::Iterate
+                         : sim::VPIRelationMode::Handle;
+    for (auto [index, child] : llvm::enumerate(node.children))
+      if (!legal(node.kind, childSelector(node, index), childMode,
+                 plan[child].kind))
+        return unsupported();
+  }
+  uint64_t computed =
+      llvm::count_if(plan, [](const Planned &node) { return !node.endpoint; });
+  if (nextID > uint64_t(INT64_MAX) || computed > uint64_t(INT64_MAX) - nextID)
+    return expression->emitError("VPI source expression ID space exhausted"),
+           failure();
+  // Assign all exact identities before materialization. No partial declarations
+  // exist when unsupported syntax or a generated relation check rejects a plan.
+  SmallVector<uint64_t> ids(plan.size());
+  for (auto [index, node] : llvm::enumerate(plan)) {
+    if (node.endpoint)
+      continue;
+    ids[index] = nextID++;
+    std::string name =
+        "__obelisk_vpi_rtl_expression_" + std::to_string(ids[index]);
+    while (SymbolTable::lookupSymbolIn(design, name)) {
+      if (nextID > uint64_t(INT64_MAX))
+        return expression->emitError(
+                   "VPI source expression ID space exhausted"),
+               failure();
+      ids[index] = nextID++;
+      name = "__obelisk_vpi_rtl_expression_" + std::to_string(ids[index]);
+    }
+    node.endpoint = VPIExpressionEndpoint{
+        sim::VPIObjectRefAttr::get(
+            builder.getContext(),
+            FlatSymbolRefAttr::get(builder.getContext(), name)),
+        node.kind};
+  }
+  struct Incoming {
+    sim::VPIObjectRefAttr owner;
+    uint32_t selector;
+    sim::VPIRelationMode mode;
+    uint64_t ordinal;
+  };
+  SmallVector<Incoming> incoming(plan.size());
+  incoming[0] = {owner, selector, mode, ordinal};
+  for (const auto &node : plan)
+    for (auto [index, child] : llvm::enumerate(node.children)) {
+      bool operand = node.kind == uint32_t(Kind::Operation);
+      incoming[child] = {node.endpoint->reference, childSelector(node, index),
+                         operand ? sim::VPIRelationMode::Iterate
+                                 : sim::VPIRelationMode::Handle,
+                         operand ? index : 0};
+    }
+  OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPointToEnd(&design.getBody().front());
+  for (auto [index, node] : llvm::enumerate(plan)) {
+    if (!node.type)
+      continue;
+    auto slot = incoming[index];
+    sim::SimVPIExpressionDeclOp::create(
+        builder, getSemanticLocation(node.source),
+        node.endpoint->reference.getSymbol().getValue(), ids[index], node.kind,
+        scope, slot.owner, slot.selector, slot.mode, slot.ordinal, node.type,
+        node.semantic, node.frozen,
+        node.kind == uint32_t(Kind::Operation)
+            ? builder.getI32IntegerAttr(node.code)
+            : IntegerAttr{},
+        node.kind == uint32_t(Kind::IndexedPartSelect)
+            ? builder.getI32IntegerAttr(node.code)
+            : IntegerAttr{});
+    for (unsigned child : node.children) {
+      auto edge = incoming[child];
+      auto relation = sim::SimVPIRelationDeclOp::create(
+          builder, getSemanticLocation(plan[child].source), edge.owner,
+          edge.selector, edge.mode, edge.ordinal,
+          plan[child].endpoint->reference);
+      if (plan[child].identifier)
+        sim::set<sim::metadata::VpiExpressionIdentifier>(
+            relation, plan[child].identifier);
+    }
+  }
+  return plan.front().endpoint;
+}
+
 LogicalResult materializeProceduralExpressionRelations(
     sim::SimDesignOp design, const PreparedUnits &units,
     const llvm::StringMap<DescriptorInfo> &descriptors, OpBuilder &builder) {
@@ -127,7 +395,8 @@ LogicalResult materializeProceduralExpressionRelations(
     statements[statement.getId()] = statement;
   if (statements.empty())
     return success();
-  VPIExpressionResolver resolver(design, descriptors);
+  VPIExpressionMaterializer materializer(design, descriptors, builder);
+  bool invalid = false;
   llvm::DenseMap<Attribute, SmallVector<Attribute>> uses;
   for (auto relation : design.getOps<sim::SimVPIRelationDeclOp>())
     if (relation.getSelector() == static_cast<uint32_t>(Relation::UseRel) &&
@@ -154,7 +423,14 @@ LogicalResult materializeProceduralExpressionRelations(
       auto sourceRef = sim::VPIObjectRefAttr::get(
           builder.getContext(), sim::VPIObjectRefKind::Statement, identity);
       auto emit = [&](Relation selector, Operation *expression) {
-        auto target = resolver.resolve(expression);
+        auto resolved = materializer.resolve(
+            expression, sourceRef, statement.getVpiKind(),
+            statement.getScopeId(), static_cast<uint32_t>(selector));
+        if (failed(resolved)) {
+          invalid = true;
+          return;
+        }
+        auto target = *resolved;
         const auto *edge = reflection::findVPITraversal(
             statement.getVpiKind(), static_cast<uint32_t>(selector),
             Mode::Handle);
@@ -232,6 +508,6 @@ LogicalResult materializeProceduralExpressionRelations(
       return WalkResult::advance();
     });
   }
-  return success();
+  return failure(invalid);
 }
 } // namespace obelisk::simlowering

@@ -1770,6 +1770,20 @@ struct DesignDatabaseCache {
   uint64_t codeUnitScopeBindingCount = 0;
   uint64_t initializerBindings = 0;
   uint64_t initializerBindingCount = 0;
+  uint64_t expressionRootBindings = 0;
+  uint64_t expressionRootBindingCount = 0;
+  uint64_t expressionTemplates = 0;
+  uint64_t expressionTemplateCount = 0;
+  uint64_t expressionNodes = 0;
+  uint64_t expressionNodeCount = 0;
+  uint64_t expressionOperands = 0;
+  uint64_t expressionOperandCount = 0;
+  uint64_t expressionLeaves = 0;
+  uint64_t expressionLeafCount = 0;
+  uint64_t expressionBoundMembers = 0;
+  uint64_t expressionBoundMemberCount = 0;
+  uint64_t expressionLeafShapes = 0;
+  uint64_t expressionLeafShapeCount = 0;
 
   uint64_t relationIndices = 0;
   uint64_t relationIndexCount = 0;
@@ -1873,6 +1887,28 @@ struct VPIFixedPropertyValue {
   const uint8_t *stringData = nullptr;
   uint64_t stringSize = 0;
 };
+
+struct VPIExpressionInfo {
+  uint32_t kind = 0, code = 0, operandCount = 0;
+  uint64_t bitWidth = 0;
+  obelisk_rt_design_cursor_v1 semantic{};
+  bool constantSelect = false;
+};
+obelisk_rt_status
+obelisk_rt_cached_vpi_expression(const obelisk_rt_context *,
+                                 obelisk_rt_design_cursor_v1,
+                                 VPIExpressionInfo *) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_expression_operand(
+    const obelisk_rt_context *, obelisk_rt_design_cursor_v1, uint32_t,
+    obelisk_rt_design_cursor_v1 *, uint32_t *) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_expression_operand_identifier(
+    const obelisk_rt_context *, obelisk_rt_design_cursor_v1, uint32_t,
+    const uint8_t **, uint64_t *) noexcept;
+// Merge retained physical Uses with exact statement/port/terminal Uses derived
+// from recipe leaf bindings. No reverse records are duplicated per instance.
+obelisk_rt_status obelisk_rt_cached_vpi_expression_use_ranges(
+    const obelisk_rt_context *, obelisk_rt_design_cursor_v1,
+    std::vector<VPIRelationRange> &) noexcept;
 
 struct VPIFrozenValue {
   uint32_t kindAndFlags = 0;

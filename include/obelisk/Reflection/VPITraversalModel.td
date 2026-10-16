@@ -1637,6 +1637,15 @@ def RootActiveTimeFormat : VPITraversalEdge<RootSource, ActiveTimeFormatRel,
 include "VPITraversalEarly.td"
 include "VPITraversalLate.td"
 
+// 37.10 details 2-3 apply to retained expression occurrences as well as
+// declarations. Their exact source instance comes from the occurrence binding.
+def RetainedComputedExpressions : VPIObjectSet<"RetainedComputedExpressions",
+  [Constant, Operation, PartSelect, IndexedPartSelect]>;
+def RetainedExpressionModule : VPITraversalEdge<RetainedComputedExpressions,
+  Module, HandleMode, ModuleTarget, NoOrder, "37.10">;
+def RetainedExpressionInstance : VPITraversalEdge<RetainedComputedExpressions,
+  InstanceRel, HandleMode, InstanceObjects, NoOrder, "37.10">;
+
 // Access-by-index policies from the arrows labelled "access by index" in the
 // Chapter 37 diagrams.  Physical and semantic type records decide whether a
 // particular object is actually indexable and which member kind is produced;

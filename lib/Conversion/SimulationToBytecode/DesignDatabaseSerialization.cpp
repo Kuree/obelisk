@@ -385,6 +385,36 @@ SmallVector<uint8_t> serializeDesignDatabase(
   struct DefinitionMemberInstanceRelationInverseRecord {
     uint32_t target = 0;
   };
+  struct ExpressionRootRecord {
+    uint32_t owner, templateIndex, firstLeaf;
+    uint16_t selector, mode;
+    uint32_t ordinal;
+  };
+  struct ExpressionTemplateRecord {
+    uint32_t definition, firstNode, nodeCount, firstOperand, operandCount;
+    uint32_t leafCount, firstLeafShape;
+  };
+  struct ExpressionNodeRecord {
+    uint16_t kind, code;
+    uint32_t semantic, firstOperand, operandCount;
+    Source source;
+    uint32_t frozen;
+  };
+  struct ExpressionLeafShapeRecord {
+    uint32_t semantic;
+    uint16_t kind;
+    StringAttr identifier;
+  };
+  SmallVector<ExpressionRootRecord> expressionRoots;
+  SmallVector<ExpressionTemplateRecord> expressionTemplates;
+  SmallVector<ExpressionNodeRecord> expressionNodes;
+  SmallVector<uint32_t> expressionOperands, expressionLeaves;
+  SmallVector<std::pair<uint32_t, uint32_t>> expressionBoundMembers;
+  SmallVector<ExpressionLeafShapeRecord> expressionLeafShapes;
+  SmallVector<sim::SimVPIRelationDeclOp> expressionRootDeclarations;
+  llvm::StringMap<sim::SimVPIExpressionDeclOp> expressionsBySymbol;
+  DenseMap<Operation *, SmallVector<sim::SimVPIRelationDeclOp>>
+      expressionChildren;
   struct ResolvedNetRunRecord {
     uint32_t objectIndex = 0;
     uint32_t netType = 0;
@@ -526,7 +556,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
   llvm::DenseMap<uint64_t, PortConnection> wholePortConnections;
   llvm::DenseSet<uint64_t> wholeStoragePortSources, wholeNetPortSources;
   for (Operation &operation : design.getBody().front()) {
-    if (auto definition = dyn_cast<sim::SimVPIDefinitionDeclOp>(operation)) {
+    if (auto expression = dyn_cast<sim::SimVPIExpressionDeclOp>(operation)) {
+      if (includeStatements)
+        expressionsBySymbol[expression.getSymName()] = expression;
+    } else if (auto definition =
+                   dyn_cast<sim::SimVPIDefinitionDeclOp>(operation)) {
       if (includeStatements) {
         definitionDeclarations.push_back(definition);
         definitionsBySymbol[definition.getSymName()] = definition;
@@ -3723,82 +3757,118 @@ SmallVector<uint8_t> serializeDesignDatabase(
         relationIdentity(relation.sourceIndex, relation.selector,
                          relation.sourceKindAndTable, 0)
             .first);
+  auto resolvePhysicalReference =
+      [&](Operation *use, sim::VPIObjectRefAttr reference,
+          StringRef endpoint) -> std::optional<ImageObjectRef> {
+    uint64_t id =
+        reference.getId() ? reference.getId().getValue().getZExtValue() : 0;
+    std::optional<ImageObjectRef> resolved;
+    switch (reference.getKind()) {
+    case sim::VPIObjectRefKind::Statement: {
+      auto found = statementIndices.find(id);
+      if (found != statementIndices.end())
+        resolved = ImageObjectRef{TableKind::Statement, found->second,
+                                  statementKinds.lookup(id)};
+      break;
+    }
+    case sim::VPIObjectRefKind::Storage: {
+      auto found = storageRefs.find(id);
+      if (found != storageRefs.end())
+        resolved = found->second;
+      break;
+    }
+    case sim::VPIObjectRefKind::Net: {
+      auto found = netRefs.find(id);
+      if (found != netRefs.end())
+        resolved = found->second;
+      break;
+    }
+    case sim::VPIObjectRefKind::NetIdentity: {
+      auto found = netIdentityRefs.find(id);
+      if (found != netIdentityRefs.end())
+        resolved = found->second;
+      break;
+    }
+    case sim::VPIObjectRefKind::Port: {
+      auto found = portRefs.find(id);
+      if (found != portRefs.end())
+        resolved = found->second;
+      break;
+    }
+    case sim::VPIObjectRefKind::DefinitionMember:
+      break;
+    case sim::VPIObjectRefKind::Symbol: {
+      StringRef name = reference.getSymbol().getValue();
+      if (auto anchor = anchorsBySymbol.find(name);
+          anchor != anchorsBySymbol.end())
+        resolved = anchorRefs.lookup(anchor->second);
+      else if (auto typespec = typespecsBySymbol.find(name);
+               typespec != typespecsBySymbol.end())
+        resolved = typespecRefs.lookup(typespec->second);
+      else if (auto source = sourceInheritanceBySymbol.find(name);
+               source != sourceInheritanceBySymbol.end())
+        resolved = sourceInheritanceRefs.lookup(source->second);
+      else if (auto alias = unresolvedAliasesBySymbol.find(name);
+               alias != unresolvedAliasesBySymbol.end())
+        resolved = unresolvedAliasRefs.lookup(alias->second);
+      else if (auto nettype = nettypesBySymbol.find(name);
+               nettype != nettypesBySymbol.end())
+        resolved = nettypeRefs.lookup(nettype->second);
+      else if (auto member = classMembersBySymbol.find(name);
+               member != classMembersBySymbol.end())
+        resolved = classMemberRefs.lookup(member->second);
+      else if (auto local = localsBySymbol.find(name);
+               local != localsBySymbol.end())
+        resolved = ImageObjectRef{
+            TableKind::Object, objectIndices.lookup(local->second),
+            sim::vpiKindForClassMember(local->second.getVpiType())};
+      break;
+    }
+    }
+    if (!resolved)
+      use->emitOpError() << endpoint << " VPI reference " << reference
+                         << " was not serialized";
+    return resolved;
+  };
+  auto expressionFor = [&](sim::VPIObjectRefAttr reference) {
+    return reference.getKind() == sim::VPIObjectRefKind::Symbol
+               ? expressionsBySymbol.lookup(reference.getSymbol().getValue())
+               : sim::SimVPIExpressionDeclOp{};
+  };
   for (sim::SimVPIRelationDeclOp relation : generalRelationDeclarations) {
-    auto resolveReference =
-        [&](sim::VPIObjectRefAttr reference,
-            StringRef endpoint) -> std::optional<ImageObjectRef> {
-      uint64_t id =
-          reference.getId() ? reference.getId().getValue().getZExtValue() : 0;
-      std::optional<ImageObjectRef> resolved;
-      switch (reference.getKind()) {
-      case sim::VPIObjectRefKind::Statement: {
-        auto found = statementIndices.find(id);
-        if (found != statementIndices.end())
-          resolved = ImageObjectRef{TableKind::Statement, found->second,
-                                    statementKinds.lookup(id)};
-        break;
+    if (relation.getSource().getKind() ==
+        sim::VPIObjectRefKind::DefinitionMember) {
+      // Whole contextual declaration Uses are derived from the independently
+      // validated forward root. They need no per-instance reverse record.
+      bool exactUse =
+          relation.getSelector() == uint32_t(VPIRelationKind::UseRel) &&
+          relation.getMode() == sim::VPIRelationMode::Iterate &&
+          llvm::any_of(generalRelationDeclarations, [&](auto forward) {
+            return forward.getSource() == relation.getTarget() &&
+                   forward.getTarget() == relation.getSource() &&
+                   forward.getMode() == sim::VPIRelationMode::Handle;
+          });
+      if (!exactUse) {
+        relation.emitOpError("contextual declaration relation requires an "
+                             "exact expression root");
+        return {};
       }
-      case sim::VPIObjectRefKind::Storage: {
-        auto found = storageRefs.find(id);
-        if (found != storageRefs.end())
-          resolved = found->second;
-        break;
-      }
-      case sim::VPIObjectRefKind::Net: {
-        auto found = netRefs.find(id);
-        if (found != netRefs.end())
-          resolved = found->second;
-        break;
-      }
-      case sim::VPIObjectRefKind::NetIdentity: {
-        auto found = netIdentityRefs.find(id);
-        if (found != netIdentityRefs.end())
-          resolved = found->second;
-        break;
-      }
-      case sim::VPIObjectRefKind::Port: {
-        auto found = portRefs.find(id);
-        if (found != portRefs.end())
-          resolved = found->second;
-        break;
-      }
-      case sim::VPIObjectRefKind::Symbol: {
-        StringRef name = reference.getSymbol().getValue();
-        if (auto anchor = anchorsBySymbol.find(name);
-            anchor != anchorsBySymbol.end())
-          resolved = anchorRefs.lookup(anchor->second);
-        else if (auto typespec = typespecsBySymbol.find(name);
-                 typespec != typespecsBySymbol.end())
-          resolved = typespecRefs.lookup(typespec->second);
-        else if (auto source = sourceInheritanceBySymbol.find(name);
-                 source != sourceInheritanceBySymbol.end())
-          resolved = sourceInheritanceRefs.lookup(source->second);
-        else if (auto alias = unresolvedAliasesBySymbol.find(name);
-                 alias != unresolvedAliasesBySymbol.end())
-          resolved = unresolvedAliasRefs.lookup(alias->second);
-        else if (auto nettype = nettypesBySymbol.find(name);
-                 nettype != nettypesBySymbol.end())
-          resolved = nettypeRefs.lookup(nettype->second);
-        else if (auto member = classMembersBySymbol.find(name);
-                 member != classMembersBySymbol.end())
-          resolved = classMemberRefs.lookup(member->second);
-        else if (auto local = localsBySymbol.find(name);
-                 local != localsBySymbol.end())
-          resolved = ImageObjectRef{
-              TableKind::Object, objectIndices.lookup(local->second),
-              sim::vpiKindForClassMember(local->second.getVpiType())};
-        break;
-      }
-      }
-      if (!resolved)
-        relation.emitOpError() << endpoint << " VPI reference " << reference
-                               << " was not serialized";
-      return resolved;
-    };
+      continue;
+    }
+    if (auto expression = expressionFor(relation.getSource())) {
+      expressionChildren[expression].push_back(relation);
+      continue;
+    }
+    if (expressionFor(relation.getTarget()) ||
+        relation.getTarget().getKind() ==
+            sim::VPIObjectRefKind::DefinitionMember) {
+      expressionRootDeclarations.push_back(relation);
+      continue;
+    }
     std::optional<ImageObjectRef> source =
-        resolveReference(relation.getSource(), "source");
+        resolvePhysicalReference(relation, relation.getSource(), "source");
     std::optional<ImageObjectRef> target =
-        resolveReference(relation.getTarget(), "target");
+        resolvePhysicalReference(relation, relation.getTarget(), "target");
     if (!source || !target)
       return {};
     auto mode = static_cast<VPITraversalMode>(
@@ -4882,6 +4952,297 @@ SmallVector<uint8_t> serializeDesignDatabase(
         definitionParameterValues.push_back(
             {static_cast<uint32_t>(index), *value});
       }
+    // Intern syntax independently of its concrete declaration bindings. Every
+    // node ordinal is a source occurrence: equal sibling subtrees stay
+    // distinct.
+    DenseMap<uint64_t, uint32_t> expressionScopeBindings;
+    DenseMap<uint64_t, sim::SimScopeDeclOp> expressionScopes;
+    for (auto scope : scopes)
+      expressionScopes[scope.getId()] = scope;
+    for (auto [index, binding] : llvm::enumerate(definitionBindings))
+      if (unpackTableIndexKind(binding.sourceIndexAndTable) == TableKind::Scope)
+        expressionScopeBindings
+            [scopes[unpackTableIndex(binding.sourceIndexAndTable)].getId()] =
+                index;
+    DenseMap<std::pair<uint32_t, uint32_t>, uint32_t> boundMemberIndices;
+    llvm::StringMap<uint32_t> expressionTemplateIndices;
+    auto append32 = [](std::string &key, uint32_t value) {
+      for (unsigned byte = 0; byte != 4; ++byte)
+        key.push_back(static_cast<char>(value >> (byte * 8)));
+    };
+    auto contextScope = [&](ImageObjectRef owner,
+                            uint32_t selector) -> std::optional<uint64_t> {
+      uint64_t id;
+      switch (owner.table) {
+      case TableKind::Statement:
+        id = statements[owner.index].declaration.getScopeId();
+        break;
+      case TableKind::Object:
+        id = objects[owner.index].scope;
+        break;
+      case TableKind::StaticObject:
+        id = staticObjects[owner.index].scope;
+        break;
+      default:
+        return std::nullopt;
+      }
+      if (owner.vpiKind == uint32_t(VPIObjectKind::Port) &&
+          selector == uint32_t(VPIRelationKind::HighConnRel)) {
+        auto scope = expressionScopes.lookup(id);
+        if (!scope || !scope.getParent())
+          return std::nullopt;
+        id = *scope.getParent();
+      }
+      return id;
+    };
+    auto leaf =
+        [&](Operation *use, sim::VPIObjectRefAttr reference, uint64_t context,
+            ExpressionLeafShapeRecord &shape) -> std::optional<uint32_t> {
+      if (reference.getKind() == sim::VPIObjectRefKind::DefinitionMember) {
+        auto instance = expressionScopeBindings.find(
+            reference.getId().getValue().getZExtValue());
+        auto member =
+            definitionMembersBySymbol.find(reference.getSymbol().getValue());
+        if (instance == expressionScopeBindings.end() ||
+            member == definitionMembersBySymbol.end() ||
+            !definitionMemberIndices.count(member->second))
+          return std::nullopt;
+        uint32_t memberIndex = definitionMemberIndices.lookup(member->second);
+        const auto &binding = definitionBindings[instance->second];
+        if (binding.specialization == UINT32_MAX ||
+            binding.definition != definitionMembers[memberIndex].definition)
+          return std::nullopt;
+        const auto &specialization =
+            definitionSpecializations[binding.specialization];
+        bool found = false;
+        for (uint32_t offset = 0; offset != specialization.bindingCount;
+             ++offset) {
+          const auto &effective =
+              definitionSpecializationBindings[specialization.firstBinding +
+                                               offset];
+          if (effective.member != memberIndex)
+            continue;
+          shape = {effective.semanticType,
+                   uint16_t(member->second.getVpiKind())};
+          found = true;
+          break;
+        }
+        if (!found || memberIndex >= (uint32_t{1} << 30))
+          return std::nullopt;
+        if (reference.getId().getValue().getZExtValue() == context)
+          return memberIndex; // LocalDefinitionMember.
+        auto pair = std::make_pair(instance->second, memberIndex);
+        auto [entry, inserted] =
+            boundMemberIndices.try_emplace(pair, expressionBoundMembers.size());
+        if (inserted)
+          expressionBoundMembers.push_back(pair);
+        if (entry->second >= (uint32_t{1} << 30))
+          return std::nullopt;
+        return (uint32_t{2} << 30) | entry->second;
+      }
+      auto object = resolvePhysicalReference(use, reference, "expression leaf");
+      if (!object ||
+          (object->table != TableKind::Object &&
+           object->table != TableKind::StaticObject) ||
+          object->index >= (uint32_t{1} << 30))
+        return std::nullopt;
+      Operation *identity = object->table == TableKind::Object
+                                ? objects[object->index].identity
+                                : staticObjects[object->index].identity;
+      auto semantic = semanticForObject(identity);
+      auto type = semantic ? addSemanticType(semantic) : std::nullopt;
+      if (!type)
+        return std::nullopt;
+      shape = {*type, uint16_t(object->vpiKind)};
+      return ((object->table == TableKind::Object ? uint32_t{1} : uint32_t{3})
+              << 30) |
+             object->index;
+    };
+    constexpr uint64_t expressionCursorLimit = uint64_t{1} << 30;
+    for (auto relation : expressionRootDeclarations) {
+      if (expressionRoots.size() >= expressionCursorLimit) {
+        relation.emitOpError(
+            "expression root count exceeds the compact cursor limit");
+        return {};
+      }
+      auto owner = resolvePhysicalReference(relation, relation.getSource(),
+                                            "expression owner");
+      auto context =
+          owner ? contextScope(*owner, relation.getSelector()) : std::nullopt;
+      uint32_t packedOwner = 0;
+      if (!owner || !context ||
+          !tryPackTableIndex(owner->table, owner->index, packedOwner)) {
+        relation.emitOpError(
+            "expression root requires an exact retained source context");
+        return {};
+      }
+      uint32_t definition = UINT32_MAX;
+      if (auto instance = expressionScopeBindings.find(*context);
+          instance != expressionScopeBindings.end())
+        definition = definitionBindings[instance->second].definition;
+      SmallVector<ExpressionNodeRecord> nodes;
+      SmallVector<uint32_t> operands, leaves;
+      SmallVector<ExpressionLeafShapeRecord> shapes;
+      SmallVector<sim::SimVPIExpressionDeclOp> order;
+      DenseMap<Operation *, uint32_t> ordinals;
+      auto root = expressionFor(relation.getTarget());
+      if (root) {
+        SmallVector<sim::SimVPIExpressionDeclOp> work{root};
+        while (!work.empty()) {
+          auto node = work.pop_back_val();
+          if (ordinals.contains(node)) {
+            node.emitOpError("expression occurrence is shared or cyclic");
+            return {};
+          }
+          if (order.size() >= expressionCursorLimit) {
+            node.emitOpError(
+                "expression node count exceeds the compact cursor limit");
+            return {};
+          }
+          ordinals[node] = static_cast<uint32_t>(order.size());
+          order.push_back(node);
+          auto &children = expressionChildren[node];
+          auto rank = [&](sim::SimVPIRelationDeclOp child) {
+            uint32_t selector = child.getSelector();
+            if (node.getVpiKind() == uint32_t(VPIObjectKind::Operation))
+              return uint64_t(child.getOrdinal());
+            if (selector == uint32_t(VPIRelationKind::ParentRel))
+              return uint64_t{0};
+            if (selector == uint32_t(VPIRelationKind::LeftRangeRel) ||
+                selector == uint32_t(VPIRelationKind::BaseExprRel))
+              return uint64_t{1};
+            return uint64_t{2};
+          };
+          llvm::sort(children, [&](auto left, auto right) {
+            return rank(left) < rank(right);
+          });
+          for (auto child : llvm::reverse(children))
+            if (child.getSelector() != uint32_t(VPIRelationKind::UseRel))
+              if (auto expression = expressionFor(child.getTarget()))
+                work.push_back(expression);
+        }
+        for (auto node : order) {
+          auto semantic = addSemanticType(node.getVpiType());
+          auto frozen =
+              node.getImmutableValueAttr()
+                  ? internFrozenValue(node, node.getImmutableValueAttr())
+                  : std::optional<uint32_t>(UINT32_MAX);
+          if (!semantic || !frozen)
+            return {};
+          uint16_t code = node.getVpiKind() == uint32_t(VPIObjectKind::Constant)
+                              ? uint16_t(7) // Integral frozen literal.
+                              : uint16_t(node.getOpType().value_or(
+                                    node.getIndexedDirection().value_or(0)));
+          if (operands.size() >= expressionCursorLimit ||
+              expressionChildren[node].size() >=
+                  expressionCursorLimit - operands.size()) {
+            node.emitOpError(
+                "expression operands exceed the compact cursor limit");
+            return {};
+          }
+          uint32_t first = static_cast<uint32_t>(operands.size());
+          for (auto child : expressionChildren[node]) {
+            if (child.getSelector() == uint32_t(VPIRelationKind::UseRel))
+              continue;
+            if (auto expression = expressionFor(child.getTarget())) {
+              operands.push_back(ordinals.lookup(expression));
+              continue;
+            }
+            ExpressionLeafShapeRecord shape;
+            auto target = leaf(child, child.getTarget(), *context, shape);
+            if (!target || leaves.size() >= (uint32_t{1} << 31)) {
+              child.emitOpError(
+                  "expression leaf has no exact compact declaration binding");
+              return {};
+            }
+            shape.identifier =
+                sim::get<sim::metadata::VpiExpressionIdentifier>(child);
+            operands.push_back((uint32_t{1} << 31) | uint32_t(leaves.size()));
+            leaves.push_back(*target);
+            shapes.push_back(shape);
+          }
+          nodes.push_back({uint16_t(node.getVpiKind()), code, *semantic, first,
+                           uint32_t(operands.size() - first), sourceFor(node),
+                           *frozen});
+        }
+      } else {
+        ExpressionLeafShapeRecord shape;
+        auto target = leaf(relation, relation.getTarget(), *context, shape);
+        if (!target) {
+          relation.emitOpError(
+              "contextual root has no exact declaration binding");
+          return {};
+        }
+        leaves.push_back(*target);
+      }
+      uint32_t templateIndex = UINT32_MAX;
+      if (root) {
+        std::string key;
+        append32(key, definition);
+        append32(key, nodes.size());
+        append32(key, operands.size());
+        append32(key, shapes.size());
+        for (const auto &node : nodes) {
+          append32(key, node.kind);
+          append32(key, node.code);
+          append32(key, node.semantic);
+          append32(key, node.firstOperand);
+          append32(key, node.operandCount);
+          append32(key, node.source.file.size());
+          key.append(node.source.file);
+          append32(key, node.source.lineColumn >> 32);
+          append32(key, node.source.lineColumn);
+          append32(key, node.frozen);
+        }
+        for (auto operand : operands)
+          append32(key, operand);
+        for (const auto &shape : shapes) {
+          append32(key, shape.semantic);
+          append32(key, shape.kind);
+          StringRef name =
+              shape.identifier ? shape.identifier.getValue() : StringRef{};
+          append32(key, name.size());
+          key.append(name.str());
+        }
+        auto [entry, inserted] = expressionTemplateIndices.try_emplace(
+            key, expressionTemplates.size());
+        templateIndex = entry->second;
+        if (inserted) {
+          if (expressionTemplates.size() >= UINT32_MAX ||
+              nodes.size() > UINT32_MAX - expressionNodes.size() ||
+              expressionOperands.size() >= expressionCursorLimit ||
+              operands.size() >=
+                  expressionCursorLimit - expressionOperands.size() ||
+              shapes.size() > UINT32_MAX - expressionLeafShapes.size()) {
+            relation.emitOpError(
+                "expression template pools exceed their compact limits");
+            return {};
+          }
+          expressionTemplates.push_back(
+              {definition, uint32_t(expressionNodes.size()),
+               uint32_t(nodes.size()), uint32_t(expressionOperands.size()),
+               uint32_t(operands.size()), uint32_t(leaves.size()),
+               uint32_t(expressionLeafShapes.size())});
+          llvm::append_range(expressionNodes, nodes);
+          llvm::append_range(expressionOperands, operands);
+          llvm::append_range(expressionLeafShapes, shapes);
+        }
+      }
+      if (leaves.size() > UINT32_MAX - expressionLeaves.size()) {
+        relation.emitOpError(
+            "expression leaf bindings exceed the compact limit");
+        return {};
+      }
+      expressionRoots.push_back(
+          {packedOwner, templateIndex, uint32_t(expressionLeaves.size()),
+           uint16_t(relation.getSelector()), uint16_t(relation.getMode()),
+           uint32_t(relation.getOrdinal())});
+      llvm::append_range(expressionLeaves, leaves);
+    }
+    llvm::sort(expressionRoots, [](const auto &left, const auto &right) {
+      return std::tie(left.owner, left.selector, left.mode, left.ordinal) <
+             std::tie(right.owner, right.selector, right.mode, right.ordinal);
+    });
     llvm::sort(frozenValueBindings, [](const FrozenValueBindingRecord &left,
                                        const FrozenValueBindingRecord &right) {
       return left.sourceIndexAndTable < right.sourceIndexAndTable;
@@ -5488,6 +5849,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
   }
 
   SmallVector<uint8_t> output(HeaderLayout.size, 0);
+  for (const auto &shape : expressionLeafShapes)
+    if (shape.identifier)
+      intern(shape.identifier.getValue());
+  for (const auto &node : expressionNodes)
+    if (!node.source.file.empty())
+      intern(node.source.file);
   uint64_t scopeOffset = output.size();
   DenseMap<uint64_t, uint64_t> scopeOffsets;
   for (auto [index, scope] : llvm::enumerate(scopes))
@@ -5576,9 +5943,29 @@ SmallVector<uint8_t> serializeDesignDatabase(
   uint64_t initializerBindingOffset =
       codeUnitScopeBindingOffset +
       codeUnitScopeBindings.size() * CodeUnitScopeBindingLayout.size;
-  uint64_t relationIndexOffset =
+  uint64_t expressionRootBindingOffset =
       initializerBindingOffset +
       initializerBindings.size() * InitializerBindingLayout.size;
+  uint64_t expressionTemplateOffset =
+      expressionRootBindingOffset +
+      expressionRoots.size() * ExpressionRootBindingLayout.size;
+  uint64_t expressionNodeOffset =
+      expressionTemplateOffset +
+      expressionTemplates.size() * ExpressionTemplateLayout.size;
+  uint64_t expressionOperandOffset =
+      expressionNodeOffset + expressionNodes.size() * ExpressionNodeLayout.size;
+  uint64_t expressionLeafOffset =
+      expressionOperandOffset +
+      expressionOperands.size() * ExpressionOperandLayout.size;
+  uint64_t expressionBoundMemberOffset =
+      expressionLeafOffset +
+      expressionLeaves.size() * ExpressionLeafLayout.size;
+  uint64_t expressionLeafShapeOffset =
+      expressionBoundMemberOffset +
+      expressionBoundMembers.size() * ExpressionBoundMemberLayout.size;
+  uint64_t relationIndexOffset =
+      expressionLeafShapeOffset +
+      expressionLeafShapes.size() * ExpressionLeafShapeLayout.size;
   uint64_t relationIndexDimensionOffset =
       relationIndexOffset + relationIndices.size() * RelationIndexLayout.size;
   uint64_t relationIndexKeyOffset =
@@ -5937,6 +6324,21 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setCodeUnitScopeBindingCount(codeUnitScopeBindings.size());
     writer.setInitializerBindingOffset(initializerBindingOffset);
     writer.setInitializerBindingCount(initializerBindings.size());
+    writer.setExpressionRootBindingOffset(expressionRootBindingOffset);
+    writer.setExpressionRootBindingCount(expressionRoots.size());
+    writer.setExpressionTemplateOffset(expressionTemplateOffset);
+    writer.setExpressionTemplateCount(expressionTemplates.size());
+    writer.setExpressionNodeOffset(expressionNodeOffset);
+    writer.setExpressionNodeCount(expressionNodes.size());
+    writer.setExpressionOperandOffset(expressionOperandOffset);
+    writer.setExpressionOperandCount(expressionOperands.size());
+    writer.setExpressionLeafOffset(expressionLeafOffset);
+    writer.setExpressionLeafCount(expressionLeaves.size());
+    writer.setExpressionBoundMemberOffset(expressionBoundMemberOffset);
+    writer.setExpressionBoundMemberCount(expressionBoundMembers.size());
+    writer.setExpressionLeafShapeOffset(expressionLeafShapeOffset);
+    writer.setExpressionLeafShapeCount(expressionLeafShapes.size());
+
     writer.setRelationIndexOffset(relationIndexOffset);
     writer.setRelationIndexCount(relationIndices.size());
     writer.setRelationIndexDimensionOffset(relationIndexDimensionOffset);
@@ -6379,6 +6781,70 @@ SmallVector<uint8_t> serializeDesignDatabase(
         output.data() + definitionMemberInstanceRelationInverseOffset +
         index * DefinitionMemberInstanceRelationInverseLayout.size);
     writer.setTarget(inverse.target);
+  }
+  for (auto [index, root] : llvm::enumerate(expressionRoots)) {
+    ExpressionRootBindingWriter writer(
+        output.data() + expressionRootBindingOffset +
+        index * ExpressionRootBindingLayout.size);
+    writer.setOwnerIndexAndTable(root.owner);
+    writer.setTemplateIndex(root.templateIndex);
+    writer.setFirstLeaf(root.firstLeaf);
+    writer.setSelector(root.selector);
+    writer.setMode(root.mode);
+    writer.setOrdinal(root.ordinal);
+  }
+  for (auto [index, recipe] : llvm::enumerate(expressionTemplates)) {
+    ExpressionTemplateWriter writer(output.data() + expressionTemplateOffset +
+                                    index * ExpressionTemplateLayout.size);
+    writer.setDefinitionIndex(recipe.definition);
+    writer.setFirstNode(recipe.firstNode);
+    writer.setNodeCount(recipe.nodeCount);
+    writer.setFirstOperand(recipe.firstOperand);
+    writer.setOperandCount(recipe.operandCount);
+    writer.setLeafCount(recipe.leafCount);
+    writer.setFirstLeafShape(recipe.firstLeafShape);
+  }
+  for (auto [index, node] : llvm::enumerate(expressionNodes)) {
+    ExpressionNodeWriter writer(output.data() + expressionNodeOffset +
+                                index * ExpressionNodeLayout.size);
+    writer.setKind(node.kind);
+    writer.setCode(node.code);
+    writer.setSemanticTypeIndex(node.semantic);
+    writer.setFirstOperand(node.firstOperand);
+    writer.setOperandCount(node.operandCount);
+    writer.setFile(node.source.file.empty()
+                       ? UINT32_MAX
+                       : uint32_t(intern(node.source.file)));
+    writer.setLine(node.source.lineColumn >> 32);
+    writer.setColumn(node.source.lineColumn);
+    writer.setFrozenValueIndex(node.frozen);
+  }
+  for (auto [index, target] : llvm::enumerate(expressionOperands)) {
+    ExpressionOperandWriter writer(output.data() + expressionOperandOffset +
+                                   index * ExpressionOperandLayout.size);
+    writer.setTarget(target);
+  }
+  for (auto [index, target] : llvm::enumerate(expressionLeaves)) {
+    ExpressionLeafWriter writer(output.data() + expressionLeafOffset +
+                                index * ExpressionLeafLayout.size);
+    writer.setTarget(target);
+  }
+  for (auto [index, pair] : llvm::enumerate(expressionBoundMembers)) {
+    ExpressionBoundMemberWriter writer(
+        output.data() + expressionBoundMemberOffset +
+        index * ExpressionBoundMemberLayout.size);
+    writer.setDefinitionBindingIndex(pair.first);
+    writer.setMemberIndex(pair.second);
+  }
+  for (auto [index, shape] : llvm::enumerate(expressionLeafShapes)) {
+    ExpressionLeafShapeWriter writer(output.data() + expressionLeafShapeOffset +
+                                     index * ExpressionLeafShapeLayout.size);
+    writer.setSemanticTypeIndex(shape.semantic);
+    writer.setKind(shape.kind);
+    writer.setReserved(0);
+    writer.setIdentifier(shape.identifier
+                             ? uint32_t(intern(shape.identifier.getValue()))
+                             : UINT32_MAX);
   }
   for (auto [index, frozen] : llvm::enumerate(frozenValues)) {
     FrozenValueWriter writer(output.data() + frozenValueOffset +

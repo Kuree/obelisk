@@ -1615,6 +1615,11 @@ bool valueRequirementsSatisfied(
       obelisk_rt_cached_vpi_frozen_value(handle->owner->context, handle->cursor,
                                          &frozen) == OBELISK_RT_OK)
     return true;
+  VPIExpressionInfo expression{};
+  if (handle->form == VPIObjectForm::Design &&
+      obelisk_rt_cached_vpi_expression(handle->owner->context, handle->cursor,
+                                       &expression) == OBELISK_RT_OK)
+    return true;
   obelisk_rt_design_type_info_v1 type{};
   if (objectInfo.type_offset == 0 ||
       obelisk_rt_cached_design_type_info(handle->owner->context,
@@ -5324,8 +5329,201 @@ bool readManagedSelectionWord(__vpiHandle *source,
   }
 }
 
+bool readValue(__vpiHandle *, const VPIValueSource &, std::vector<uint64_t> &,
+               std::vector<uint64_t> &);
+
+bool readExpressionValue(__vpiHandle *handle, const VPIExpressionInfo &rootInfo,
+                         std::vector<uint64_t> &value,
+                         std::vector<uint64_t> &unknown) {
+  struct Evaluated {
+    VPIExpressionInfo info{};
+    obelisk_rt_design_cursor_v1 semantic{};
+    uint64_t width = 0;
+    std::vector<uint64_t> value, unknown;
+  };
+  struct Pending {
+    obelisk_rt_design_cursor_v1 cursor;
+    VPIExpressionInfo info;
+    uint32_t next = 0;
+    std::vector<obelisk_rt_design_cursor_v1> children;
+  };
+  OBELISK_RT_TRY {
+    std::unordered_map<uint64_t, Evaluated> results;
+    std::vector<Pending> pending;
+    pending.push_back({handle->cursor, rootInfo, 0, {}});
+    auto readLeaf = [&](obelisk_rt_design_cursor_v1 cursor, uint32_t kind) {
+      __vpiHandle leaf;
+      leaf.owner = handle->owner;
+      leaf.cursor = cursor;
+      leaf.exactVpiType = kind;
+      leaf.classDefinitionOrigin = handle->classDefinitionOrigin;
+      leaf.dynamicObject = handle->dynamicObject;
+      leaf.dynamicIdentity = handle->dynamicIdentity;
+      leaf.frameActivation = handle->frameActivation;
+      const auto *policy = valuePolicyFor(&leaf);
+      VPIValueSource source{};
+      Evaluated result;
+      if (!policy || !valueSourceFor(&leaf, *policy, source) ||
+          !valueRequirementsSatisfied(&leaf, source.info, *policy) ||
+          !readValue(&leaf, source, result.value, result.unknown))
+        return false;
+      result.width = source.info.bit_width;
+      result.semantic = source.semanticCursor;
+      results.emplace(cursor.offset, std::move(result));
+      return true;
+    };
+    auto integer = [&](const Evaluated &operand, int64_t &out) {
+      if (!operand.width || operand.value.empty())
+        return false;
+      for (uint64_t word : operand.unknown)
+        if (word)
+          return false;
+      obelisk_rt_design_semantic_type_info_v1 semantic{};
+      if (obelisk_rt_cached_design_semantic_type_info(
+              handle->owner->context, operand.semantic, &semantic) !=
+          OBELISK_RT_OK)
+        return false;
+      bool signedValue =
+          (semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0;
+      bool negative =
+          signedValue && ((operand.value[(operand.width - 1) / 64] >>
+                           ((operand.width - 1) % 64)) &
+                          1);
+      for (uint64_t bit = 64; bit < operand.width; ++bit)
+        if (bool((operand.value[bit / 64] >> (bit % 64)) & 1) != negative)
+          return false;
+      uint64_t bits = operand.value[0];
+      if (operand.width < 64 && negative)
+        bits |= UINT64_MAX << operand.width;
+      if ((bits >> 63) != uint64_t(negative))
+        return false;
+      out = static_cast<int64_t>(bits);
+      return true;
+    };
+    while (!pending.empty()) {
+      Pending &current = pending.back();
+      if (current.next != current.info.operandCount) {
+        obelisk_rt_design_cursor_v1 child{};
+        uint32_t kind = 0;
+        if (obelisk_rt_cached_vpi_expression_operand(
+                handle->owner->context, current.cursor, current.next++, &child,
+                &kind) != OBELISK_RT_OK)
+          return false;
+        current.children.push_back(child);
+        if (results.count(child.offset))
+          continue;
+        VPIExpressionInfo expression{};
+        if (obelisk_rt_cached_vpi_expression(handle->owner->context, child,
+                                             &expression) == OBELISK_RT_OK)
+          pending.push_back({child, expression, 0, {}});
+        else if (!readLeaf(child, kind))
+          return false;
+        continue;
+      }
+      Evaluated result;
+      result.info = current.info;
+      result.width = current.info.bitWidth;
+      result.semantic = current.info.semantic;
+      size_t words = 0;
+      if (!checkedWordCount(result.width, 64, words))
+        return false;
+      result.value.assign(words, 0);
+      result.unknown.assign(words, 0);
+      auto child = [&](size_t index) -> const Evaluated & {
+        return results.at(current.children[index].offset);
+      };
+      auto copyBit = [&](const Evaluated &source, uint64_t from, uint64_t to) {
+        if ((source.value[from / 64] >> (from % 64)) & 1)
+          result.value[to / 64] |= UINT64_C(1) << (to % 64);
+        if ((source.unknown[from / 64] >> (from % 64)) & 1)
+          result.unknown[to / 64] |= UINT64_C(1) << (to % 64);
+      };
+      if (current.info.kind == vpiConstant) {
+        VPIFrozenValue frozen{};
+        if (obelisk_rt_cached_vpi_frozen_value(handle->owner->context,
+                                               current.cursor,
+                                               &frozen) != OBELISK_RT_OK)
+          return false;
+        uint64_t bytes = (result.width + 7) / 8;
+        for (uint64_t byte = 0; byte != bytes; ++byte) {
+          result.value[byte / 8] |= uint64_t{frozen.payload[byte]}
+                                    << ((byte % 8) * 8);
+          result.unknown[byte / 8] |= uint64_t{frozen.payload[bytes + byte]}
+                                      << ((byte % 8) * 8);
+        }
+      } else if (current.info.kind == vpiOperation) {
+        bool repeat = current.info.code == vpiMultiConcatOp;
+        int64_t repetitions = 1;
+        if (repeat && (!integer(child(0), repetitions) || repetitions <= 0))
+          return false;
+        uint64_t destination = 0;
+        for (int64_t repetition = 0; repetition != repetitions; ++repetition)
+          for (size_t index = current.children.size();
+               index != size_t(repeat);) {
+            const auto &operand = child(--index);
+            for (uint64_t bit = 0; bit != operand.width; ++bit)
+              copyBit(operand, bit, destination++);
+          }
+        if (destination != result.width)
+          return false;
+      } else {
+        const auto &parent = child(0);
+        obelisk_rt_design_semantic_type_info_v1 semantic{};
+        if (obelisk_rt_cached_design_semantic_type_info(
+                handle->owner->context, parent.semantic, &semantic) !=
+            OBELISK_RT_OK)
+          return false;
+        bool ascending = semantic.range_left < semantic.range_right;
+        int64_t base = 0, rightBound = 0;
+        bool available =
+            integer(child(1), base) && integer(child(2), rightBound);
+        bool indexed = current.info.kind == vpiIndexedPartSelect;
+        __int128 first = indexed ? static_cast<__int128>(base)
+                                 : static_cast<__int128>(rightBound);
+        if (indexed && current.info.code == 1 && ascending)
+          first += result.width - 1;
+        if (indexed && current.info.code == 2 && !ascending)
+          first -= result.width - 1;
+        bool fourState =
+            (semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0;
+        for (uint64_t bit = 0; bit != result.width; ++bit) {
+          __int128 sourceIndex = ascending ? first - bit : first + bit;
+          __int128 offset =
+              ascending
+                  ? static_cast<__int128>(semantic.range_right) - sourceIndex
+                  : sourceIndex - static_cast<__int128>(semantic.range_right);
+          if (!available || offset < 0 || offset >= parent.width) {
+            if (fourState)
+              result.unknown[bit / 64] |= UINT64_C(1) << (bit % 64);
+          } else
+            copyBit(parent, static_cast<uint64_t>(offset), bit);
+        }
+      }
+      uint64_t cursor = current.cursor.offset;
+      results.emplace(cursor, std::move(result));
+      pending.pop_back();
+    }
+    auto result = results.find(handle->cursor.offset);
+    if (result == results.end())
+      return false;
+    value = std::move(result->second.value);
+    unknown = std::move(result->second.unknown);
+    return true;
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(handle->owner, "expression value evaluation is unavailable",
+             vpiNotice);
+    return false;
+  }
+}
+
 bool readValue(__vpiHandle *handle, const VPIValueSource &source,
                std::vector<uint64_t> &value, std::vector<uint64_t> &unknown) {
+  VPIExpressionInfo expression{};
+  if (source.form == VPIObjectForm::Design &&
+      obelisk_rt_cached_vpi_expression(handle->owner->context, source.cursor,
+                                       &expression) == OBELISK_RT_OK)
+    return readExpressionValue(handle, expression, value, unknown);
   if (source.form == VPIObjectForm::SnapshotValue) {
     if (!handle->snapshot->readable) {
       setError(handle->owner, "snapshot member has no readable value",
@@ -9682,6 +9880,34 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       return nullptr;
     }
   }
+  if (reference && sourceDesign && type == vpiUse) {
+    OBELISK_RT_TRY {
+      std::vector<VPIRelationRange> ranges;
+      auto status = obelisk_rt_cached_vpi_expression_use_ranges(state->context,
+                                                                parent, ranges);
+      if (status == OBELISK_RT_OK) {
+        auto iterator = std::make_unique<__vpiHandle>();
+        iterator->owner = state;
+        iterator->kind = VPIHandleKind::Iterator;
+        iterator->iteratorType = type;
+        iterator->relationIterator = true;
+        iterator->relationRange = ranges.front();
+        iterator->classMemberRanges = std::move(ranges);
+        copyUseRecipe(*iterator, *referenceHandle);
+        iterator->classDefinitionOrigin = sourceClassDefinitionOrigin;
+        return keepHandle(state, std::move(iterator));
+      }
+      if (status != OBELISK_RT_EOF) {
+        setError(state, "could not resolve expression uses",
+                 status == OBELISK_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
+        return nullptr;
+      }
+    }
+    OBELISK_RT_CATCH_ALL {
+      setError(state, "could not allocate expression-use iterator", vpiSystem);
+      return nullptr;
+    }
+  }
   VPIRelationRange range{};
   obelisk_rt_status relationStatus = OBELISK_RT_EOF;
   uint32_t storageSelector = static_cast<uint32_t>(type);
@@ -10609,6 +10835,29 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
              vpiNotice);
     return vpiUndefined;
   }
+  VPIExpressionInfo expression{};
+  if (handle->form == VPIObjectForm::Design &&
+      obelisk_rt_cached_vpi_expression(handle->owner->context, handle->cursor,
+                                       &expression) == OBELISK_RT_OK) {
+    if (!propertyFor(handle, property))
+      return vpiUndefined;
+    if (property == vpiSize)
+      return static_cast<PLI_INT32>(
+          std::min<uint64_t>(expression.bitWidth, INT32_MAX));
+    if (property == vpiOpType || property == vpiConstType ||
+        property == vpiIndexedPartSelectType)
+      return expression.code;
+    if (property == vpiConstantSelect)
+      return expression.constantSelect;
+    if (property == vpiSigned) {
+      obelisk_rt_design_semantic_type_info_v1 semantic{};
+      if (obelisk_rt_cached_design_semantic_type_info(
+              handle->owner->context, expression.semantic, &semantic) !=
+          OBELISK_RT_OK)
+        return vpiUndefined;
+      return (semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0;
+    }
+  }
   if (handle->kind == VPIHandleKind::Object &&
       (property == vpiArrayMember || property == vpiPackedArrayMember ||
        property == vpiConstantSelect || property == vpiSigned)) {
@@ -11407,6 +11656,124 @@ bool decompileSourceExpression(__vpiHandle *handle, std::string &result) {
   }
 }
 
+// Render retained syntax without evaluating live leaves or inferring a name
+// from a display hierarchy. A missing exact identifier is an unavailable query.
+bool decompileRetainedExpression(__vpiHandle *handle, std::string &result) {
+  struct Pending {
+    obelisk_rt_design_cursor_v1 cursor{};
+    uint32_t kind = 0;
+    std::string_view identifier;
+    std::string token;
+  };
+  auto *context = handle->owner->context;
+  OBELISK_RT_TRY {
+    std::string text;
+    bool escaped = false;
+    auto append = [&](std::string_view value) {
+      if (escaped && !value.empty()) {
+        if (value.front() != ' ')
+          text += ' ';
+        escaped = false;
+      }
+      text += value;
+    };
+    auto token = [](std::string value) {
+      Pending item;
+      item.token = std::move(value);
+      return item;
+    };
+    std::vector<Pending> pending{
+        {handle->cursor, uint32_t(vpiTypeForHandle(handle)), {}, {}}};
+    while (!pending.empty()) {
+      Pending item = std::move(pending.back());
+      pending.pop_back();
+      if (!item.kind) {
+        append(item.token);
+        continue;
+      }
+      VPIExpressionInfo expression{};
+      if (obelisk_rt_cached_vpi_expression(context, item.cursor, &expression) !=
+          OBELISK_RT_OK) {
+        if (item.identifier.empty()) {
+          setError(handle->owner,
+                   "exact source reference spelling is unavailable", vpiNotice);
+          return false;
+        }
+        append("\\");
+        append(item.identifier);
+        escaped = true;
+        continue;
+      }
+      if (item.kind == vpiConstant) {
+        __vpiHandle literal;
+        literal.owner = handle->owner;
+        literal.cursor = item.cursor;
+        literal.exactVpiType = vpiConstant;
+        std::string spelling;
+        if (!decompileSourceExpression(&literal, spelling))
+          return false;
+        append(spelling);
+        continue;
+      }
+      std::vector<Pending> children;
+      for (uint32_t index = 0; index != expression.operandCount; ++index) {
+        Pending child;
+        if (obelisk_rt_cached_vpi_expression_operand(
+                context, item.cursor, index, &child.cursor, &child.kind) !=
+            OBELISK_RT_OK)
+          return false;
+        const uint8_t *name = nullptr;
+        uint64_t size = 0;
+        auto status = obelisk_rt_cached_vpi_expression_operand_identifier(
+            context, item.cursor, index, &name, &size);
+        if (status == OBELISK_RT_OK)
+          child.identifier =
+              std::string_view(reinterpret_cast<const char *>(name), size);
+        else if (status != OBELISK_RT_EOF)
+          return false;
+        children.push_back(std::move(child));
+      }
+      std::vector<Pending> ordered;
+      if (item.kind == vpiOperation) {
+        bool repeated = expression.code == vpiMultiConcatOp;
+        ordered.push_back(token("{ "));
+        if (repeated) {
+          ordered.push_back(std::move(children[0]));
+          ordered.push_back(token(" { "));
+        }
+        for (size_t index = repeated ? 1 : 0; index != children.size();
+             ++index) {
+          if (index != size_t(repeated))
+            ordered.push_back(token(" , "));
+          ordered.push_back(std::move(children[index]));
+        }
+        ordered.push_back(token(repeated ? " } }" : " }"));
+      } else {
+        ordered.push_back(std::move(children[0]));
+        ordered.push_back(token(" [ "));
+        ordered.push_back(std::move(children[1]));
+        ordered.push_back(token(item.kind == vpiPartSelect ? " : "
+                                : expression.code == 1     ? " +: "
+                                                           : " -: "));
+        ordered.push_back(std::move(children[2]));
+        ordered.push_back(token(" ]"));
+      }
+      for (auto iterator = ordered.rbegin(); iterator != ordered.rend();
+           ++iterator)
+        pending.push_back(std::move(*iterator));
+    }
+    if (escaped)
+      text += ' ';
+    result = std::move(text);
+    return true;
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(handle->owner, "could not decompile retained VPI expression",
+             vpiSystem);
+    return false;
+  }
+}
+
 extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
                                                      vpiHandle opaque) {
   VPICallScope vpiCallScope;
@@ -11614,6 +11981,12 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     }
   }
   if (property == vpiDecompile) {
+    VPIExpressionInfo expression{};
+    if (handle->form == VPIObjectForm::Design && !handle->statement &&
+        obelisk_rt_cached_vpi_expression(handle->owner->context, handle->cursor,
+                                         &expression) == OBELISK_RT_OK)
+      return decompileRetainedExpression(handle, scratch) ? scratch.data()
+                                                          : nullptr;
     if (hasDeclarationName)
       return decompileSourceExpression(handle, scratch) ? scratch.data()
                                                         : nullptr;

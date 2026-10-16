@@ -32,6 +32,8 @@ verifyVPIDefinitionMemberRef(mlir::Operation *use, SimDesignOp design,
                              VPIObjectRefAttr reference,
                              mlir::SymbolTableCollection &symbols);
 
+mlir::LogicalResult verifyVPIExpressionInventory(SimDesignOp design);
+
 bool isVPIVisibleCodeUnit(SimCodeUnitDeclOp codeUnit);
 /// The source callable kind may differ from its executable ABI entry kind:
 /// imported tasks run through synchronous function thunks.

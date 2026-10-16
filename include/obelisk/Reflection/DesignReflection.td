@@ -543,6 +543,67 @@ def DefinitionMemberInstanceRelationInverse
     : ReflectionLayout<"DefinitionMemberInstanceRelationInverse", 4,
       [DefinitionMemberInstanceRelationInverseTarget]>;
 
+// Shared expression templates retain source occurrences by local node ordinal.
+// An exact root relation slot supplies instance identity and declaration leaves;
+// neither a node nor a leaf allocates a duplicate physical Object record.
+// TemplateIndex UINT32_MAX denotes a direct contextual declaration root with
+// one leaf. Other roots use template node zero. Node FirstOperand is relative
+// to its template operand slice; template slices are dense and disjoint.
+// Operand bit31 tags a leaf ordinal; otherwise it names a local node ordinal.
+// Leaf high bits form their own namespace: 0 local definition member, 1 Object,
+// 2 ExpressionBoundMember, 3 StaticObject. All payloads use the low30 bits.
+def ExpressionRootBindingOwnerIndexAndTable : ReflectionField<"OwnerIndexAndTable", 0, U32LE>;
+def ExpressionRootBindingTemplateIndex : ReflectionField<"TemplateIndex", 4, U32LE>;
+def ExpressionRootBindingFirstLeaf : ReflectionField<"FirstLeaf", 8, U32LE>;
+def ExpressionRootBindingSelector : ReflectionField<"Selector", 12, U16LE>;
+def ExpressionRootBindingMode : ReflectionField<"Mode", 14, U16LE>;
+def ExpressionRootBindingOrdinal : ReflectionField<"Ordinal", 16, U32LE>;
+def ExpressionRootBinding : ReflectionLayout<"ExpressionRootBinding", 20,
+  [ExpressionRootBindingOwnerIndexAndTable, ExpressionRootBindingTemplateIndex, ExpressionRootBindingFirstLeaf, ExpressionRootBindingSelector, ExpressionRootBindingMode, ExpressionRootBindingOrdinal]>;
+
+def ExpressionTemplateDefinitionIndex : ReflectionField<"DefinitionIndex", 0, U32LE>;
+def ExpressionTemplateFirstNode : ReflectionField<"FirstNode", 4, U32LE>;
+def ExpressionTemplateNodeCount : ReflectionField<"NodeCount", 8, U32LE>;
+def ExpressionTemplateFirstOperand : ReflectionField<"FirstOperand", 12, U32LE>;
+def ExpressionTemplateOperandCount : ReflectionField<"OperandCount", 16, U32LE>;
+def ExpressionTemplateLeafCount : ReflectionField<"LeafCount", 20, U32LE>;
+def ExpressionTemplateFirstLeafShape : ReflectionField<"FirstLeafShape", 24, U32LE>;
+def ExpressionTemplate : ReflectionLayout<"ExpressionTemplate", 28,
+  [ExpressionTemplateDefinitionIndex, ExpressionTemplateFirstNode, ExpressionTemplateNodeCount, ExpressionTemplateFirstOperand, ExpressionTemplateOperandCount, ExpressionTemplateLeafCount, ExpressionTemplateFirstLeafShape]>;
+
+def ExpressionNodeKind : ReflectionField<"Kind", 0, U16LE>;
+def ExpressionNodeCode : ReflectionField<"Code", 2, U16LE>;
+def ExpressionNodeSemanticTypeIndex : ReflectionField<"SemanticTypeIndex", 4, U32LE>;
+def ExpressionNodeFirstOperand : ReflectionField<"FirstOperand", 8, U32LE>;
+def ExpressionNodeOperandCount : ReflectionField<"OperandCount", 12, U32LE>;
+def ExpressionNodeFile : ReflectionField<"File", 16, U32LE>;
+def ExpressionNodeLine : ReflectionField<"Line", 20, U32LE>;
+def ExpressionNodeColumn : ReflectionField<"Column", 24, U32LE>;
+def ExpressionNodeFrozenValueIndex : ReflectionField<"FrozenValueIndex", 28, U32LE>;
+def ExpressionNode : ReflectionLayout<"ExpressionNode", 32,
+  [ExpressionNodeKind, ExpressionNodeCode, ExpressionNodeSemanticTypeIndex, ExpressionNodeFirstOperand, ExpressionNodeOperandCount, ExpressionNodeFile, ExpressionNodeLine, ExpressionNodeColumn, ExpressionNodeFrozenValueIndex]>;
+
+def ExpressionOperandTarget : ReflectionField<"Target", 0, U32LE>;
+def ExpressionOperand : ReflectionLayout<"ExpressionOperand", 4,
+  [ExpressionOperandTarget]>;
+
+def ExpressionLeafTarget : ReflectionField<"Target", 0, U32LE>;
+def ExpressionLeaf : ReflectionLayout<"ExpressionLeaf", 4,
+  [ExpressionLeafTarget]>;
+
+def ExpressionBoundMemberDefinitionBindingIndex : ReflectionField<"DefinitionBindingIndex", 0, U32LE>;
+def ExpressionBoundMemberMemberIndex : ReflectionField<"MemberIndex", 4, U32LE>;
+def ExpressionBoundMember : ReflectionLayout<"ExpressionBoundMember", 8,
+  [ExpressionBoundMemberDefinitionBindingIndex, ExpressionBoundMemberMemberIndex]>;
+
+def ExpressionLeafShapeSemanticTypeIndex : ReflectionField<"SemanticTypeIndex", 0, U32LE>;
+def ExpressionLeafShapeKind : ReflectionField<"Kind", 4, U16LE>;
+def ExpressionLeafShapeReserved : ReflectionField<"Reserved", 6, U16LE>;
+def ExpressionLeafShapeIdentifier : ReflectionField<"Identifier", 8, U32LE>;
+def ExpressionLeafShape : ReflectionLayout<"ExpressionLeafShape", 12,
+  [ExpressionLeafShapeSemanticTypeIndex, ExpressionLeafShapeKind,
+   ExpressionLeafShapeReserved, ExpressionLeafShapeIdentifier]>;
+
 // Per-bit immutable resolved-net subtypes. Runs are sorted by object index and
 // first bit, nonoverlapping, and maximally coalesced. Missing bits deliberately
 // mean that the exact dominating subtype is unavailable.
@@ -766,12 +827,40 @@ def SemanticDirectoryInitializerBindingOffset
 def SemanticDirectoryInitializerBindingCount
     : ReflectionField<"InitializerBindingCount", 744, U64LE>;
 
+def SemanticDirectoryExpressionRootBindingOffset
+    : ReflectionField<"ExpressionRootBindingOffset", 752, U64LE>;
+def SemanticDirectoryExpressionRootBindingCount
+    : ReflectionField<"ExpressionRootBindingCount", 760, U64LE>;
 def SemanticDirectoryDefinitionParameterValueOffset
     : ReflectionField<"DefinitionParameterValueOffset", 768, U64LE>;
 def SemanticDirectoryDefinitionParameterValueCount
     : ReflectionField<"DefinitionParameterValueCount", 776, U64LE>;
+def SemanticDirectoryExpressionTemplateOffset
+    : ReflectionField<"ExpressionTemplateOffset", 784, U64LE>;
+def SemanticDirectoryExpressionTemplateCount
+    : ReflectionField<"ExpressionTemplateCount", 792, U64LE>;
+def SemanticDirectoryExpressionNodeOffset
+    : ReflectionField<"ExpressionNodeOffset", 800, U64LE>;
+def SemanticDirectoryExpressionNodeCount
+    : ReflectionField<"ExpressionNodeCount", 808, U64LE>;
+def SemanticDirectoryExpressionOperandOffset
+    : ReflectionField<"ExpressionOperandOffset", 816, U64LE>;
+def SemanticDirectoryExpressionOperandCount
+    : ReflectionField<"ExpressionOperandCount", 824, U64LE>;
+def SemanticDirectoryExpressionLeafOffset
+    : ReflectionField<"ExpressionLeafOffset", 832, U64LE>;
+def SemanticDirectoryExpressionLeafCount
+    : ReflectionField<"ExpressionLeafCount", 840, U64LE>;
+def SemanticDirectoryExpressionBoundMemberOffset
+    : ReflectionField<"ExpressionBoundMemberOffset", 848, U64LE>;
+def SemanticDirectoryExpressionBoundMemberCount
+    : ReflectionField<"ExpressionBoundMemberCount", 856, U64LE>;
+def SemanticDirectoryExpressionLeafShapeOffset
+    : ReflectionField<"ExpressionLeafShapeOffset", 864, U64LE>;
+def SemanticDirectoryExpressionLeafShapeCount
+    : ReflectionField<"ExpressionLeafShapeCount", 872, U64LE>;
 
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 784,
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 880,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -863,8 +952,22 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 784,
    SemanticDirectoryCodeUnitScopeBindingCount,
    SemanticDirectoryInitializerBindingOffset,
    SemanticDirectoryInitializerBindingCount,
+   SemanticDirectoryExpressionRootBindingOffset,
+   SemanticDirectoryExpressionRootBindingCount,
    SemanticDirectoryDefinitionParameterValueOffset,
-   SemanticDirectoryDefinitionParameterValueCount]>;
+   SemanticDirectoryDefinitionParameterValueCount,
+   SemanticDirectoryExpressionTemplateOffset,
+   SemanticDirectoryExpressionTemplateCount,
+   SemanticDirectoryExpressionNodeOffset,
+   SemanticDirectoryExpressionNodeCount,
+   SemanticDirectoryExpressionOperandOffset,
+   SemanticDirectoryExpressionOperandCount,
+   SemanticDirectoryExpressionLeafOffset,
+   SemanticDirectoryExpressionLeafCount,
+   SemanticDirectoryExpressionBoundMemberOffset,
+   SemanticDirectoryExpressionBoundMemberCount,
+   SemanticDirectoryExpressionLeafShapeOffset,
+   SemanticDirectoryExpressionLeafShapeCount]>;
 
 // Exact compatible implementations derived from typed class dispatch. Rows
 // are sorted by (CallID, CodeUnitID); every row in one call group carries the
