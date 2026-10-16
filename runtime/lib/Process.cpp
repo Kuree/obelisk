@@ -3092,8 +3092,10 @@ obelisk_rt_collect_process_tree_unlocked(const obelisk_rt_context *context,
   // with a link, can be an ancestor. Remember the parents of the former.
   std::unordered_map<uint64_t, uint64_t> liveParents;
   rootLive = false;
+  bool activeScheduled = false;
   auto noteLive = [&](uint64_t token, uint64_t parent) {
     rootLive |= token == root;
+    activeScheduled |= token == active;
     if (parentMarks.count(token))
       liveParents.emplace(token, parent);
   };
@@ -3103,8 +3105,11 @@ obelisk_rt_collect_process_tree_unlocked(const obelisk_rt_context *context,
   for (const ScheduledDesignTask &task : context->scheduledDesignTasks)
     if (!task.terminated)
       noteLive(task.id, task.parent);
-  // An executing design task has left the scheduler vector.
-  if (active != 0)
+  // Only an executing design task leaves the scheduler vectors; it carries
+  // its parent in the active state. Every other active identity, such as a
+  // native process or an observer's waiter, is scheduled with its own parent.
+  bool activeDequeued = active != 0 && !activeScheduled;
+  if (activeDequeued)
     noteLive(active, context->activeLogicalProcessParent);
 
   // Whether `node` is root or one of its descendants, memoized for every
@@ -3150,7 +3155,7 @@ obelisk_rt_collect_process_tree_unlocked(const obelisk_rt_context *context,
       visit(task.id, task.parent);
   for (const auto &[finished, parent] : links)
     visit(finished, parent);
-  if (active != 0)
+  if (activeDequeued)
     visit(active, context->activeLogicalProcessParent);
   return tree;
 }

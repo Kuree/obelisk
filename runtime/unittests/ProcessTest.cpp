@@ -7802,6 +7802,39 @@ TEST(Scheduler, ProcessTreeCollectionFollowsChainsInAnyOrder) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, ProcessTreeTakesScheduledParentsFromTheScheduler) {
+  // IEEE 1800-2023 9.7: kill() reaches only descendants. An observer runs
+  // as its scheduled waiter, so only a dequeued design task contributes its
+  // parent from the active state.
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  constexpr uint64_t tag = OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+  auto live = reinterpret_cast<obelisk_rt_process_instance_v1 *>(
+      static_cast<uintptr_t>(1));
+  for (auto [token, parent] :
+       {std::pair<uint64_t, uint64_t>{1, 0}, {2, tag | 1}, {3, 0}}) {
+    ScheduledProcess process;
+    process.instance = live;
+    process.token = token;
+    process.parent = parent;
+    context->scheduledProcesses.push_back(std::move(process));
+  }
+  context->logicalProcessParentsWithChildren = {tag | 1};
+  // Waiter 3 is active with the parent of the producer, process 2.
+  context->activeLogicalProcessToken = tag | 3;
+  context->activeLogicalProcessParent = tag | 1;
+  bool rootLive = false;
+  EXPECT_EQ(
+      obelisk_rt_collect_process_tree_unlocked(context, tag | 1, rootLive),
+      (std::unordered_set<uint64_t>{tag | 1, tag | 2}));
+  EXPECT_TRUE(rootLive);
+
+  context->activeLogicalProcessToken = 0;
+  context->activeLogicalProcessParent = 0;
+  context->scheduledProcesses.clear();
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, FinishedParentLinksPruneOnlyWithProcessCompaction) {
   // A prune scans every scheduled process. A dead slot below the compaction
   // threshold keeps compaction pending on every scheduler iteration, so it

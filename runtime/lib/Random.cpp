@@ -193,11 +193,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_initialization_enter(
       obelisk_rt_v1_random_state_seed(&stream->second, context->configuredSeed,
                                       kDefaultSequence);
     uint64_t token = scopes.nextToken++;
-    scopes.activations.push_back({token, scopes.activeScope,
-                                  context->activeLogicalProcessToken,
-                                  context->activeRandom});
+    scopes.activations.push_back(
+        {token, scopes.activeScope, context->activeLogicalProcessToken,
+         context->activeLogicalProcessParent, context->activeRandom});
     scopes.activeScope = scope;
     context->activeLogicalProcessToken = 0;
+    context->activeLogicalProcessParent = 0;
     context->activeRandom = &stream->second;
     *outActivation = token;
     return OBELISK_RT_OK;
@@ -222,6 +223,7 @@ obelisk_rt_v1_random_initialization_leave(obelisk_rt_context *context,
     auto previous = scopes.activations.back();
     context->activeRandom = previous.previousRandom;
     context->activeLogicalProcessToken = previous.previousProcess;
+    context->activeLogicalProcessParent = previous.previousParent;
     scopes.activeScope = previous.previousScope;
     scopes.activations.pop_back();
     return OBELISK_RT_OK;

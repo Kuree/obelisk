@@ -852,6 +852,7 @@ struct PublicationBatch {
   bool flushing = false;
   uint32_t staticID = 0; // zero while the window is empty
   uint64_t logicalProcessToken = 0;
+  uint64_t logicalProcessParent = 0;
   const obelisk_rt_context *aotContext = nullptr;
   uint64_t rootWidth = 0;
   uint64_t windowLow = 0;
@@ -1057,6 +1058,7 @@ struct InitializationRandomScopes {
     uint64_t token;
     uint64_t previousScope;
     uint64_t previousProcess;
+    uint64_t previousParent;
     obelisk_rt_random_state_v1 *previousRandom;
   };
   // Map nodes keep saved stream pointers stable across nested scope entries.

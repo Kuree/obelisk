@@ -117,6 +117,7 @@ bool evaluateBoundObserver(obelisk_rt_context *context, uint64_t taskID,
 
   obelisk_rt_process_instance_v1 *producer = context->activeNativeProcess;
   uint64_t producerToken = context->activeLogicalProcessToken;
+  uint64_t producerParent = context->activeLogicalProcessParent;
   uint64_t producerTask = context->activeDesignTaskID;
   bool producerWaitOrderFailed = context->activeWaitOrderFailed;
   bool producerExecuting = context->designTaskExecuting;
@@ -124,6 +125,7 @@ bool evaluateBoundObserver(obelisk_rt_context *context, uint64_t taskID,
   std::vector<uint64_t> waiterControls = task->controls;
   context->activeNativeProcess = nullptr;
   context->activeLogicalProcessToken = taskID;
+  context->activeLogicalProcessParent = task->parent;
   context->activeDesignTaskID = taskID;
   context->activeWaitOrderFailed = false;
   context->designTaskExecuting = true;
@@ -143,6 +145,7 @@ bool evaluateBoundObserver(obelisk_rt_context *context, uint64_t taskID,
   context->activeControls = std::move(producerControls);
   context->activeNativeProcess = producer;
   context->activeLogicalProcessToken = producerToken;
+  context->activeLogicalProcessParent = producerParent;
   context->activeDesignTaskID = producerTask;
   context->activeWaitOrderFailed = producerWaitOrderFailed;
   context->designTaskExecuting = producerExecuting;

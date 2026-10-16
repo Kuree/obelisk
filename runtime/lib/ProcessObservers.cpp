@@ -114,6 +114,7 @@ bool evaluateNativeBoundObserver(obelisk_rt_context *context,
 
   obelisk_rt_process_instance_v1 *producer = context->activeNativeProcess;
   uint64_t producerToken = context->activeLogicalProcessToken;
+  uint64_t producerParent = context->activeLogicalProcessParent;
   uint64_t producerDesignTask = context->activeDesignTaskID;
   bool producerWaitOrderFailed = context->activeWaitOrderFailed;
   bool producerDesignExecuting = context->designTaskExecuting;
@@ -122,6 +123,7 @@ bool evaluateNativeBoundObserver(obelisk_rt_context *context,
   context->activeNativeProcess = waiter;
   context->activeLogicalProcessToken =
       OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | processToken;
+  context->activeLogicalProcessParent = process->parent;
   context->activeDesignTaskID = 0;
   context->activeWaitOrderFailed = false;
   context->designTaskExecuting = false;
@@ -162,6 +164,7 @@ bool evaluateNativeBoundObserver(obelisk_rt_context *context,
   context->activeControls = std::move(producerControls);
   context->activeNativeProcess = producer;
   context->activeLogicalProcessToken = producerToken;
+  context->activeLogicalProcessParent = producerParent;
   context->activeDesignTaskID = producerDesignTask;
   context->activeWaitOrderFailed = producerWaitOrderFailed;
   context->designTaskExecuting = producerDesignExecuting;

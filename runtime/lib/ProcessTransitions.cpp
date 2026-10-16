@@ -2402,7 +2402,7 @@ void flushPublicationBatch(obelisk_rt_context *context) {
       changed |= batch.plane(PublicationBatch::Changed)[word] != 0;
     struct Reset {
       obelisk_rt_context *context;
-      uint64_t firstWord, lastWord, previousToken;
+      uint64_t firstWord, lastWord, previousToken, previousParent;
       ~Reset() {
         PublicationBatch &batch = context->publicationBatch;
         for (unsigned plane = 0; plane != PublicationBatch::PlaneCount; ++plane)
@@ -2412,10 +2412,13 @@ void flushPublicationBatch(obelisk_rt_context *context) {
         batch.staticID = 0;
         batch.flushing = false;
         context->activeLogicalProcessToken = previousToken;
+        context->activeLogicalProcessParent = previousParent;
       }
-    } reset{context, firstWord, lastWord, context->activeLogicalProcessToken};
+    } reset{context, firstWord, lastWord, context->activeLogicalProcessToken,
+            context->activeLogicalProcessParent};
     batch.flushing = true;
     context->activeLogicalProcessToken = batch.logicalProcessToken;
+    context->activeLogicalProcessParent = batch.logicalProcessParent;
     if (changed && context->schedulerStatus == OBELISK_RT_OK) {
       auto bytes = [&](PublicationBatch::Plane plane) {
         return reinterpret_cast<const uint8_t *>(batch.plane(plane) +
@@ -2487,6 +2490,7 @@ obelisk_rt_v1_scheduler_publication_batch_begin(obelisk_rt_context *context) {
                              (PublicationBatch::kWindowWords + 1),
                          0);
     batch.logicalProcessToken = context->activeLogicalProcessToken;
+    batch.logicalProcessParent = context->activeLogicalProcessParent;
     batch.aotContext = activeNativeAOTContext;
     publicationBatchContext = context;
     return OBELISK_RT_OK;
@@ -2564,11 +2568,17 @@ extern "C" void obelisk_rt_v1_scheduler_static_transition_owned(
   // the executing process must not wake its own inactive event control.
   struct PublicationScope {
     obelisk_rt_context *context;
-    uint64_t previous;
-    ~PublicationScope() { context->activeLogicalProcessToken = previous; }
-  } scope{context, context->activeLogicalProcessToken};
+    uint64_t previous, previousParent;
+    ~PublicationScope() {
+      context->activeLogicalProcessToken = previous;
+      context->activeLogicalProcessParent = previousParent;
+    }
+  } scope{context, context->activeLogicalProcessToken,
+          context->activeLogicalProcessParent};
   context->activeLogicalProcessToken =
       kNativeLogicalProcessTag | context->scheduledProcesses[index].token;
+  context->activeLogicalProcessParent =
+      context->scheduledProcesses[index].parent;
   obelisk_rt_v1_scheduler_static_transition(context, staticState, lowBit,
                                             bitWidth, oldValue, oldUnknown,
                                             newValue, newUnknown);
