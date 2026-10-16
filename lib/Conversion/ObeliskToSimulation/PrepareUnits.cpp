@@ -1278,7 +1278,8 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
         scopes.lookup(unit.source), unit.entryKind,
         builder.getStringAttr(unit.hierarchy),
         builder.getStringAttr(getDebugName(unit.source)),
-        (isa<semantic::SVPortConnectionOp>(unit.source) ||
+        (isa<semantic::SVPortConnectionOp, semantic::SVVariableSymbolOp,
+             semantic::SVClassPropertySymbolOp>(unit.source) ||
          !sim::isVPIVisibleEntryKind(unit.entryKind))
             ? builder.getUnitAttr()
             : UnitAttr{});

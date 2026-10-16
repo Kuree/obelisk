@@ -280,6 +280,7 @@ add_executable(obelisk-design-database-dump-test EXCLUDE_FROM_ALL
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIClassDispatchTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIFramesTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPISourceFramesTest.cpp"
+  "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPISourceInitializersTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIFrameLocalsTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIFrameAliasesTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIStaticLocalsTest.cpp"

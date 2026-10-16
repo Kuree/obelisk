@@ -4598,6 +4598,27 @@ void ObeliskSimPreparePass::runOnOperation() {
   if (failed(
           materializeProceduralTypes(module, design, proceduralTypes, builder)))
     return abort();
+  // A declaration initializer has its own executable helper, but no source
+  // activation. Retain its exact static object before inventorying its calls;
+  // the runtime then derives the call's lexical scope from that declaration.
+  if (preserveVPIMethodBindings)
+    for (const PreparedUnit &unit : preparedUnits->units) {
+      auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(unit.source);
+      if (!isa<semantic::SVVariableSymbolOp>(unit.source) &&
+          !(property &&
+            property.getLifetime() == semantic::SVVariableLifetime::Static))
+        continue;
+      auto descriptor = descriptors.find(getHierarchyName(unit.source));
+      if (descriptor == descriptors.end() ||
+          descriptor->second.kind != DescriptorInfo::Kind::Storage) {
+        emitError(getSemanticLocation(unit.source))
+            << "static initializer has no exact source storage descriptor";
+        return abort();
+      }
+      sim::SimVPIInitializerBindingOp::create(builder,
+                                              getSemanticLocation(unit.source),
+                                              unit.id, descriptor->second.id);
+    }
   if (failed(materializeProceduralCalls(design, *preparedUnits, semanticSymbols,
                                         builder)))
     return abort();

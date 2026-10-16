@@ -653,8 +653,12 @@ materializeProceduralCalls(sim::SimDesignOp design, const PreparedUnits &units,
   for (auto existing : design.getBody().front().getOps<sim::SimVPICallDeclOp>())
     nextID = std::max(nextID, static_cast<uint64_t>(existing.getId()) + 1);
   SymbolTable symbols(design);
+  llvm::DenseSet<uint64_t> initializerUnits;
+  for (auto binding : design.getOps<sim::SimVPIInitializerBindingOp>())
+    initializerUnits.insert(binding.getCodeUnitId());
   for (const PreparedUnit &unit : units.units) {
-    if (!isa<semantic::SVProceduralBlockSymbolOp,
+    if (!initializerUnits.contains(unit.id) &&
+        !isa<semantic::SVProceduralBlockSymbolOp,
              semantic::SVSubroutineSymbolOp>(unit.source))
       continue;
     auto owner = units.declarations.lookup(unit.source);
@@ -663,8 +667,10 @@ materializeProceduralCalls(sim::SimDesignOp design, const PreparedUnits &units,
     SmallVector<Operation *> pending{unit.source};
     while (!pending.empty()) {
       Operation *source = pending.pop_back_val();
-      if (source != unit.source && isa<semantic::SVProceduralBlockSymbolOp,
-                                       semantic::SVSubroutineSymbolOp>(source))
+      // Nested source units, including static local initializers, own their
+      // occurrences independently. Automatic declaration initializers remain
+      // in this procedural owner because they have no separate helper unit.
+      if (source != unit.source && units.declarations.count(source))
         continue;
       for (Operation *child : llvm::reverse(getChildren(source)))
         pending.push_back(child);

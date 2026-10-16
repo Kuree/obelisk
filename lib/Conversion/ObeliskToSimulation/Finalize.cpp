@@ -354,14 +354,21 @@ public:
     if (failed(propagateVPIControlEscapes(design)))
       return signalPassFailure();
     SymbolTable symbols(design);
+    llvm::DenseSet<uint64_t> initializerUnits;
+    for (auto binding : design.getOps<sim::SimVPIInitializerBindingOp>())
+      initializerUnits.insert(binding.getCodeUnitId());
     SmallVector<Operation *> calls;
     design.walk([&](Operation *operation) {
       if (!isa<sim::SimCallOp, sim::SimTaskCallOp, sim::SimClassVirtualCallOp,
                sim::SimClassVirtualTaskCallOp, sim::SimDPICallOp>(operation))
         return;
       auto function = operation->getParentOfType<sim::SimFuncOp>();
+      auto codeUnitID =
+          function ? function->getAttrOfType<IntegerAttr>("code_unit_id")
+                   : IntegerAttr{};
       if (function &&
-          sim::has<sim::metadata::VpiFrameInstrumentation>(function) &&
+          (sim::has<sim::metadata::VpiFrameInstrumentation>(function) ||
+           (codeUnitID && initializerUnits.contains(codeUnitID.getInt()))) &&
           sim::has<sim::metadata::VpiCallSite>(operation))
         calls.push_back(operation);
     });
