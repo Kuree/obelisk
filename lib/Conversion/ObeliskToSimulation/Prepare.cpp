@@ -12,6 +12,7 @@
 #include "LowerUnit.h"
 #include "PrepareCaptures.h"
 #include "PrepareDeclarations.h"
+#include "PrepareExpressions.h"
 #include "PrepareLocals.h"
 #include "PrepareNetTopology.h"
 #include "PrepareRandomFunctions.h"
@@ -9258,6 +9259,9 @@ void ObeliskSimPreparePass::runOnOperation() {
     return abort();
   if (failed(materializeProceduralLocals(
           design, *preparedUnits, *preparedCaptures, descriptors, builder)))
+    return abort();
+  if (failed(materializeProceduralExpressionRelations(design, *preparedUnits,
+                                                      descriptors, builder)))
     return abort();
   auto &unitCaptures = preparedCaptures->descriptors;
   auto &unitReadCaptures = preparedCaptures->readDescriptors;

@@ -344,11 +344,9 @@ statementShape(Operation *source,
     if (children.empty())
       return std::nullopt;
     shape.kind = *loop;
-    // Slang's do-while visits its body before its condition. Other supported
-    // loops place the body last, after conditions/initializers/increments.
-    shape.children.push_back({isa<semantic::SVDoWhileLoopStatementOp>(source)
-                                  ? children.front()
-                                  : children.back()});
+    // The semantic inventory visits loop conditions before the body, including
+    // do-while (whose source spelling places the body first).
+    shape.children.push_back({children.back()});
     return shape;
   }
   if (auto wait = dyn_cast<semantic::SVWaitOrderStatementOp>(source)) {

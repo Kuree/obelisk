@@ -32,6 +32,7 @@ add_mlir_library(ObeliskToSimulation
   PrepareCoverage.cpp
   PrepareCaptures.cpp
   PrepareLocals.cpp
+  PrepareExpressions.cpp
   Prepare.cpp
   PrepareDeclarations.cpp
   PrepareNetTopology.cpp
