@@ -258,6 +258,7 @@ set_target_properties(ObeliskGeneratedVPIResolvedNetTypesRuntimeTests PROPERTIES
 add_executable(obelisk-design-database-dump-test EXCLUDE_FROM_ALL
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedDesignDatabaseDumpTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIClassMessagesTest.cpp"
+  "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIAggregateMessagesTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIMailboxLayoutTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIEventBindingsTest.cpp"
 )

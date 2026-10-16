@@ -81,8 +81,11 @@ Integral and packed values retain every bit and unknown bit; real and string
 values are copied. Scanned values are read-only; copied values survive removal
 from the mailbox and collection of the mailbox. Class references are weak and
 expire when their referents are collected; the iterator's `vpiUse` also holds
-the mailbox weakly. Unpacked aggregate and container message snapshots are
-still being completed.
+the mailbox weakly. Unpacked arrays, structs, dynamic arrays, and queues expose
+nested positional assignment-pattern expressions through `vpiOperand`.
+Scanned operands keep their copied values after parent handles are released.
+Union, associative-array, and untyped mailbox message snapshots are still
+being completed.
 
 Virtual-interface variables expose their current `vpiActual` interface or
 exact modport; a null variable returns a quiet null handle. `vpiIsModPort`

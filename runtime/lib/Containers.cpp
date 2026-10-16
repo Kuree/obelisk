@@ -5028,6 +5028,36 @@ obelisk_rt_mailbox_snapshot(obelisk_rt_object_v1 *mailbox,
   return status;
 }
 
+obelisk_rt_status
+obelisk_rt_container_snapshot(obelisk_rt_object_v1 *container,
+                              uint32_t *outKind,
+                              const obelisk_rt_element_type_v1 **outElement,
+                              std::vector<uint8_t> &outValues) {
+  outValues.clear();
+  if (outKind)
+    *outKind = 0;
+  if (outElement)
+    *outElement = nullptr;
+  if (!outKind || !outElement)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContainerHeader snapshot{};
+  auto status = snapshotHeader(container, snapshot);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (snapshot.isMailbox ||
+      (snapshot.kind != OBELISK_RT_CONTAINER_DYNAMIC_ARRAY &&
+       snapshot.kind != OBELISK_RT_CONTAINER_QUEUE))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  std::vector<uint8_t> values;
+  status = snapshotValues(container, snapshot, values);
+  if (status == OBELISK_RT_OK) {
+    *outKind = snapshot.kind;
+    *outElement = snapshot.element;
+    outValues = std::move(values);
+  }
+  return status;
+}
+
 extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_create_typed(
     obelisk_rt_gc_lane_v1 *lane, uint64_t typeID, uint32_t elementKind,
     uint32_t elementFlags, uint64_t valueSize, uint64_t alignment,

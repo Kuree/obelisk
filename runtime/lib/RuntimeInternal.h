@@ -3186,6 +3186,15 @@ obelisk_rt_status
 obelisk_rt_named_event_waiters(obelisk_rt_context *context, uint64_t eventID,
                                std::vector<uint64_t> &outProcesses);
 
+// Copies a sequential value container without changing its contents. Mailbox
+// identities are excluded; callers preserve class references instead. The
+// active lane must remain entered until copied managed words are inspected.
+obelisk_rt_status
+obelisk_rt_container_snapshot(obelisk_rt_object_v1 *container,
+                              uint32_t *outKind,
+                              const obelisk_rt_element_type_v1 **outElement,
+                              std::vector<uint8_t> &outValues);
+
 // Returns logical process tokens, including the native-process tag. The
 // caller holds an active lane and no lease for object; the helper does not
 // change wait readiness or scheduler state and promises no iteration order.
