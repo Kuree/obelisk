@@ -1395,6 +1395,78 @@ bool isUnresolvedTypeAlias(__vpiHandle *handle) {
          (info.capabilities & OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS) != 0;
 }
 
+uint32_t sourceInheritanceCapabilities(__vpiHandle *handle) {
+  if (handle->form != VPIObjectForm::Design || handle->statement)
+    return 0;
+  obelisk_rt_design_info_v1 info{};
+  return infoFor(handle, info) &&
+                 info.kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT
+             ? info.capabilities
+             : 0;
+}
+
+bool rejectUnavailableInheritanceRelation(__vpiHandle *handle,
+                                          uint32_t selector, bool iterate) {
+  uint32_t caps = sourceInheritanceCapabilities(handle);
+  const char *message = nullptr;
+  if (!iterate && selector == vpiClassTypespec &&
+      (caps & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_BASE))
+    message = "lexical base type requires an unsupported source form";
+  else if (iterate && selector == vpiArgument &&
+           (caps & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CONSTRUCTOR_ARGUMENTS))
+    message = "constructor argument source expressions are unavailable";
+  else if (iterate && selector == vpiParamAssign &&
+           (caps & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETERS))
+    message = "explicit class parameter source assignments are unavailable";
+  else if (iterate && (caps & OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC) &&
+           (selector == vpiVariables || selector == vpiMethods ||
+            selector == vpiConstraint || selector == vpiNamedEvent ||
+            selector == vpiNamedEventArray || selector == vpiTypedef ||
+            selector == vpiInternalScope || selector == vpiParameter))
+    message =
+        "lexical class type does not provide this specialization inventory";
+  auto targetFor = [&](obelisk_rt_design_cursor_v1 source, uint32_t relation,
+                       obelisk_rt_design_cursor_v1 &target) {
+    VPIRelationRange range{};
+    uint32_t kind = 0;
+    bool statement = false;
+    return obelisk_rt_cached_vpi_relation_range(handle->owner->context, source,
+                                                relation, false,
+                                                &range) == OBELISK_RT_OK &&
+           range.count == 1 &&
+           obelisk_rt_cached_vpi_relation_target(handle->owner->context,
+                                                 range.first, &target, &kind,
+                                                 &statement) == OBELISK_RT_OK &&
+           !statement;
+  };
+  if (!iterate && selector == vpiRhs &&
+      (caps & OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT)) {
+    obelisk_rt_design_cursor_v1 parameter{};
+    obelisk_rt_design_info_v1 info{};
+    if (targetFor(handle->cursor, vpiLhs, parameter) &&
+        obelisk_rt_cached_design_info(handle->owner->context, parameter,
+                                      &info) == OBELISK_RT_OK &&
+        (info.capabilities &
+         OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT))
+      message = "original parameter default form is unavailable";
+  }
+  if (!iterate && selector == vpiExtends &&
+      (caps & OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC)) {
+    obelisk_rt_design_cursor_v1 definition{}, clause{};
+    obelisk_rt_design_info_v1 info{};
+    if (targetFor(handle->cursor, vpiClassDefn, definition) &&
+        targetFor(definition, vpiExtends, clause) &&
+        obelisk_rt_cached_design_info(handle->owner->context, clause, &info) ==
+            OBELISK_RT_OK &&
+        (info.capabilities & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_BASE))
+      message = "lexical base type requires an unsupported source form";
+  }
+  if (!message)
+    return false;
+  setError(handle->owner, message, vpiNotice);
+  return true;
+}
+
 bool rejectUnresolvedParameterQuery(__vpiHandle *handle) {
   if (handle->form != VPIObjectForm::Design)
     return false;
@@ -8231,6 +8303,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
           type == vpiLeftRange ? left : right);
     }
   }
+  if (rejectUnavailableInheritanceRelation(handle, type, false))
+    return nullptr;
   if ((type == vpiTypespec || type == vpiExpr) &&
       isUnresolvedTypeAlias(handle)) {
     setError(handle->owner,
@@ -8950,6 +9024,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
         return snapshotChildren(handle, type);
       return nullptr;
     }
+    if (rejectUnavailableInheritanceRelation(handle, type, true))
+      return nullptr;
     referenceHandle = handle;
     parent = handle->cursor;
     sourceStatement = handle->statement;
@@ -9769,6 +9845,14 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
              vpiNotice);
     return vpiUndefined;
   }
+  uint32_t inheritanceCaps = sourceInheritanceCapabilities(handle);
+  if (property == vpiClassType &&
+      (inheritanceCaps & OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC))
+    return vpiUserDefinedClass;
+  if (property == vpiConnByName &&
+      (inheritanceCaps &
+       OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT))
+    return 0;
   if (property == vpiLocalParam && isUnresolvedTypeAlias(handle)) {
     setError(handle->owner, "unresolved typedef is not a parameter declaration",
              vpiNotice);

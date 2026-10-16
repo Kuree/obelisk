@@ -398,6 +398,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
   SmallVector<sim::SimVPINettypeDeclOp> nettypes;
   SmallVector<sim::SimVPITypespecDeclOp> typespecs;
   SmallVector<sim::SimVPIUnresolvedTypeAliasDeclOp> unresolvedAliases;
+  SmallVector<Operation *> sourceInheritance;
+  llvm::StringMap<Operation *> sourceInheritanceBySymbol;
   SmallVector<sim::SimVPIClassMemberDeclOp> classMembers;
   DenseMap<Operation *, sim::SimClassFieldDeclOp> classMemberFields;
   DenseSet<uint64_t> classStaticStorage;
@@ -554,6 +556,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
       if (includeStatements) {
         nettypes.push_back(nettype);
         nettypesBySymbol[nettype.getSymName()] = nettype;
+      }
+    } else if (isa<sim::SimVPILexicalClassTypespecDeclOp,
+                   sim::SimVPIClassExtendsDeclOp,
+                   sim::SimVPIClassParameterAssignDeclOp>(operation)) {
+      if (includeStatements) {
+        sourceInheritance.push_back(&operation);
+        sourceInheritanceBySymbol
+            [cast<StringAttr>(operation.getAttr("sym_name")).getValue()] =
+                &operation;
       }
     } else if (auto alias =
                    dyn_cast<sim::SimVPIUnresolvedTypeAliasDeclOp>(operation)) {
@@ -816,6 +827,37 @@ SmallVector<uint8_t> serializeDesignDatabase(
                          *id, nettype.getScopeId(),
                          nettype.getHierarchicalName().str(), Type{}, 0,
                          sourceFor(nettype), true, nettype});
+    } else if (isa<sim::SimVPILexicalClassTypespecDeclOp,
+                   sim::SimVPIClassExtendsDeclOp,
+                   sim::SimVPIClassParameterAssignDeclOp>(operation)) {
+      if (!includeStatements)
+        continue;
+      auto type = dyn_cast<sim::SimVPILexicalClassTypespecDeclOp>(operation);
+      auto clause = dyn_cast<sim::SimVPIClassExtendsDeclOp>(operation);
+      uint64_t ordinal = cast<IntegerAttr>(operation.getAttr("id")).getInt();
+      auto id = staticInventoryID(&operation, ordinal, type ? 1 : 0);
+      if (!id)
+        return {};
+      uint32_t kind =
+          static_cast<uint32_t>(type     ? VPIObjectKind::ClassTypespec
+                                : clause ? VPIObjectKind::Extends
+                                         : VPIObjectKind::ParamAssign);
+      uint32_t caps =
+          type     ? OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC
+          : clause ? 0
+                   : OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT;
+      if (type && type.getUnavailableParametersAttr())
+        caps |= OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETERS;
+      if (clause && clause.getUnavailableBaseAttr())
+        caps |= OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_BASE;
+      if (clause && clause.getUnavailableArgumentsAttr())
+        caps |= OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CONSTRUCTOR_ARGUMENTS;
+      objects.push_back(
+          {OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, kind, caps, *id,
+           static_cast<uint64_t>(
+               cast<IntegerAttr>(operation.getAttr("scope_id")).getInt()),
+           type ? type.getDebugName().str() : std::string{}, Type{}, 0,
+           sourceFor(&operation), false, &operation});
     } else if (auto alias =
                    dyn_cast<sim::SimVPIUnresolvedTypeAliasDeclOp>(operation)) {
       if (!includeStatements)
@@ -1584,7 +1626,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint32_t vpiKind;
   };
   DenseMap<Operation *, ImageObjectRef> anchorRefs, nettypeRefs, typespecRefs,
-      classMemberRefs, unresolvedAliasRefs;
+      classMemberRefs, unresolvedAliasRefs, sourceInheritanceRefs;
   DenseSet<uint32_t> lexicallyAnchoredObjectIndices;
   DenseMap<uint64_t, ImageObjectRef> codeUnitSourceRefs;
   if (includeStatements) {
@@ -1708,6 +1750,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
         return {};
       }
       eventBindings.push_back({packed, binding.getEventId()});
+    }
+    for (Operation *declaration : sourceInheritance) {
+      uint32_t index = objectIndices.lookup(declaration);
+      sourceInheritanceRefs[declaration] = {TableKind::Object, index,
+                                            objects[index].vpiKind};
     }
     for (auto alias : unresolvedAliases) {
       uint32_t index = objectIndices.lookup(alias);
@@ -2616,6 +2663,125 @@ SmallVector<uint8_t> serializeDesignDatabase(
         return {};
     }
 
+    auto sourceSymbolRef = [&](FlatSymbolRefAttr symbol) -> ImageObjectRef {
+      if (auto source = sourceInheritanceBySymbol.lookup(symbol.getValue()))
+        return sourceInheritanceRefs.lookup(source);
+      if (auto anchor = anchorsBySymbol.lookup(symbol.getValue()))
+        return anchorRefs.lookup(anchor);
+      if (auto typespec = typespecsBySymbol.lookup(symbol.getValue()))
+        return typespecRefs.lookup(typespec);
+      if (auto alias = unresolvedAliasesBySymbol.lookup(symbol.getValue()))
+        return unresolvedAliasRefs.lookup(alias);
+      llvm_unreachable(
+          "verified source inheritance reference was not serialized");
+    };
+    auto inheritanceRelation = [&](Operation *declaration, ImageObjectRef from,
+                                   uint32_t selector, VPITraversalMode mode,
+                                   ImageObjectRef to, uint32_t ordinal = 0) {
+      return addRelation(declaration, from.table, from.index, from.vpiKind,
+                         selector, mode, to.table, to.index, to.vpiKind,
+                         ordinal);
+    };
+    llvm::DenseMap<Attribute, sim::SimVPIClassExtendsDeclOp>
+        sourceExtendsByOwner;
+    for (Operation *declaration : sourceInheritance)
+      if (auto clause = dyn_cast<sim::SimVPIClassExtendsDeclOp>(declaration))
+        sourceExtendsByOwner[clause.getOwnerAttr()] = clause;
+    auto originalHandleTarget = [&](FlatSymbolRefAttr source,
+                                    uint32_t selector) {
+      for (auto relation : generalRelationDeclarations)
+        if (relation.getSource().getKind() == sim::VPIObjectRefKind::Symbol &&
+            relation.getSource().getSymbol() == source &&
+            relation.getSelector() == selector &&
+            relation.getMode() == sim::VPIRelationMode::Handle &&
+            relation.getTarget().getKind() == sim::VPIObjectRefKind::Symbol)
+          return relation.getTarget().getSymbol();
+      return FlatSymbolRefAttr{};
+    };
+    for (Operation *declaration : sourceInheritance) {
+      ImageObjectRef self = sourceInheritanceRefs.lookup(declaration);
+      if (auto type =
+              dyn_cast<sim::SimVPILexicalClassTypespecDeclOp>(declaration)) {
+        if (failed(inheritanceRelation(
+                type, self, static_cast<uint32_t>(VPIObjectKind::ClassDefn),
+                VPITraversalMode::Handle,
+                sourceSymbolRef(type.getDefinitionAttr()))) ||
+            failed(inheritanceRelation(
+                type, self, static_cast<uint32_t>(VPIRelationKind::ScopeRel),
+                VPITraversalMode::Handle,
+                sourceSymbolRef(type.getOwnerAttr()))))
+          return {};
+        FlatSymbolRefAttr inheritedType;
+        if (auto base = sourceExtendsByOwner.lookup(type.getDefinitionAttr()))
+          inheritedType = base.getBaseTypespecAttr();
+        else if (auto clause = originalHandleTarget(
+                     type.getDefinitionAttr(),
+                     static_cast<uint32_t>(VPIRelationKind::ExtendsRel)))
+          inheritedType = originalHandleTarget(
+              clause, static_cast<uint32_t>(VPIObjectKind::ClassTypespec));
+        if (inheritedType &&
+            failed(inheritanceRelation(
+                type, self, static_cast<uint32_t>(VPIRelationKind::ExtendsRel),
+                VPITraversalMode::Handle, sourceSymbolRef(inheritedType))))
+          return {};
+      } else if (auto clause =
+                     dyn_cast<sim::SimVPIClassExtendsDeclOp>(declaration)) {
+        auto owner = sourceSymbolRef(clause.getOwnerAttr());
+        if (failed(inheritanceRelation(
+                clause, owner,
+                static_cast<uint32_t>(VPIRelationKind::ExtendsRel),
+                VPITraversalMode::Handle, self)) ||
+            failed(inheritanceRelation(
+                clause, self, static_cast<uint32_t>(VPIObjectKind::ClassDefn),
+                VPITraversalMode::Handle, owner)))
+          return {};
+        if (auto base = clause.getBaseTypespecAttr())
+          if (failed(inheritanceRelation(
+                  clause, self,
+                  static_cast<uint32_t>(VPIObjectKind::ClassTypespec),
+                  VPITraversalMode::Handle, sourceSymbolRef(base))))
+            return {};
+      } else if (auto assignment =
+                     dyn_cast<sim::SimVPIClassParameterAssignDeclOp>(
+                         declaration)) {
+        auto parameter = sourceSymbolRef(assignment.getParameterAttr());
+        if (failed(inheritanceRelation(
+                assignment, sourceSymbolRef(assignment.getOwnerAttr()),
+                static_cast<uint32_t>(VPIObjectKind::ParamAssign),
+                VPITraversalMode::Iterate, self, assignment.getOrdinal())) ||
+            failed(inheritanceRelation(
+                assignment, self,
+                static_cast<uint32_t>(VPIRelationKind::LhsRel),
+                VPITraversalMode::Handle, parameter)) ||
+            failed(inheritanceRelation(
+                assignment, self,
+                static_cast<uint32_t>(VPIRelationKind::ScopeRel),
+                VPITraversalMode::Handle,
+                sourceSymbolRef(assignment.getOwnerAttr()))))
+          return {};
+        for (auto relation : generalRelationDeclarations)
+          if (relation.getSource().getKind() == sim::VPIObjectRefKind::Symbol &&
+              relation.getSource().getSymbol() ==
+                  assignment.getParameterAttr() &&
+              relation.getSelector() ==
+                  static_cast<uint32_t>(VPIRelationKind::ExprRel) &&
+              relation.getMode() == sim::VPIRelationMode::Handle) {
+            if (relation.getTarget().getKind() !=
+                sim::VPIObjectRefKind::Symbol) {
+              assignment.emitOpError(
+                  "original parameter default must preserve symbolic identity");
+              return {};
+            }
+            if (failed(inheritanceRelation(
+                    assignment, self,
+                    static_cast<uint32_t>(VPIRelationKind::RhsRel),
+                    VPITraversalMode::Handle,
+                    sourceSymbolRef(relation.getTarget().getSymbol()))))
+              return {};
+          }
+      }
+    }
+
     llvm::sort(unresolvedAliases, [](auto left, auto right) {
       return left.getId() < right.getId();
     });
@@ -3278,6 +3444,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
         else if (auto typespec = typespecsBySymbol.find(name);
                  typespec != typespecsBySymbol.end())
           resolved = typespecRefs.lookup(typespec->second);
+        else if (auto source = sourceInheritanceBySymbol.find(name);
+                 source != sourceInheritanceBySymbol.end())
+          resolved = sourceInheritanceRefs.lookup(source->second);
         else if (auto alias = unresolvedAliasesBySymbol.find(name);
                  alias != unresolvedAliasesBySymbol.end())
           resolved = unresolvedAliasRefs.lookup(alias->second);
@@ -4551,7 +4720,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
           anchor &&
           (exactKind == static_cast<uint32_t>(VPIObjectKind::Parameter) ||
            exactKind == static_cast<uint32_t>(VPIObjectKind::Task) ||
-           exactKind == static_cast<uint32_t>(VPIObjectKind::Function)) &&
+           exactKind == static_cast<uint32_t>(VPIObjectKind::Function) ||
+           (exactKind == static_cast<uint32_t>(VPIObjectKind::ClassDefn) &&
+            llvm::any_of(sourceInheritance,
+                         [&](Operation *declaration) {
+                           auto type =
+                               dyn_cast<sim::SimVPILexicalClassTypespecDeclOp>(
+                                   declaration);
+                           return type && type.getDefinitionAttr().getValue() ==
+                                              anchor.getSymName();
+                         }))) &&
           !anchor.getDebugName().empty())
         if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
                                     anchor.getDebugNameAttr())))
@@ -4561,6 +4739,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
           sim::isVPIVisibleCodeUnit(unit))
         if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
                                     unit.getDebugNameAttr())))
+          return failure();
+      if (auto type =
+              dyn_cast<sim::SimVPILexicalClassTypespecDeclOp>(operation))
+        if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
+                                    type.getDebugNameAttr())))
           return failure();
       if (auto alias =
               dyn_cast<sim::SimVPIUnresolvedTypeAliasDeclOp>(operation))

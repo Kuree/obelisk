@@ -529,8 +529,9 @@ LogicalResult SourceClassDefinitionSymbolOp::verify() {
   return sourceclass::verifyDefinition<
       GenericClassDefSymbolOp, SourceClassDefinitionSymbolOp,
       SourceClassPropertySymbolOp, SourceClassTypeAliasSymbolOp,
-      SourceClassMethodSymbolOp, SourceClassConstraintSymbolOp,
-      SourceTypeParameterSymbolOp, SourceValueParameterSymbolOp>(*this);
+      SourceClassMethodSymbolOp, SourceClassExtendsOp,
+      SourceClassConstraintSymbolOp, SourceTypeParameterSymbolOp,
+      SourceValueParameterSymbolOp>(*this);
 }
 
 LogicalResult ClassTypeOp::verifySymbolUses(SymbolTableCollection &symbols) {
@@ -600,6 +601,19 @@ LogicalResult SourceUnavailableTypeOp::verify() {
   return sourceclass::verifyDeclaredTypeOwner<SourceClassPropertySymbolOp,
                                               SourceClassTypeAliasSymbolOp>(
       *this, false);
+}
+
+LogicalResult SourceClassExtendsOp::verify() {
+  return sourceclass::verifyExtends<GenericClassDefSymbolOp,
+                                    SourceClassDefinitionSymbolOp, ClassTypeOp>(
+      *this);
+}
+
+LogicalResult
+SourceClassExtendsOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  return sourceclass::verifyExtendsReference<
+      GenericClassDefSymbolOp, SourceClassDefinitionSymbolOp, ClassTypeOp>(
+      *this, symbols);
 }
 
 LogicalResult SourceClassConstraintSymbolOp::verify() {

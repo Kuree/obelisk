@@ -1114,6 +1114,25 @@ def SourceUnavailableTypeOp
   let hasVerifier = 1;
 }
 
+def SourceClassExtendsOp
+    : SlangASTNodeOp<"sv.source.class_extends",
+                     [DeclareOpInterfaceMethods<SymbolUserOpInterface>],
+                     (ins OptionalAttr<SymbolRefAttr>:$base_definition,
+                         OptionalAttr<StrAttr>:$unavailable_base,
+                         OptionalAttr<StrAttr>:$parameter_arguments,
+                         OptionalAttr<StrAttr>:$constructor_arguments)> {
+  let summary = "lexical class inheritance without choosing a specialization";
+  let description = [{
+    The base declaration is an exact source class symbol. An unresolved
+    dependent base instead retains its source spelling in unavailable_base;
+    exactly one representation is required. Explicit parameter and constructor
+    argument syntax is retained separately until its source expression graph
+    can be represented. An absent list is distinct from an unavailable one.
+    The node has no effective type or elaborated body.
+  }];
+  let hasVerifier = 1;
+}
+
 def SourceClassConstraintSymbolOp
     : SlangSymbolASTNodeOp<"sv.source.class_constraint", [], (ins
         OptionalAttr<UnitAttr>:$is_static,

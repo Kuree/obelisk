@@ -7,6 +7,7 @@
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include <type_traits>
 
 namespace obelisk::sourceclass {
@@ -115,6 +116,89 @@ mlir::LogicalResult verifyConstraint(Constraint op) {
         mlir::isa<Constraint, SourceClass, Declarations...>(sibling) &&
         sibling.getAttr("name") == op->getAttr("name"))
       return op.emitOpError("duplicates a lexical class declaration name");
+  return mlir::success();
+}
+
+template <typename GenericClass, typename SourceClass, typename ClassType,
+          typename Extends>
+mlir::LogicalResult verifyExtends(Extends op) {
+  if (!mlir::isa_and_nonnull<GenericClass, SourceClass, ClassType>(
+          op->getParentOp()))
+    return op.emitOpError("source extends requires a lexical class owner");
+  auto *owner = op->getParentOp();
+  if (auto kind = owner->template getAttrOfType<mlir::BoolAttr>("is_interface");
+      kind && kind.getValue())
+    return op.emitOpError("normal class extends requires a normal class owner");
+  if (auto type = mlir::dyn_cast<ClassType>(owner)) {
+    if (type.getLexicalDefinitionAttr() ||
+        mlir::isa_and_nonnull<GenericClass>(type->getParentOp()))
+      return op.emitOpError(
+          "source extends requires the original lexical owner");
+  }
+  if (auto generic = mlir::dyn_cast<GenericClass>(owner))
+    if (generic.getLexicalDefinitionAttr())
+      return op.emitOpError(
+          "source extends requires the original lexical owner");
+  if (op->hasAttr("semantic_type") ||
+      (!op.getBody().empty() && !op.getBody().front().empty()))
+    return op.emitOpError(
+        "source extends cannot carry an effective type or body");
+  if (bool(op.getBaseDefinitionAttr()) == bool(op.getUnavailableBaseAttr()))
+    return op.emitOpError(
+        "source extends requires exactly one base declaration "
+        "or unavailable source form");
+  for (auto text : {op.getUnavailableBaseAttr(), op.getParameterArgumentsAttr(),
+                    op.getConstructorArgumentsAttr()})
+    if (text && (text.getValue().empty() || text.getValue().contains('\0')))
+      return op.emitOpError(
+          "unavailable source syntax must be nonempty without "
+          "NUL bytes");
+  for (mlir::Operation &sibling : op->getBlock()->getOperations())
+    if (&sibling != op.getOperation() && mlir::isa<Extends>(sibling))
+      return op.emitOpError("class has more than one source extends clause");
+  return mlir::success();
+}
+
+template <typename GenericClass, typename SourceClass, typename ClassType,
+          typename Extends>
+mlir::LogicalResult
+verifyExtendsReference(Extends op, mlir::SymbolTableCollection &symbols) {
+  if (!op.getBaseDefinitionAttr())
+    return mlir::success();
+  mlir::Operation *target =
+      lookupDefinition(op, op.getBaseDefinitionAttr(), symbols);
+  if (!mlir::isa_and_nonnull<GenericClass, SourceClass, ClassType>(target))
+    return op.emitOpError("base definition must name an exact source class");
+  if (auto type = mlir::dyn_cast<ClassType>(target)) {
+    if (type.getLexicalDefinitionAttr() ||
+        mlir::isa_and_nonnull<GenericClass>(type->getParentOp()))
+      return op.emitOpError(
+          "base definition must name the lexical declaration, "
+          "not a specialization");
+  }
+  if (auto generic = mlir::dyn_cast<GenericClass>(target))
+    if (generic.getLexicalDefinitionAttr())
+      return op.emitOpError("base definition must name the original lexical "
+                            "declaration");
+  if (target->getAttrOfType<mlir::BoolAttr>("is_interface").getValue())
+    return op.emitOpError(
+        "normal class extends cannot name an interface class");
+  llvm::SmallPtrSet<mlir::Operation *, 8> ancestors;
+  ancestors.insert(op->getParentOp());
+  while (target) {
+    if (!ancestors.insert(target).second)
+      return op.emitOpError("source class inheritance contains a cycle");
+    Extends next;
+    if (!target->getRegion(0).empty())
+      for (mlir::Operation &child : target->getRegion(0).front())
+        if (auto clause = mlir::dyn_cast<Extends>(child)) {
+          next = clause;
+          break;
+        }
+    target = next && next.getBaseDefinitionAttr()
+                 ? lookupDefinition(next, next.getBaseDefinitionAttr(), symbols)
+                 : nullptr;
+  }
   return mlir::success();
 }
 

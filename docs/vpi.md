@@ -289,3 +289,17 @@ The complete canonical `vpi_user.h`, `sv_vpi_user.h`,
 ```sh
 $(obelisk --print-resource-dir)/include
 ```
+
+Lexical class inheritance is retained for unused generic classes as distinct
+source class types, with exact `vpiClassDefn`, `vpiExtends`, and transitive
+`vpiDerivedClasses` identities. Omitted class actuals retain ordered
+`vpiParamAssign` objects whose `vpiRhs` shares the corresponding declaration's
+original default; missing defaults remain absent and unsupported defaults
+report a notice. These lexical types never appear in the specialization
+inventory. Explicit class actuals and constructor arguments retain unavailable
+source evidence and report a notice until their expression forms are supported.
+Dependent or imported base names without exact source proof keep an Extends
+occurrence and report a notice for the unresolved base type. Lexical class types
+do not expose specialization member inventories; lexical parameter iteration
+through this typespec remains unavailable, while each default assignment's Lhs
+retains the exact lexical parameter declaration.

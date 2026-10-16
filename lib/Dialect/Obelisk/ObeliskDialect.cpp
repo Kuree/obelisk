@@ -599,8 +599,9 @@ LogicalResult SVSourceClassDefinitionSymbolOp::verify() {
   return sourceclass::verifyDefinition<
       SVGenericClassDefSymbolOp, SVSourceClassDefinitionSymbolOp,
       SVSourceClassPropertySymbolOp, SVSourceClassTypeAliasSymbolOp,
-      SVSourceClassMethodSymbolOp, SVSourceClassConstraintSymbolOp,
-      SVSourceTypeParameterSymbolOp, SVSourceValueParameterSymbolOp>(*this);
+      SVSourceClassMethodSymbolOp, SVSourceClassExtendsOp,
+      SVSourceClassConstraintSymbolOp, SVSourceTypeParameterSymbolOp,
+      SVSourceValueParameterSymbolOp>(*this);
 }
 
 LogicalResult SVClassTypeOp::verifySymbolUses(SymbolTableCollection &symbols) {
@@ -671,6 +672,19 @@ LogicalResult SVSourceUnavailableTypeOp::verify() {
   return sourceclass::verifyDeclaredTypeOwner<SVSourceClassPropertySymbolOp,
                                               SVSourceClassTypeAliasSymbolOp>(
       *this, false);
+}
+
+LogicalResult SVSourceClassExtendsOp::verify() {
+  return sourceclass::verifyExtends<SVGenericClassDefSymbolOp,
+                                    SVSourceClassDefinitionSymbolOp,
+                                    SVClassTypeOp>(*this);
+}
+
+LogicalResult
+SVSourceClassExtendsOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  return sourceclass::verifyExtendsReference<SVGenericClassDefSymbolOp,
+                                             SVSourceClassDefinitionSymbolOp,
+                                             SVClassTypeOp>(*this, symbols);
 }
 
 LogicalResult SVSourceClassConstraintSymbolOp::verify() {

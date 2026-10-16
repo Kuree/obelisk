@@ -698,6 +698,65 @@ def SimVPITypespecDeclOp : SimOp<"vpi_typespec.decl", [
   let hasVerifier = 1;
 }
 
+def SimVPILexicalClassTypespecDeclOp
+    : SimOp<"vpi_lexical_class_typespec.decl",
+            [Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+             MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+  let summary =
+      "source class type construct without an effective specialization";
+  let description = [{
+    Represents the lexical class type in an extends clause (IEEE 37.32 details
+    1-3). `owner` is the class in which the construct occurs; `definition` names
+    the referenced lexical class declaration. The typespec has no executable
+    class identity, semantic type root, member inventory, or specialization
+    iteration membership. Omitted actuals are represented by default parameter
+    assignments; unsupported explicit actuals retain their source syntax.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id, I64Attr:$scope_id,
+      FlatSymbolRefAttr:$owner, FlatSymbolRefAttr:$definition,
+      StrAttr:$debug_name, OptionalAttr<StrAttr>:$unavailable_parameters);
+  let assemblyFormat = [{
+    $sym_name `id` $id `in` $scope_id `owner` $owner `definition` $definition
+    `debug` $debug_name attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIClassExtendsDeclOp
+    : SimOp<"vpi_class_extends.decl",
+            [Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+             MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+  let summary = "immutable source class extends occurrence";
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id, I64Attr:$scope_id,
+      FlatSymbolRefAttr:$owner, OptionalAttr<FlatSymbolRefAttr>:$base_typespec,
+      OptionalAttr<StrAttr>:$unavailable_base,
+      OptionalAttr<StrAttr>:$unavailable_arguments);
+  let assemblyFormat = [{
+    $sym_name `id` $id `in` $scope_id `owner` $owner attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIClassParameterAssignDeclOp
+    : SimOp<"vpi_class_parameter_assign.decl",
+            [Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+             MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+  let summary = "omitted class actual referring to its exact original default";
+  let description = [{
+    The Lhs is a parameter of the lexical class named by `owner`'s definition.
+    Rhs shares that declaration's Expr identity and never uses an elaborated
+    value. Missing and unsupported declaration defaults remain distinguishable.
+    The ordinal is dense in declaration order among non-local parameters.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id, I64Attr:$scope_id,
+      FlatSymbolRefAttr:$owner, FlatSymbolRefAttr:$parameter, I64Attr:$ordinal);
+  let assemblyFormat = [{
+    $sym_name `id` $id `in` $scope_id `owner` $owner `parameter` $parameter
+    `ordinal` $ordinal attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
 def SimVPIUnresolvedTypeAliasDeclOp
     : SimOp<"vpi_unresolved_type_alias.decl",
             [Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,

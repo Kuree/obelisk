@@ -1650,6 +1650,17 @@ TEST(VPIObjectModel, RuntimeExportsCanonicalImmutableModelImage) {
 #endif
 }
 
+TEST(VPIObjectModel, LexicalInheritanceHasImmutableImageIdentities) {
+  EXPECT_TRUE(
+      vpiObjectSetContains(VPIObjectSetID::StaticImageObjects, vpiExtends));
+  EXPECT_TRUE(
+      vpiObjectSetContains(VPIObjectSetID::StaticImageObjects, vpiParamAssign));
+  EXPECT_TRUE(vpiObjectSetContains(VPIObjectSetID::StaticImageObjects,
+                                   vpiClassTypespec));
+  EXPECT_FALSE(
+      vpiObjectSetContains(VPIObjectSetID::StaticImageObjects, vpiClassObj));
+}
+
 TEST(VPIObjectModel, ObjectRepresentationsExhaustivelyMatchIndependentOracle) {
   auto bit = [](Representation representation) {
     return vpiRepresentationMask(representation);

@@ -5995,6 +5995,166 @@ private:
     importSourceDeclaredType(*declared, member, types);
   }
 
+  void importSourceClassExtends(const slang::ast::Symbol &definition,
+                                const slang::ast::ClassType &source) {
+    const auto *syntax =
+        definition.getSyntax()
+            ? definition.getSyntax()
+                  ->as_if<slang::syntax::ClassDeclarationSyntax>()
+            : nullptr;
+    if (!syntax || !syntax->extendsClause || source.isInterface)
+      return;
+    const auto &clause = *syntax->extendsClause;
+    const slang::syntax::NameSyntax *name = clause.baseName;
+    const slang::ast::Scope *scope = &source;
+    bool packageQualified = false;
+    if (const auto *qualified =
+            name->as_if<slang::syntax::ScopedNameSyntax>()) {
+      const auto *package =
+          qualified->left->as_if<slang::syntax::IdentifierNameSyntax>();
+      scope = package ? source.getCompilation().getPackage(
+                            package->identifier.valueText())
+                      : nullptr;
+      name = qualified->right;
+      packageQualified = true;
+    }
+    std::string_view identifier;
+    const slang::syntax::ParameterValueAssignmentSyntax *parameters = nullptr;
+    if (auto *plain = name->as_if<slang::syntax::IdentifierNameSyntax>())
+      identifier = plain->identifier.valueText();
+    else if (auto *parameterized =
+                 name->as_if<slang::syntax::ClassNameSyntax>()) {
+      identifier = parameterized->identifier.valueText();
+      parameters = parameterized->parameters;
+    }
+    // A normal unqualified lookup asks ClassType::getBaseClass while
+    // ascending the class scope. That would bind precisely the dependent
+    // inheritance expression being preserved here. Read direct declaration
+    // identities and lexical positions instead; imported and inherited name
+    // domains stay explicitly unavailable until their source proof exists.
+    auto directMember = [&](const slang::ast::Scope &owner,
+                            std::optional<slang::ast::SymbolIndex> position,
+                            bool &unavailable) -> const slang::ast::Symbol * {
+      const auto &names = owner.getUnelaboratedNameMap();
+      if (auto found = names.find(identifier); found != names.end()) {
+        const auto &member = *found->second;
+        if (member.getParentScope() == &owner &&
+            (!position || member.getIndex() <= *position)) {
+          if (member.kind == slang::ast::SymbolKind::ClassType ||
+              member.kind == slang::ast::SymbolKind::GenericClassDef)
+            return &member;
+          unavailable = true;
+          return nullptr;
+        }
+      }
+      bool wildcard = false;
+      if (auto *imports = owner.getWildcardImportData())
+        for (const auto *import : imports->wildcardImports)
+          wildcard |= !position || import->getIndex() <= *position;
+      const auto *ownerSyntax = owner.asSymbol().getSyntax();
+      const auto *classSyntax =
+          ownerSyntax
+              ? ownerSyntax->as_if<slang::syntax::ClassDeclarationSyntax>()
+              : nullptr;
+      unavailable |= wildcard || (classSyntax && classSyntax->extendsClause);
+      return nullptr;
+    };
+    const slang::ast::Symbol *base = nullptr;
+    bool unavailable = false;
+    if (!identifier.empty() && !packageQualified) {
+      for (const auto *item = source.getFirstMember(); item;
+           item = item->getNextSibling()) {
+        const auto &member = *item;
+        if (member.name != identifier || member.getParentScope() != &source)
+          continue;
+        if (member.kind == slang::ast::SymbolKind::TypeParameter)
+          unavailable |=
+              member.as<slang::ast::TypeParameterSymbol>().isPortParam();
+        else if (member.kind == slang::ast::SymbolKind::Parameter)
+          unavailable |= member.as<slang::ast::ParameterSymbol>().isPortParam();
+      }
+      const slang::ast::Symbol *position = &definition;
+      for (const auto *owner = definition.getParentScope();
+           owner && !unavailable && !base; owner = position->getParentScope()) {
+        base = directMember(*owner, position->getIndex(), unavailable);
+        position = &owner->asSymbol();
+      }
+    } else if (scope && !identifier.empty()) {
+      base = directMember(*scope, std::nullopt, unavailable);
+    }
+    if (base)
+      base = &sourceClassDefinition(*base);
+    auto attrs = originalSourceAttributes(clause.sourceRange());
+    if (base)
+      attrs.set("base_definition", getSemanticSymbolReference(*base));
+    else
+      attrs.set("unavailable_base",
+                builder.getStringAttr(clause.baseName->toString()));
+    if (parameters)
+      attrs.set("parameter_arguments",
+                builder.getStringAttr(parameters->toString()));
+    if (clause.arguments)
+      attrs.set("constructor_arguments",
+                builder.getStringAttr(clause.arguments->toString()));
+    else if (clause.defaultedArg)
+      attrs.set("constructor_arguments",
+                builder.getStringAttr(clause.defaultedArg->toString()));
+    else {
+      // Constructor chaining can be spelled in the body instead of the
+      // extends clause. Inspect only parsed constructor syntax, including an
+      // exact out-of-block definition, without requesting its bound body.
+      struct SuperArguments : slang::syntax::SyntaxVisitor<SuperArguments> {
+        std::string syntax;
+        static bool isSuperNew(const slang::syntax::NameSyntax &name) {
+          auto *scoped = name.as_if<slang::syntax::ScopedNameSyntax>();
+          return scoped &&
+                 scoped->left->kind == slang::syntax::SyntaxKind::SuperHandle &&
+                 scoped->right->kind ==
+                     slang::syntax::SyntaxKind::ConstructorName;
+        }
+        void handle(const slang::syntax::NewClassExpressionSyntax &expression) {
+          if (isSuperNew(*expression.scopedNew) && expression.argList)
+            syntax = expression.argList->toString();
+        }
+        void handle(const slang::syntax::SuperNewDefaultedArgsExpressionSyntax
+                        &expression) {
+          if (isSuperNew(*expression.scopedNew))
+            syntax = expression.toString();
+        }
+      } arguments;
+      for (const auto *item = source.getFirstMember(); item;
+           item = item->getNextSibling()) {
+        const auto &member = *item;
+        if (member.getParentScope() != &source)
+          continue;
+        const slang::syntax::SyntaxNode *body = nullptr;
+        if (member.kind == slang::ast::SymbolKind::Subroutine &&
+            member.as<slang::ast::SubroutineSymbol>().flags.has(
+                slang::ast::MethodFlags::Constructor))
+          body = member.getSyntax();
+        else if (member.kind == slang::ast::SymbolKind::MethodPrototype &&
+                 member.as<slang::ast::MethodPrototypeSymbol>().flags.has(
+                     slang::ast::MethodFlags::Constructor)) {
+          const auto &outer = *source.getParentScope();
+          body = std::get<0>(source.getCompilation().findOutOfBlockDecl(
+              outer, source.name, member.name));
+        }
+        if (body)
+          body->visit(arguments);
+      }
+      if (!arguments.syntax.empty())
+        attrs.set("constructor_arguments",
+                  builder.getStringAttr(arguments.syntax));
+    }
+    auto operation = slangir::SourceClassExtendsOp::create(
+        builder, sourceLocation(clause.sourceRange().start()), TypeRange{},
+        ValueRange{}, attrs.getAttrs());
+    operation.getBody().emplaceBlock();
+    if (base)
+      pendingReferences.push_back(
+          {operation, base, builder.getStringAttr("base_definition")});
+  }
+
   void importSourceClassConstraint(
       const slang::ast::ConstraintBlockSymbol &constraint,
       const slang::ast::Symbol &definition) {
@@ -6125,6 +6285,7 @@ private:
 
   void importSourceClassMembers(const slang::ast::Symbol &definition,
                                 const slang::ast::ClassType &source) {
+    importSourceClassExtends(definition, source);
     auto parameters = originalParameterMap(source);
     OriginalParameterMap sourceTypes;
     for (const auto &member : source.members()) {
@@ -6380,6 +6541,8 @@ private:
       for (const auto &entry : specializations)
         entry.second->visit(*this);
     } else if constexpr (std::same_as<T, slang::ast::ClassType>) {
+      if (!node.genericClass && &sourceClassDefinition(node) == &node)
+        importSourceClassExtends(node, node);
       this->visitDefault(node);
       if (const auto *baseConstructorCall = node.getBaseConstructorCall())
         baseConstructorCall->visit(*this);

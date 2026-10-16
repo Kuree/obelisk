@@ -3236,6 +3236,131 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   };
   llvm::DenseSet<std::pair<Attribute, Attribute>> derivedDefinitions;
   llvm::DenseMap<Attribute, uint64_t> nextDerivedOrdinal;
+  llvm::DenseSet<Attribute> sourceExtendsDefinitions;
+  llvm::DenseMap<Attribute, Attribute> lexicalBaseDefinitions;
+  SmallVector<semantic::SVSourceClassExtendsOp> sourceExtends;
+  module.walk([&](semantic::SVSourceClassExtendsOp clause) {
+    sourceExtends.push_back(clause);
+  });
+  for (auto clause : sourceExtends) {
+    Operation *source = clause->getParentOp();
+    if (auto type = dyn_cast<semantic::SVClassTypeOp>(source);
+        type && hasSeparateLexicalClass(type))
+      continue;
+    FlatSymbolRefAttr owner = anchorSymbols.lookup(source);
+    if (!owner) {
+      emitError(getSemanticLocation(clause))
+          << "source extends has no exact lexical class owner";
+      invalid = true;
+      continue;
+    }
+    Operation *base = clause.getBaseDefinitionAttr()
+                          ? lexicalClassSymbols.lookupSymbolIn(
+                                module, clause.getBaseDefinitionAttr())
+                          : nullptr;
+    FlatSymbolRefAttr definition =
+        base ? anchorSymbols.lookup(base) : FlatSymbolRefAttr{};
+    // Preserve the existing resolved builtin path when it has an exact
+    // canonical standard-class typespec. Source-only dependent builtin forms
+    // remain explicitly unavailable instead of inventing a class definition.
+    if (!definition && isa<semantic::SVClassTypeOp>(source) &&
+        builtinBaseTypespecs.count(source))
+      continue;
+    sourceExtendsDefinitions.insert(owner);
+    FlatSymbolRefAttr lexicalType;
+    if (definition) {
+      lexicalBaseDefinitions[owner] = definition;
+      std::string name =
+          "__obelisk_vpi_lexical_class_" + std::to_string(nextTypespecId);
+      auto declaration = sim::SimVPILexicalClassTypespecDeclOp::create(
+          builder, getSemanticLocation(clause), builder.getStringAttr(name),
+          builder.getI64IntegerAttr(nextTypespecId++),
+          builder.getI64IntegerAttr(scopes.lookup(source)), owner, definition,
+          builder.getStringAttr(getDebugName(base)),
+          clause.getParameterArgumentsAttr());
+      lexicalType = FlatSymbolRefAttr::get(declaration.getSymNameAttr());
+      if (!clause.getParameterArgumentsAttr()) {
+        uint64_t ordinal = 0;
+        for (Operation *parameter : getChildren(base)) {
+          if (!isa<semantic::SVSourceValueParameterSymbolOp,
+                   semantic::SVSourceTypeParameterSymbolOp,
+                   semantic::SVParameterSymbolOp,
+                   semantic::SVTypeParameterSymbolOp>(parameter))
+            continue;
+          Attribute local = parameter->getAttr("is_local_param");
+          if (isa_and_nonnull<UnitAttr>(local) ||
+              (isa_and_nonnull<BoolAttr>(local) &&
+               cast<BoolAttr>(local).getValue()))
+            continue;
+          auto formal = anchorSymbols.lookup(parameter);
+          if (!formal) {
+            emitError(getSemanticLocation(parameter))
+                << "source class parameter has no exact lexical declaration";
+            invalid = true;
+            continue;
+          }
+          std::string assignmentName = "__obelisk_vpi_class_actual_" +
+                                       std::to_string(nextSyntheticInventoryId);
+          sim::SimVPIClassParameterAssignDeclOp::create(
+              builder, getSemanticLocation(clause),
+              builder.getStringAttr(assignmentName),
+              builder.getI64IntegerAttr(nextSyntheticInventoryId++),
+              builder.getI64IntegerAttr(scopes.lookup(source)), lexicalType,
+              formal, builder.getI64IntegerAttr(ordinal++));
+        }
+      }
+    }
+    std::string name =
+        "__obelisk_vpi_extends_" + std::to_string(nextSyntheticInventoryId);
+    StringAttr unavailable =
+        definition ? StringAttr{} : clause.getUnavailableBaseAttr();
+    if (!definition && !unavailable)
+      unavailable = builder.getStringAttr(getDebugName(base));
+    sim::SimVPIClassExtendsDeclOp::create(
+        builder, getSemanticLocation(clause), builder.getStringAttr(name),
+        builder.getI64IntegerAttr(nextSyntheticInventoryId++),
+        builder.getI64IntegerAttr(scopes.lookup(source)), owner, lexicalType,
+        unavailable, clause.getConstructorArgumentsAttr());
+  }
+  // Older authored source IR may encode a nonparameterized base solely by
+  // its exact class handle. Include those declaration edges when walking an
+  // unused generic descendant, without choosing a generic specialization.
+  for (semantic::SVClassTypeOp type : classes.sources) {
+    if (hasSeparateLexicalClass(type))
+      continue;
+    auto baseType = dyn_cast_or_null<semantic::ClassHandleType>(
+        type.getBaseClass().value_or(Type{}));
+    auto base = baseType ? classes.semanticClasses.lookup(
+                               baseType.getClassName().getLeafReference())
+                         : semantic::SVClassTypeOp{};
+    if (!base || hasSeparateLexicalClass(base))
+      continue;
+    auto owner = classDefinitionSymbols.lookup(type);
+    auto definition = classDefinitionSymbols.lookup(base);
+    if (owner && definition)
+      lexicalBaseDefinitions.try_emplace(owner, definition);
+  }
+  // The source graph exists even when no specialization was materialized.
+  // Preserve transitive lexical descendants in deterministic declaration order.
+  for (auto clause : sourceExtends) {
+    FlatSymbolRefAttr definition = anchorSymbols.lookup(clause->getParentOp());
+    Attribute ancestor = lexicalBaseDefinitions.lookup(definition);
+    llvm::DenseSet<Attribute> visited;
+    while (ancestor) {
+      if (!visited.insert(ancestor).second) {
+        emitError(getSemanticLocation(clause))
+            << "source class inheritance contains a cycle";
+        invalid = true;
+        break;
+      }
+      if (derivedDefinitions.insert({ancestor, definition}).second)
+        emitClassRelation(getSemanticLocation(clause),
+                          cast<FlatSymbolRefAttr>(ancestor), 727,
+                          sim::VPIRelationMode::Iterate,
+                          nextDerivedOrdinal[ancestor]++, definition);
+      ancestor = lexicalBaseDefinitions.lookup(ancestor);
+    }
+  }
   for (semantic::SVClassTypeOp classType : classes.sources) {
     auto builtin = classType->getAttrOfType<TypeAttr>(builtinBaseTypeAttrName);
     auto baseType = dyn_cast_or_null<semantic::ClassHandleType>(
@@ -3296,7 +3421,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     // A nonparameterized class typespec may also represent the lexical
     // construct. Parameterized lexical extends expressions need their own
     // unresolved source typespec, rather than one chosen specialization.
-    if (hasSeparateLexicalClass(classType) ||
+    if (sourceExtendsDefinitions.contains(definition) ||
+        hasSeparateLexicalClass(classType) ||
         (baseClass && hasSeparateLexicalClass(baseClass)))
       continue;
     std::string symbolName =

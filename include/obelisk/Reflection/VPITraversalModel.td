@@ -1128,21 +1128,22 @@ def IsFinalProperty : VPIProperty<"vpiIsFinal", 670, IntegerProperty,
 // Exact source-only identities that may occupy an immutable static-object
 // image record. Runtime-created handles, executable processes, statements,
 // nets, and ordinary design storage use their dedicated representations.
-def StaticImageObjects : VPIObjectSet<"StaticImageObjects",
-  [Package, Parameter, TypeParameter, Constant, Operation,
-   ClassDefn, Constraint, Modport, Task,
-   FuncCall, TaskCall, MethodFuncCall, MethodTaskCall, SysFuncCall, SysTaskCall,
-   Function, ClockingBlock, GenScope, PropertyDecl,
-   SequenceDecl, Gate, Switch, Udp, NamedEvent, ModuleArray, InterfaceArray,
-   ProgramArray, GateArray, SwitchArray, UdpArray, NamedEventArray,
-   GenScopeArray, InterconnectArray, LongIntTypespec, ShortRealTypespec,
-   ByteTypespec,
-   ShortIntTypespec, IntTypespec, ClassTypespec, StringTypespec,
-   ChandleTypespec, EnumTypespec, IntegerTypespec, TimeTypespec,
-   RealTypespec, StructTypespec, UnionTypespec, BitTypespec, LogicTypespec,
-   ArrayTypespec, VoidTypespec, PackedArrayTypespec, SequenceTypespec,
-   PropertyTypespec, EventTypespec, InterfaceTypespec, EnumConst,
-   NettypeDecl]>;
+def StaticImageObjects
+    : VPIObjectSet<
+          "StaticImageObjects",
+          [Package, Parameter, TypeParameter, ParamAssign, Constant, Operation,
+           ClassDefn, Extends, Constraint, Modport, Task, FuncCall, TaskCall,
+           MethodFuncCall, MethodTaskCall, SysFuncCall, SysTaskCall, Function,
+           ClockingBlock, GenScope, PropertyDecl, SequenceDecl, Gate, Switch,
+           Udp, NamedEvent, ModuleArray, InterfaceArray, ProgramArray,
+           GateArray, SwitchArray, UdpArray, NamedEventArray, GenScopeArray,
+           InterconnectArray, LongIntTypespec, ShortRealTypespec, ByteTypespec,
+           ShortIntTypespec, IntTypespec, ClassTypespec, StringTypespec,
+           ChandleTypespec, EnumTypespec, IntegerTypespec, TimeTypespec,
+           RealTypespec, StructTypespec, UnionTypespec, BitTypespec,
+           LogicTypespec, ArrayTypespec, VoidTypespec, PackedArrayTypespec,
+           SequenceTypespec, PropertyTypespec, EventTypespec, InterfaceTypespec,
+           EnumConst, NettypeDecl]>;
 def RangeObjects : VPIObjectSet<"RangeObjects", [Range]>;
 def IndexExpressionObjects : VPIObjectSet<"IndexExpressionObjects", [],
   [ExpressionFamily]>;

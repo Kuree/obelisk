@@ -1700,6 +1700,15 @@ enum {
   OBELISK_RT_DESIGN_CAP_FRAME_LOCAL = UINT32_C(1) << 13,
   // Definition-backed vpiIODecl views use these record-kind-specific bits
   // for the exact IEEE direction, including vpiRef and undefined.
+  OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC = UINT32_C(1) << 14,
+  // Present source inheritance forms without a supported relation graph.
+  OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_BASE = UINT32_C(1) << 15,
+  OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CONSTRUCTOR_ARGUMENTS = UINT32_C(1) << 16,
+  OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETERS = UINT32_C(1) << 17,
+  // ParamAssign whose Rhs is the exact Lhs declaration's original Expr.
+  OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT = UINT32_C(1) << 18,
+  // Definition-backed vpiIODecl views use these record-kind-specific bits
+  // for the exact IEEE direction, including vpiRef and undefined.
   OBELISK_RT_DESIGN_CAP_IO_DIRECTION_SHIFT = 8,
   OBELISK_RT_DESIGN_CAP_IO_DIRECTION_MASK = UINT32_C(7) << 8,
   OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT = 8,
