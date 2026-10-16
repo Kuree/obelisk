@@ -4593,6 +4593,9 @@ void ObeliskSimPreparePass::runOnOperation() {
   if (failed(materializeProceduralStatements(
           design, *preparedUnits, semanticSymbols, builder)))
     return abort();
+  if (failed(materializeProceduralCalls(design, *preparedUnits, semanticSymbols,
+                                        builder)))
+    return abort();
   auto &units = preparedUnits->units;
   auto &directCalleeNames = preparedUnits->directCalleeNames;
   auto &codeUnitDeclarations = preparedUnits->declarations;

@@ -18,6 +18,11 @@ namespace obelisk::sim {
 /// Verifies that a postponed-region function reads state without writing it.
 mlir::LogicalResult verifyPostponedReadOnly(SimFuncOp root);
 
+/// Verifies an optional typed source-call identity on an executable call.
+mlir::LogicalResult verifyVPICallSite(mlir::Operation *operation,
+                                      mlir::SymbolTableCollection &symbols,
+                                      bool isTask);
+
 /// True when \p type is a four-state logic type or an aggregate containing one.
 bool containsFourStateLeaf(mlir::Type type);
 

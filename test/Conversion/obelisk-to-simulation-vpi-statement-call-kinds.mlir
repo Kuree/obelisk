@@ -125,3 +125,11 @@ module attributes {coverage.language_version = 2023 : i32} {
 // CHECK-DAG: simulation.statement.decl {{[0-9]+}} in [[SIZE]] scope {{[0-9]+}} type 648
 // CHECK-DAG: simulation.statement.decl {{[0-9]+}} in [[RANDOMIZE]] scope {{[0-9]+}} type 648
 // CHECK-DAG: simulation.statement.decl {{[0-9]+}} in [[SYSTEM]] scope {{[0-9]+}} type 56
+
+// Each exact call statement aliases the corresponding immutable occurrence.
+// CHECK: simulation.vpi_call.decl @[[STATIC_CALL:[^ ]+]] id {{[0-9]+}} in {{[0-9]+}} scope 0 type 648 name "stat" statement [[S0:[0-9]+]] within [[S0]] callee {{[0-9]+}}
+// CHECK: simulation.vpi_call.decl @[[IMPLICIT_CALL:[^ ]+]] id {{[0-9]+}} in {{[0-9]+}} scope 0 type 648 name "inst" statement [[S1:[0-9]+]] within [[S1]] callee {{[0-9]+}}
+// CHECK: simulation.vpi_call.decl @{{[^ ]+}} id {{[0-9]+}} in {{[0-9]+}} scope 1 type 648 name "stat" statement {{[0-9]+}} within {{[0-9]+}} callee {{[0-9]+}}
+// CHECK: simulation.vpi_call.decl @{{[^ ]+}} id {{[0-9]+}} in {{[0-9]+}} scope 1 type 648 name "size" statement {{[0-9]+}} within {{[0-9]+}}{{$}}
+// CHECK: simulation.vpi_call.decl @{{[^ ]+}} id {{[0-9]+}} in {{[0-9]+}} scope 1 type 648 name "randomize" statement {{[0-9]+}} within {{[0-9]+}}{{$}}
+// CHECK: simulation.vpi_call.decl @{{[^ ]+}} id {{[0-9]+}} in {{[0-9]+}} scope 1 type 56 name "$urandom" statement {{[0-9]+}} within {{[0-9]+}}{{$}}

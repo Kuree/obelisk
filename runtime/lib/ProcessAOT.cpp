@@ -1158,7 +1158,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
     case OBELISK_RT_FRAGMENT_TERMINATE:
       if (!scheduled.callers.empty() && !terminationRequested &&
           !killRequested) {
-        if (scheduled.callerControlDepths.size() != scheduled.callers.size())
+        if (scheduled.callerDepths.size() != scheduled.callers.size())
           return OBELISK_RT_INVALID_LIFECYCLE;
         obelisk_rt_process_instance_v1 *caller = scheduled.callers.back();
         status = context->nativeSchedulePlan->bind(
@@ -1166,8 +1166,15 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
             caller);
         if (status != OBELISK_RT_OK)
           return status;
+        if (context->vpiState) {
+          status = obelisk_rt_vpi_frame_unwind_process(
+              context, kNativeLogicalProcessTag | scheduled.token,
+              scheduled.callerDepths.back().vpiFrameDepth);
+          if (status != OBELISK_RT_OK)
+            return status;
+        }
         scheduled.callers.pop_back();
-        scheduled.callerControlDepths.pop_back();
+        scheduled.callerDepths.pop_back();
         if (!scheduled.signalSubscriptions.empty() ||
             scheduled.computedObserverWaitRegistered)
           obelisk_rt_unregister_signal_wait_unlocked(
@@ -1192,6 +1199,9 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
           nullptr);
       if (status != OBELISK_RT_OK)
         return status;
+      if (context->vpiState)
+        (void)obelisk_rt_vpi_frame_unwind_process(
+            context, kNativeLogicalProcessTag | scheduled.token, 0);
       obelisk_rt_program_complete_unlocked(
           context, kNativeLogicalProcessTag | scheduled.token,
           scheduled.programOwner);
@@ -1216,7 +1226,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       context->schedulerCompactionPending = true;
       if (terminationRequested || killRequested)
         terminatedCallers.swap(scheduled.callers);
-      scheduled.callerControlDepths.clear();
+      scheduled.callerDepths.clear();
       obelisk_rt_release_controls_unlocked(context, scheduled.controls);
       scheduled.controls.clear();
       scheduled.signalTriggered = false;
@@ -1342,9 +1352,15 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
         return OBELISK_RT_INVALID_LIFECYCLE;
       if (scheduled.callers.size() == std::numeric_limits<size_t>::max())
         return OBELISK_RT_OUT_OF_RESOURCES;
+      uint64_t frameDepth = 0;
+      if (context->vpiState) {
+        status = obelisk_rt_vpi_frame_depth_process(
+            context, kNativeLogicalProcessTag | scheduled.token, &frameDepth);
+        if (status != OBELISK_RT_OK)
+          return status;
+      }
       scheduled.callers.reserve(scheduled.callers.size() + 1);
-      scheduled.callerControlDepths.reserve(
-          scheduled.callerControlDepths.size() + 1);
+      scheduled.callerDepths.reserve(scheduled.callerDepths.size() + 1);
       if (!scheduled.signalSubscriptions.empty() ||
           scheduled.computedObserverWaitRegistered)
         obelisk_rt_unregister_signal_wait_unlocked(
@@ -1353,7 +1369,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
       if (status != OBELISK_RT_OK)
         return status;
       scheduled.callers.push_back(selected);
-      scheduled.callerControlDepths.push_back(scheduled.controls.size());
+      scheduled.callerDepths.push_back({scheduled.controls.size(), frameDepth});
       updateScheduledProcessInstance(context, scheduled, callee);
       scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
       scheduled.waitOffset = 0;

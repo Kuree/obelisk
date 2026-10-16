@@ -12,6 +12,7 @@
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Reflection/VPIObjectModel.h"
 #include "obelisk/Runtime/StableHash.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -441,7 +442,45 @@ LogicalResult SimCallOp::verify() {
   return success();
 }
 
+LogicalResult verifyVPICallSite(Operation *operation,
+                                SymbolTableCollection &symbols, bool isTask) {
+  auto reference = sim::get<metadata::VpiCallSite>(operation);
+  if (!reference)
+    return success();
+  auto declaration =
+      symbols.lookupNearestSymbolFrom<SimVPICallDeclOp>(operation, reference);
+  if (!declaration)
+    return operation->emitOpError(
+        "VPI call site must name a simulation.vpi_call.decl");
+  using ObjectKind = reflection::VPIObjectKind;
+  auto kind = static_cast<ObjectKind>(declaration.getVpiKind());
+  bool taskKind = kind == ObjectKind::TaskCall ||
+                  kind == ObjectKind::MethodTaskCall ||
+                  kind == ObjectKind::SysTaskCall;
+  if (taskKind != isTask)
+    return operation->emitOpError(
+        "VPI call site task/function kind disagrees with executable call");
+  if (isa<SimClassVirtualCallOp, SimClassVirtualTaskCallOp>(operation) &&
+      !declaration.getIsIndirect())
+    return operation->emitOpError(
+        "virtual executable call requires an indirect VPI call site");
+  if (auto declaredCallee = declaration.getCalleeCodeUnitId();
+      declaredCallee && !declaration.getIsIndirect()) {
+    if (auto calleeRef =
+            operation->getAttrOfType<FlatSymbolRefAttr>("callee")) {
+      auto callee =
+          symbols.lookupNearestSymbolFrom<SimFuncOp>(operation, calleeRef);
+      if (!callee || callee.getCodeUnitId() != declaredCallee)
+        return operation->emitOpError(
+            "VPI direct call target disagrees with the executable code unit");
+    }
+  }
+  return success();
+}
+
 LogicalResult SimCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (failed(verifyVPICallSite(*this, symbolTable, false)))
+    return failure();
   auto callee = symbolTable.lookupNearestSymbolFrom<SimFuncOp>(getOperation(),
                                                                getCalleeAttr());
   if (!callee || (callee.getEntryKind() != EntryKind::Function &&
@@ -578,6 +617,8 @@ LogicalResult SimTaskCallOp::verify() {
 
 LogicalResult
 SimTaskCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (failed(verifyVPICallSite(*this, symbolTable, true)))
+    return failure();
   auto callee = symbolTable.lookupNearestSymbolFrom<SimFuncOp>(getOperation(),
                                                                getCalleeAttr());
   if (!callee || callee.getEntryKind() != EntryKind::Task)
@@ -631,6 +672,8 @@ LogicalResult SimClassVirtualTaskCallOp::verify() {
 
 LogicalResult SimClassVirtualTaskCallOp::verifySymbolUses(
     SymbolTableCollection &symbolTable) {
+  if (failed(verifyVPICallSite(*this, symbolTable, true)))
+    return failure();
   auto method = symbolTable.lookupNearestSymbolFrom<SimClassMethodDeclOp>(
       getOperation(), getMethodAttr());
   if (!method || !method.getIsVirtual() || !method.getIsTask() ||
@@ -646,6 +689,10 @@ LogicalResult SimClassVirtualTaskCallOp::verifySymbolUses(
       !type.getResults().empty())
     return emitOpError("receiver or arguments do not match the virtual task");
   return success();
+}
+
+LogicalResult SimDPICallOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  return verifyVPICallSite(*this, symbols, getIsTask());
 }
 
 void SimDPICallOp::getEffects(

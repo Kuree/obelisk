@@ -3383,6 +3383,29 @@ obelisk_rt_v1_vpi_start_simulation(obelisk_rt_context *context);
 obelisk_rt_status obelisk_rt_v1_vpi_end_simulation(obelisk_rt_context *context);
 void obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context);
 
+// IEEE 1800-2023 37.43: exact procedural activations. Generated code uses
+// stable source IDs, resolved through the validated design image. Suspension
+// preserves the activation stack; returning or disabling a scope removes it.
+enum {
+  OBELISK_RT_VPI_FRAME_CODE_UNIT_SCOPE = 0,
+  OBELISK_RT_VPI_FRAME_CALL = 1,
+  OBELISK_RT_VPI_FRAME_STATEMENT_SCOPE = 2
+};
+obelisk_rt_status obelisk_rt_v1_vpi_frame_enter(obelisk_rt_context *context,
+                                                uint64_t code_unit_id,
+                                                uint32_t origin_kind,
+                                                uint64_t origin_id,
+                                                uint64_t *out_activation);
+obelisk_rt_status
+obelisk_rt_v1_vpi_frame_checkpoint(obelisk_rt_context *context,
+                                   uint64_t statement_id);
+obelisk_rt_status obelisk_rt_v1_vpi_frame_leave(obelisk_rt_context *context,
+                                                uint64_t activation);
+obelisk_rt_status obelisk_rt_v1_vpi_frame_depth(obelisk_rt_context *context,
+                                                uint64_t *out_depth);
+obelisk_rt_status obelisk_rt_v1_vpi_frame_unwind(obelisk_rt_context *context,
+                                                 uint64_t depth);
+
 // Generated single-threaded schedule ABI.  The plan is immutable; mutable
 // generated storage is reached through `mutable_state` and may be installed in
 // at most one live context at a time.  A successful add transfers process

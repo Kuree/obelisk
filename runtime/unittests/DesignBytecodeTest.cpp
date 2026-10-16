@@ -16984,10 +16984,10 @@ TEST(VPI, WaitingThreadsUseRealSchedulerIdentityAndExpireWithExecution) {
         EXPECT_EQ(vpi_compare_objects(parent, alias), 1);
         EXPECT_EQ(vpi_release_handle(alias), 1);
       }
-      for (PLI_INT32 selector : {vpiOrigin, vpiFrame}) {
-        EXPECT_EQ(vpi_handle(selector, parent), nullptr);
-        EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
-      }
+      EXPECT_EQ(vpi_handle(vpiOrigin, parent), nullptr);
+      EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+      EXPECT_EQ(vpi_handle(vpiFrame, parent), nullptr);
+      EXPECT_EQ(vpi_chk_error(nullptr), 0);
       vpiHandle children = vpi_iterate(vpiThread, parent);
       ASSERT_NE(children, nullptr);
       use = vpi_handle(vpiUse, children);

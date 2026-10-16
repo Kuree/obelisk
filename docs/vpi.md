@@ -100,8 +100,18 @@ bodies and supported fork branches, with lexical statement nesting retained
 through optimization. The inventory includes case-item groups, ordered loop
 controls, immediate assertion actions, procedural assignments, and repeated
 event controls. Call statements retain their exact function, task, system, or method-call
-kind and enclosing scope. Unsupported source statement forms remain unbound;
-frame relations are still being completed.
+kind and enclosing scope. Call inventories also retain nested expression calls,
+exact lexical owners, direct callee relations, and shared identity for calls
+that are themselves statements. Indirect dispatch remains explicitly marked.
+Unsupported source statement forms remain unbound.
+
+The runtime frame API tracks distinct activations and exposes their parent,
+origin, thread, current statement, active state, and automatic lifetime.
+Suspension preserves a frame; return, disable, and kill invalidate the exited
+activations without invalidating their immutable source objects. Bytecode,
+native, and AOT scheduler paths restore the saved caller frame depth. Compiler
+frame instrumentation and automatic-local bindings are still being completed;
+ordinary source execution does not yet populate these frame queries.
 
 `vpiMessages` snapshots mailbox contents in FIFO order without consuming them.
 Integral and packed values retain every bit and unknown bit; real and string

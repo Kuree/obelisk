@@ -768,7 +768,7 @@ static const llvm::StringMap<discardable::PayloadCheck> &declarations() {
       metadata::DescriptorPackedLow, metadata::DescriptorRootType,
       metadata::FlushedPrivateSlot, metadata::GcPollFree,
       metadata::HierarchicalName, metadata::Rematerialized, metadata::VpiAnchor,
-      metadata::VpiStatementId, metadata::VpiAutomatic,
+      metadata::VpiStatementId, metadata::VpiCallSite, metadata::VpiAutomatic,
       metadata::VpiCellInstance, metadata::VpiDefinitionName,
       metadata::VpiIdentityDelegated, metadata::VpiBoxType,
       metadata::VpiSourceTypeIdentity, metadata::VpiTop,

@@ -12,5 +12,10 @@ mlir::LogicalResult materializeProceduralStatements(
     sim::SimDesignOp design, const PreparedUnits &units,
     const llvm::StringMap<mlir::Operation *> &semanticSymbols,
     mlir::OpBuilder &builder);
+/// Preserve every source call occurrence, independently of statement shape.
+mlir::LogicalResult materializeProceduralCalls(
+    sim::SimDesignOp design, const PreparedUnits &units,
+    const llvm::StringMap<mlir::Operation *> &semanticSymbols,
+    mlir::OpBuilder &builder);
 } // namespace obelisk::simlowering
 #endif

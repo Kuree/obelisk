@@ -99,6 +99,12 @@ LogicalResult UnitLowering::copyOutToActual(Operation *actual,
 }
 
 FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
+  auto retainCallSite = [&](auto lowered) {
+    if (auto site = sim::get<sim::metadata::VpiCallSite>(op))
+      sim::set<sim::metadata::VpiCallSite>(lowered, site);
+    return lowered;
+  };
+
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
   std::optional<StringRef> referencedPath = op.getReferencedPath();
@@ -2182,10 +2188,10 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         SmallVector<Value> operands{function.getBody().front().getArgument(0),
                                     taskReceiver};
         llvm::append_range(operands, arguments);
-        sim::SimTaskCallOp::create(builder, location, target, operands,
-                                   builder.getI64IntegerAttr(operands.size()),
-                                   schedule::ContinuationSiteAttr{},
-                                   continuation);
+        retainCallSite(sim::SimTaskCallOp::create(
+            builder, location, target, operands,
+            builder.getI64IntegerAttr(operands.size()),
+            schedule::ContinuationSiteAttr{}, continuation));
       };
       if (!sim::has<sim::metadata::ClassVirtual>(op)) {
         emitTaskCall(callee, *receiver);
@@ -2198,10 +2204,10 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return emitError(location)
                    << "virtual class task has no frozen slot and signature",
                failure();
-      sim::SimClassVirtualTaskCallOp::create(
+      retainCallSite(sim::SimClassVirtualTaskCallOp::create(
           builder, location, *receiver, method, slot, signature, arguments,
           builder.getI64IntegerAttr(arguments.size()),
-          schedule::ContinuationSiteAttr{}, continuation);
+          schedule::ContinuationSiteAttr{}, continuation));
       return finishTask();
     }
     ValueRange results;
@@ -2213,15 +2219,15 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
             << "virtual call has no frozen method slot and signature";
         return failure();
       }
-      results = sim::SimClassVirtualCallOp::create(
-                    builder, location, resultTypes, *receiver, method, slot,
-                    signature, arguments)
+      results = retainCallSite(sim::SimClassVirtualCallOp::create(
+                                   builder, location, resultTypes, *receiver,
+                                   method, slot, signature, arguments))
                     .getResults();
     } else {
-      results =
-          sim::SimClassDirectCallOp::create(builder, location, resultTypes,
-                                            callee, *receiver, arguments)
-              .getResults();
+      results = retainCallSite(sim::SimClassDirectCallOp::create(
+                                   builder, location, resultTypes, callee,
+                                   *receiver, arguments))
+                    .getResults();
     }
     if (failed(emitTerminationPoll(location)))
       return failure();
@@ -2888,7 +2894,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     uint32_t sourceColumn = fileLocation ? fileLocation.getColumn() : 0;
     SmallVector<Type> dpiResultTypes(callResultTypes);
     dpiResultTypes.push_back(runtime::StatusType::get(builder.getContext()));
-    auto call = sim::SimDPICallOp::create(
+    auto call = retainCallSite(sim::SimDPICallOp::create(
         builder, location, dpiResultTypes,
         builder.getI32IntegerAttr(
             static_cast<uint32_t>(importID.getValue().getZExtValue())),
@@ -2901,14 +2907,14 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         builder.getI32IntegerAttr(sourceColumn), runtimeContext, operands,
         builder.getArrayAttr(dpiOpenArrayLayouts),
         builder.getArrayAttr(dpiAggregateLayouts),
-        /*logical_inputs=*/IntegerAttr{});
+        /*logical_inputs=*/IntegerAttr{}));
     sim::SimStatusCheckOp::create(builder, location, call.getResults().back());
     llvm::append_range(callResults, call.getResults().drop_back());
   } else if (!directTask) {
     if (!virtualCallees) {
-      auto call =
+      auto call = retainCallSite(
           sim::SimCallOp::create(builder, location, callResultTypes, callee,
-                                 operands, ArrayAttr{}, ArrayAttr{});
+                                 operands, ArrayAttr{}, ArrayAttr{}));
       llvm::append_range(callResults, call.getResults());
     } else {
       Block *merge = addBlock();
@@ -2951,9 +2957,9 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           if (capture)
             recordSensitivity(capture);
         }
-        auto selected = sim::SimCallOp::create(
+        auto selected = retainCallSite(sim::SimCallOp::create(
             builder, location, callResultTypes, candidate.getCallee(),
-            candidateOperands, ArrayAttr{}, ArrayAttr{});
+            candidateOperands, ArrayAttr{}, ArrayAttr{}));
         cf::BranchOp::create(builder, location, merge, selected.getResults());
         setCurrent(next);
       }
@@ -2967,10 +2973,10 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   } else {
     Block *continuation = addBlock();
     if (!virtualCallees) {
-      sim::SimTaskCallOp::create(builder, location, callee, operands,
-                                 builder.getI64IntegerAttr(operands.size()),
-                                 schedule::ContinuationSiteAttr{},
-                                 continuation);
+      retainCallSite(sim::SimTaskCallOp::create(
+          builder, location, callee, operands,
+          builder.getI64IntegerAttr(operands.size()),
+          schedule::ContinuationSiteAttr{}, continuation));
     } else {
       for (auto candidate :
            virtualCallees.getAsRange<sim::VirtualInterfaceCalleeAttr>()) {
@@ -3009,10 +3015,10 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           if (capture)
             recordSensitivity(capture);
         }
-        sim::SimTaskCallOp::create(
+        retainCallSite(sim::SimTaskCallOp::create(
             builder, location, candidate.getCallee(), candidateOperands,
             builder.getI64IntegerAttr(candidateOperands.size()),
-            schedule::ContinuationSiteAttr{}, continuation);
+            schedule::ContinuationSiteAttr{}, continuation));
         setCurrent(next);
       }
       if (failed(emitRuntimeFatal(

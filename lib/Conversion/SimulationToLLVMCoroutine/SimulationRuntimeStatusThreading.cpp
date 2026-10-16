@@ -200,6 +200,8 @@ LogicalResult threadRuntimeStatuses(ModuleOp module, AnalysisManager manager) {
         rewriter, call.getLoc(), results, call.getCalleeAttr(),
         call.getOperands(), call.getArgAttrsAttr(),
         rewriter.getArrayAttr(resultAttrs));
+    if (auto site = sim::get<sim::metadata::VpiCallSite>(call))
+      sim::set<sim::metadata::VpiCallSite>(replacement, site);
     for (auto [oldResult, newResult] : llvm::zip_equal(
              call.getResults(), replacement.getResults().drop_back()))
       oldResult.replaceAllUsesWith(newResult);
@@ -221,6 +223,8 @@ LogicalResult threadRuntimeStatuses(ModuleOp module, AnalysisManager manager) {
     auto replacement = sim::SimClassDirectCallOp::create(
         rewriter, call.getLoc(), results, call.getCalleeAttr(),
         call.getReceiver(), call.getArguments());
+    if (auto site = sim::get<sim::metadata::VpiCallSite>(call))
+      sim::set<sim::metadata::VpiCallSite>(replacement, site);
     for (auto [oldResult, newResult] : llvm::zip_equal(
              call.getResults(), replacement.getResults().drop_back()))
       oldResult.replaceAllUsesWith(newResult);

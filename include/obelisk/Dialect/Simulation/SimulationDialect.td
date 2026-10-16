@@ -541,6 +541,8 @@ def ObeliskSimulationDialect : Dialect {
     "::mlir::FlatSymbolRefAttr":$vpi_anchor,
     // Exact immutable statement occurrence retained across fork outlining.
     "::mlir::IntegerAttr":$vpi_statement_id,
+    // Exact source call declaration, including calls nested in expressions.
+    "::mlir::FlatSymbolRefAttr":$vpi_call_site,
     "::mlir::BoolAttr":$vpi_automatic,
     "::mlir::BoolAttr":$vpi_cell_instance,
     "::mlir::StringAttr":$vpi_definition_name,

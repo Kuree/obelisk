@@ -700,7 +700,11 @@ def SemanticDirectoryValueElementBindingOffset
     : ReflectionField<"ValueElementBindingOffset", 544, U64LE>;
 def SemanticDirectoryValueElementBindingCount
     : ReflectionField<"ValueElementBindingCount", 552, U64LE>;
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 560,
+def SemanticDirectoryCallSiteBindingOffset
+    : ReflectionField<"CallSiteBindingOffset", 560, U64LE>;
+def SemanticDirectoryCallSiteBindingCount
+    : ReflectionField<"CallSiteBindingCount", 568, U64LE>;
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 576,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -767,7 +771,19 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 560,
    SemanticDirectoryBoxTypeBindingOffset,
    SemanticDirectoryBoxTypeBindingCount,
    SemanticDirectoryValueElementBindingOffset,
-   SemanticDirectoryValueElementBindingCount]>;
+   SemanticDirectoryValueElementBindingCount,
+   SemanticDirectoryCallSiteBindingOffset,
+   SemanticDirectoryCallSiteBindingCount]>;
+
+// Exact immutable call occurrences, including expression-nested calls.
+def CallSiteBindingID : ReflectionField<"ID", 0, U64LE>;
+def CallSiteBindingObject : ReflectionField<"ObjectIndexAndTable", 8, U32LE>;
+def CallSiteBindingOwner : ReflectionField<"OwnerCodeUnitIndex", 12, U32LE>;
+def CallSiteBindingFlags : ReflectionField<"Flags", 16, U32LE>;
+def CallSiteBindingReserved : ReflectionField<"Reserved", 20, U32LE>;
+def CallSiteBinding : ReflectionLayout<"CallSiteBinding", 24,
+  [CallSiteBindingID, CallSiteBindingObject, CallSiteBindingOwner,
+   CallSiteBindingFlags, CallSiteBindingReserved]>;
 
 // Sparse exact code-unit identity to immutable source statement mapping.
 def ThreadOriginBindingCodeUnitID : ReflectionField<"CodeUnitID", 0, U64LE>;

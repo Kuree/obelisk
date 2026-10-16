@@ -257,6 +257,32 @@ def SimStatementDeclOp : SimOp<"statement.decl", [
   let hasVerifier = 1;
 }
 
+def SimVPICallDeclOp : SimOp<"vpi_call.decl", [
+    Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable identity of one source task/function call";
+  let description = [{
+    Identifies the actual call occurrence independently of executable clones.
+    A discarded call may alias its existing statement identity. Calls nested
+    within another expression have independent unnamed expression identities;
+    they never acquire a fabricated statement-containment edge. The enclosing
+    statement provides lexical context only. The optional callee code-unit ID
+    identifies a statically resolved source declaration, not a dynamic override.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
+                       I64Attr:$code_unit_id, I64Attr:$scope_id,
+                       I32Attr:$vpi_kind, StrAttr:$name,
+                       OptionalAttr<I64Attr>:$statement_id,
+                       OptionalAttr<I64Attr>:$enclosing_statement_id,
+                       OptionalAttr<I64Attr>:$callee_code_unit_id,
+                       UnitAttr:$is_indirect);
+  let assemblyFormat = [{$sym_name `id` $id `in` $code_unit_id `scope`
+    $scope_id `type` $vpi_kind `name` $name
+    (`statement` $statement_id^)? (`within` $enclosing_statement_id^)?
+    (`callee` $callee_code_unit_id^)? attr-dict}];
+  let hasVerifier = 1;
+}
+
 def SimVPIThreadOriginBindingOp : SimOp<"vpi_thread_origin_binding", [
     MemoryEffects<[MemWrite<SimInventoryResource>]>
   ]> {
@@ -3340,6 +3366,7 @@ def SimClassVirtualTaskCallOp : SimOp<"class.virtual_task_call", [
 }
 
 def SimDPICallOp : SimOp<"dpi.call", [
+  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "shared zero-time DPI-C import boundary";

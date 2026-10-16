@@ -503,6 +503,55 @@ LogicalResult SimStatementDeclOp::verify() {
                                reflectionDefinitionLoc(*this));
 }
 
+LogicalResult SimVPICallDeclOp::verify() {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("requires a simulation.design owner");
+  if (failed(verifyNonnegative(*this, getIdAttr(), "call-site ID")) ||
+      failed(verifyNonnegative(*this, getCodeUnitIdAttr(), "code-unit ID")) ||
+      failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")) ||
+      failed(verifyNonnegative(*this, getVpiKindAttr(), "VPI call kind")))
+    return failure();
+  if (!getId() || !getCodeUnitId())
+    return emitOpError("call-site and code-unit IDs must be nonzero");
+  for (auto [attribute, name] :
+       {std::pair{getStatementIdAttr(), "statement ID"},
+        std::pair{getEnclosingStatementIdAttr(), "enclosing statement ID"},
+        std::pair{getCalleeCodeUnitIdAttr(), "callee code-unit ID"}})
+    if (attribute) {
+      if (failed(verifyNonnegative(*this, attribute, name)))
+        return failure();
+      if (attribute.getValue().isZero())
+        return emitOpError() << name << " must be positive";
+    }
+  using Kind = reflection::VPIObjectKind;
+  switch (static_cast<Kind>(getVpiKind())) {
+  case Kind::FuncCall:
+  case Kind::MethodFuncCall:
+  case Kind::SysFuncCall:
+  case Kind::TaskCall:
+  case Kind::MethodTaskCall:
+  case Kind::SysTaskCall:
+    break;
+  default:
+    return emitOpError("kind must identify an exact task/function call");
+  }
+  if (getName().empty() || getName().contains('\0'))
+    return emitOpError(
+        "requires the nonempty source callee name without NUL bytes");
+  if (getIsIndirect() &&
+      getVpiKind() != static_cast<uint32_t>(Kind::TaskCall) &&
+      getVpiKind() != static_cast<uint32_t>(Kind::FuncCall) &&
+      getVpiKind() != static_cast<uint32_t>(Kind::MethodTaskCall) &&
+      getVpiKind() != static_cast<uint32_t>(Kind::MethodFuncCall))
+    return emitOpError(
+        "only a user task/function call may use indirect dispatch");
+  if ((getVpiKind() == static_cast<uint32_t>(Kind::SysFuncCall) ||
+       getVpiKind() == static_cast<uint32_t>(Kind::SysTaskCall)) &&
+      getCalleeCodeUnitIdAttr())
+    return emitOpError("system call cannot name a source code-unit callee");
+  return success();
+}
+
 LogicalResult SimVPIThreadOriginBindingOp::verify() {
   if (!isa<SimDesignOp>((*this)->getParentOp()))
     return emitOpError("requires a simulation.design owner");
@@ -3155,6 +3204,8 @@ LogicalResult SimClassRootBindOp::verify() {
 
 LogicalResult
 SimClassDirectCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (failed(verifyVPICallSite(*this, symbolTable, false)))
+    return failure();
   auto callee =
       symbolTable.lookupNearestSymbolFrom<SimFuncOp>(*this, getCalleeAttr());
   if (!callee)
@@ -3190,6 +3241,8 @@ LogicalResult SimClassDispatchTargetsOp::verifySymbolUses(
 
 LogicalResult
 SimClassVirtualCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (failed(verifyVPICallSite(*this, symbolTable, false)))
+    return failure();
   auto method = symbolTable.lookupNearestSymbolFrom<SimClassMethodDeclOp>(
       *this, getMethodAttr());
   if (!method || !method.getIsVirtual() || !method.getSlot() ||
@@ -3223,7 +3276,7 @@ LogicalResult SimDesignOp::verifyRegions() {
   llvm::DenseSet<uint64_t> scopeIds, coverageScopeIds, codeUnitIds,
       statementIds, statementSiteIds, storageIds, netIds, driverIds, portIds,
       connectionIds, covergroupIds, classIds, vpiAnchorIds, vpiNetIdentityIds,
-      typespecIds, nettypeIds, enumConstIds;
+      typespecIds, nettypeIds, enumConstIds, vpiCallIds;
   llvm::DenseMap<uint64_t, SimScopeDeclOp> scopes;
   llvm::DenseMap<uint64_t, SimCodeUnitDeclOp> codeUnits;
   llvm::DenseMap<uint64_t, SimStatementDeclOp> statements;
@@ -3232,6 +3285,7 @@ LogicalResult SimDesignOp::verifyRegions() {
   SmallVector<SimStatementDeclOp> statementInventory;
   SmallVector<SimStatementSiteDeclOp> statementSites;
   SmallVector<SimVPIThreadOriginBindingOp> threadOrigins;
+  SmallVector<SimVPICallDeclOp> vpiCalls;
   SmallVector<SimVPIStatementRelationDeclOp> statementRelations;
   SmallVector<SimVPIRelationDeclOp> vpiRelations;
   SmallVector<SimVPIDefinitionMemberDeclOp> definitionMembers;
@@ -3290,6 +3344,10 @@ LogicalResult SimDesignOp::verifyRegions() {
         return failure();
       statements[statement.getId()] = statement;
       statementInventory.push_back(statement);
+    } else if (auto call = dyn_cast<SimVPICallDeclOp>(op)) {
+      if (failed(addId(call.getIdAttr(), vpiCallIds, "VPI call-site")))
+        return failure();
+      vpiCalls.push_back(call);
     } else if (auto binding = dyn_cast<SimVPIThreadOriginBindingOp>(op)) {
       threadOrigins.push_back(binding);
     } else if (auto site = dyn_cast<SimStatementSiteDeclOp>(op)) {
@@ -4101,6 +4159,44 @@ LogicalResult SimDesignOp::verifyRegions() {
       static_cast<uint32_t>(reflection::VPIObjectKind::Thread),
       static_cast<uint32_t>(reflection::VPIRelationKind::OriginRel),
       reflection::VPITraversalMode::Handle);
+  llvm::DenseSet<uint64_t> callStatementAliases;
+  for (SimVPICallDeclOp call : vpiCalls) {
+    auto owner = codeUnits.lookup(call.getCodeUnitId());
+    if (!owner || owner.getScopeId() != call.getScopeId())
+      return call.emitOpError(
+          "owner must name a code unit in its physical scope");
+    auto checkStatement = [&](uint64_t id) -> SimStatementDeclOp {
+      auto statement = statements.lookup(id);
+      return statement && statement.getCodeUnitId() &&
+                     *statement.getCodeUnitId() == call.getCodeUnitId() &&
+                     statement.getScopeId() == call.getScopeId()
+                 ? statement
+                 : SimStatementDeclOp{};
+    };
+    if (auto id = call.getStatementId()) {
+      auto statement = checkStatement(*id);
+      if (!statement || statement.getVpiKind() != call.getVpiKind())
+        return call.emitOpError(
+            "statement alias must name the same call kind and owner");
+      if (!callStatementAliases.insert(*id).second)
+        return call.emitOpError("duplicates a source call statement identity");
+    }
+    if (auto id = call.getEnclosingStatementId(); id && !checkStatement(*id))
+      return call.emitOpError(
+          "enclosing statement must have the same lexical owner");
+    if (auto id = call.getCalleeCodeUnitId()) {
+      auto callee = codeUnits.lookup(*id);
+      using Kind = reflection::VPIObjectKind;
+      bool task =
+          call.getVpiKind() == static_cast<uint32_t>(Kind::TaskCall) ||
+          call.getVpiKind() == static_cast<uint32_t>(Kind::MethodTaskCall);
+      if (!callee || callee.getCodeUnitKind() !=
+                         (task ? EntryKind::Task : EntryKind::Function))
+        return call.emitOpError(
+            "callee must name the corresponding task/function declaration");
+    }
+  }
+
   for (SimVPIThreadOriginBindingOp binding : threadOrigins) {
     auto codeUnit = codeUnits.find(binding.getCodeUnitId());
     auto statement = statements.find(binding.getStatementId());

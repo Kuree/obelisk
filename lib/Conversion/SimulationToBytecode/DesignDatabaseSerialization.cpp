@@ -257,6 +257,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint32_t statement;
   };
   SmallVector<ThreadOriginBindingRecord> threadOriginBindings;
+  SmallVector<sim::SimVPICallDeclOp> callDeclarations;
+  struct CallSiteBindingRecord {
+    uint64_t id;
+    uint32_t object, owner, flags;
+  };
+  SmallVector<CallSiteBindingRecord> callSiteBindings;
   struct FrozenValueRecord {
     uint32_t kindAndFlags = 0;
     uint64_t bitWidth = 0;
@@ -615,6 +621,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
     else if (auto statement = dyn_cast<sim::SimStatementDeclOp>(operation)) {
       if (includeStatements)
         statements.push_back({statement, sourceFor(statement)});
+    } else if (auto call = dyn_cast<sim::SimVPICallDeclOp>(operation)) {
+      if (includeStatements)
+        callDeclarations.push_back(call);
     } else if (auto site = dyn_cast<sim::SimStatementSiteDeclOp>(operation)) {
       if (includeStatements)
         statementSites.push_back({site});
@@ -701,7 +710,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
                            anchor.getEnclosingScopeId(), std::move(name),
                            Type{}, 0, sourceFor(anchor),
                            !specializedOwner && !sourceExpression, anchor});
-    } else if (auto member = dyn_cast<sim::SimVPIClassMemberDeclOp>(operation)) {
+    } else if (auto member =
+                   dyn_cast<sim::SimVPIClassMemberDeclOp>(operation)) {
       if (!includeStatements)
         continue;
       auto field = classMemberFields.lookup(member);
@@ -907,6 +917,30 @@ SmallVector<uint8_t> serializeDesignDatabase(
   }
   if (scopes.empty())
     return {};
+  // A nested call is an expression occurrence, not an invented statement.
+  // Keep it unindexed and distinct even when spelling and location coincide.
+  llvm::sort(callDeclarations, [](auto left, auto right) {
+    return left.getId() < right.getId();
+  });
+  uint64_t nextCallObjectID = 0;
+  for (const Record &object : objects)
+    if (object.kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT)
+      nextCallObjectID = std::max(nextCallObjectID, object.id);
+  for (const StaticObjectRecord &object : staticObjects)
+    nextCallObjectID = std::max(nextCallObjectID, object.id);
+  for (sim::SimVPICallDeclOp call : callDeclarations) {
+    if (call.getStatementId())
+      continue;
+    if (nextCallObjectID == UINT64_MAX) {
+      call.emitOpError("call occurrence object identity cannot be encoded");
+      return {};
+    }
+    objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+                       static_cast<uint32_t>(call.getVpiKind()), 0,
+                       ++nextCallObjectID, call.getScopeId(),
+                       call.getName().str(), Type{}, 0, sourceFor(call), false,
+                       call});
+  }
   // Direct lookup of a static property denotes its class declaration view.
   // Its backing storage is implementation identity, not a second VPI object.
   for (Record &object : objects)
@@ -1299,6 +1333,24 @@ SmallVector<uint8_t> serializeDesignDatabase(
       threadOriginBindings.push_back(
           {binding.getCodeUnitId(), statement->second});
     }
+  }
+
+  for (sim::SimVPICallDeclOp call : callDeclarations) {
+    TableKind table = TableKind::Object;
+    uint32_t index = objectIndices.lookup(call);
+    if (auto statementID = call.getStatementId()) {
+      table = TableKind::Statement;
+      index = statementIndices.lookup(*statementID);
+    }
+    uint32_t packed = 0;
+    if (!tryPackTableIndex(table, index, packed)) {
+      call.emitOpError("call occurrence object reference cannot be packed");
+      return {};
+    }
+    callSiteBindings.push_back(
+        {call.getId(), packed,
+         codeUnitObjectIndices.lookup(call.getCodeUnitId()),
+         static_cast<uint32_t>(call.getIsIndirect())});
   }
 
   DenseMap<uint64_t, uint32_t> automaticOrdinals;
@@ -1952,6 +2004,54 @@ SmallVector<uint8_t> serializeDesignDatabase(
               TableKind::Statement, static_cast<uint32_t>(sourceIndex),
               static_cast<uint32_t>(statement.getVpiKind()), targetTable,
               targetIndex, targetKind, VPIAutomaticRelation::ParentScope)))
+        return {};
+    }
+  }
+
+  for (auto [ordinal, call] : llvm::enumerate(callDeclarations)) {
+    const auto binding = callSiteBindings[ordinal];
+    TableKind sourceTable = unpackTableIndexKind(binding.object);
+    uint32_t sourceIndex = unpackTableIndex(binding.object);
+    const uint32_t callKind = call.getVpiKind();
+    // The nearest retained scope owns the occurrence; enclosing expressions
+    // and composite statements do not become false lexical scopes.
+    TableKind scopeTable = TableKind::Scope;
+    uint32_t scopeIndex = scopeIndices.lookup(call.getScopeId());
+    uint32_t scopeKind = sim::vpiKindForScope(scopes[scopeIndex]);
+    for (auto enclosing = call.getEnclosingStatementId(); enclosing;) {
+      uint32_t index = statementIndices.lookup(*enclosing);
+      auto statement = statements[index].declaration;
+      if (statement.getIsScope()) {
+        scopeTable = TableKind::Statement;
+        scopeIndex = index;
+        scopeKind = statement.getVpiKind();
+        break;
+      }
+      enclosing = statement.getParentId();
+    }
+    if (scopeTable == TableKind::Scope) {
+      uint32_t ownerKind = objects[binding.owner].vpiKind;
+      const auto *owner = findVPIObjectKind(ownerKind);
+      if (owner && (owner->families & vpiFamilyMask(VPIObjectFamily::Scope))) {
+        scopeTable = TableKind::Object;
+        scopeIndex = binding.owner;
+        scopeKind = ownerKind;
+      }
+    }
+    if (findVPITraversal(callKind,
+                         static_cast<uint32_t>(VPIRelationKind::ScopeRel),
+                         VPITraversalMode::Handle) &&
+        failed(addRelation(call, sourceTable, sourceIndex, callKind,
+                           static_cast<uint32_t>(VPIRelationKind::ScopeRel),
+                           VPITraversalMode::Handle, scopeTable, scopeIndex,
+                           scopeKind)))
+      return {};
+    if (auto calleeID = call.getCalleeCodeUnitId()) {
+      uint32_t callee = codeUnitObjectIndices.lookup(*calleeID);
+      uint32_t kind = objects[callee].vpiKind;
+      if (failed(addRelation(call, sourceTable, sourceIndex, callKind, kind,
+                             VPITraversalMode::Handle, TableKind::Object,
+                             callee, kind)))
         return {};
     }
   }
@@ -4014,6 +4114,13 @@ SmallVector<uint8_t> serializeDesignDatabase(
                 addCodeUnitProperties(operation, packedSource, source.vpiKind)))
           return {};
     }
+    for (auto [index, call] : llvm::enumerate(callDeclarations)) {
+      const auto *property = reflection::findVPIProperty(call.getVpiKind(), 2);
+      if (property &&
+          failed(addFixedProperty(call, callSiteBindings[index].object,
+                                  call.getVpiKind(), 2, call.getNameAttr())))
+        return {};
+    }
     // Required image Booleans encode false by absence. Optional image facts
     // retain explicit false because absence requests the derived fallback.
     fixedProperties.erase(
@@ -4311,9 +4418,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
   uint64_t threadOriginBindingOffset =
       eventArrayStorageBindingOffset +
       eventArrayStorageBindings.size() * EventArrayStorageBindingLayout.size;
-  uint64_t relationIndexOffset =
+  uint64_t callSiteBindingOffset =
       threadOriginBindingOffset +
       threadOriginBindings.size() * ThreadOriginBindingLayout.size;
+  uint64_t relationIndexOffset =
+      callSiteBindingOffset +
+      callSiteBindings.size() * CallSiteBindingLayout.size;
   uint64_t relationIndexDimensionOffset =
       relationIndexOffset + relationIndices.size() * RelationIndexLayout.size;
   uint64_t relationIndexKeyOffset =
@@ -4640,6 +4750,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setEventArrayStorageBindingCount(eventArrayStorageBindings.size());
     writer.setThreadOriginBindingOffset(threadOriginBindingOffset);
     writer.setThreadOriginBindingCount(threadOriginBindings.size());
+    writer.setCallSiteBindingOffset(callSiteBindingOffset);
+    writer.setCallSiteBindingCount(callSiteBindings.size());
     writer.setRelationIndexOffset(relationIndexOffset);
     writer.setRelationIndexCount(relationIndices.size());
     writer.setRelationIndexDimensionOffset(relationIndexDimensionOffset);
@@ -4791,6 +4903,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setOwnerIndex(binding.ownerIndex);
     writer.setSemanticTypeIndex(binding.semanticType);
     writer.setPhysicalTypeIndex(binding.physicalType);
+  }
+  for (auto [index, binding] : llvm::enumerate(callSiteBindings)) {
+    CallSiteBindingWriter writer(output.data() + callSiteBindingOffset +
+                                 index * CallSiteBindingLayout.size);
+    writer.setID(binding.id);
+    writer.setObjectIndexAndTable(binding.object);
+    writer.setOwnerCodeUnitIndex(binding.owner);
+    writer.setFlags(binding.flags);
+    writer.setReserved(0);
   }
   llvm::sort(threadOriginBindings, [](const auto &left, const auto &right) {
     return left.codeUnit < right.codeUnit;

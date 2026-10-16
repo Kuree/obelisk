@@ -558,4 +558,100 @@ LogicalResult materializeProceduralStatements(
   }
   return success();
 }
+
+LogicalResult
+materializeProceduralCalls(sim::SimDesignOp design, const PreparedUnits &units,
+                           const llvm::StringMap<Operation *> &semanticSymbols,
+                           OpBuilder &builder) {
+  uint64_t nextID = 1;
+  for (auto existing : design.getBody().front().getOps<sim::SimVPICallDeclOp>())
+    nextID = std::max(nextID, static_cast<uint64_t>(existing.getId()) + 1);
+  SymbolTable symbols(design);
+  for (const PreparedUnit &unit : units.units) {
+    if (!isa<semantic::SVProceduralBlockSymbolOp,
+             semantic::SVSubroutineSymbolOp>(unit.source))
+      continue;
+    auto owner = units.declarations.lookup(unit.source);
+    if (!owner)
+      continue;
+    SmallVector<Operation *> pending{unit.source};
+    while (!pending.empty()) {
+      Operation *source = pending.pop_back_val();
+      if (source != unit.source && isa<semantic::SVProceduralBlockSymbolOp,
+                                       semantic::SVSubroutineSymbolOp>(source))
+        continue;
+      for (Operation *child : llvm::reverse(getChildren(source)))
+        pending.push_back(child);
+      auto call = dyn_cast<semantic::SVCallExpressionOp>(source);
+      if (!call)
+        continue;
+      if (nextID > INT64_MAX)
+        return call.emitOpError(
+            "VPI call occurrence inventory exceeds its ID domain");
+      bool task = call.getSubroutineKind() == semantic::SVSubroutineKind::Task;
+      Kind kind = isMethodCall(call, semanticSymbols)
+                      ? (task ? Kind::MethodTaskCall : Kind::MethodFuncCall)
+                  : call.getIsSystemCall()
+                      ? (task ? Kind::SysTaskCall : Kind::SysFuncCall)
+                      : (task ? Kind::TaskCall : Kind::FuncCall);
+      IntegerAttr statementID, enclosingID, calleeID;
+      for (Operation *parent = call->getParentOp();
+           parent && parent != unit.source; parent = parent->getParentOp()) {
+        auto id = sim::get<sim::metadata::VpiStatementId>(parent);
+        if (!id)
+          continue;
+        enclosingID = id;
+        if (isa<semantic::SVExpressionStatementOp>(parent)) {
+          auto children = getChildren(parent);
+          Operation *expression = children.size() == 1 ? children[0] : nullptr;
+          if (auto cast =
+                  dyn_cast_if_present<semantic::SVConversionExpressionOp>(
+                      expression);
+              cast && cast.getSemanticType() &&
+              isa<semantic::VoidType>(cast.getSemanticType())) {
+            auto operand = getChildren(cast);
+            expression = operand.size() == 1 ? operand[0] : nullptr;
+          }
+          if (expression == call.getOperation())
+            statementID = id;
+        }
+        break;
+      }
+      bool isVirtual = !units.resolveVirtualInterfaceCallees(call).empty();
+      if (!call.getIsSystemCall())
+        if (auto reference = call.getReferencedSymbolAttr()) {
+          auto found = semanticSymbols.find(reference.getLeafReference());
+          Operation *target =
+              found == semanticSymbols.end() ? nullptr : found->second;
+          if (auto implementation = units.externCalleeTargets.find(target);
+              implementation != units.externCalleeTargets.end())
+            target = implementation->second;
+          if (auto prototype =
+                  dyn_cast_if_present<semantic::SVMethodPrototypeSymbolOp>(
+                      target))
+            for (Operation *child : getChildren(prototype))
+              if (isa<semantic::SVSubroutineSymbolOp>(child)) {
+                target = child;
+                break;
+              }
+          if (target && !target->hasAttr("is_builtin")) {
+            if (auto callee = units.declarations.lookup(target))
+              calleeID = callee.getIdAttr();
+            isVirtual |= target->hasAttr("is_virtual") &&
+                         !(call.getIsSuperClass() && !call.getHasThisClass());
+          }
+        }
+      auto declaration = sim::SimVPICallDeclOp::create(
+          builder, getSemanticLocation(call),
+          ("__obelisk_vpi_call_" + Twine(nextID)).str(), nextID, unit.id,
+          owner.getScopeId(), static_cast<uint32_t>(kind), call.getCalleeName(),
+          statementID, enclosingID, calleeID, isVirtual);
+      symbols.insert(declaration);
+      sim::set<sim::metadata::VpiCallSite>(
+          call, FlatSymbolRefAttr::get(declaration.getSymNameAttr()));
+      ++nextID;
+    }
+  }
+  return success();
+}
 } // namespace obelisk::simlowering

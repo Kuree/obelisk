@@ -5990,12 +5990,19 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
             !context->schedulerFinishRequested.load(
                 std::memory_order_relaxed) &&
             !killRequested) {
-          if (scheduled.callerControlDepths.size() != scheduled.callers.size())
+          if (scheduled.callerDepths.size() != scheduled.callers.size())
             return OBELISK_RT_INVALID_LIFECYCLE;
+          if (context->vpiState) {
+            status = obelisk_rt_vpi_frame_unwind_process(
+                context, kNativeLogicalProcessTag | scheduled.token,
+                scheduled.callerDepths.back().vpiFrameDepth);
+            if (status != OBELISK_RT_OK)
+              return status;
+          }
           updateScheduledProcessInstance(context, scheduled,
                                          scheduled.callers.back());
           scheduled.callers.pop_back();
-          scheduled.callerControlDepths.pop_back();
+          scheduled.callerDepths.pop_back();
           scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
           scheduled.waitOffset = 0;
           scheduled.waitSize = 0;
@@ -6005,6 +6012,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           scheduled.queuedRegion = scheduled.homeRegion;
           destroy = true;
         } else {
+          if (context->vpiState)
+            (void)obelisk_rt_vpi_frame_unwind_process(
+                context, kNativeLogicalProcessTag | scheduled.token, 0);
           uint64_t token = scheduled.token;
           obelisk_rt_program_complete_unlocked(context,
                                                kNativeLogicalProcessTag | token,
@@ -6027,7 +6037,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           context->schedulerCompactionPending = true;
           if (terminationRequested || killRequested)
             terminatedCallers.swap(scheduled.callers);
-          scheduled.callerControlDepths.clear();
+          scheduled.callerDepths.clear();
           obelisk_rt_release_controls_unlocked(context, scheduled.controls);
           scheduled.controls.clear();
           destroy = true;
@@ -6059,9 +6069,15 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           return OBELISK_RT_INVALID_LIFECYCLE;
         if (scheduled.callers.size() == std::numeric_limits<size_t>::max())
           return OBELISK_RT_OUT_OF_RESOURCES;
+        uint64_t frameDepth = 0;
+        if (context->vpiState) {
+          status = obelisk_rt_vpi_frame_depth_process(
+              context, kNativeLogicalProcessTag | scheduled.token, &frameDepth);
+          if (status != OBELISK_RT_OK)
+            return status;
+        }
         scheduled.callers.reserve(scheduled.callers.size() + 1);
-        scheduled.callerControlDepths.reserve(
-            scheduled.callerControlDepths.size() + 1);
+        scheduled.callerDepths.reserve(scheduled.callerDepths.size() + 1);
         if (!scheduled.signalSubscriptions.empty() ||
             scheduled.computedObserverWaitRegistered)
           obelisk_rt_unregister_signal_wait_unlocked(
@@ -6070,7 +6086,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         if (status != OBELISK_RT_OK)
           return status;
         scheduled.callers.push_back(selected);
-        scheduled.callerControlDepths.push_back(scheduled.controls.size());
+        scheduled.callerDepths.push_back(
+            {scheduled.controls.size(), frameDepth});
         updateScheduledProcessInstance(context, scheduled, callee);
         scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
         scheduled.waitOffset = 0;

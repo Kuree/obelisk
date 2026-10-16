@@ -77,6 +77,7 @@ enum class VPIObjectForm : uint8_t {
   IntegralConstant,
   ClassObject,
   Thread,
+  Frame,
   SnapshotValue
 };
 
@@ -208,6 +209,7 @@ struct __vpiHandle {
   // A process class reference is a scheduler token, never a managed pointer.
   // Finished and killed process objects retain their identity in tombstones.
   uint64_t logicalProcess = 0;
+  uint64_t frameActivation = 0;
 
   uint32_t selectionRootType = 0;
   obelisk::reflection::VPIIndexedAccessKind selectionAccessKind =
@@ -314,6 +316,17 @@ struct VPISystemTf {
   PLI_BYTE8 *userData = nullptr;
 };
 
+struct VPIFrameActivation {
+  uint64_t id = 0;
+  uint64_t parent = 0;
+  uint64_t logicalProcess = 0;
+  uint64_t codeUnit = 0;
+  uint64_t lexicalCodeUnit = 0;
+  obelisk_rt_design_cursor_v1 origin{};
+  obelisk_rt_design_cursor_v1 statement{};
+  bool originIsStatement = false;
+};
+
 struct VPIState {
   obelisk_rt_context *context = nullptr;
   // Keep the simulation thread's binding slot alive even if that thread exits
@@ -332,6 +345,15 @@ struct VPIState {
   uint64_t lastClassCollection = 0;
   bool hasDynamicHandles = false;
   bool hasThreadHandles = false;
+  bool hasFrameHandles = false;
+  uint64_t nextFrameActivation = 1;
+  uint64_t frameGeneration = 0;
+  uint64_t lastPrunedFrameGeneration = 0;
+  // Code-unit metadata is immutable. Resolve each distinct executable owner
+  // once, rather than scanning the design inventory on every activation.
+  std::unordered_map<uint64_t, uint64_t> frameLexicalOwners;
+  std::unordered_map<uint64_t, VPIFrameActivation> frames;
+  std::unordered_map<uint64_t, std::vector<uint64_t>> frameStacks;
 
   uint64_t runtimeObserverCallbacks = 0;
   std::unordered_map<uint64_t, VPICallback> callbacks;
@@ -489,6 +511,39 @@ void pruneThreadHandles(VPIState *state) {
   }
 }
 
+uint64_t topFrame(VPIState *state, uint64_t logicalProcess) {
+  auto stack = state->frameStacks.find(logicalProcess);
+  return stack == state->frameStacks.end() || stack->second.empty()
+             ? 0
+             : stack->second.back();
+}
+
+bool frameIsLive(VPIState *state, uint64_t activation) {
+  ContextMutexLock lock(state->context);
+  auto found = state->frames.find(activation);
+  return found != state->frames.end() &&
+         (!found->second.logicalProcess ||
+          threadIsLive(state, found->second.logicalProcess));
+}
+
+void pruneFrameHandles(VPIState *state) {
+  if (!state->hasFrameHandles || state->callDepth || state->callbackDepth ||
+      state->frameGeneration == state->lastPrunedFrameGeneration)
+    return;
+  state->hasFrameHandles = false;
+  for (auto entry = state->handles.begin(); entry != state->handles.end();) {
+    if (entry->second->frameActivation) {
+      if (!frameIsLive(state, entry->second->frameActivation)) {
+        entry = state->handles.erase(entry);
+        continue;
+      }
+      state->hasFrameHandles = true;
+    }
+    ++entry;
+  }
+  state->lastPrunedFrameGeneration = state->frameGeneration;
+}
+
 class VPICallScope {
 public:
   VPICallScope() : state(currentState()) {
@@ -496,6 +551,7 @@ public:
       state->errorLevel = 0;
       pruneDynamicHandles(state);
       pruneThreadHandles(state);
+      pruneFrameHandles(state);
       ++state->callDepth;
     }
   }
@@ -540,6 +596,10 @@ __vpiHandle *findHandle(vpiHandle opaque) {
   if (hasThreadLifetime(*handle) &&
       !threadIsLive(state, handle->logicalProcess)) {
     setError(state, "invalid or finished VPI thread handle");
+    return nullptr;
+  }
+  if (handle->frameActivation && !frameIsLive(state, handle->frameActivation)) {
+    setError(state, "invalid or completed VPI frame handle");
     return nullptr;
   }
   if (handle->dynamicObject) {
@@ -593,6 +653,25 @@ vpiHandle makeThreadHandle(VPIState *state, uint64_t logicalProcess) {
   }
   OBELISK_RT_CATCH_ALL {
     setError(state, "could not allocate VPI thread handle", vpiSystem);
+    return nullptr;
+  }
+}
+
+vpiHandle makeFrameHandle(VPIState *state, uint64_t activation) {
+  if (!activation || !frameIsLive(state, activation))
+    return nullptr;
+  OBELISK_RT_TRY {
+    auto handle = std::make_unique<__vpiHandle>();
+    handle->owner = state;
+    handle->form = VPIObjectForm::Frame;
+    handle->exactVpiType = vpiFrame;
+    handle->frameActivation = activation;
+    handle->allocationScheme = vpiAutomaticScheme;
+    state->hasFrameHandles = true;
+    return keepHandle(state, std::move(handle));
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(state, "could not allocate VPI frame handle", vpiSystem);
     return nullptr;
   }
 }
@@ -6989,6 +7068,215 @@ obelisk_rt_v1_vpi_object_model(void) {
   return &model;
 }
 
+extern "C" OBELISK_VPI_EXPORT obelisk_rt_status obelisk_rt_v1_vpi_frame_enter(
+    obelisk_rt_context *context, uint64_t codeUnitID, uint32_t originKind,
+    uint64_t originID, uint64_t *outActivation) {
+  if (outActivation)
+    *outActivation = 0;
+  if (!context || !outActivation ||
+      originKind > OBELISK_RT_VPI_FRAME_STATEMENT_SCOPE)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextMutexLock lock(context);
+  auto *state = static_cast<VPIState *>(context->vpiState);
+  if (!state)
+    return OBELISK_RT_OK;
+  obelisk_rt_design_cursor_v1 scope{}, origin{};
+  bool originIsStatement = false;
+  uint64_t lexicalCodeUnit = UINT64_MAX;
+  obelisk_rt_status status = OBELISK_RT_OK;
+  OBELISK_RT_TRY {
+    auto owner = state->frameLexicalOwners.find(codeUnitID);
+    if (owner != state->frameLexicalOwners.end()) {
+      lexicalCodeUnit = owner->second;
+    } else {
+      status = obelisk_rt_cached_vpi_code_unit_scope(context, codeUnitID,
+                                                     &scope, &lexicalCodeUnit);
+      if (status != OBELISK_RT_OK)
+        return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
+      state->frameLexicalOwners.emplace(codeUnitID, lexicalCodeUnit);
+    }
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
+  status = obelisk_rt_cached_vpi_frame_origin(context, originKind, originID,
+                                              &origin, &originIsStatement);
+  if (status != OBELISK_RT_OK)
+    return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
+  const uint64_t process = context->activeLogicalProcessToken;
+  const uint64_t parent = topFrame(state, process);
+  if (originKind == OBELISK_RT_VPI_FRAME_CODE_UNIT_SCOPE) {
+    if (parent || originID != codeUnitID)
+      return OBELISK_RT_INVALID_FRAME;
+  } else {
+    if (!parent)
+      return OBELISK_RT_INVALID_FRAME;
+    uint64_t owner = UINT64_MAX;
+    obelisk_rt_design_cursor_v1 checked{};
+    bool callIsStatement = false;
+    status = originKind == OBELISK_RT_VPI_FRAME_CALL
+                 ? obelisk_rt_cached_vpi_call(context, originID, &checked,
+                                              &owner, &callIsStatement)
+                 : obelisk_rt_cached_vpi_statement(context, originID, &checked,
+                                                   &owner);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (owner != state->frames.at(parent).lexicalCodeUnit ||
+        (originKind == OBELISK_RT_VPI_FRAME_STATEMENT_SCOPE &&
+         (owner != lexicalCodeUnit ||
+          codeUnitID != state->frames.at(parent).codeUnit)))
+      return OBELISK_RT_INVALID_FRAME;
+    if (originKind == OBELISK_RT_VPI_FRAME_CALL) {
+      status = obelisk_rt_cached_vpi_call_target(context, originID, codeUnitID);
+      if (status != OBELISK_RT_OK)
+        return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
+    }
+  }
+  if (!state->nextFrameActivation)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  OBELISK_RT_TRY {
+    const uint64_t id = state->nextFrameActivation;
+    auto [stack, createdStack] = state->frameStacks.try_emplace(process);
+    struct Rollback {
+      VPIState *state;
+      uint64_t process;
+      uint64_t id;
+      bool createdStack;
+      bool insertedFrame = false;
+      bool committed = false;
+      ~Rollback() {
+        if (committed)
+          return;
+        if (insertedFrame)
+          state->frames.erase(id);
+        if (createdStack)
+          state->frameStacks.erase(process);
+      }
+    } rollback{state, process, id, createdStack};
+    rollback.insertedFrame =
+        state->frames
+            .emplace(id, VPIFrameActivation{id,
+                                            parent,
+                                            process,
+                                            codeUnitID,
+                                            lexicalCodeUnit,
+                                            origin,
+                                            {},
+                                            originIsStatement})
+            .second;
+    if (!rollback.insertedFrame)
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    stack->second.push_back(id);
+    rollback.committed = true;
+    ++state->nextFrameActivation;
+    *outActivation = id;
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
+}
+
+extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
+obelisk_rt_v1_vpi_frame_checkpoint(obelisk_rt_context *context,
+                                   uint64_t statementID) {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextMutexLock lock(context);
+  auto *state = static_cast<VPIState *>(context->vpiState);
+  if (!state)
+    return OBELISK_RT_OK;
+  const uint64_t id = topFrame(state, context->activeLogicalProcessToken);
+  if (!id)
+    return OBELISK_RT_INVALID_FRAME;
+  obelisk_rt_design_cursor_v1 statement{};
+  uint64_t owner = UINT64_MAX;
+  const auto status =
+      obelisk_rt_cached_vpi_statement(context, statementID, &statement, &owner);
+  if (status != OBELISK_RT_OK)
+    return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
+  auto &frame = state->frames.at(id);
+  if (owner != frame.lexicalCodeUnit)
+    return OBELISK_RT_INVALID_FRAME;
+  frame.statement = statement;
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status
+obelisk_rt_vpi_frame_unwind_process(obelisk_rt_context *context,
+                                    uint64_t logicalProcess, uint64_t depth) {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextMutexLock lock(context);
+  auto *state = static_cast<VPIState *>(context->vpiState);
+  if (!state)
+    return OBELISK_RT_OK;
+  auto stack = state->frameStacks.find(logicalProcess);
+  if (stack == state->frameStacks.end())
+    return depth ? OBELISK_RT_INVALID_FRAME : OBELISK_RT_OK;
+  if (depth > stack->second.size())
+    return OBELISK_RT_INVALID_FRAME;
+  if (depth == stack->second.size())
+    return OBELISK_RT_OK;
+  while (stack->second.size() > depth) {
+    state->frames.erase(stack->second.back());
+    stack->second.pop_back();
+  }
+  if (stack->second.empty())
+    state->frameStacks.erase(stack);
+  ++state->frameGeneration;
+  return OBELISK_RT_OK;
+}
+
+extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
+obelisk_rt_v1_vpi_frame_unwind(obelisk_rt_context *context, uint64_t depth) {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextMutexLock lock(context);
+  return obelisk_rt_vpi_frame_unwind_process(
+      context, context->activeLogicalProcessToken, depth);
+}
+
+obelisk_rt_status obelisk_rt_vpi_frame_depth_process(
+    obelisk_rt_context *context, uint64_t logicalProcess, uint64_t *outDepth) {
+  if (outDepth)
+    *outDepth = 0;
+  if (!context || !outDepth)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextMutexLock lock(context);
+  auto *state = static_cast<VPIState *>(context->vpiState);
+  if (!state)
+    return OBELISK_RT_OK;
+  auto stack = state->frameStacks.find(logicalProcess);
+  if (stack != state->frameStacks.end())
+    *outDepth = stack->second.size();
+  return OBELISK_RT_OK;
+}
+
+extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
+obelisk_rt_v1_vpi_frame_depth(obelisk_rt_context *context, uint64_t *outDepth) {
+  if (outDepth)
+    *outDepth = 0;
+  if (!context || !outDepth)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextMutexLock lock(context);
+  return obelisk_rt_vpi_frame_depth_process(
+      context, context->activeLogicalProcessToken, outDepth);
+}
+
+extern "C" OBELISK_VPI_EXPORT obelisk_rt_status obelisk_rt_v1_vpi_frame_leave(
+    obelisk_rt_context *context, uint64_t activation) {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextMutexLock lock(context);
+  auto *state = static_cast<VPIState *>(context->vpiState);
+  if (!state)
+    return activation ? OBELISK_RT_INVALID_FRAME : OBELISK_RT_OK;
+  const uint64_t process = context->activeLogicalProcessToken;
+  if (!activation || topFrame(state, process) != activation)
+    return OBELISK_RT_INVALID_FRAME;
+  return obelisk_rt_vpi_frame_unwind_process(
+      context, process, state->frameStacks.at(process).size() - 1);
+}
+
 extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
 obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
                           const char *const *modules, uint64_t moduleCount) {
@@ -7284,14 +7572,14 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
 extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
                                                    vpiHandle reference) {
   VPICallScope vpiCallScope;
-  // IEEE 1800-2023 37.43 detail 4 defines this NULL-root query as the
-  // currently active frame. Live frame materialization is intentionally a
-  // separate feature; outside procedural execution the correct result is a
-  // quiet NULL, rather than treating the NULL reference as an invalid handle.
+  // IEEE 1800-2023 37.43 detail 4: the innermost executing activation.
   if (!reference && type == vpiFrame) {
-    if (!requireState())
+    auto *state = requireState();
+    if (!state)
       return nullptr;
-    return nullptr;
+    ContextMutexLock lock(state->context);
+    return makeFrameHandle(
+        state, topFrame(state, state->context->activeLogicalProcessToken));
   }
   __vpiHandle *handle = findHandle(reference);
   if (!handle)
@@ -7361,6 +7649,34 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       return nullptr;
     }
   }
+  if (handle->form == VPIObjectForm::Frame) {
+    ContextMutexLock lock(handle->owner->context);
+    const auto found = handle->owner->frames.find(handle->frameActivation);
+    if (found == handle->owner->frames.end())
+      return nullptr;
+    const auto &frame = found->second;
+    if (type == vpiParent)
+      return makeFrameHandle(handle->owner, frame.parent);
+    if (type == vpiThread)
+      return frame.logicalProcess
+                 ? makeThreadHandle(handle->owner, frame.logicalProcess)
+                 : nullptr;
+    if (type == vpiOrigin || type == vpiStmt) {
+      const auto cursor = type == vpiOrigin ? frame.origin : frame.statement;
+      if (!cursor.offset)
+        return nullptr;
+      uint32_t exact = 0;
+      if (obelisk_rt_cached_vpi_type(handle->owner->context, cursor, &exact) !=
+          OBELISK_RT_OK) {
+        setError(handle->owner, "invalid VPI frame source metadata",
+                 vpiInternal);
+        return nullptr;
+      }
+      return makeHandle(handle->owner, cursor, exact,
+                        type == vpiStmt || frame.originIsStatement);
+    }
+    return nullptr;
+  }
   if (handle->form == VPIObjectForm::Thread) {
     if (type == vpiParent)
       return threadParent(handle);
@@ -7394,9 +7710,11 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       // owner and lifetime are independent of this dynamic thread activation.
       return makeHandle(handle->owner, statement, statementType, true);
     }
-    if (type == vpiFrame)
-      setError(handle->owner, "VPI thread frame metadata is unavailable",
-               vpiNotice);
+    if (type == vpiFrame) {
+      ContextMutexLock lock(handle->owner->context);
+      return makeFrameHandle(handle->owner,
+                             topFrame(handle->owner, handle->logicalProcess));
+    }
     return nullptr;
   }
   if (sourceType == vpiClassVar && type == vpiClassObj)
@@ -7940,6 +8258,12 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       return nullptr;
     if (handle->form == VPIObjectForm::Thread)
       return type == vpiThread ? threadChildren(handle) : nullptr;
+    if (handle->form == VPIObjectForm::Frame) {
+      if (type == vpiAutomatics)
+        setError(handle->owner,
+                 "frame automatic storage metadata is unavailable", vpiNotice);
+      return nullptr;
+    }
     if (handle->form == VPIObjectForm::ClassObject &&
         type == vpiWaitingProcesses)
       return classWaitingProcesses(handle);
@@ -8841,7 +9165,11 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
       rejectUnresolvedParameterQuery(handle))
     return vpiUndefined;
   if (property == vpiSize && handle->form == VPIObjectForm::Design &&
-      vpiTypeForHandle(handle) == vpiOperation) {
+      !handle->statement &&
+      (vpiTypeForHandle(handle) == vpiOperation ||
+       vpiTypeForHandle(handle) == vpiFuncCall ||
+       vpiTypeForHandle(handle) == vpiMethodFuncCall ||
+       vpiTypeForHandle(handle) == vpiSysFuncCall)) {
     obelisk_rt_design_info_v1 info{};
     if (!infoFor(handle, info))
       return vpiUndefined;
@@ -8876,7 +9204,9 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     // inherit protection from their allocated type; declarations use the image.
     if (handle->kind != VPIHandleKind::Object && property == vpiIsProtected)
       return 0;
-    if (handle->form == VPIObjectForm::Thread && property == vpiIsProtected)
+    if ((handle->form == VPIObjectForm::Thread ||
+         handle->form == VPIObjectForm::Frame) &&
+        property == vpiIsProtected)
       return 0;
     if (handle->form == VPIObjectForm::SnapshotValue) {
       if (property == vpiOpType && handle->snapshot->opType)
@@ -8914,6 +9244,12 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   if (property == vpiActive && handle->form == VPIObjectForm::Thread)
     return obelisk_rt_v1_process_current(handle->owner->context) ==
            handle->logicalProcess;
+  if (property == vpiActive && handle->form == VPIObjectForm::Frame) {
+    ContextMutexLock lock(handle->owner->context);
+    return topFrame(handle->owner,
+                    handle->owner->context->activeLogicalProcessToken) ==
+           handle->frameActivation;
+  }
   if (property == vpiIteratorType && handle->kind == VPIHandleKind::Iterator)
     return handle->iteratorType;
   // Released and reclaimed handles fail findHandle() above. A live variable
@@ -10844,6 +11180,9 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_compare_objects(vpiHandle first,
             (left->snapshot->bitSelection && right->snapshot->bitSelection &&
              left->snapshot->parent == right->snapshot->parent &&
              left->snapshot->bitIndex == right->snapshot->bitIndex));
+  if (left->form == VPIObjectForm::Frame || right->form == VPIObjectForm::Frame)
+    return left->form == right->form &&
+           left->frameActivation == right->frameActivation;
   if (left->form == VPIObjectForm::Thread ||
       right->form == VPIObjectForm::Thread)
     return left->form == right->form &&

@@ -3773,9 +3773,11 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
         nativeInstances.insert(nativeInstances.end(), process.callers.begin(),
                                process.callers.end());
         process.callers.clear();
-        process.callerControlDepths.clear();
+        process.callerDepths.clear();
         obelisk_rt_unregister_signal_wait_unlocked(
             context, process.signalSubscriptions, process.token, false);
+        if (context->vpiState)
+          (void)obelisk_rt_vpi_frame_unwind_process(context, token, 0);
         process.instance = nullptr;
         ++context->schedulerDeadProcessCount;
         context->schedulerCompactionPending = true;
@@ -3806,6 +3808,8 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
             context, task.signalSubscriptions, task.id, true);
         obelisk_rt_release_controls_unlocked(context, task.controls);
         task.controls.clear();
+        if (context->vpiState)
+          (void)obelisk_rt_vpi_frame_unwind_process(context, task.id, 0);
         task.terminated = true;
         ++context->schedulerDeadDesignTaskCount;
         context->schedulerCompactionPending = true;
@@ -4096,10 +4100,12 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
         nativeInstances.insert(nativeInstances.end(), process.callers.begin(),
                                process.callers.end());
         process.callers.clear();
-        process.callerControlDepths.clear();
+        process.callerDepths.clear();
         obelisk_rt_unregister_signal_wait_unlocked(
             context, process.signalSubscriptions, process.token, false);
         context->logicalProcessParentsWithChildren.erase(token);
+        if (context->vpiState)
+          (void)obelisk_rt_vpi_frame_unwind_process(context, token, 0);
         process.instance = nullptr;
         ++context->schedulerDeadProcessCount;
         context->schedulerCompactionPending = true;
@@ -4122,6 +4128,8 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
         context->logicalProcessParentsWithChildren.erase(task.id);
         obelisk_rt_release_controls_unlocked(context, task.controls);
         task.controls.clear();
+        if (context->vpiState)
+          (void)obelisk_rt_vpi_frame_unwind_process(context, task.id, 0);
         task.terminated = true;
         ++context->schedulerDeadDesignTaskCount;
         context->schedulerCompactionPending = true;
@@ -4311,12 +4319,10 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
       auto nativeUnwind = [&](const ScheduledProcess &process)
           -> std::optional<UnwindBoundary> {
         std::optional<size_t> control = targetedControl(process.controls);
-        if (!control ||
-            process.callerControlDepths.size() != process.callers.size())
+        if (!control || process.callerDepths.size() != process.callers.size())
           return std::nullopt;
-        for (size_t index = 0; index != process.callerControlDepths.size();
-             ++index)
-          if (process.callerControlDepths[index] == *control)
+        for (size_t index = 0; index != process.callerDepths.size(); ++index)
+          if (process.callerDepths[index].controlDepth == *control)
             return UnwindBoundary{index, *control};
         return std::nullopt;
       };
@@ -4333,9 +4339,8 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
       auto nativeResumeOwner = [](const ScheduledProcess &process,
                                   size_t control) {
         size_t owner = process.callers.size();
-        for (size_t index = 0; index != process.callerControlDepths.size();
-             ++index)
-          if (control < process.callerControlDepths[index]) {
+        for (size_t index = 0; index != process.callerDepths.size(); ++index)
+          if (control < process.callerDepths[index].controlDepth) {
             owner = index;
             break;
           }
@@ -4397,8 +4402,7 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
                        ((UINT64_C(1) << 63) | process.token) == current;
               });
           if (scheduled != context->scheduledProcesses.end()) {
-            if (scheduled->callerControlDepths.size() !=
-                scheduled->callers.size())
+            if (scheduled->callerDepths.size() != scheduled->callers.size())
               return OBELISK_RT_INVALID_LIFECYCLE;
             size_t owner = nativeResumeOwner(*scheduled, resume.control);
             if (owner < scheduled->callers.size())
@@ -4434,7 +4438,7 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
         if (!process.instance || (token == current && !cancelCurrent) ||
             !isTargetMember(process.controls))
           continue;
-        if (process.callerControlDepths.size() != process.callers.size())
+        if (process.callerDepths.size() != process.callers.size())
           return OBELISK_RT_INVALID_LIFECYCLE;
         if (std::optional<ResumeBoundary> resume =
                 resumeBoundary(token, process.controls)) {
@@ -4543,6 +4547,33 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
         OBELISK_RT_RETHROW;
       }
 
+      // Control identities retain the frame depth from before their own scope
+      // activation. A fork can inherit a foreign control; disabling it removes
+      // that descendant's entire frame stack instead of borrowing the owner's
+      // unrelated depth.
+      auto unwindControlFrames = [&](uint64_t logicalProcess,
+                                     const std::vector<uint64_t> &controls,
+                                     size_t index) -> obelisk_rt_status {
+        if (!context->vpiState)
+          return OBELISK_RT_OK;
+        if (index >= controls.size())
+          return OBELISK_RT_INVALID_LIFECYCLE;
+        auto found = targetControls.find(controls[index]);
+        if (found == targetControls.end())
+          return OBELISK_RT_INVALID_LIFECYCLE;
+        uint64_t depth = found->second.owner == logicalProcess
+                             ? found->second.vpiFrameDepth
+                             : 0;
+        return obelisk_rt_vpi_frame_unwind_process(context, logicalProcess,
+                                                   depth);
+      };
+      if (!cancelCurrent && trim != context->activeControls.size()) {
+        auto status =
+            unwindControlFrames(current, context->activeControls, trim);
+        if (status != OBELISK_RT_OK)
+          return status;
+      }
+
       // Clause 16.4 flushes reports when the outermost enclosing process
       // scope is disabled. A canceled observer has no static exit edge and
       // likewise cannot retain a pending report.
@@ -4572,7 +4603,14 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
                index != activeEscape->owner + 1; --index)
             nativeInstances.push_back(scheduled->callers[index - 1]);
           scheduled->callers.resize(activeEscape->owner + 1);
-          scheduled->callerControlDepths.resize(activeEscape->owner + 1);
+          scheduled->callerDepths.resize(activeEscape->owner + 1);
+          if (context->vpiState) {
+            auto status = obelisk_rt_vpi_frame_depth_process(
+                context, current,
+                &scheduled->callerDepths.back().vpiFrameDepth);
+            if (status != OBELISK_RT_OK)
+              return status;
+          }
         } else {
           ScheduledDesignTask &task = *context->activeDesignTask;
           task.callers[activeEscape->owner].continuation =
@@ -4585,6 +4623,12 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
                                    std::move(activation.frame)});
           }
           task.callers.resize(activeEscape->owner + 1);
+          if (context->vpiState) {
+            auto status = obelisk_rt_vpi_frame_depth_process(
+                context, current, &task.callers.back().vpiFrameDepth);
+            if (status != OBELISK_RT_OK)
+              return status;
+          }
         }
       }
       if (currentNonlocalExit)
@@ -4604,6 +4648,10 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
           continue;
         if (std::optional<ResumeBoundary> resume =
                 resumeBoundary(token, process.controls)) {
+          auto status =
+              unwindControlFrames(token, process.controls, resume->control);
+          if (status != OBELISK_RT_OK)
+            return status;
           if (resume->control == 0)
             obelisk_rt_flush_deferred_immediate_reports_unlocked(context,
                                                                  token);
@@ -4617,7 +4665,7 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
               nativeInstances.push_back(process.callers[index - 1]);
             process.instance = selected;
             process.callers.resize(owner);
-            process.callerControlDepths.resize(owner);
+            process.callerDepths.resize(owner);
           }
           if (selected->native_handle) {
             selected->descriptor->native_destroy(selected);
@@ -4658,6 +4706,10 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
         }
         obelisk_rt_flush_deferred_immediate_reports_unlocked(context, token);
         if (std::optional<UnwindBoundary> unwind = nativeUnwind(process)) {
+          auto status =
+              unwindControlFrames(token, process.controls, unwind->control);
+          if (status != OBELISK_RT_OK)
+            return status;
           obelisk_rt_process_instance_v1 *caller =
               process.callers[unwind->caller];
           if (process.aotActorSlot != UINT32_MAX) {
@@ -4679,7 +4731,7 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
             nativeInstances.push_back(process.callers[index - 1]);
           process.instance = caller;
           process.callers.resize(unwind->caller);
-          process.callerControlDepths.resize(unwind->caller);
+          process.callerDepths.resize(unwind->caller);
           obelisk_rt_unregister_signal_wait_unlocked(
               context, process.signalSubscriptions, process.token, false);
           for (size_t index = unwind->control; index != process.controls.size();
@@ -4702,10 +4754,12 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
         nativeInstances.insert(nativeInstances.end(), process.callers.begin(),
                                process.callers.end());
         process.callers.clear();
-        process.callerControlDepths.clear();
+        process.callerDepths.clear();
         obelisk_rt_unregister_signal_wait_unlocked(
             context, process.signalSubscriptions, process.token, false);
         context->logicalProcessParentsWithChildren.erase(token);
+        if (context->vpiState)
+          (void)obelisk_rt_vpi_frame_unwind_process(context, token, 0);
         process.instance = nullptr;
         ++context->schedulerDeadProcessCount;
         context->schedulerCompactionPending = true;
@@ -4725,6 +4779,10 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
           continue;
         if (std::optional<ResumeBoundary> resume =
                 resumeBoundary(task.id, task.controls)) {
+          auto status =
+              unwindControlFrames(task.id, task.controls, resume->control);
+          if (status != OBELISK_RT_OK)
+            return status;
           if (resume->control == 0)
             obelisk_rt_flush_deferred_immediate_reports_unlocked(context,
                                                                  task.id);
@@ -4767,6 +4825,10 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
         }
         obelisk_rt_flush_deferred_immediate_reports_unlocked(context, task.id);
         if (std::optional<UnwindBoundary> unwind = designUnwind(task)) {
+          auto status =
+              unwindControlFrames(task.id, task.controls, unwind->control);
+          if (status != OBELISK_RT_OK)
+            return status;
           designTasks.push_back({task.id, task.function, task.scratchOffset,
                                  false, std::move(task.frame)});
           for (size_t index = task.callers.size(); index != unwind->caller + 1;
@@ -4818,6 +4880,8 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
           obelisk_rt_release_controls_unlocked(context, task.controls);
         }
         task.controls.clear();
+        if (context->vpiState)
+          (void)obelisk_rt_vpi_frame_unwind_process(context, task.id, 0);
         task.terminated = true;
         ++context->schedulerDeadDesignTaskCount;
         context->schedulerCompactionPending = true;
@@ -5098,6 +5162,8 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
       obelisk_rt_unregister_signal_wait_unlocked(
           context, task.signalSubscriptions, task.id, true);
       if (taskDequeued) {
+        if (context->vpiState)
+          (void)obelisk_rt_vpi_frame_unwind_process(context, task.id, 0);
         task.controls = std::move(context->activeControls);
         obelisk_rt_release_controls_unlocked(context, task.controls);
         releaseDesignTaskOwnedStatesUnlocked(context, task.id);
@@ -5842,6 +5908,13 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
           finalizeStatus = OBELISK_RT_INVALID_BYTECODE;
           break;
         }
+        uint64_t frameDepth = 0;
+        if (context->vpiState) {
+          finalizeStatus =
+              obelisk_rt_vpi_frame_depth_process(context, task.id, &frameDepth);
+          if (finalizeStatus != OBELISK_RT_OK)
+            break;
+        }
         task.callers.reserve(checkedSizeSum(task.callers.size(), 1));
         if (!task.signalSubscriptions.empty() ||
             task.computedObserverWaitRegistered)
@@ -5850,7 +5923,7 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
         task.callers.push_back({task.function, task.continuation,
                                 std::move(task.frame), task.scratchOffset,
                                 task.scratchSize, task.scheduleRank,
-                                task.controls.size()});
+                                task.controls.size(), frameDepth});
         DesignActivation activation = std::move(pendingActivation->activation);
         task.function = activation.function;
         task.continuation = activation.continuation;
@@ -5874,6 +5947,12 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
           obelisk_rt_unregister_signal_wait_unlocked(
               context, task.signalSubscriptions, task.id, true);
         if (!task.callers.empty()) {
+          if (context->vpiState) {
+            finalizeStatus = obelisk_rt_vpi_frame_unwind_process(
+                context, task.id, task.callers.back().vpiFrameDepth);
+            if (finalizeStatus != OBELISK_RT_OK)
+              break;
+          }
           DesignActivation caller = std::move(task.callers.back());
           task.callers.pop_back();
           context->designTaskFrames.release(std::move(task.frame));
@@ -5900,6 +5979,8 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
           releaseDesignTaskOwnedStatesUnlocked(context, task.id);
           obelisk_rt_release_controls_unlocked(context, task.controls);
           task.controls.clear();
+          if (context->vpiState)
+            (void)obelisk_rt_vpi_frame_unwind_process(context, task.id, 0);
           task.terminated = true;
           task.waitOffset = 0;
           task.waitSize = 0;

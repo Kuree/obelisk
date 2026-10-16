@@ -629,13 +629,19 @@ struct NativeReadyPublicationBatch {
   std::unordered_set<uint64_t> queued;
 };
 
+struct ProcessCallerDepths {
+  size_t controlDepth = 0;
+  uint64_t vpiFrameDepth = 0;
+};
+
 struct ScheduledProcess {
   obelisk_rt_process_instance_v1 *instance = nullptr;
   std::vector<obelisk_rt_process_instance_v1 *> callers;
   // Control-stack size immediately before each corresponding task call.
   // This identifies the caller continuation to restore when a live task
   // activation is disabled from another logical process.
-  std::vector<size_t> callerControlDepths;
+  // Capture both stacks before the callee activation starts.
+  std::vector<ProcessCallerDepths> callerDepths;
   std::vector<uint64_t> controls;
   uint64_t token = 0;
   uint64_t parent = 0;
@@ -995,6 +1001,7 @@ struct DesignActivation {
   uint64_t scratchSize = 0;
   uint32_t scheduleRank = UINT32_MAX;
   size_t controlDepth = 0;
+  uint64_t vpiFrameDepth = 0;
 };
 
 struct ScheduledDesignTask {
@@ -1510,6 +1517,8 @@ struct ControlActivation {
   uint64_t memberships = 0;
   uint64_t owner = 0;
   uint32_t continuation = 0;
+  // Recorded before the corresponding procedural scope frame is entered.
+  uint64_t vpiFrameDepth = 0;
 };
 
 struct DpiScopeHandle {
@@ -1712,6 +1721,8 @@ struct DesignDatabaseCache {
   uint64_t eventArrayStorageBindingCount = 0;
   uint64_t threadOriginBindings = 0;
   uint64_t threadOriginBindingCount = 0;
+  uint64_t callSiteBindings = 0;
+  uint64_t callSiteBindingCount = 0;
   uint64_t relationIndices = 0;
   uint64_t relationIndexCount = 0;
   uint64_t relationIndexDimensions = 0;
@@ -3858,6 +3869,44 @@ struct VPIEventCellBinding {
 obelisk_rt_status obelisk_rt_cached_vpi_event_array_cell(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 event,
     VPIEventCellBinding *outBinding) noexcept;
+
+// Stable source identities used by explicit frame events. Cursor provenance is
+// returned separately because call-as-statement aliases share a public kind
+// with expression occurrences. No native code passes packed image-table
+// references.
+obelisk_rt_status
+obelisk_rt_cached_vpi_call(const obelisk_rt_context *context, uint64_t callID,
+                           obelisk_rt_design_cursor_v1 *outCursor,
+                           uint64_t *outOwnerCodeUnitID,
+                           bool *outIsStatement) noexcept;
+obelisk_rt_status
+obelisk_rt_cached_vpi_statement(const obelisk_rt_context *context,
+                                uint64_t statementID,
+                                obelisk_rt_design_cursor_v1 *outCursor,
+                                uint64_t *outOwnerCodeUnitID) noexcept;
+obelisk_rt_status
+obelisk_rt_cached_vpi_code_unit_scope(const obelisk_rt_context *context,
+                                      uint64_t codeUnitID,
+                                      obelisk_rt_design_cursor_v1 *outCursor,
+                                      uint64_t *outLexicalCodeUnitID) noexcept;
+obelisk_rt_status
+obelisk_rt_cached_vpi_call_target(const obelisk_rt_context *context,
+                                  uint64_t callID,
+                                  uint64_t calleeCodeUnitID) noexcept;
+// OriginKind: 0 exact code-unit scope, 1 call occurrence, 2 scoped statement.
+obelisk_rt_status obelisk_rt_cached_vpi_frame_origin(
+    const obelisk_rt_context *context, uint32_t originKind, uint64_t originID,
+    obelisk_rt_design_cursor_v1 *outCursor, bool *outIsStatement) noexcept;
+
+// Remove activations belonging to a returned, disabled, or killed scope.
+// Scheduler callers hold the context mutex; this helper is also safe to call
+// recursively from ordinary execution. A zero target depth removes the root.
+obelisk_rt_status
+obelisk_rt_vpi_frame_unwind_process(obelisk_rt_context *context,
+                                    uint64_t logicalProcess, uint64_t depth);
+obelisk_rt_status
+obelisk_rt_vpi_frame_depth_process(obelisk_rt_context *context,
+                                   uint64_t logicalProcess, uint64_t *outDepth);
 
 // Returns the immutable source statement for an exact executable code unit,
 // or EOF when this image has no retained thread-origin binding.
