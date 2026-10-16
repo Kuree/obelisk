@@ -720,7 +720,34 @@ def SemanticDirectoryClassDispatchParentBindingOffset
     : ReflectionField<"ClassDispatchParentBindingOffset", 624, U64LE>;
 def SemanticDirectoryClassDispatchParentBindingCount
     : ReflectionField<"ClassDispatchParentBindingCount", 632, U64LE>;
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 640,
+def SemanticDirectoryInterfaceCallableOffset
+    : ReflectionField<"InterfaceCallableOffset", 640, U64LE>;
+def SemanticDirectoryInterfaceCallableCount
+    : ReflectionField<"InterfaceCallableCount", 648, U64LE>;
+def SemanticDirectoryInterfaceInstanceOffset
+    : ReflectionField<"InterfaceInstanceOffset", 656, U64LE>;
+def SemanticDirectoryInterfaceInstanceCount
+    : ReflectionField<"InterfaceInstanceCount", 664, U64LE>;
+def SemanticDirectoryInterfaceCallableBindingOffset
+    : ReflectionField<"InterfaceCallableBindingOffset", 672, U64LE>;
+def SemanticDirectoryInterfaceCallableBindingCount
+    : ReflectionField<"InterfaceCallableBindingCount", 680, U64LE>;
+def SemanticDirectoryInterfaceCallBindingOffset
+    : ReflectionField<"InterfaceCallBindingOffset", 688, U64LE>;
+def SemanticDirectoryInterfaceCallBindingCount
+    : ReflectionField<"InterfaceCallBindingCount", 696, U64LE>;
+
+def SemanticDirectoryCallableSignatureBindingOffset
+    : ReflectionField<"CallableSignatureBindingOffset", 704, U64LE>;
+def SemanticDirectoryCallableSignatureBindingCount
+    : ReflectionField<"CallableSignatureBindingCount", 712, U64LE>;
+
+def SemanticDirectoryCodeUnitScopeBindingOffset
+    : ReflectionField<"CodeUnitScopeBindingOffset", 720, U64LE>;
+def SemanticDirectoryCodeUnitScopeBindingCount
+    : ReflectionField<"CodeUnitScopeBindingCount", 728, U64LE>;
+
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 736,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -797,7 +824,19 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 640,
    SemanticDirectoryClassDispatchMethodBindingOffset,
    SemanticDirectoryClassDispatchMethodBindingCount,
    SemanticDirectoryClassDispatchParentBindingOffset,
-   SemanticDirectoryClassDispatchParentBindingCount]>;
+   SemanticDirectoryClassDispatchParentBindingCount,
+   SemanticDirectoryInterfaceCallableOffset,
+   SemanticDirectoryInterfaceCallableCount,
+   SemanticDirectoryInterfaceInstanceOffset,
+   SemanticDirectoryInterfaceInstanceCount,
+   SemanticDirectoryInterfaceCallableBindingOffset,
+   SemanticDirectoryInterfaceCallableBindingCount,
+   SemanticDirectoryInterfaceCallBindingOffset,
+   SemanticDirectoryInterfaceCallBindingCount,
+   SemanticDirectoryCallableSignatureBindingOffset,
+   SemanticDirectoryCallableSignatureBindingCount,
+   SemanticDirectoryCodeUnitScopeBindingOffset,
+   SemanticDirectoryCodeUnitScopeBindingCount]>;
 
 // Exact compatible implementations derived from typed class dispatch. Rows
 // are sorted by (CallID, CodeUnitID); every row in one call group carries the
@@ -855,9 +894,67 @@ def FrameLocalBinding : ReflectionLayout<"FrameLocalBinding", 24,
   [FrameLocalBindingID, FrameLocalBindingObject, FrameLocalBindingOwner,
    FrameLocalBindingScope, FrameLocalBindingOrdinal]>;
 
+// Declaration-owned nominal interface membership, independent of source calls.
+// Callable flags bit0 denotes an extern member. Original callable ABI equality
+// is verified by typed compiler inventory; it is not approximated by a hash.
+// Implementation rows are sorted (MemberIndex, ScopeIndex). Ordinary members
+// have identical declaration and implementation indices; an extern fork/join
+// task retains its declaration as the executable aggregator.
+// Call contracts are sorted by CallID. All compatible elaborated interfaces
+// participate across top modules. Access is 0 plain, 1 import, 2 export.
+def InterfaceCallableTypeIndexAndTable : ReflectionField<"TypeIndexAndTable", 0, U32LE>;
+def InterfaceCallableNameOffset : ReflectionField<"NameOffset", 4, U32LE>;
+def InterfaceCallableNameSize : ReflectionField<"NameSize", 8, U32LE>;
+def InterfaceCallableKind : ReflectionField<"Kind", 12, U16LE>;
+def InterfaceCallableFlags : ReflectionField<"Flags", 14, U16LE>;
+def InterfaceCallableSignatureID : ReflectionField<"SignatureID", 16, U32LE>;
+def InterfaceCallableReserved : ReflectionField<"Reserved", 20, U32LE>;
+def InterfaceCallable : ReflectionLayout<"InterfaceCallable", 24,
+  [InterfaceCallableTypeIndexAndTable, InterfaceCallableNameOffset, InterfaceCallableNameSize, InterfaceCallableKind, InterfaceCallableFlags, InterfaceCallableSignatureID, InterfaceCallableReserved]>;
+
+def InterfaceInstanceScopeIndex : ReflectionField<"ScopeIndex", 0, U32LE>;
+def InterfaceInstanceTypeIndexAndTable : ReflectionField<"TypeIndexAndTable", 4, U32LE>;
+def InterfaceInstance : ReflectionLayout<"InterfaceInstance", 8,
+  [InterfaceInstanceScopeIndex, InterfaceInstanceTypeIndexAndTable]>;
+
+def InterfaceCallableBindingMemberIndex : ReflectionField<"MemberIndex", 0, U32LE>;
+def InterfaceCallableBindingScopeIndex : ReflectionField<"ScopeIndex", 4, U32LE>;
+def InterfaceCallableBindingDeclarationIndex : ReflectionField<"DeclarationIndex", 8, U32LE>;
+def InterfaceCallableBindingImplementationIndex : ReflectionField<"ImplementationIndex", 12, U32LE>;
+def InterfaceCallableBinding : ReflectionLayout<"InterfaceCallableBinding", 16,
+  [InterfaceCallableBindingMemberIndex, InterfaceCallableBindingScopeIndex, InterfaceCallableBindingDeclarationIndex, InterfaceCallableBindingImplementationIndex]>;
+
+def InterfaceCallBindingCallID : ReflectionField<"CallID", 0, U64LE>;
+def InterfaceCallBindingMemberIndex : ReflectionField<"MemberIndex", 8, U32LE>;
+def InterfaceCallBindingAccess : ReflectionField<"Access", 12, U32LE>;
+def InterfaceCallBinding : ReflectionLayout<"InterfaceCallBinding", 16,
+  [InterfaceCallBindingCallID, InterfaceCallBindingMemberIndex, InterfaceCallBindingAccess]>;
+
+// Canonical original source ABI equivalence, frozen independently of dispatch
+// bindings. Signature IDs intern the normalized function type and directions.
+// Every retained unit is an endpoint of an interface callable binding. Flags
+// bit0 marks declaration-owned exports; bit1 marks an extern task aggregator.
+def CallableSignatureBindingCodeUnitIndex : ReflectionField<"CodeUnitIndex", 0, U32LE>;
+def CallableSignatureBindingSignatureID : ReflectionField<"SignatureID", 4, U32LE>;
+def CallableSignatureBindingFlags : ReflectionField<"Flags", 8, U32LE>;
+def CallableSignatureBinding : ReflectionLayout<"CallableSignatureBinding", 12,
+  [CallableSignatureBindingCodeUnitIndex, CallableSignatureBindingSignatureID, CallableSignatureBindingFlags]>;
+
 // Exact immutable call occurrences, including expression-nested calls.
 // Flags bit0 marks indirect dispatch; bit1 requires the exact class contract
 // and complete target group in CallDispatchBinding (and implies bit0).
+// Bit2 instead requires an exact InterfaceCallBinding. Bits1/2 exclude each
+// other and both require indirect bit0.
+// Maps an internal callable implementation to its exact public source scope.
+// Rows are sorted by code-unit ID; source references are unique.
+def CodeUnitScopeBindingCodeUnitID : ReflectionField<"CodeUnitID", 0, U64LE>;
+def CodeUnitScopeBindingSource : ReflectionField<"SourceIndexAndTable", 8, U32LE>;
+// Bit0 proves a source task implemented by a synchronous function ABI thunk.
+def CodeUnitScopeBindingFlags : ReflectionField<"Flags", 12, U32LE>;
+def CodeUnitScopeBinding : ReflectionLayout<"CodeUnitScopeBinding", 16,
+  [CodeUnitScopeBindingCodeUnitID, CodeUnitScopeBindingSource,
+   CodeUnitScopeBindingFlags]>;
+
 def CallSiteBindingID : ReflectionField<"ID", 0, U64LE>;
 def CallSiteBindingObject : ReflectionField<"ObjectIndexAndTable", 8, U32LE>;
 def CallSiteBindingOwner : ReflectionField<"OwnerCodeUnitIndex", 12, U32LE>;

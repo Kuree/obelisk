@@ -13,11 +13,15 @@
 
 namespace obelisk::sim {
 
+enum class EntryKind : uint32_t;
 class SimCodeUnitDeclOp;
 class SimScopeDeclOp;
 class VPITypeSemanticsAttr;
 
 bool isVPIVisibleCodeUnit(SimCodeUnitDeclOp codeUnit);
+/// The source callable kind may differ from its executable ABI entry kind:
+/// imported tasks run through synchronous function thunks.
+std::optional<EntryKind> vpiCallableSourceKind(SimCodeUnitDeclOp codeUnit);
 uint32_t vpiKindForCodeUnit(SimCodeUnitDeclOp codeUnit);
 uint32_t vpiKindForScope(SimScopeDeclOp scope);
 uint32_t vpiKindForStorage(VPITypeSemanticsAttr type);

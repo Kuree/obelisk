@@ -1746,6 +1746,19 @@ struct DesignDatabaseCache {
   uint64_t classDispatchMethodBindingCount = 0;
   uint64_t classDispatchParentBindings = 0;
   uint64_t classDispatchParentBindingCount = 0;
+  uint64_t interfaceCallables = 0;
+  uint64_t interfaceCallableCount = 0;
+  uint64_t interfaceInstances = 0;
+  uint64_t interfaceInstanceCount = 0;
+  uint64_t interfaceCallableBindings = 0;
+  uint64_t interfaceCallableBindingCount = 0;
+  uint64_t interfaceCallBindings = 0;
+  uint64_t interfaceCallBindingCount = 0;
+  uint64_t callableSignatureBindings = 0;
+  uint64_t callableSignatureBindingCount = 0;
+  uint64_t codeUnitScopeBindings = 0;
+  uint64_t codeUnitScopeBindingCount = 0;
+
   uint64_t relationIndices = 0;
   uint64_t relationIndexCount = 0;
   uint64_t relationIndexDimensions = 0;

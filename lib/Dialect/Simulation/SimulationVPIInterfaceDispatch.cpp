@@ -169,11 +169,11 @@ LogicalResult obelisk::sim::verifyVPIInterfaceDispatch(SimDesignOp design) {
   llvm::DenseSet<std::pair<uint64_t, Attribute>> declarations;
   for (auto [id, callable] : callables) {
     auto unit = units.lookup(id);
-    if (!unit || (unit.getCodeUnitKind() != EntryKind::Task &&
-                  unit.getCodeUnitKind() != EntryKind::Function))
+    auto sourceKind = vpiCallableSourceKind(unit);
+    if (!sourceKind)
       return callable.emitOpError(
           "code unit must name a task or function declaration");
-    if (unit.getCodeUnitKind() == EntryKind::Task &&
+    if (sourceKind == EntryKind::Task &&
         callable.getSignature().getNumResults())
       return callable.emitOpError("task source signature must have no results");
     auto reference = callable.getInterfaceMemberAttr();
@@ -189,7 +189,7 @@ LogicalResult obelisk::sim::verifyVPIInterfaceDispatch(SimDesignOp design) {
     if (!unit.getDebugName() || *unit.getDebugName() != member.getName())
       return callable.emitOpError(
           "declaration must preserve the exact source member name");
-    if (unit.getCodeUnitKind() != member.getMemberKind() ||
+    if (sourceKind != member.getMemberKind() ||
         callable.getSignature() != member.getSignature() ||
         callable.getDirectionsAttr() != member.getDirectionsAttr())
       return callable.emitOpError(
@@ -204,7 +204,7 @@ LogicalResult obelisk::sim::verifyVPIInterfaceDispatch(SimDesignOp design) {
     if (!exports)
       continue;
     if (callable.getIsForkJoin()) {
-      if (unit.getCodeUnitKind() != EntryKind::Task)
+      if (sourceKind != EntryKind::Task)
         return callable.emitOpError(
             "only an extern task may use fork/join aggregation");
     } else if (exports.size() != 1)
@@ -214,7 +214,7 @@ LogicalResult obelisk::sim::verifyVPIInterfaceDispatch(SimDesignOp design) {
       auto provider = callables.lookup(providerID);
       auto providerUnit = units.lookup(providerID);
       if (!provider || !providerUnit || provider.getInterfaceExportsAttr() ||
-          providerUnit.getCodeUnitKind() != unit.getCodeUnitKind() ||
+          vpiCallableSourceKind(providerUnit) != sourceKind ||
           provider.getSignature() != callable.getSignature() ||
           provider.getDirectionsAttr() != callable.getDirectionsAttr())
         return callable.emitOpError(

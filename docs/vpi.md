@@ -116,6 +116,10 @@ Virtual-interface call lowering considers every elaborated instance of the exact
 nominal interface type, including instances under other top modules, with
 modport import/export filtering. Typed source contracts retain the original
 callable ABI and declaration-owned extern providers through optimization.
+The reflection image retains nominal membership, signatures, and extern-task
+aggregation facts so runtime frame queries can validate the actual callee.
+Internal DPI code units map to their exact public source declarations, including
+imported tasks executed through a function ABI; they do not add public scopes.
 
 The runtime frame API tracks distinct activations and exposes their parent,
 origin, thread, current statement, active state, and automatic lifetime.
@@ -124,7 +128,7 @@ activations without invalidating their immutable source objects. Bytecode,
 native, and AOT scheduler paths restore the saved caller frame depth. A checked
 prepare/consume/finish protocol carries the exact source call through nested
 synchronous and suspending calls, including native and AOT task handoffs.
- Frame-local declaration inventories can be enumerated before storage is bound.
+Frame-local declaration inventories can be enumerated before storage is bound.
 Bound local values and selections use weak automatic references and expire with
 their activation; structural typespec and lexical-scope handles remain valid.
 Compiler frame instrumentation and source-level local bindings are still being

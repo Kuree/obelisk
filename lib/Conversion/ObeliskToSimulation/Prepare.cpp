@@ -4612,16 +4612,12 @@ void ObeliskSimPreparePass::runOnOperation() {
     auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source);
     if (!subroutine)
       continue;
-    // DPI imports use ABI helpers rather than source task/function code units.
-    // Such a helper is executable machinery, not the imported object's
-    // physical identity, so leave the static VPI anchor unbacked.
-    if (subroutine.getIsDpiImport().value_or(false))
-      continue;
     sim::EntryKind expectedKind =
         subroutine.getSubroutineKind() == semantic::SVSubroutineKind::Task
             ? sim::EntryKind::Task
             : sim::EntryKind::Function;
-    if (unit.entryKind != expectedKind)
+    if (unit.entryKind != expectedKind &&
+        !subroutine.getIsDpiImport().value_or(false))
       continue;
     auto anchorRef = sim::get<sim::metadata::VpiAnchor>(unit.source);
     if (!anchorRef)
@@ -4630,6 +4626,15 @@ void ObeliskSimPreparePass::runOnOperation() {
         SymbolTable::lookupSymbolIn(design, anchorRef));
     if (!anchor || anchor.getBackingAttr())
       continue;
+    if (subroutine.getIsDpiImport().value_or(false)) {
+      // The ABI thunk implements this exact source declaration but does not
+      // replace its public identity. Frames resolve its source scope through
+      // an explicit binding, independent of any particular caller.
+      sim::SimVPICodeUnitScopeBindingOp::create(
+          builder, getSemanticLocation(unit.source),
+          builder.getI64IntegerAttr(unit.id), anchorRef);
+      continue;
+    }
     anchor.setBackingAttr(sim::VPIObjectBackingAttr::get(
         context, sim::VPIObjectBackingKind::CodeUnit,
         builder.getI64IntegerAttr(unit.id), FlatSymbolRefAttr{}));

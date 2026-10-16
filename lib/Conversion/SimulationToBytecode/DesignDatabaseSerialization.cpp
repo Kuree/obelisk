@@ -271,6 +271,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint32_t object, owner, flags;
   };
   SmallVector<CallSiteBindingRecord> callSiteBindings;
+  struct CodeUnitScopeBindingRecord {
+    uint64_t codeUnitID;
+    uint32_t source, flags;
+  };
+  SmallVector<CodeUnitScopeBindingRecord> codeUnitScopeBindings;
   SmallVector<sim::SimVPIClassCallDispatchOp> classCallDispatchDeclarations;
   struct CallDispatchBindingRecord {
     uint64_t callID, codeUnitID, receiverClassID, slot, signatureID;
@@ -286,6 +291,32 @@ SmallVector<uint8_t> serializeDesignDatabase(
   SmallVector<CallDispatchBindingRecord> callDispatchBindings;
   SmallVector<ClassDispatchMethodBindingRecord> classDispatchMethodBindings;
   SmallVector<ClassDispatchParentBindingRecord> classDispatchParentBindings;
+  SmallVector<sim::SimVPIInterfaceCallDispatchOp> interfaceCallDeclarations;
+  struct InterfaceCallableRecord {
+    uint32_t nominal;
+    StringRef name;
+    uint16_t kind, flags;
+    uint32_t signature;
+  };
+  struct InterfaceInstanceRecord {
+    uint32_t scope, nominal;
+  };
+  struct InterfaceCallableBindingRecord {
+    uint32_t member, scope, declaration, implementation;
+  };
+  struct InterfaceCallBindingRecord {
+    uint64_t id;
+    uint32_t member, access;
+  };
+  SmallVector<InterfaceCallableRecord> interfaceCallables;
+  SmallVector<InterfaceInstanceRecord> interfaceInstances;
+  SmallVector<InterfaceCallableBindingRecord> interfaceCallableBindings;
+  SmallVector<InterfaceCallBindingRecord> interfaceCallBindings;
+  struct CallableSignatureBindingRecord {
+    uint32_t unit, signature, flags;
+  };
+  SmallVector<CallableSignatureBindingRecord> callableSignatureBindings;
+  DenseSet<uint64_t> interfaceDeclarationIDs;
   struct FrozenValueRecord {
     uint32_t kindAndFlags = 0;
     uint64_t bitWidth = 0;
@@ -666,6 +697,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
                    dyn_cast<sim::SimVPIClassCallDispatchOp>(operation)) {
       if (includeStatements)
         classCallDispatchDeclarations.push_back(dispatch);
+    } else if (auto dispatch =
+                   dyn_cast<sim::SimVPIInterfaceCallDispatchOp>(operation)) {
+      if (includeStatements)
+        interfaceCallDeclarations.push_back(dispatch);
     } else if (auto site = dyn_cast<sim::SimStatementSiteDeclOp>(operation)) {
       if (includeStatements)
         statementSites.push_back({site});
@@ -1002,6 +1037,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
   DenseSet<StringRef> classDispatchCalls;
   for (auto dispatch : classCallDispatchDeclarations)
     classDispatchCalls.insert(dispatch.getCall());
+  DenseSet<StringRef> interfaceDispatchCalls;
+  for (auto dispatch : interfaceCallDeclarations)
+    interfaceDispatchCalls.insert(dispatch.getCall());
   for (sim::SimVPICallDeclOp call : callDeclarations) {
     if (call.getStatementId())
       continue;
@@ -1425,7 +1463,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
         {call.getId(), packed,
          codeUnitObjectIndices.lookup(call.getCodeUnitId()),
          static_cast<uint32_t>(call.getIsIndirect()) |
-             (classDispatchCalls.contains(call.getSymName()) ? 2u : 0u)});
+             (classDispatchCalls.contains(call.getSymName()) ? 2u : 0u) |
+             (interfaceDispatchCalls.contains(call.getSymName()) ? 4u : 0u)});
   }
 
   for (sim::SimVPILocalDeclOp local : localDeclarations) {
@@ -1547,6 +1586,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   DenseMap<Operation *, ImageObjectRef> anchorRefs, nettypeRefs, typespecRefs,
       classMemberRefs, unresolvedAliasRefs;
   DenseSet<uint32_t> lexicallyAnchoredObjectIndices;
+  DenseMap<uint64_t, ImageObjectRef> codeUnitSourceRefs;
   if (includeStatements) {
     for (auto [index, object] : llvm::enumerate(objects))
       if (auto storage =
@@ -1596,6 +1636,37 @@ SmallVector<uint8_t> serializeDesignDatabase(
         objects[index].indexName = false;
       lexicallyAnchoredObjectIndices.insert(index);
     }
+    SymbolTableCollection sourceScopeSymbols;
+    for (auto binding :
+         design.getBody().front().getOps<sim::SimVPICodeUnitScopeBindingOp>()) {
+      auto source =
+          sourceScopeSymbols.lookupNearestSymbolFrom<sim::SimVPIObjectAnchorOp>(
+              binding, binding.getSourceAttr());
+      auto found = anchorRefs.find(source);
+      if (found == anchorRefs.end() ||
+          !codeUnitObjectIndices.contains(binding.getCodeUnitId())) {
+        binding.emitOpError("code-unit source scope was not serialized");
+        return {};
+      }
+      uint32_t packed = 0;
+      if (!tryPackTableIndex(found->second.table, found->second.index,
+                             packed)) {
+        binding.emitOpError("code-unit source scope cannot be packed");
+        return {};
+      }
+      auto unit = cast<sim::SimCodeUnitDeclOp>(
+          objects[codeUnitObjectIndices.lookup(binding.getCodeUnitId())]
+              .identity);
+      const bool taskViaFunction =
+          unit.getCodeUnitKind() == sim::EntryKind::Function &&
+          sim::vpiCallableSourceKind(unit) == sim::EntryKind::Task;
+      codeUnitScopeBindings.push_back(
+          {binding.getCodeUnitId(), packed, taskViaFunction ? 1u : 0u});
+      codeUnitSourceRefs.try_emplace(binding.getCodeUnitId(), found->second);
+    }
+    llvm::sort(codeUnitScopeBindings, [](auto left, auto right) {
+      return left.codeUnitID < right.codeUnitID;
+    });
     for (auto [storage, anchor] : eventArrayStorage) {
       ImageObjectRef target = anchorRefs.lookup(anchor);
       uint32_t packed = 0;
@@ -2179,12 +2250,17 @@ SmallVector<uint8_t> serializeDesignDatabase(
       enclosing = statement.getParentId();
     }
     if (scopeTable == TableKind::Scope) {
-      uint32_t ownerKind = objects[binding.owner].vpiKind;
-      const auto *owner = findVPIObjectKind(ownerKind);
+      auto source = codeUnitSourceRefs.find(call.getCodeUnitId());
+      ImageObjectRef ownerRef =
+          source != codeUnitSourceRefs.end()
+              ? source->second
+              : ImageObjectRef{TableKind::Object, binding.owner,
+                               objects[binding.owner].vpiKind};
+      const auto *owner = findVPIObjectKind(ownerRef.vpiKind);
       if (owner && (owner->families & vpiFamilyMask(VPIObjectFamily::Scope))) {
-        scopeTable = TableKind::Object;
-        scopeIndex = binding.owner;
-        scopeKind = ownerKind;
+        scopeTable = ownerRef.table;
+        scopeIndex = ownerRef.index;
+        scopeKind = ownerRef.vpiKind;
       }
     }
     if (findVPITraversal(callKind,
@@ -2197,10 +2273,14 @@ SmallVector<uint8_t> serializeDesignDatabase(
       return {};
     if (auto calleeID = call.getCalleeCodeUnitId()) {
       uint32_t callee = codeUnitObjectIndices.lookup(*calleeID);
-      uint32_t kind = objects[callee].vpiKind;
-      if (failed(addRelation(call, sourceTable, sourceIndex, callKind, kind,
-                             VPITraversalMode::Handle, TableKind::Object,
-                             callee, kind)))
+      auto mapped = codeUnitSourceRefs.find(*calleeID);
+      ImageObjectRef target = mapped != codeUnitSourceRefs.end()
+                                  ? mapped->second
+                                  : ImageObjectRef{TableKind::Object, callee,
+                                                   objects[callee].vpiKind};
+      if (failed(addRelation(call, sourceTable, sourceIndex, callKind,
+                             target.vpiKind, VPITraversalMode::Handle,
+                             target.table, target.index, target.vpiKind)))
         return {};
     }
   }
@@ -2907,6 +2987,156 @@ SmallVector<uint8_t> serializeDesignDatabase(
           return std::tie(left.classID, left.kind, left.parentClassID) <
                  std::tie(right.classID, right.kind, right.parentClassID);
         });
+  }
+
+  if (!interfaceCallDeclarations.empty()) {
+    // Source-owned contracts have already proved the original callable ABI.
+    // Retain nominal membership and declaration-owned extern implementation
+    // identities so the reader can independently derive each call's targets.
+    SymbolTableCollection symbols;
+    DenseSet<Operation *> requiredMembers;
+    for (auto contract : interfaceCallDeclarations)
+      requiredMembers.insert(
+          symbols.lookupNearestSymbolFrom<sim::SimVPIInterfaceMemberDeclOp>(
+              contract, contract.getMemberAttr()));
+    struct MemberRecord {
+      sim::SimVPIInterfaceMemberDeclOp declaration;
+      uint32_t nominal;
+    };
+    SmallVector<MemberRecord> members;
+    DenseSet<uint32_t> nominalTypes;
+    auto nominalReference = [&](Operation *source, FlatSymbolRefAttr reference,
+                                uint32_t &packed) -> LogicalResult {
+      auto type = symbols.lookupNearestSymbolFrom<sim::SimVPITypespecDeclOp>(
+          source, reference);
+      auto found = typespecRefs.find(type);
+      if (found == typespecRefs.end() ||
+          !tryPackTableIndex(found->second.table, found->second.index, packed))
+        return source->emitOpError("interface nominal type was not serialized");
+      return success();
+    };
+    for (auto member :
+         design.getBody().front().getOps<sim::SimVPIInterfaceMemberDeclOp>()) {
+      if (!requiredMembers.contains(member))
+        continue;
+      uint32_t nominal;
+      if (failed(
+              nominalReference(member, member.getInterfaceTypeAttr(), nominal)))
+        return {};
+      members.push_back({member, nominal});
+      nominalTypes.insert(nominal);
+    }
+    llvm::sort(members, [](auto left, auto right) {
+      return std::make_pair(left.nominal, left.declaration.getName()) <
+             std::make_pair(right.nominal, right.declaration.getName());
+    });
+    DenseMap<std::pair<Attribute, Attribute>, uint32_t> signatureIDs;
+    auto internSignature = [&](TypeAttr type, DenseI32ArrayAttr directions) {
+      auto [entry, inserted] = signatureIDs.try_emplace(
+          std::make_pair(Attribute(type), Attribute(directions)),
+          static_cast<uint32_t>(signatureIDs.size()) + 1);
+      return entry->second;
+    };
+    DenseMap<Operation *, uint32_t> memberIndices;
+    for (auto [index, record] : llvm::enumerate(members)) {
+      auto member = record.declaration;
+      memberIndices[member] = static_cast<uint32_t>(index);
+      interfaceCallables.push_back(
+          {record.nominal, member.getName(),
+           static_cast<uint16_t>(member.getMemberKind() == sim::EntryKind::Task
+                                     ? VPIObjectKind::Task
+                                     : VPIObjectKind::Function),
+           static_cast<uint16_t>(member.getIsExtern()),
+           internSignature(member.getSignatureAttr(),
+                           member.getDirectionsAttr())});
+    }
+    for (auto instance : design.getBody()
+                             .front()
+                             .getOps<sim::SimVPIInterfaceInstanceBindingOp>()) {
+      uint32_t nominal;
+      if (failed(nominalReference(instance, instance.getInterfaceTypeAttr(),
+                                  nominal)))
+        return {};
+      if (!nominalTypes.contains(nominal))
+        continue;
+      auto scope = scopeIndices.find(instance.getScopeId());
+      if (scope == scopeIndices.end()) {
+        instance.emitOpError("interface instance scope was not serialized");
+        return {};
+      }
+      interfaceInstances.push_back({scope->second, nominal});
+    }
+    DenseSet<uint32_t> requiredSignatureUnits;
+    for (auto callable :
+         design.getBody().front().getOps<sim::SimVPICallableDeclOp>()) {
+      if (!callable.getInterfaceMemberAttr())
+        continue;
+      auto member =
+          symbols.lookupNearestSymbolFrom<sim::SimVPIInterfaceMemberDeclOp>(
+              callable, callable.getInterfaceMemberAttr());
+      auto index = memberIndices.find(member);
+      if (index == memberIndices.end())
+        continue;
+      auto declaration = codeUnitObjectIndices.find(callable.getCodeUnitId());
+      // Ordinary extern calls execute the resolved provider directly. An extern
+      // fork/join executes its declared aggregation unit, including zero
+      // exports.
+      uint64_t implementationID = callable.getCodeUnitId();
+      if (auto exports = callable.getInterfaceExports();
+          exports && !callable.getIsForkJoin())
+        implementationID = exports->front();
+      auto implementation = codeUnitObjectIndices.find(implementationID);
+      if (declaration == codeUnitObjectIndices.end() ||
+          implementation == codeUnitObjectIndices.end()) {
+        callable.emitOpError("interface callable endpoint was not serialized");
+        return {};
+      }
+      uint32_t scope = scopeIndices.lookup(objects[declaration->second].scope);
+      interfaceCallableBindings.push_back(
+          {index->second, scope, declaration->second, implementation->second});
+      interfaceDeclarationIDs.insert(callable.getCodeUnitId());
+      requiredSignatureUnits.insert(declaration->second);
+      requiredSignatureUnits.insert(implementation->second);
+    }
+    // Source ABI facts are emitted from declarations, independently of the
+    // selected implementation rows. Omit facts with no dispatch endpoint.
+    for (auto callable :
+         design.getBody().front().getOps<sim::SimVPICallableDeclOp>()) {
+      auto unit = codeUnitObjectIndices.find(callable.getCodeUnitId());
+      if (unit == codeUnitObjectIndices.end() ||
+          !requiredSignatureUnits.contains(unit->second))
+        continue;
+      callableSignatureBindings.push_back(
+          {unit->second,
+           internSignature(callable.getSignatureAttr(),
+                           callable.getDirectionsAttr()),
+           (callable.getInterfaceExportsAttr() ? 1u : 0u) |
+               (callable.getIsForkJoin() ? 2u : 0u)});
+    }
+    llvm::sort(callableSignatureBindings,
+               [](const auto &left, const auto &right) {
+                 return left.unit < right.unit;
+               });
+    for (auto contract : interfaceCallDeclarations) {
+      auto call = symbols.lookupNearestSymbolFrom<sim::SimVPICallDeclOp>(
+          contract, contract.getCallAttr());
+      auto member =
+          symbols.lookupNearestSymbolFrom<sim::SimVPIInterfaceMemberDeclOp>(
+              contract, contract.getMemberAttr());
+      interfaceCallBindings.push_back(
+          {call.getId(), memberIndices.lookup(member), contract.getAccess()});
+    }
+    llvm::sort(interfaceInstances, [](const auto &left, const auto &right) {
+      return left.scope < right.scope;
+    });
+    llvm::sort(interfaceCallableBindings,
+               [](const auto &left, const auto &right) {
+                 return std::tie(left.member, left.scope) <
+                        std::tie(right.member, right.scope);
+               });
+    llvm::sort(interfaceCallBindings, [](const auto &left, const auto &right) {
+      return left.id < right.id;
+    });
   }
 
   for (sim::SimVPIStatementRelationDeclOp relation : relationDeclarations) {
@@ -4326,6 +4556,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
         if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
                                     anchor.getDebugNameAttr())))
           return failure();
+      if (auto unit = dyn_cast<sim::SimCodeUnitDeclOp>(operation);
+          unit && interfaceDeclarationIDs.contains(unit.getId()) &&
+          sim::isVPIVisibleCodeUnit(unit))
+        if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
+                                    unit.getDebugNameAttr())))
+          return failure();
       if (auto alias =
               dyn_cast<sim::SimVPIUnresolvedTypeAliasDeclOp>(operation))
         if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
@@ -4650,6 +4886,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     intern(member.name);
   for (const ModportBindingRecord &modport : modportBindings)
     intern(modport.name);
+  for (const InterfaceCallableRecord &member : interfaceCallables)
+    intern(member.name);
   for (DefinitionRecord &definition : definitions) {
     intern(definition.declaration.getDefinitionName());
     if (!definition.source.file.empty())
@@ -4740,9 +4978,27 @@ SmallVector<uint8_t> serializeDesignDatabase(
       classDispatchMethodBindingOffset +
       classDispatchMethodBindings.size() *
           ClassDispatchMethodBindingLayout.size;
-  uint64_t relationIndexOffset = classDispatchParentBindingOffset +
-                                 classDispatchParentBindings.size() *
-                                     ClassDispatchParentBindingLayout.size;
+  uint64_t interfaceCallableOffset = classDispatchParentBindingOffset +
+                                     classDispatchParentBindings.size() *
+                                         ClassDispatchParentBindingLayout.size;
+  uint64_t interfaceInstanceOffset =
+      interfaceCallableOffset +
+      interfaceCallables.size() * InterfaceCallableLayout.size;
+  uint64_t interfaceCallableBindingOffset =
+      interfaceInstanceOffset +
+      interfaceInstances.size() * InterfaceInstanceLayout.size;
+  uint64_t interfaceCallBindingOffset =
+      interfaceCallableBindingOffset +
+      interfaceCallableBindings.size() * InterfaceCallableBindingLayout.size;
+  uint64_t callableSignatureBindingOffset =
+      interfaceCallBindingOffset +
+      interfaceCallBindings.size() * InterfaceCallBindingLayout.size;
+  uint64_t codeUnitScopeBindingOffset =
+      callableSignatureBindingOffset +
+      callableSignatureBindings.size() * CallableSignatureBindingLayout.size;
+  uint64_t relationIndexOffset =
+      codeUnitScopeBindingOffset +
+      codeUnitScopeBindings.size() * CodeUnitScopeBindingLayout.size;
   uint64_t relationIndexDimensionOffset =
       relationIndexOffset + relationIndices.size() * RelationIndexLayout.size;
   uint64_t relationIndexKeyOffset =
@@ -5083,6 +5339,18 @@ SmallVector<uint8_t> serializeDesignDatabase(
         classDispatchParentBindingOffset);
     writer.setClassDispatchParentBindingCount(
         classDispatchParentBindings.size());
+    writer.setInterfaceCallableOffset(interfaceCallableOffset);
+    writer.setInterfaceCallableCount(interfaceCallables.size());
+    writer.setInterfaceInstanceOffset(interfaceInstanceOffset);
+    writer.setInterfaceInstanceCount(interfaceInstances.size());
+    writer.setInterfaceCallableBindingOffset(interfaceCallableBindingOffset);
+    writer.setInterfaceCallableBindingCount(interfaceCallableBindings.size());
+    writer.setInterfaceCallBindingOffset(interfaceCallBindingOffset);
+    writer.setInterfaceCallBindingCount(interfaceCallBindings.size());
+    writer.setCallableSignatureBindingOffset(callableSignatureBindingOffset);
+    writer.setCallableSignatureBindingCount(callableSignatureBindings.size());
+    writer.setCodeUnitScopeBindingOffset(codeUnitScopeBindingOffset);
+    writer.setCodeUnitScopeBindingCount(codeUnitScopeBindings.size());
     writer.setRelationIndexOffset(relationIndexOffset);
     writer.setRelationIndexCount(relationIndices.size());
     writer.setRelationIndexDimensionOffset(relationIndexDimensionOffset);
@@ -5244,6 +5512,14 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setScopeIndexAndTable(binding.scope);
     writer.setOrdinal(binding.ordinal);
   }
+  for (auto [index, binding] : llvm::enumerate(codeUnitScopeBindings)) {
+    CodeUnitScopeBindingWriter writer(output.data() +
+                                      codeUnitScopeBindingOffset +
+                                      index * CodeUnitScopeBindingLayout.size);
+    writer.setCodeUnitID(binding.codeUnitID);
+    writer.setSourceIndexAndTable(binding.source);
+    writer.setFlags(binding.flags);
+  }
   for (auto [index, binding] : llvm::enumerate(callSiteBindings)) {
     CallSiteBindingWriter writer(output.data() + callSiteBindingOffset +
                                  index * CallSiteBindingLayout.size);
@@ -5280,6 +5556,48 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setParentClassID(binding.parentClassID);
     writer.setKind(binding.kind);
     writer.setFlags(binding.flags);
+  }
+  for (auto [index, member] : llvm::enumerate(interfaceCallables)) {
+    InterfaceCallableWriter writer(output.data() + interfaceCallableOffset +
+                                   index * InterfaceCallableLayout.size);
+    writer.setTypeIndexAndTable(member.nominal);
+    writer.setNameOffset(stringOffsets.lookup(member.name));
+    writer.setNameSize(member.name.size());
+    writer.setKind(member.kind);
+    writer.setFlags(member.flags);
+    writer.setSignatureID(member.signature);
+    writer.setReserved(0);
+  }
+  for (auto [index, binding] : llvm::enumerate(callableSignatureBindings)) {
+    CallableSignatureBindingWriter writer(
+        output.data() + callableSignatureBindingOffset +
+        index * CallableSignatureBindingLayout.size);
+    writer.setCodeUnitIndex(binding.unit);
+    writer.setSignatureID(binding.signature);
+    writer.setFlags(binding.flags);
+  }
+  for (auto [index, instance] : llvm::enumerate(interfaceInstances)) {
+    InterfaceInstanceWriter writer(output.data() + interfaceInstanceOffset +
+                                   index * InterfaceInstanceLayout.size);
+    writer.setScopeIndex(instance.scope);
+    writer.setTypeIndexAndTable(instance.nominal);
+  }
+  for (auto [index, binding] : llvm::enumerate(interfaceCallableBindings)) {
+    InterfaceCallableBindingWriter writer(
+        output.data() + interfaceCallableBindingOffset +
+        index * InterfaceCallableBindingLayout.size);
+    writer.setMemberIndex(binding.member);
+    writer.setScopeIndex(binding.scope);
+    writer.setDeclarationIndex(binding.declaration);
+    writer.setImplementationIndex(binding.implementation);
+  }
+  for (auto [index, binding] : llvm::enumerate(interfaceCallBindings)) {
+    InterfaceCallBindingWriter writer(output.data() +
+                                      interfaceCallBindingOffset +
+                                      index * InterfaceCallBindingLayout.size);
+    writer.setCallID(binding.id);
+    writer.setMemberIndex(binding.member);
+    writer.setAccess(binding.access);
   }
   llvm::sort(threadOriginBindings, [](const auto &left, const auto &right) {
     return left.codeUnit < right.codeUnit;

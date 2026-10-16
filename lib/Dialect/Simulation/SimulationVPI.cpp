@@ -61,6 +61,18 @@ bool isVPIVisibleCodeUnit(SimCodeUnitDeclOp codeUnit) {
          isVPIVisibleEntryKind(codeUnit.getCodeUnitKind());
 }
 
+std::optional<EntryKind> vpiCallableSourceKind(SimCodeUnitDeclOp codeUnit) {
+  if (!codeUnit)
+    return std::nullopt;
+  if (codeUnit.getCodeUnitKind() == EntryKind::Function &&
+      dpi::has<dpi::Import>(codeUnit) && dpi::has<dpi::Task>(codeUnit))
+    return EntryKind::Task;
+  if (codeUnit.getCodeUnitKind() == EntryKind::Task ||
+      codeUnit.getCodeUnitKind() == EntryKind::Function)
+    return codeUnit.getCodeUnitKind();
+  return std::nullopt;
+}
+
 bool areEquivalentVPIRefTypes(VPITypeSemanticsAttr left,
                               VPITypeSemanticsAttr right) {
   return equivalentRefType(left, right);

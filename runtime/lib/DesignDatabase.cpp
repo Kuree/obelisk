@@ -63,6 +63,19 @@ constexpr uint64_t kClassDispatchMethodBindingSize =
     obelisk::reflection::ClassDispatchMethodBindingLayout.size;
 constexpr uint64_t kClassDispatchParentBindingSize =
     obelisk::reflection::ClassDispatchParentBindingLayout.size;
+constexpr uint64_t kInterfaceCallableSize =
+    obelisk::reflection::InterfaceCallableLayout.size;
+constexpr uint64_t kInterfaceInstanceSize =
+    obelisk::reflection::InterfaceInstanceLayout.size;
+constexpr uint64_t kInterfaceCallableBindingSize =
+    obelisk::reflection::InterfaceCallableBindingLayout.size;
+constexpr uint64_t kInterfaceCallBindingSize =
+    obelisk::reflection::InterfaceCallBindingLayout.size;
+constexpr uint64_t kCallableSignatureBindingSize =
+    obelisk::reflection::CallableSignatureBindingLayout.size;
+constexpr uint64_t kCodeUnitScopeBindingSize =
+    obelisk::reflection::CodeUnitScopeBindingLayout.size;
+
 constexpr uint64_t kEventBindingSize =
     obelisk::reflection::EventBindingLayout.size;
 constexpr uint64_t kEventArrayStorageBindingSize =
@@ -288,6 +301,15 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
            classDispatchMethodBindingCount = 0;
   uint64_t classDispatchParentBindingOffset = 0,
            classDispatchParentBindingCount = 0;
+  uint64_t interfaceCallableOffset = 0, interfaceCallableCount = 0;
+  uint64_t interfaceInstanceOffset = 0, interfaceInstanceCount = 0;
+  uint64_t interfaceCallableBindingOffset = 0,
+           interfaceCallableBindingCount = 0;
+  uint64_t interfaceCallBindingOffset = 0, interfaceCallBindingCount = 0;
+  uint64_t callableSignatureBindingOffset = 0,
+           callableSignatureBindingCount = 0;
+  uint64_t codeUnitScopeBindingOffset = 0, codeUnitScopeBindingCount = 0;
+
   uint64_t relationIndexOffset = 0, relationIndexCount = 0;
   uint64_t relationIndexDimensionOffset = 0, relationIndexDimensionCount = 0;
   uint64_t relationIndexKeyOffset = 0, relationIndexKeyCount = 0;
@@ -409,6 +431,18 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         reader.getClassDispatchParentBindingOffset();
     classDispatchParentBindingCount =
         reader.getClassDispatchParentBindingCount();
+    interfaceCallableOffset = reader.getInterfaceCallableOffset();
+    interfaceCallableCount = reader.getInterfaceCallableCount();
+    interfaceInstanceOffset = reader.getInterfaceInstanceOffset();
+    interfaceInstanceCount = reader.getInterfaceInstanceCount();
+    interfaceCallableBindingOffset = reader.getInterfaceCallableBindingOffset();
+    interfaceCallableBindingCount = reader.getInterfaceCallableBindingCount();
+    interfaceCallBindingOffset = reader.getInterfaceCallBindingOffset();
+    interfaceCallBindingCount = reader.getInterfaceCallBindingCount();
+    callableSignatureBindingOffset = reader.getCallableSignatureBindingOffset();
+    codeUnitScopeBindingOffset = reader.getCodeUnitScopeBindingOffset();
+    callableSignatureBindingCount = reader.getCallableSignatureBindingCount();
+    codeUnitScopeBindingCount = reader.getCodeUnitScopeBindingCount();
   }
   database = {data,
               execution->design_database_size,
@@ -466,6 +500,19 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               classDispatchMethodBindingCount,
               classDispatchParentBindingOffset,
               classDispatchParentBindingCount,
+              interfaceCallableOffset,
+              interfaceCallableCount,
+              interfaceInstanceOffset,
+              interfaceInstanceCount,
+              interfaceCallableBindingOffset,
+              interfaceCallableBindingCount,
+              interfaceCallBindingOffset,
+              interfaceCallBindingCount,
+              callableSignatureBindingOffset,
+              callableSignatureBindingCount,
+              codeUnitScopeBindingOffset,
+              codeUnitScopeBindingCount,
+
               relationIndexOffset,
               relationIndexCount,
               relationIndexDimensionOffset,
@@ -563,6 +610,19 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         {database.classDispatchParentBindings,
          database.classDispatchParentBindingCount,
          kClassDispatchParentBindingSize},
+        {database.interfaceCallables, database.interfaceCallableCount,
+         kInterfaceCallableSize},
+        {database.interfaceInstances, database.interfaceInstanceCount,
+         kInterfaceInstanceSize},
+        {database.interfaceCallableBindings,
+         database.interfaceCallableBindingCount, kInterfaceCallableBindingSize},
+        {database.interfaceCallBindings, database.interfaceCallBindingCount,
+         kInterfaceCallBindingSize},
+        {database.callableSignatureBindings,
+         database.callableSignatureBindingCount, kCallableSignatureBindingSize},
+        {database.codeUnitScopeBindings, database.codeUnitScopeBindingCount,
+         kCodeUnitScopeBindingSize},
+
         {database.relationIndices, database.relationIndexCount,
          kRelationIndexSize},
         {database.relationIndexDimensions, database.relationIndexDimensionCount,
@@ -647,6 +707,13 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         database.callDispatchBindingCount != 0 ||
         database.classDispatchMethodBindingCount != 0 ||
         database.classDispatchParentBindingCount != 0 ||
+        database.interfaceCallableCount != 0 ||
+        database.interfaceInstanceCount != 0 ||
+        database.interfaceCallableBindingCount != 0 ||
+        database.interfaceCallBindingCount != 0 ||
+        database.callableSignatureBindingCount != 0 ||
+        database.codeUnitScopeBindingCount != 0 ||
+
         database.relationIndexCount != 0 ||
         database.relationIndexDimensionCount != 0 ||
         database.relationIndexKeyCount != 0 ||
@@ -727,6 +794,23 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       !validRange(database.classDispatchParentBindings,
                   database.classDispatchParentBindingCount,
                   kClassDispatchParentBindingSize, database.size) ||
+      !validRange(database.interfaceCallables, database.interfaceCallableCount,
+                  kInterfaceCallableSize, database.size) ||
+      !validRange(database.interfaceInstances, database.interfaceInstanceCount,
+                  kInterfaceInstanceSize, database.size) ||
+      !validRange(database.interfaceCallableBindings,
+                  database.interfaceCallableBindingCount,
+                  kInterfaceCallableBindingSize, database.size) ||
+      !validRange(database.interfaceCallBindings,
+                  database.interfaceCallBindingCount, kInterfaceCallBindingSize,
+                  database.size) ||
+      !validRange(database.callableSignatureBindings,
+                  database.callableSignatureBindingCount,
+                  kCallableSignatureBindingSize, database.size) ||
+      !validRange(database.codeUnitScopeBindings,
+                  database.codeUnitScopeBindingCount, kCodeUnitScopeBindingSize,
+                  database.size) ||
+
       !validRange(database.relationIndices, database.relationIndexCount,
                   kRelationIndexSize, database.size) ||
       !validRange(database.relationIndexDimensions,
@@ -822,6 +906,19 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        database.classDispatchMethodBindings < kHeaderSize) ||
       (database.classDispatchParentBindingCount != 0 &&
        database.classDispatchParentBindings < kHeaderSize) ||
+      (database.interfaceCallableCount != 0 &&
+       database.interfaceCallables < kHeaderSize) ||
+      (database.interfaceInstanceCount != 0 &&
+       database.interfaceInstances < kHeaderSize) ||
+      (database.interfaceCallableBindingCount != 0 &&
+       database.interfaceCallableBindings < kHeaderSize) ||
+      (database.interfaceCallBindingCount != 0 &&
+       database.interfaceCallBindings < kHeaderSize) ||
+      (database.callableSignatureBindingCount != 0 &&
+       database.callableSignatureBindings < kHeaderSize) ||
+      (database.codeUnitScopeBindingCount != 0 &&
+       database.codeUnitScopeBindings < kHeaderSize) ||
+
       (database.semanticRootBindingCount != 0 &&
        database.semanticRootBindings < kHeaderSize) ||
       (database.relationIndexCount != 0 &&
@@ -905,6 +1002,13 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       database.callDispatchBindingCount > UINT32_MAX ||
       database.classDispatchMethodBindingCount > UINT32_MAX ||
       database.classDispatchParentBindingCount > UINT32_MAX ||
+      database.interfaceCallableCount > UINT32_MAX ||
+      database.interfaceInstanceCount > UINT32_MAX ||
+      database.interfaceCallableBindingCount > UINT32_MAX ||
+      database.interfaceCallBindingCount > UINT32_MAX ||
+      database.callableSignatureBindingCount > UINT32_MAX ||
+      database.codeUnitScopeBindingCount > UINT32_MAX ||
+
       database.relationIndexCount > UINT32_MAX ||
       database.relationIndexDimensionCount > UINT32_MAX ||
       database.relationIndexKeyCount > UINT32_MAX ||
@@ -1146,6 +1250,19 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       {database.classDispatchParentBindings,
        database.classDispatchParentBindingCount,
        kClassDispatchParentBindingSize},
+      {database.interfaceCallables, database.interfaceCallableCount,
+       kInterfaceCallableSize},
+      {database.interfaceInstances, database.interfaceInstanceCount,
+       kInterfaceInstanceSize},
+      {database.interfaceCallableBindings,
+       database.interfaceCallableBindingCount, kInterfaceCallableBindingSize},
+      {database.interfaceCallBindings, database.interfaceCallBindingCount,
+       kInterfaceCallBindingSize},
+      {database.callableSignatureBindings,
+       database.callableSignatureBindingCount, kCallableSignatureBindingSize},
+      {database.codeUnitScopeBindings, database.codeUnitScopeBindingCount,
+       kCodeUnitScopeBindingSize},
+
       {database.relationIndices, database.relationIndexCount,
        kRelationIndexSize},
       {database.relationIndexDimensions, database.relationIndexDimensionCount,
@@ -2093,6 +2210,330 @@ bool validateClassCallDispatch(const Database &database) {
     contracts.erase(contract);
   }
   return contracts.empty();
+}
+
+bool findCallableSource(const Database &database, uint32_t codeUnitObjectIndex,
+                        uint32_t &packedSource, uint64_t &sourceOffset) {
+  using namespace obelisk::reflection;
+  if (codeUnitObjectIndex >= database.objectCount)
+    return false;
+  const uint64_t offset =
+      database.objects + uint64_t{codeUnitObjectIndex} * kObjectSize;
+  const uint8_t *unit = database.data + offset;
+  if (recordKind(unit) != OBELISK_RT_DESIGN_RECORD_PROCESS &&
+      recordKind(unit) != OBELISK_RT_DESIGN_RECORD_FUNCTION)
+    return false;
+  const uint32_t kind = recordVPIKind(unit);
+  if (kind == static_cast<uint32_t>(VPIObjectKind::Task) ||
+      kind == static_cast<uint32_t>(VPIObjectKind::Function)) {
+    sourceOffset = offset;
+    return tryPackTableIndex(TableKind::Object, codeUnitObjectIndex,
+                             packedSource);
+  }
+  const uint64_t id = read64(unit + 8);
+  uint64_t low = 0, high = database.codeUnitScopeBindingCount;
+  while (low < high) {
+    uint64_t middle = low + (high - low) / 2;
+    CodeUnitScopeBindingView row(database.data +
+                                 database.codeUnitScopeBindings +
+                                 middle * kCodeUnitScopeBindingSize);
+    if (row.getCodeUnitID() < id)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == database.codeUnitScopeBindingCount)
+    return false;
+  CodeUnitScopeBindingView row(database.data + database.codeUnitScopeBindings +
+                               low * kCodeUnitScopeBindingSize);
+  if (row.getCodeUnitID() != id)
+    return false;
+  packedSource = row.getSourceIndexAndTable();
+  return packedObjectReferenceOffset(database, packedSource, sourceOffset);
+}
+
+bool validateCodeUnitScopes(
+    const Database &database,
+    const std::unordered_map<uint32_t, std::string_view> &fixedNames) {
+  using namespace obelisk::reflection;
+  std::unordered_map<uint64_t, uint32_t> units;
+  for (uint32_t index = 0; index != database.objectCount; ++index) {
+    const uint8_t *unit =
+        database.data + database.objects + uint64_t{index} * kObjectSize;
+    if (recordKind(unit) == OBELISK_RT_DESIGN_RECORD_PROCESS ||
+        recordKind(unit) == OBELISK_RT_DESIGN_RECORD_FUNCTION)
+      if (!units.emplace(read64(unit + 8), index).second)
+        return false;
+  }
+  uint64_t previous = 0;
+  std::unordered_set<uint32_t> sources;
+  for (uint64_t index = 0; index != database.codeUnitScopeBindingCount;
+       ++index) {
+    CodeUnitScopeBindingView row(database.data +
+                                 database.codeUnitScopeBindings +
+                                 index * kCodeUnitScopeBindingSize);
+    auto found = units.find(row.getCodeUnitID());
+    uint64_t sourceOffset = 0;
+    const uint32_t source = row.getSourceIndexAndTable();
+    if (!row.getCodeUnitID() || row.getCodeUnitID() > INT64_MAX ||
+        (index && row.getCodeUnitID() <= previous) || row.getFlags() > 1 ||
+        found == units.end() || !sources.insert(source).second ||
+        !packedObjectReferenceOffset(database, source, sourceOffset))
+      return false;
+    const uint8_t *unit = database.data + database.objects +
+                          uint64_t{found->second} * kObjectSize;
+    const uint8_t *target = database.data + sourceOffset;
+    bool compact = isStaticObjectOffset(database, sourceOffset);
+    if (recordVPIKind(unit) ||
+        !(read32(unit + 4) & OBELISK_RT_DESIGN_CAP_INTERNAL) ||
+        (!compact &&
+         recordKind(target) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT))
+      return false;
+    const uint32_t kind = objectReferenceVPIKind(database, sourceOffset);
+    const bool functionABI =
+        recordKind(unit) == OBELISK_RT_DESIGN_RECORD_FUNCTION;
+    if (row.getFlags() && !functionABI)
+      return false;
+    if (kind != static_cast<uint32_t>(functionABI && !row.getFlags()
+                                          ? VPIObjectKind::Function
+                                          : VPIObjectKind::Task))
+      return false;
+    uint64_t sourceScope =
+        compact ? database.scopes + uint64_t{read32(target + 8)} * kScopeSize
+                : read64(target + 16);
+    uint64_t sourceName =
+        compact ? database.strings + read32(target + 16) : read64(target + 40);
+    std::string_view unitHierarchy, sourceHierarchy;
+    auto name = fixedNames.find(source);
+    if (sourceScope != read64(unit + 16) ||
+        !getString(database, read64(unit + 40), unitHierarchy) ||
+        !getString(database, sourceName, sourceHierarchy) ||
+        unitHierarchy != sourceHierarchy || name == fixedNames.end() ||
+        name->second.empty())
+      return false;
+    previous = row.getCodeUnitID();
+  }
+  return true;
+}
+
+// Interface targets come from declaration-owned nominal membership, not a
+// caller-authored candidate list. Original source signatures are retained as
+// independent callable facts and checked for every declaration/provider pair.
+bool validateInterfaceCallDispatch(
+    const Database &database,
+    const std::unordered_map<uint32_t, std::string_view> &fixedNames) {
+  using namespace obelisk::reflection;
+  auto memberAt = [&](uint32_t index) {
+    return InterfaceCallableView(database.data + database.interfaceCallables +
+                                 uint64_t{index} * kInterfaceCallableSize);
+  };
+  auto isNominal = [&](uint32_t packed) {
+    uint64_t offset = 0;
+    uint32_t root = UINT32_MAX;
+    if (!packedObjectReferenceOffset(database, packed, offset) ||
+        objectReferenceVPIKind(database, offset) !=
+            static_cast<uint32_t>(VPIObjectKind::InterfaceTypespec) ||
+        !findSemanticRootBinding(database, packed, root) ||
+        root >= database.semanticTypeCount)
+      return false;
+    const uint8_t *semantic = database.data + database.semanticTypes +
+                              uint64_t{root} * kSemanticTypeSize;
+    std::string_view modport;
+    return (read32(semantic) & UINT32_C(0xff)) ==
+               OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE &&
+           read32(semantic + 12) == UINT32_MAX &&
+           read32(semantic + 16) == packed &&
+           getString(database, database.strings + read32(semantic + 24),
+                     modport) &&
+           modport.empty();
+  };
+  std::vector<std::string_view> names;
+  std::unordered_map<uint32_t, uint32_t> nominalInstanceCounts;
+  std::pair<uint32_t, std::string_view> previousMember{};
+  for (uint32_t i = 0; i != database.interfaceCallableCount; ++i) {
+    auto member = memberAt(i);
+    std::string_view name;
+    if (!getString(database, database.strings + member.getNameOffset(), name) ||
+        name.empty() || name.size() != member.getNameSize() ||
+        (member.getNameOffset() &&
+         database.data[database.strings + member.getNameOffset() - 1]) ||
+        member.getFlags() > 1 || !member.getSignatureID() ||
+        member.getReserved() ||
+        (member.getKind() != static_cast<uint16_t>(VPIObjectKind::Task) &&
+         member.getKind() != static_cast<uint16_t>(VPIObjectKind::Function)) ||
+        !isNominal(member.getTypeIndexAndTable()))
+      return false;
+    auto key = std::pair(member.getTypeIndexAndTable(), name);
+    if (i && key <= previousMember)
+      return false;
+    previousMember = key;
+    names.push_back(name);
+    nominalInstanceCounts.try_emplace(member.getTypeIndexAndTable(), 0);
+  }
+  std::unordered_map<uint32_t, uint32_t> instanceTypes;
+  uint32_t previousScope = 0;
+  for (uint32_t i = 0; i != database.interfaceInstanceCount; ++i) {
+    InterfaceInstanceView instance(database.data + database.interfaceInstances +
+                                   uint64_t{i} * kInterfaceInstanceSize);
+    auto nominal = nominalInstanceCounts.find(instance.getTypeIndexAndTable());
+    if (instance.getScopeIndex() >= database.scopeCount ||
+        (i && instance.getScopeIndex() <= previousScope) ||
+        nominal == nominalInstanceCounts.end() ||
+        recordVPIKind(database.data + database.scopes +
+                      uint64_t{instance.getScopeIndex()} * kScopeSize) !=
+            static_cast<uint32_t>(VPIObjectKind::Interface))
+      return false;
+    instanceTypes.emplace(instance.getScopeIndex(),
+                          instance.getTypeIndexAndTable());
+    ++nominal->second;
+    previousScope = instance.getScopeIndex();
+  }
+  std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>> signatures;
+  uint32_t previousUnit = 0;
+  for (uint32_t i = 0; i != database.callableSignatureBindingCount; ++i) {
+    CallableSignatureBindingView binding(
+        database.data + database.callableSignatureBindings +
+        uint64_t{i} * kCallableSignatureBindingSize);
+    uint32_t packed = 0;
+    uint64_t source = 0;
+    if ((i && binding.getCodeUnitIndex() <= previousUnit) ||
+        !binding.getSignatureID() || (binding.getFlags() & ~UINT32_C(3)) ||
+        !findCallableSource(database, binding.getCodeUnitIndex(), packed,
+                            source) ||
+        ((binding.getFlags() & 2) &&
+         (!(binding.getFlags() & 1) ||
+          objectReferenceVPIKind(database, source) !=
+              static_cast<uint32_t>(VPIObjectKind::Task))))
+      return false;
+    signatures.emplace(binding.getCodeUnitIndex(),
+                       std::pair(binding.getSignatureID(), binding.getFlags()));
+    previousUnit = binding.getCodeUnitIndex();
+  }
+  std::unordered_set<uint32_t> usedSignatures;
+  auto unitMatches = [&](uint32_t index, uint32_t kind, uint32_t signature) {
+    auto found = signatures.find(index);
+    uint32_t packed = 0;
+    uint64_t source = 0;
+    if (found == signatures.end() || found->second.first != signature ||
+        !findCallableSource(database, index, packed, source) ||
+        objectReferenceVPIKind(database, source) != kind)
+      return false;
+    usedSignatures.insert(index);
+    return true;
+  };
+  std::vector<uint32_t> memberCounts(database.interfaceCallableCount, 0);
+  std::pair<uint32_t, uint32_t> previousBinding{};
+  for (uint32_t i = 0; i != database.interfaceCallableBindingCount; ++i) {
+    InterfaceCallableBindingView binding(
+        database.data + database.interfaceCallableBindings +
+        uint64_t{i} * kInterfaceCallableBindingSize);
+    auto key = std::pair(binding.getMemberIndex(), binding.getScopeIndex());
+    auto instance = instanceTypes.find(binding.getScopeIndex());
+    if ((i && key <= previousBinding) ||
+        binding.getMemberIndex() >= database.interfaceCallableCount ||
+        instance == instanceTypes.end())
+      return false;
+    auto member = memberAt(binding.getMemberIndex());
+    if (instance->second != member.getTypeIndexAndTable() ||
+        !unitMatches(binding.getDeclarationIndex(), member.getKind(),
+                     member.getSignatureID()) ||
+        !unitMatches(binding.getImplementationIndex(), member.getKind(),
+                     member.getSignatureID()) ||
+        (!member.getFlags() &&
+         binding.getDeclarationIndex() != binding.getImplementationIndex()))
+      return false;
+    uint32_t declarationFlags =
+        signatures.at(binding.getDeclarationIndex()).second;
+    bool external = declarationFlags & 1;
+    bool forkJoin = declarationFlags & 2;
+    bool self =
+        binding.getDeclarationIndex() == binding.getImplementationIndex();
+    if (external != static_cast<bool>(member.getFlags()) ||
+        (external && self != forkJoin) ||
+        (!self && signatures.at(binding.getImplementationIndex()).second))
+      return false;
+    uint32_t packed = 0;
+    uint64_t declaration = 0;
+    if (!findCallableSource(database, binding.getDeclarationIndex(), packed,
+                            declaration))
+      return false;
+    uint64_t scope =
+        isStaticObjectOffset(database, declaration)
+            ? database.scopes +
+                  uint64_t{read32(database.data + declaration + 8)} * kScopeSize
+            : read64(database.data + declaration + 16);
+    if (scope !=
+        database.scopes + uint64_t{binding.getScopeIndex()} * kScopeSize)
+      return false;
+    auto name = fixedNames.find(packed);
+    if (name == fixedNames.end() ||
+        name->second != names[binding.getMemberIndex()])
+      return false;
+    ++memberCounts[binding.getMemberIndex()];
+    previousBinding = key;
+  }
+  if (usedSignatures.size() != signatures.size())
+    return false;
+  for (uint32_t i = 0; i != database.interfaceCallableCount; ++i)
+    if (memberCounts[i] !=
+        nominalInstanceCounts.at(memberAt(i).getTypeIndexAndTable()))
+      return false;
+
+  std::unordered_map<uint64_t, uint32_t> contracts;
+  for (uint64_t i = 0; i != database.callSiteBindingCount; ++i) {
+    CallSiteBindingView call(database.data + database.callSiteBindings +
+                             i * kCallSiteBindingSize);
+    if (call.getFlags() & 4)
+      contracts.emplace(call.getID(), call.getObjectIndexAndTable());
+  }
+  std::vector<bool> usedMembers(database.interfaceCallableCount, false);
+  uint64_t previousCall = 0;
+  for (uint64_t i = 0; i != database.interfaceCallBindingCount; ++i) {
+    InterfaceCallBindingView binding(database.data +
+                                     database.interfaceCallBindings +
+                                     i * kInterfaceCallBindingSize);
+    auto call = contracts.find(binding.getCallID());
+    if (!binding.getCallID() || binding.getCallID() <= previousCall ||
+        call == contracts.end() || binding.getAccess() > 2 ||
+        binding.getMemberIndex() >= database.interfaceCallableCount)
+      return false;
+    auto member = memberAt(binding.getMemberIndex());
+    uint32_t packed = call->second;
+    uint32_t kind = 0;
+    if (unpackTableIndexKind(packed) == TableKind::Statement) {
+      kind = read16(database.data + database.statements +
+                    uint64_t{unpackTableIndex(packed)} * kStatementSize + 36);
+    } else {
+      const uint8_t *object = database.data + database.objects +
+                              uint64_t{unpackTableIndex(packed)} * kObjectSize;
+      kind = recordVPIKind(object);
+      std::string_view name;
+      if (!getString(database, read64(object + 40), name) ||
+          name != names[binding.getMemberIndex()])
+        return false;
+    }
+    bool task = kind == static_cast<uint32_t>(VPIObjectKind::TaskCall) ||
+                kind == static_cast<uint32_t>(VPIObjectKind::MethodTaskCall);
+    bool function =
+        kind == static_cast<uint32_t>(VPIObjectKind::FuncCall) ||
+        kind == static_cast<uint32_t>(VPIObjectKind::MethodFuncCall);
+    if ((!task && !function) ||
+        member.getKind() !=
+            static_cast<uint16_t>(task ? VPIObjectKind::Task
+                                       : VPIObjectKind::Function) ||
+        (binding.getAccess() == 2 && !member.getFlags()))
+      return false;
+    auto name = fixedNames.find(packed);
+    if (name != fixedNames.end() &&
+        name->second != names[binding.getMemberIndex()])
+      return false;
+    usedMembers[binding.getMemberIndex()] = true;
+    previousCall = binding.getCallID();
+    contracts.erase(call);
+  }
+  return contracts.empty() &&
+         std::all_of(usedMembers.begin(), usedMembers.end(),
+                     [](bool used) { return used; });
 }
 
 bool validateDatabaseImpl(const Database &database) {
@@ -4653,9 +5094,9 @@ bool validateDatabaseImpl(const Database &database) {
       uint32_t owner = binding.getOwnerCodeUnitIndex();
       if (!id || id > INT64_MAX || (index && id <= previous) ||
           owner >= database.objectCount || !callObjects.insert(packed).second ||
-          (binding.getFlags() & ~UINT32_C(3)) ||
-          ((binding.getFlags() & 2) && !(binding.getFlags() & 1)) ||
-          binding.getReserved())
+          (binding.getFlags() & ~UINT32_C(7)) ||
+          ((binding.getFlags() & 6) && !(binding.getFlags() & 1)) ||
+          ((binding.getFlags() & 6) == 6) || binding.getReserved())
         return false;
       const uint64_t ownerOffset =
           database.objects + uint64_t{owner} * kObjectSize;
@@ -5723,21 +6164,29 @@ bool validateDatabaseImpl(const Database &database) {
             return false;
           break;
         case obelisk::reflection::TableKind::Object:
-          if (targetIndex != callOwner->second)
+        case obelisk::reflection::TableKind::StaticObject: {
+          uint32_t source = 0;
+          uint64_t sourceOffset = 0;
+          if (!findCallableSource(database, callOwner->second, source,
+                                  sourceOffset) ||
+              source != packedTarget)
             return false;
           break;
+        }
         case obelisk::reflection::TableKind::Scope: {
           const auto *ownerKind =
               obelisk::reflection::findVPIObjectKind(recordVPIKind(owner));
-          if (read64(owner + 16) != uint64_t(target - database.data) ||
+          uint32_t source = 0;
+          uint64_t sourceOffset = 0;
+          if (findCallableSource(database, callOwner->second, source,
+                                 sourceOffset) ||
+              read64(owner + 16) != uint64_t(target - database.data) ||
               (ownerKind && (ownerKind->families &
                              obelisk::reflection::vpiFamilyMask(
                                  obelisk::reflection::VPIObjectFamily::Scope))))
             return false;
           break;
         }
-        case obelisk::reflection::TableKind::StaticObject:
-          return false;
         }
         callScopes.insert(sourceEndpoint);
       }
@@ -6641,7 +7090,9 @@ bool validateDatabaseImpl(const Database &database) {
                                    kObjectSize)))
       return false;
   }
-  return validateClassCallDispatch(database);
+  return validateClassCallDispatch(database) &&
+         validateCodeUnitScopes(database, fixedNames) &&
+         validateInterfaceCallDispatch(database, fixedNames);
 }
 
 // Reflection entry points have a C ABI. Keep allocator failures and malformed
@@ -6785,6 +7236,21 @@ bool sameDatabase(const Database &left, const Database &right) noexcept {
              right.classDispatchParentBindings &&
          left.classDispatchParentBindingCount ==
              right.classDispatchParentBindingCount &&
+         left.interfaceCallables == right.interfaceCallables &&
+         left.interfaceCallableCount == right.interfaceCallableCount &&
+         left.interfaceInstances == right.interfaceInstances &&
+         left.interfaceInstanceCount == right.interfaceInstanceCount &&
+         left.interfaceCallableBindings == right.interfaceCallableBindings &&
+         left.interfaceCallableBindingCount ==
+             right.interfaceCallableBindingCount &&
+         left.interfaceCallBindings == right.interfaceCallBindings &&
+         left.interfaceCallBindingCount == right.interfaceCallBindingCount &&
+         left.callableSignatureBindings == right.callableSignatureBindings &&
+         left.codeUnitScopeBindings == right.codeUnitScopeBindings &&
+         left.callableSignatureBindingCount ==
+             right.callableSignatureBindingCount &&
+         left.codeUnitScopeBindingCount == right.codeUnitScopeBindingCount &&
+
          left.relationIndices == right.relationIndices &&
          left.relationIndexCount == right.relationIndexCount &&
          left.relationIndexDimensions == right.relationIndexDimensions &&
@@ -8757,6 +9223,16 @@ obelisk_rt_cached_vpi_code_unit_scope(const obelisk_rt_context *context,
   if (!found)
     return OBELISK_RT_EOF;
   const uint8_t *object = database->data + found;
+  uint32_t packedSource = 0;
+  uint64_t sourceOffset = 0;
+  if (findCallableSource(
+          *database,
+          static_cast<uint32_t>((found - database->objects) / kObjectSize),
+          packedSource, sourceOffset)) {
+    outCursor->offset = sourceOffset;
+    *outLexicalCodeUnitID = codeUnitID;
+    return OBELISK_RT_OK;
+  }
   if (read32(object + 4) & OBELISK_RT_DESIGN_CAP_INTERNAL) {
     obelisk_rt_design_cursor_v1 origin{};
     auto status =
@@ -8837,6 +9313,56 @@ obelisk_rt_cached_vpi_call_target(const obelisk_rt_context *context,
                ? OBELISK_RT_OK
                : OBELISK_RT_EOF;
   }
+  if (binding.getFlags() & 4) {
+    if (!calleeCodeUnitID)
+      return OBELISK_RT_EOF;
+    uint64_t first = 0, last = database->interfaceCallBindingCount;
+    while (first < last) {
+      uint64_t middle = first + (last - first) / 2;
+      obelisk::reflection::InterfaceCallBindingView contract(
+          database->data + database->interfaceCallBindings +
+          middle * kInterfaceCallBindingSize);
+      if (contract.getCallID() < callID)
+        first = middle + 1;
+      else
+        last = middle;
+    }
+    if (first == database->interfaceCallBindingCount)
+      return OBELISK_RT_EOF;
+    obelisk::reflection::InterfaceCallBindingView contract(
+        database->data + database->interfaceCallBindings +
+        first * kInterfaceCallBindingSize);
+    if (contract.getCallID() != callID)
+      return OBELISK_RT_EOF;
+    const uint32_t member = contract.getMemberIndex();
+    first = 0;
+    last = database->interfaceCallableBindingCount;
+    while (first < last) {
+      uint64_t middle = first + (last - first) / 2;
+      obelisk::reflection::InterfaceCallableBindingView implementation(
+          database->data + database->interfaceCallableBindings +
+          middle * kInterfaceCallableBindingSize);
+      if (implementation.getMemberIndex() < member)
+        first = middle + 1;
+      else
+        last = middle;
+    }
+    // Rows have been proved complete for this exact nominal member. Provider
+    // identities may be shared by multiple interface instances.
+    for (; first != database->interfaceCallableBindingCount; ++first) {
+      obelisk::reflection::InterfaceCallableBindingView implementation(
+          database->data + database->interfaceCallableBindings +
+          first * kInterfaceCallableBindingSize);
+      if (implementation.getMemberIndex() != member)
+        break;
+      const uint8_t *unit =
+          database->data + database->objects +
+          uint64_t{implementation.getImplementationIndex()} * kObjectSize;
+      if (read64(unit + 8) == calleeCodeUnitID)
+        return OBELISK_RT_OK;
+    }
+    return OBELISK_RT_EOF;
+  }
   if (binding.getFlags() & 1)
     return OBELISK_RT_EOF;
   obelisk_rt_design_cursor_v1 call{};
@@ -8871,14 +9397,23 @@ obelisk_rt_cached_vpi_call_target(const obelisk_rt_context *context,
                                                  &targetKind, &statement);
   if (status != OBELISK_RT_OK)
     return status;
-  if (statement || !isObjectOffset(*database, target.offset))
+  if (statement)
     return OBELISK_RT_EOF;
-  const uint8_t *record = database->data + target.offset;
-  return (recordKind(record) == OBELISK_RT_DESIGN_RECORD_PROCESS ||
-          recordKind(record) == OBELISK_RT_DESIGN_RECORD_FUNCTION) &&
-                 read64(record + 8) == calleeCodeUnitID
-             ? OBELISK_RT_OK
-             : OBELISK_RT_EOF;
+  for (uint32_t index = 0; index != database->objectCount; ++index) {
+    const uint8_t *unit =
+        database->data + database->objects + uint64_t{index} * kObjectSize;
+    if ((recordKind(unit) != OBELISK_RT_DESIGN_RECORD_PROCESS &&
+         recordKind(unit) != OBELISK_RT_DESIGN_RECORD_FUNCTION) ||
+        read64(unit + 8) != calleeCodeUnitID)
+      continue;
+    uint32_t packed = 0;
+    uint64_t source = 0;
+    return findCallableSource(*database, index, packed, source) &&
+                   source == target.offset
+               ? OBELISK_RT_OK
+               : OBELISK_RT_EOF;
+  }
+  return OBELISK_RT_EOF;
 }
 
 obelisk_rt_status obelisk_rt_cached_vpi_frame_origin(

@@ -78,8 +78,15 @@ static_assert(field::StaticObjectSourceLine == 20);
 static_assert(field::StaticObjectSourceColumn == 24);
 static_assert(field::StaticObjectVPIKind == 28);
 static_assert(field::StaticObjectFlags == 30);
-static_assert(SemanticDirectoryLayout.size == 640);
+static_assert(SemanticDirectoryLayout.size == 736);
 static_assert(FrameLocalBindingLayout.size == 24);
+static_assert(InterfaceCallableLayout.size == 24);
+static_assert(InterfaceInstanceLayout.size == 8);
+static_assert(InterfaceCallableBindingLayout.size == 16);
+static_assert(InterfaceCallBindingLayout.size == 16);
+static_assert(CallableSignatureBindingLayout.size == 12);
+static_assert(CodeUnitScopeBindingLayout.size == 16);
+
 static_assert(BoxTypeBindingLayout.size == 16);
 static_assert(ValueElementBindingLayout.size == 16);
 static_assert(ThreadOriginBindingLayout.size == 16);

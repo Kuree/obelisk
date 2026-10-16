@@ -548,6 +548,31 @@ LogicalResult SimVPILocalDeclOp::verify() {
                                reflectionDefinitionLoc(*this));
 }
 
+LogicalResult SimVPICodeUnitScopeBindingOp::verify() {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("requires a simulation.design owner");
+  if (failed(verifyNonnegative(*this, getCodeUnitIdAttr(), "code-unit ID")))
+    return failure();
+  if (!getCodeUnitId())
+    return emitOpError("code-unit ID must be positive");
+  return success();
+}
+
+LogicalResult
+SimVPICodeUnitScopeBindingOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  auto anchor = symbols.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+      *this, getSourceAttr());
+  using Kind = reflection::VPIObjectKind;
+  if (!anchor || anchor.getBackingAttr() ||
+      (anchor.getVpiKind() != static_cast<uint32_t>(Kind::Task) &&
+       anchor.getVpiKind() != static_cast<uint32_t>(Kind::Function)))
+    return emitOpError("source must name an unbacked task or function anchor");
+  if (anchor.getDebugName().empty() || anchor.getDebugName().contains('\0'))
+    return emitOpError("mapped source callable requires a nonempty exact name "
+                       "without NUL bytes");
+  return success();
+}
+
 LogicalResult SimVPICallDeclOp::verify() {
   if (!isa<SimDesignOp>((*this)->getParentOp()))
     return emitOpError("requires a simulation.design owner");
@@ -3414,6 +3439,7 @@ LogicalResult SimDesignOp::verifyRegions() {
   SmallVector<SimStatementDeclOp> statementInventory;
   SmallVector<SimStatementSiteDeclOp> statementSites;
   SmallVector<SimVPIThreadOriginBindingOp> threadOrigins;
+  SmallVector<SimVPICodeUnitScopeBindingOp> codeUnitScopes;
   SmallVector<SimVPICallDeclOp> vpiCalls;
   SmallVector<SimVPILocalDeclOp> vpiLocals;
   llvm::DenseSet<uint64_t> vpiLocalIds;
@@ -3491,6 +3517,8 @@ LogicalResult SimDesignOp::verifyRegions() {
                .second)
         return dispatch.emitOpError(
             "duplicates a class call dispatch contract");
+    } else if (auto binding = dyn_cast<SimVPICodeUnitScopeBindingOp>(op)) {
+      codeUnitScopes.push_back(binding);
     } else if (auto binding = dyn_cast<SimVPIThreadOriginBindingOp>(op)) {
       threadOrigins.push_back(binding);
     } else if (auto site = dyn_cast<SimStatementSiteDeclOp>(op)) {
@@ -4389,6 +4417,32 @@ LogicalResult SimDesignOp::verifyRegions() {
           })
           .wasInterrupted())
     return failure();
+  llvm::DenseSet<uint64_t> boundCodeUnitScopes;
+  llvm::DenseSet<Operation *> boundSourceScopes;
+  for (SimVPICodeUnitScopeBindingOp binding : codeUnitScopes) {
+    auto unit = codeUnits.lookup(binding.getCodeUnitId());
+    auto source = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+        binding, binding.getSourceAttr());
+    if (!unit || isVPIVisibleCodeUnit(unit) || !vpiCallableSourceKind(unit))
+      return binding.emitOpError(
+          "requires an internal task/function code unit");
+    if (!source)
+      return binding.emitOpError("source must name a callable anchor");
+    uint32_t expected =
+        static_cast<uint32_t>(vpiCallableSourceKind(unit) == EntryKind::Task
+                                  ? reflection::VPIObjectKind::Task
+                                  : reflection::VPIObjectKind::Function);
+    if (source.getVpiKind() != expected ||
+        source.getEnclosingScopeId() != unit.getScopeId() ||
+        source.getHierarchicalName() != unit.getHierarchicalName())
+      return binding.emitOpError("source callable kind, physical scope, and "
+                                 "hierarchy must match its code unit");
+    if (!boundCodeUnitScopes.insert(binding.getCodeUnitId()).second ||
+        !boundSourceScopes.insert(source).second)
+      return binding.emitOpError(
+          "duplicates a code-unit or source scope binding");
+  }
+
   llvm::DenseSet<uint64_t> callStatementAliases;
   for (SimVPICallDeclOp call : vpiCalls) {
     auto owner = codeUnits.lookup(call.getCodeUnitId());
@@ -4420,8 +4474,8 @@ LogicalResult SimDesignOp::verifyRegions() {
       bool task =
           call.getVpiKind() == static_cast<uint32_t>(Kind::TaskCall) ||
           call.getVpiKind() == static_cast<uint32_t>(Kind::MethodTaskCall);
-      if (!callee || callee.getCodeUnitKind() !=
-                         (task ? EntryKind::Task : EntryKind::Function))
+      if (vpiCallableSourceKind(callee) !=
+          (task ? EntryKind::Task : EntryKind::Function))
         return call.emitOpError(
             "callee must name the corresponding task/function declaration");
     }

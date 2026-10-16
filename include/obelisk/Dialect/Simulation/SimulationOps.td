@@ -230,6 +230,22 @@ def SimCodeUnitDeclOp : SimOp<"code_unit.decl", [
   let hasVerifier = 1;
 }
 
+def SimVPICodeUnitScopeBindingOp : SimOp<"vpi_code_unit_scope.bind", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "source callable scope of an internal executable code unit";
+  let description = [{
+    Connects an executable ABI helper to the exact source task or function it
+    implements. The source anchor retains its own public identity; the helper
+    never becomes a second public callable. This declaration is independent of
+    any call occurrence or runtime activation.
+  }];
+  let arguments = (ins I64Attr:$code_unit_id, FlatSymbolRefAttr:$source);
+  let assemblyFormat = "$code_unit_id `to` $source attr-dict";
+  let hasVerifier = 1;
+}
+
 def SimStatementDeclOp : SimOp<"statement.decl", [
     MemoryEffects<[MemWrite<SimInventoryResource>]>
   ]> {
