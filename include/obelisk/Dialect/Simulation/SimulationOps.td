@@ -403,6 +403,22 @@ def SimVPIObjectAnchorOp : SimOp<"vpi_object.anchor", [
   let hasVerifier = 1;
 }
 
+def SimVPIEventBindingOp : SimOp<"vpi_event_binding", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "exact runtime identity of an immutable named-event declaration";
+  let description = [{
+    Associates a source named-event anchor with the event identity used by its
+    executable waits and triggers. This is immutable reflection inventory and
+    does not create an event or schedule work. Mutable event reference cells
+    use their storage binding instead.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$event, I64Attr:$event_id);
+  let assemblyFormat = "$event `id` $event_id attr-dict";
+  let hasVerifier = 1;
+}
+
 def SimVPIClassMemberDeclOp : SimOp<"vpi_class_member.decl", [
     Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemWrite<SimInventoryResource>]>

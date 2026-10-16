@@ -50,6 +50,8 @@ constexpr uint64_t kSemanticClassBindingSize =
     obelisk::reflection::SemanticClassBindingLayout.size;
 constexpr uint64_t kClassMemberBindingSize =
     obelisk::reflection::ClassMemberBindingLayout.size;
+constexpr uint64_t kEventBindingSize =
+    obelisk::reflection::EventBindingLayout.size;
 constexpr uint64_t kModportBindingSize =
     obelisk::reflection::ModportBindingLayout.size;
 constexpr uint64_t kMailboxElementBindingSize =
@@ -254,6 +256,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
   uint64_t classMemberBindingOffset = 0, classMemberBindingCount = 0;
   uint64_t modportBindingOffset = 0, modportBindingCount = 0;
   uint64_t mailboxElementBindingOffset = 0, mailboxElementBindingCount = 0;
+  uint64_t eventBindingOffset = 0, eventBindingCount = 0;
   uint64_t relationIndexOffset = 0, relationIndexCount = 0;
   uint64_t relationIndexDimensionOffset = 0, relationIndexDimensionCount = 0;
   uint64_t relationIndexKeyOffset = 0, relationIndexKeyCount = 0;
@@ -351,6 +354,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     modportBindingCount = reader.getModportBindingCount();
     mailboxElementBindingOffset = reader.getMailboxElementBindingOffset();
     mailboxElementBindingCount = reader.getMailboxElementBindingCount();
+    eventBindingOffset = reader.getEventBindingOffset();
+    eventBindingCount = reader.getEventBindingCount();
   }
   database = {data,
               execution->design_database_size,
@@ -388,6 +393,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               modportBindingCount,
               mailboxElementBindingOffset,
               mailboxElementBindingCount,
+              eventBindingOffset,
+              eventBindingCount,
               relationIndexOffset,
               relationIndexCount,
               relationIndexDimensionOffset,
@@ -464,6 +471,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
          kModportBindingSize},
         {database.mailboxElementBindings, database.mailboxElementBindingCount,
          kMailboxElementBindingSize},
+        {database.eventBindings, database.eventBindingCount, kEventBindingSize},
         {database.relationIndices, database.relationIndexCount,
          kRelationIndexSize},
         {database.relationIndexDimensions, database.relationIndexDimensionCount,
@@ -538,7 +546,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         database.classMemberBindingCount != 0 ||
         database.modportBindingCount != 0 ||
         database.mailboxElementBindingCount != 0 ||
-        database.relationIndexCount != 0 ||
+        database.eventBindingCount != 0 || database.relationIndexCount != 0 ||
         database.relationIndexDimensionCount != 0 ||
         database.relationIndexKeyCount != 0 ||
         database.relationIndexMemberCount != 0 ||
@@ -592,6 +600,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       !validRange(database.mailboxElementBindings,
                   database.mailboxElementBindingCount,
                   kMailboxElementBindingSize, database.size) ||
+      !validRange(database.eventBindings, database.eventBindingCount,
+                  kEventBindingSize, database.size) ||
       !validRange(database.relationIndices, database.relationIndexCount,
                   kRelationIndexSize, database.size) ||
       !validRange(database.relationIndexDimensions,
@@ -667,6 +677,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        database.modportBindings < kHeaderSize) ||
       (database.mailboxElementBindingCount != 0 &&
        database.mailboxElementBindings < kHeaderSize) ||
+      (database.eventBindingCount != 0 &&
+       database.eventBindings < kHeaderSize) ||
       (database.semanticRootBindingCount != 0 &&
        database.semanticRootBindings < kHeaderSize) ||
       (database.relationIndexCount != 0 &&
@@ -740,6 +752,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       database.classMemberBindingCount > UINT32_MAX ||
       database.modportBindingCount > UINT32_MAX ||
       database.mailboxElementBindingCount > UINT32_MAX ||
+      database.eventBindingCount > UINT32_MAX ||
       database.relationIndexCount > UINT32_MAX ||
       database.relationIndexDimensionCount > UINT32_MAX ||
       database.relationIndexKeyCount > UINT32_MAX ||
@@ -960,6 +973,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        kModportBindingSize},
       {database.mailboxElementBindings, database.mailboxElementBindingCount,
        kMailboxElementBindingSize},
+      {database.eventBindings, database.eventBindingCount, kEventBindingSize},
       {database.relationIndices, database.relationIndexCount,
        kRelationIndexSize},
       {database.relationIndexDimensions, database.relationIndexDimensionCount,
@@ -3229,6 +3243,30 @@ bool validateDatabaseImpl(const Database &database) {
       return false;
   }
 
+  std::unordered_set<uint32_t> boundEvents;
+  uint32_t previousEvent = 0;
+  for (uint64_t index = 0; index != database.eventBindingCount; ++index) {
+    obelisk::reflection::EventBindingView binding(
+        database.data + database.eventBindings + index * kEventBindingSize);
+    uint32_t event = binding.getEventIndexAndTable();
+    uint64_t offset = 0;
+    if ((index && event <= previousEvent) || binding.getReserved() != 0 ||
+        binding.getEventID() > INT64_MAX ||
+        !packedObjectReferenceOffset(database, event, offset) ||
+        objectReferenceVPIKind(database, offset) !=
+            static_cast<uint32_t>(
+                obelisk::reflection::VPIObjectKind::NamedEvent))
+      return false;
+    // Static anchors have no state storage, class receiver, or mutable cell.
+    if (!isStaticObjectOffset(database, offset) &&
+        (!isObjectOffset(database, offset) ||
+         recordKind(database.data + offset) !=
+             OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT))
+      return false;
+    boundEvents.insert(event);
+    previousEvent = event;
+  }
+
   std::unordered_set<uint32_t> boundModports;
   std::unordered_set<uint64_t> modportParents;
   std::unordered_map<uint32_t, std::unordered_set<std::string_view>>
@@ -3301,6 +3339,7 @@ bool validateDatabaseImpl(const Database &database) {
     uint64_t memberOffset = 0, ownerOffset = 0;
     std::string_view memberName;
     if ((index && member <= previousMember) || binding.getFlags() > 3 ||
+        boundEvents.count(member) != 0 ||
         canonical == canonicalClassTypes.end() ||
         !packedObjectReferenceOffset(database, member, memberOffset) ||
         !packedObjectReferenceOffset(database, owner, ownerOffset) ||
@@ -5243,6 +5282,8 @@ bool sameDatabase(const Database &left, const Database &right) noexcept {
          left.modportBindingCount == right.modportBindingCount &&
          left.mailboxElementBindings == right.mailboxElementBindings &&
          left.mailboxElementBindingCount == right.mailboxElementBindingCount &&
+         left.eventBindings == right.eventBindings &&
+         left.eventBindingCount == right.eventBindingCount &&
          left.relationIndices == right.relationIndices &&
          left.relationIndexCount == right.relationIndexCount &&
          left.relationIndexDimensions == right.relationIndexDimensions &&
@@ -6956,6 +6997,38 @@ obelisk_rt_cached_vpi_scope(const obelisk_rt_context *context, uint64_t scopeID,
     }
   }
   return OBELISK_RT_EOF;
+}
+
+obelisk_rt_status
+obelisk_rt_cached_vpi_event_binding(const obelisk_rt_context *context,
+                                    obelisk_rt_design_cursor_v1 event,
+                                    uint64_t *outEventID) noexcept {
+  if (!outEventID)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outEventID = 0;
+  const Database *database = cachedDatabase(context);
+  uint32_t packed = 0;
+  if (!database ||
+      !packedObjectReferenceForCursor(*database, event.offset, packed))
+    return OBELISK_RT_INVALID_HANDLE;
+  uint64_t low = 0, high = database->eventBindingCount;
+  while (low < high) {
+    uint64_t middle = low + (high - low) / 2;
+    obelisk::reflection::EventBindingView binding(
+        database->data + database->eventBindings + middle * kEventBindingSize);
+    if (binding.getEventIndexAndTable() < packed)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == database->eventBindingCount)
+    return OBELISK_RT_EOF;
+  obelisk::reflection::EventBindingView binding(
+      database->data + database->eventBindings + low * kEventBindingSize);
+  if (binding.getEventIndexAndTable() != packed)
+    return OBELISK_RT_EOF;
+  *outEventID = binding.getEventID();
+  return OBELISK_RT_OK;
 }
 
 obelisk_rt_status

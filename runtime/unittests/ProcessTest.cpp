@@ -2885,6 +2885,255 @@ TEST(RuntimeInternals, ConditionalWakeUpdatesSchedulerSelectionGeneration) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, NamedEventWaitersExcludeReadyAndTerminatedThreads) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  SchedulerFixture fixture(13);
+  schedulerWaitKind = OBELISK_RT_SUSPEND_EVENT;
+  schedulerWaitEdge = OBELISK_RT_WAIT_EDGE_NONE;
+  schedulerWaitHandle = 0; // Zero is a valid executable event identity.
+  schedulerResumeCount = 0;
+  auto *instance = makeSchedulerInstance(fixture);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
+  const uint64_t token =
+      obelisk_rt_v1_scheduler_process_token(context, instance);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  std::vector<uint64_t> waiters;
+  EXPECT_EQ(obelisk_rt_named_event_waiters(context, 0, waiters), OBELISK_RT_OK);
+  EXPECT_EQ(waiters, (std::vector<uint64_t>{token}));
+  EXPECT_EQ(obelisk_rt_named_event_waiters(context, 1, waiters), OBELISK_RT_OK);
+  EXPECT_TRUE(waiters.empty());
+  EXPECT_EQ(obelisk_rt_named_event_waiters(context, UINT64_MAX, waiters),
+            OBELISK_RT_OK);
+  EXPECT_TRUE(waiters.empty());
+
+  obelisk_rt_process_control_disposition disposition{};
+  ASSERT_EQ(obelisk_rt_v1_process_control(context, token,
+                                          OBELISK_RT_PROCESS_CONTROL_SUSPEND,
+                                          &disposition),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_named_event_waiters(context, 0, waiters), OBELISK_RT_OK);
+  EXPECT_EQ(waiters, (std::vector<uint64_t>{token}));
+  obelisk_rt_v1_scheduler_event(context, 0, 0);
+  // Readiness, rather than dispatch or explicit suspension, ends the event
+  // wait.
+  EXPECT_EQ(obelisk_rt_named_event_waiters(context, 0, waiters), OBELISK_RT_OK);
+  EXPECT_TRUE(waiters.empty());
+  EXPECT_EQ(schedulerResumeCount, 0u);
+  EXPECT_EQ(context->events.at(0).generation, 1u);
+  ASSERT_EQ(obelisk_rt_v1_process_control(
+                context, token, OBELISK_RT_PROCESS_CONTROL_KILL, &disposition),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_named_event_waiters(context, 0, waiters), OBELISK_RT_OK);
+  EXPECT_TRUE(waiters.empty());
+  waiters.push_back(token);
+  EXPECT_EQ(obelisk_rt_named_event_waiters(nullptr, 0, waiters),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_TRUE(waiters.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
+struct NamedEventOrderWait {
+  obelisk_rt_wait_record_v1 wait{};
+  std::array<obelisk_rt_wait_entry_v1, 3> entries{};
+};
+
+obelisk_rt_status
+namedEventOrderExecute(obelisk_rt_process_instance_v1 *instance) {
+  if (!instance || !instance->action || !instance->frame ||
+      instance->frame_size < sizeof(NamedEventOrderWait))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  instance->native_handle = instance;
+  if (instance->continuation != 0) {
+    *instance->action = {
+        OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+    return OBELISK_RT_OK;
+  }
+  auto &record = *static_cast<NamedEventOrderWait *>(instance->frame);
+  record.wait = {
+      OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EVENT_ORDER, 0, 3, 0, 0};
+  record.entries = {{{41, OBELISK_RT_WAIT_EDGE_NONE, 0},
+                     {42, OBELISK_RT_WAIT_EDGE_NONE, 0},
+                     {43, OBELISK_RT_WAIT_EDGE_NONE, 0}}};
+  *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
+                       OBELISK_RT_SUSPEND_EVENT_ORDER,
+                       1,
+                       OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
+                       0,
+                       sizeof(NamedEventOrderWait)};
+  return OBELISK_RT_OK;
+}
+
+TEST(Scheduler, NamedEventWaitersTrackOnlyRemainingEventOrder) {
+  for (bool failOrder : {false, true}) {
+    SCOPED_TRACE(failOrder);
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+    SchedulerFixture fixture(14);
+    fixture.fields[0].size = sizeof(NamedEventOrderWait);
+    fixture.layout.field_count = 1;
+    fixture.layout.checksum = checksum(fixture.layout);
+    fixture.descriptor.native_execute = namedEventOrderExecute;
+    auto *instance = makeSchedulerInstance(fixture);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
+    const uint64_t token =
+        obelisk_rt_v1_scheduler_process_token(context, instance);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+    std::vector<uint64_t> waiters;
+    for (uint64_t event : {41, 42, 43}) {
+      EXPECT_EQ(obelisk_rt_named_event_waiters(context, event, waiters),
+                OBELISK_RT_OK);
+      EXPECT_EQ(waiters, (std::vector<uint64_t>{token}));
+    }
+    obelisk_rt_v1_scheduler_event(context, 41, 0);
+    EXPECT_EQ(obelisk_rt_named_event_waiters(context, 41, waiters),
+              OBELISK_RT_OK);
+    EXPECT_TRUE(waiters.empty());
+    for (uint64_t event : {42, 43}) {
+      EXPECT_EQ(obelisk_rt_named_event_waiters(context, event, waiters),
+                OBELISK_RT_OK);
+      EXPECT_EQ(waiters, (std::vector<uint64_t>{token}));
+    }
+    if (!failOrder)
+      obelisk_rt_v1_scheduler_event(context, 42, 0);
+    obelisk_rt_v1_scheduler_event(context, 43, 0);
+    for (uint64_t event : {41, 42, 43}) {
+      EXPECT_EQ(obelisk_rt_named_event_waiters(context, event, waiters),
+                OBELISK_RT_OK);
+      EXPECT_TRUE(waiters.empty());
+    }
+    EXPECT_EQ(context->scheduledProcesses.front().waitOrderFailed, failOrder);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+    EXPECT_TRUE(context->scheduledProcesses.empty());
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+struct NamedEventConditionalWait {
+  obelisk_rt_computed_wait_record_v1 wait{};
+  std::array<obelisk_rt_computed_observer_v1, 2> observers{};
+  std::array<obelisk_rt_computed_dependency_v1, 3> dependencies{};
+  obelisk_rt_computed_clause_v1 clause{};
+  uint64_t previousValue = 0;
+  uint64_t previousUnknown = 0;
+};
+
+obelisk_rt_status
+namedEventConditionalExecute(obelisk_rt_process_instance_v1 *instance) {
+  if (!instance || !instance->action || !instance->frame ||
+      instance->frame_size < sizeof(NamedEventConditionalWait))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  instance->native_handle = instance;
+  if (instance->continuation != 0) {
+    *instance->action = {
+        OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+    return OBELISK_RT_OK;
+  }
+  auto &record = *static_cast<NamedEventConditionalWait *>(instance->frame);
+  record = {};
+  record.wait = {OBELISK_RT_VERSION,
+                 OBELISK_RT_SUSPEND_OBSERVER,
+                 OBELISK_RT_COMPUTED_WAIT_INTERLEAVED,
+                 1,
+                 2,
+                 0,
+                 3,
+                 1,
+                 offsetof(NamedEventConditionalWait, observers),
+                 offsetof(NamedEventConditionalWait, dependencies),
+                 offsetof(NamedEventConditionalWait, dependencies),
+                 offsetof(NamedEventConditionalWait, clause),
+                 offsetof(NamedEventConditionalWait, previousValue),
+                 0,
+                 sizeof(NamedEventConditionalWait),
+                 0};
+  record.observers[0] = {
+      eventOnlyComputedObserverID,
+      0,
+      0,
+      0,
+      2,
+      static_cast<uint32_t>(offsetof(NamedEventConditionalWait, previousValue)),
+      0};
+  record.observers[1] = {
+      eventOnlyComputedObserverID, 0, 0, 2, 1, UINT32_MAX, 0};
+  record.dependencies = {{{91, OBELISK_RT_OBSERVER_DEPENDENCY_EVENT, 1},
+                          {91, OBELISK_RT_OBSERVER_DEPENDENCY_EVENT, 1},
+                          {92, OBELISK_RT_OBSERVER_DEPENDENCY_EVENT, 1}}};
+  // Computed clauses carry an ordinary edge kind; EVENT_PRIMARY makes a
+  // named-event occurrence trigger independently of a value transition.
+  record.clause = {0, 1, OBELISK_RT_WAIT_EDGE_CHANGE,
+                   OBELISK_RT_COMPUTED_CLAUSE_EVENT_PRIMARY};
+  *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
+                       OBELISK_RT_SUSPEND_OBSERVER,
+                       1,
+                       OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
+                       0,
+                       sizeof(NamedEventConditionalWait)};
+  return OBELISK_RT_OK;
+}
+
+TEST(Scheduler, NamedEventWaitersIgnoreObserverConditionsAndDeduplicate) {
+  obelisk_rt_observer_descriptor_v1 observer{eventOnlyComputedObserverID,
+                                             nullptr,
+                                             0,
+                                             1,
+                                             0,
+                                             OBELISK_RT_OBSERVER_NO_BYTECODE,
+                                             eventOnlyComputedEvaluator,
+                                             0};
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.observers = &observer;
+  execution.observer_count = 1;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  EventOnlyComputedFixture fixture(15);
+  fixture.fields[0].size = sizeof(NamedEventConditionalWait);
+  fixture.layout.frame_size = sizeof(NamedEventConditionalWait);
+  fixture.layout.checksum = checksum(fixture.layout);
+  fixture.descriptor.execution = &execution;
+  fixture.descriptor.native_execute = namedEventConditionalExecute;
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
+  const uint64_t token =
+      obelisk_rt_v1_scheduler_process_token(context, instance);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  std::vector<uint64_t> waiters;
+  EXPECT_EQ(obelisk_rt_named_event_waiters(context, 91, waiters),
+            OBELISK_RT_OK);
+  EXPECT_EQ(waiters, (std::vector<uint64_t>{token}));
+  EXPECT_EQ(obelisk_rt_named_event_waiters(context, 92, waiters),
+            OBELISK_RT_OK);
+  EXPECT_TRUE(waiters.empty());
+  obelisk_rt_v1_scheduler_event(context, 92, 0);
+  EXPECT_EQ(obelisk_rt_named_event_waiters(context, 91, waiters),
+            OBELISK_RT_OK);
+  EXPECT_EQ(waiters, (std::vector<uint64_t>{token}));
+  const auto &scheduled = context->scheduledProcesses.front();
+  EXPECT_FALSE(scheduled.signalTriggered);
+  EXPECT_EQ(context->activeComputedObserverWaiterCount, 1u);
+  // A corrupt frame is rejected without publishing a partial waiter snapshot.
+  auto &record = *static_cast<NamedEventConditionalWait *>(instance->frame);
+  record.observers[0].dependency_count = UINT32_MAX;
+  EXPECT_EQ(obelisk_rt_named_event_waiters(context, 91, waiters),
+            OBELISK_RT_INVALID_FRAME);
+  EXPECT_TRUE(waiters.empty());
+  record.observers[0].dependency_count = 2;
+  obelisk_rt_v1_scheduler_event(context, 91, 0);
+  EXPECT_EQ(obelisk_rt_named_event_waiters(context, 91, waiters),
+            OBELISK_RT_OK);
+  EXPECT_TRUE(waiters.empty());
+  EXPECT_TRUE(context->scheduledProcesses.front().signalTriggered);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_TRUE(context->scheduledProcesses.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, SignalWaitsAreSelectiveAndEdgeAware) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);

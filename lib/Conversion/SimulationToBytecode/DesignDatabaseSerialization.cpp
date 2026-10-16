@@ -235,6 +235,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint32_t typespec, semanticType, physicalType;
   };
   SmallVector<MailboxElementBindingRecord> mailboxElementBindings;
+  struct EventBindingRecord {
+    uint32_t event;
+    uint64_t id;
+  };
+  SmallVector<EventBindingRecord> eventBindings;
   struct FrozenValueRecord {
     uint32_t kindAndFlags = 0;
     uint64_t bitWidth = 0;
@@ -381,7 +386,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     if (isa<IntegerType, sim::LogicType, sim::StringType, sim::ClassHandleType,
             sim::DynamicArrayType, sim::QueueType, sim::MailboxType,
             sim::SemaphoreType, sim::AssocArrayType, sim::ProcessType,
-            sim::CovergroupHandleType, sim::VirtualInterfaceType,
+            sim::CovergroupHandleType, sim::VirtualInterfaceType, sim::EventType,
             sim::ChandleType>(type) ||
         type.isF32() || type.isF64())
       return true;
@@ -1383,6 +1388,21 @@ SmallVector<uint8_t> serializeDesignDatabase(
           typespecsBySymbol.contains(anchor.getParentAttr().getValue()))
         objects[index].indexName = false;
       lexicallyAnchoredObjectIndices.insert(index);
+    }
+    for (auto binding :
+         design.getBody().front().getOps<sim::SimVPIEventBindingOp>()) {
+      auto found = anchorsBySymbol.find(binding.getEventAttr().getValue());
+      if (found == anchorsBySymbol.end()) {
+        binding.emitOpError("named-event anchor was not serialized");
+        return {};
+      }
+      ImageObjectRef target = anchorRefs.lookup(found->second);
+      uint32_t packed = 0;
+      if (!tryPackTableIndex(target.table, target.index, packed)) {
+        binding.emitOpError("named-event binding index cannot be packed");
+        return {};
+      }
+      eventBindings.push_back({packed, binding.getEventId()});
     }
     for (sim::SimVPITypespecDeclOp typespec : typespecs) {
       uint32_t index = objectIndices.lookup(typespec);
@@ -4120,9 +4140,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
       classMemberBindings.size() * ClassMemberBindingLayout.size;
   uint64_t mailboxElementBindingOffset =
       modportBindingOffset + modportBindings.size() * ModportBindingLayout.size;
-  uint64_t relationIndexOffset =
+  uint64_t eventBindingOffset =
       mailboxElementBindingOffset +
       mailboxElementBindings.size() * MailboxElementBindingLayout.size;
+  uint64_t relationIndexOffset =
+      eventBindingOffset + eventBindings.size() * EventBindingLayout.size;
   uint64_t relationIndexDimensionOffset =
       relationIndexOffset + relationIndices.size() * RelationIndexLayout.size;
   uint64_t relationIndexKeyOffset =
@@ -4439,6 +4461,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setModportBindingCount(modportBindings.size());
     writer.setMailboxElementBindingOffset(mailboxElementBindingOffset);
     writer.setMailboxElementBindingCount(mailboxElementBindings.size());
+    writer.setEventBindingOffset(eventBindingOffset);
+    writer.setEventBindingCount(eventBindings.size());
     writer.setRelationIndexOffset(relationIndexOffset);
     writer.setRelationIndexCount(relationIndices.size());
     writer.setRelationIndexDimensionOffset(relationIndexDimensionOffset);
@@ -4583,6 +4607,17 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setTypespecIndexAndTable(binding.typespec);
     writer.setSemanticTypeIndex(binding.semanticType);
     writer.setPhysicalTypeIndex(binding.physicalType);
+  }
+
+  llvm::sort(eventBindings, [](const auto &left, const auto &right) {
+    return left.event < right.event;
+  });
+  for (auto [index, binding] : llvm::enumerate(eventBindings)) {
+    EventBindingWriter writer(output.data() + eventBindingOffset +
+                              index * EventBindingLayout.size);
+    writer.setEventIndexAndTable(binding.event);
+    writer.setReserved(0);
+    writer.setEventID(binding.id);
   }
   llvm::sort(modportBindings, [](const auto &left, const auto &right) {
     return left.modport < right.modport;

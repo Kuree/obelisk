@@ -65,8 +65,12 @@ execution finishes or is killed. Mailbox typespecs and live objects expose
 their effective type parameter `T` through `vpiParameter`, preserving its
 typedef spelling independently of the canonical mailbox type identity.
 
-`vpiWaitingProcesses` on a mailbox or semaphore returns its suspended threads,
-including when the resource is a built-in base of a user class. Thread handles
+`vpiWaitingProcesses` on a named event, mailbox, or semaphore returns its
+suspended threads, including when the resource is a built-in base of a user
+class. Named-event queries follow the current event identity of aliases and
+class members, including fixed class event-array elements. Event-order waits
+include only their remaining events; a satisfied wait is excluded even before
+the scheduler dispatches its thread. Thread handles
 expose `vpiParent`, child `vpiThread` iteration, and `vpiActive`, which is true
 only during that thread's execution. Thread handles expire on finish or kill;
 they have `vpiAutomaticScheme` lifetime. Thread source-statement and frame

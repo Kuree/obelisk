@@ -648,7 +648,11 @@ def SemanticDirectoryMailboxElementBindingOffset
     : ReflectionField<"MailboxElementBindingOffset", 464, U64LE>;
 def SemanticDirectoryMailboxElementBindingCount
     : ReflectionField<"MailboxElementBindingCount", 472, U64LE>;
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 480,
+def SemanticDirectoryEventBindingOffset
+    : ReflectionField<"EventBindingOffset", 480, U64LE>;
+def SemanticDirectoryEventBindingCount
+    : ReflectionField<"EventBindingCount", 488, U64LE>;
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 496,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -705,7 +709,17 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 480,
    SemanticDirectoryModportBindingOffset,
    SemanticDirectoryModportBindingCount,
    SemanticDirectoryMailboxElementBindingOffset,
-   SemanticDirectoryMailboxElementBindingCount]>;
+   SemanticDirectoryMailboxElementBindingCount,
+   SemanticDirectoryEventBindingOffset,
+   SemanticDirectoryEventBindingCount]>;
+
+// Exact runtime identity of a source named event without a mutable event cell.
+// Event zero is valid. The all-ones sentinel is never an event identity.
+def EventBindingObject : ReflectionField<"EventIndexAndTable", 0, U32LE>;
+def EventBindingReserved : ReflectionField<"Reserved", 4, U32LE>;
+def EventBindingID : ReflectionField<"EventID", 8, U64LE>;
+def EventBinding : ReflectionLayout<"EventBinding", 16,
+  [EventBindingObject, EventBindingReserved, EventBindingID]>;
 
 // Exact source names identify modports within a physical interface instance.
 // Hierarchy display strings may contain escaped separators. Entries are sorted

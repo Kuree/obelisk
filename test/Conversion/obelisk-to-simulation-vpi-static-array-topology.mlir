@@ -185,6 +185,8 @@ module attributes {
 // CHECK-DAG: simulation.vpi_object.anchor {{.*}}type 601{{.*}}parent @[[INTERFACES]]{{.*}}hierarchy "top.i[2]"{{.*}}member_indices = array<i64: 2>
 // CHECK-DAG: simulation.vpi_object.anchor @[[PROGRAMS:__obelisk_vpi_anchor_[0-9]+]] {{.*}}type 604{{.*}}parent @[[TOP]]{{.*}}hierarchy "top.p" debug "p" {index_ranges = array<i64: -2, -2>}
 // CHECK-DAG: simulation.vpi_object.anchor {{.*}}type 602{{.*}}parent @[[PROGRAMS]]{{.*}}hierarchy "top.p[-2]"{{.*}}member_indices = array<i64: -2>
+// CHECK-DAG: simulation.vpi_event_binding @[[READY]] id 0
+// CHECK-DAG: simulation.vpi_event_binding @[[DONE]] id 1
 // CHECK-NOT: obelisk.sv.
 // COUNT-COUNT-1: simulation.vpi_object.anchor {{.*}} type 112
 // IMAGE-COUNT-1: object name=top.events kind=9 vpi_kind=129

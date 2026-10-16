@@ -3686,6 +3686,23 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     if (!portAliases.aliases.count(getHierarchyName(op)))
       emitDescriptor(op);
 
+  // Standalone named events have an executable event identity without an
+  // allocated storage cell. Preserve that identity separately from the source
+  // anchor's inventory ID; those namespaces are unrelated.
+  {
+    for (Operation *source : designObjects) {
+      FlatSymbolRefAttr anchor = anchorSymbols.lookup(source);
+      auto descriptor = descriptors.find(getHierarchyName(source));
+      if (!anchor || !scalarNamedEvents.contains(source) ||
+          descriptor == descriptors.end() ||
+          descriptor->second.kind != DescriptorInfo::Kind::Event)
+        continue;
+      sim::SimVPIEventBindingOp::create(
+          builder, getSemanticLocation(source), anchor,
+          builder.getI64IntegerAttr(descriptor->second.id));
+    }
+  }
+
   // Source properties are immutable declarations, even though the same field
   // is backed by distinct storage in every live receiver. Keep that binding
   // symbolic until native class layout is known to the bytecode serializer.

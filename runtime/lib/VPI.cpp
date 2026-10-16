@@ -4263,6 +4263,68 @@ bool decodeValue(__vpiHandle *handle, const s_vpi_value *source, uint64_t width,
   }
 }
 
+vpiHandle namedEventWaitingProcesses(__vpiHandle *source) {
+  if (source->classDefinitionOrigin) {
+    setError(source->owner, "a lexical named event has no readable actual",
+             vpiNotice);
+    return nullptr;
+  }
+  ContextTransaction transaction(source->owner->context);
+  ManagedExecutionScope managed(source->owner->context);
+  if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane()) {
+    setError(source->owner, "named event VPI query cannot enter GC scope",
+             vpiInternal);
+    return nullptr;
+  }
+  uint64_t eventID = UINT64_MAX;
+  VPIClassMemberBinding member{};
+  auto status = obelisk_rt_cached_vpi_class_member(source->owner->context,
+                                                   source->cursor, &member);
+  if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF) {
+    setError(source->owner, "named event VPI class binding is invalid",
+             vpiInternal);
+    return nullptr;
+  }
+  const bool staticEvent = status == OBELISK_RT_OK && member.isStatic &&
+                           member.staticEventID != UINT64_MAX;
+  if (staticEvent) {
+    eventID = member.staticEventID;
+  } else {
+    status = source->form == VPIObjectForm::Design
+                 ? obelisk_rt_cached_vpi_event_binding(source->owner->context,
+                                                       source->cursor, &eventID)
+                 : OBELISK_RT_EOF;
+    if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF) {
+      setError(source->owner, "named event VPI executable binding is invalid",
+               vpiInternal);
+      return nullptr;
+    }
+    if (status == OBELISK_RT_EOF) {
+      // Event variables and selected class event fields hold the executable
+      // event identity. Source-only declaration anchors carry no such value.
+      obelisk_rt_design_info_v1 info{};
+      if (!infoFor(source, info))
+        return nullptr;
+      if (info.type_offset == 0 || info.bit_width != 64) {
+        setError(source->owner, "named event has no executable event binding",
+                 vpiNotice);
+        return nullptr;
+      }
+      if (!readManagedStateWord(source, eventID))
+        return nullptr;
+    }
+  }
+  std::vector<uint64_t> processes;
+  status = obelisk_rt_named_event_waiters(source->owner->context, eventID,
+                                          processes);
+  if (status != OBELISK_RT_OK) {
+    setError(source->owner, "named event VPI waiter query failed",
+             status == OBELISK_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
+    return nullptr;
+  }
+  return makeThreadIterator(source, vpiWaitingProcesses, std::move(processes));
+}
+
 vpiHandle virtualInterfaceActual(__vpiHandle *source) {
   if (source->classDefinitionOrigin) {
     setError(source->owner,
@@ -5927,6 +5989,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
         obelisk_rt_cached_vpi_type(state->context, parent, &sourceType) !=
             OBELISK_RT_OK)
       return nullptr;
+    if (sourceType == vpiNamedEvent && type == vpiWaitingProcesses)
+      return namedEventWaitingProcesses(handle);
     if (type == vpiIndex && (handle->form == VPIObjectForm::Indexed ||
                              handle->form == VPIObjectForm::Design)) {
       const auto *edge = obelisk::reflection::findVPITraversal(

@@ -260,6 +260,149 @@ obelisk_rt_builtin_class_waiters(obelisk_rt_gc_lane_v1 *lane,
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
+// Query only the blocked portion of a wait. A process whose event occurrence
+// is already latched may still be queued (or explicitly suspended), but it is
+// no longer waiting on that event. This inspection does not evaluate observers
+// or mutate scheduler readiness, subscriptions, or event generations.
+obelisk_rt_status
+obelisk_rt_named_event_waiters(obelisk_rt_context *context, uint64_t eventID,
+                               std::vector<uint64_t> &outProcesses) {
+  outProcesses.clear();
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (eventID == UINT64_MAX)
+    return OBELISK_RT_OK;
+  OBELISK_RT_TRY {
+    ContextMutexLock lock(context);
+    std::vector<uint64_t> processes;
+    auto inspect = [&](uint64_t token, uint32_t suspendKind,
+                       const uint8_t *frame, uint64_t frameSize,
+                       uint64_t waitOffset, uint64_t waitSize,
+                       const std::vector<uint64_t> &generations,
+                       uint32_t orderIndex, bool orderReady,
+                       bool signalTriggered,
+                       const obelisk_rt_execution_descriptor_v1 *execution) {
+      if (suspendKind != OBELISK_RT_SUSPEND_EVENT &&
+          suspendKind != OBELISK_RT_SUSPEND_EVENT_ORDER &&
+          suspendKind != OBELISK_RT_SUSPEND_OBSERVER)
+        return true;
+      if (!frame || waitOffset > frameSize ||
+          waitSize > frameSize - waitOffset ||
+          waitOffset % alignof(obelisk_rt_wait_record_v1) != 0)
+        return false;
+      const uint8_t *bytes = frame + waitOffset;
+      bool matches = false;
+      if (suspendKind == OBELISK_RT_SUSPEND_OBSERVER) {
+        if (waitSize < sizeof(obelisk_rt_computed_wait_record_v1))
+          return false;
+        const auto *wait =
+            reinterpret_cast<const obelisk_rt_computed_wait_record_v1 *>(bytes);
+        if (!obelisk_rt_validate_computed_wait_record(execution, wait,
+                                                      waitSize))
+          return false;
+        if (signalTriggered)
+          return true;
+        const auto *observers =
+            computedWaitSpan<obelisk_rt_computed_observer_v1>(
+                wait, wait->observers_offset, wait->observer_count);
+        const auto *dependencies =
+            computedWaitSpan<obelisk_rt_computed_dependency_v1>(
+                wait, wait->dependencies_offset, wait->dependency_count);
+        const auto *clauses = computedWaitSpan<obelisk_rt_computed_clause_v1>(
+            wait, wait->clauses_offset, wait->clause_count);
+        // An iff condition is evaluated when its primary occurs; events
+        // mentioned only by that condition do not awaken the process.
+        for (uint32_t index = 0; index != wait->clause_count; ++index) {
+          const auto &primary = observers[clauses[index].primary_observer];
+          for (uint32_t offset = 0; offset != primary.dependency_count;
+               ++offset) {
+            const auto &dependency =
+                dependencies[primary.dependency_begin + offset];
+            matches |=
+                dependency.kind == OBELISK_RT_OBSERVER_DEPENDENCY_EVENT &&
+                dependency.stable_id == eventID;
+          }
+        }
+      } else {
+        if (waitSize < sizeof(obelisk_rt_wait_record_v1))
+          return false;
+        const auto *wait =
+            reinterpret_cast<const obelisk_rt_wait_record_v1 *>(bytes);
+        if (wait->version != OBELISK_RT_VERSION || wait->kind != suspendKind ||
+            wait->flags != 0 || wait->payload != 0 || wait->auxiliary != 0 ||
+            wait->count == 0 ||
+            wait->count >
+                (waitSize - sizeof(*wait)) / sizeof(obelisk_rt_wait_entry_v1))
+          return false;
+        const auto *entries = waitEntries(wait);
+        for (uint32_t index = 0; index != wait->count; ++index)
+          if (entries[index].edge != OBELISK_RT_WAIT_EDGE_NONE ||
+              entries[index].reserved != 0)
+            return false;
+        uint32_t first = 0;
+        if (suspendKind == OBELISK_RT_SUSPEND_EVENT_ORDER) {
+          if (orderIndex > wait->count)
+            return false;
+          if (orderReady)
+            return true;
+          if (orderIndex == wait->count)
+            return false;
+          first = orderIndex;
+        } else {
+          if (generations.size() != wait->count)
+            return false;
+          for (uint32_t index = 0; index != wait->count; ++index) {
+            auto found = context->events.find(entries[index].stable_id);
+            uint64_t generation =
+                found == context->events.end() ? 0 : found->second.generation;
+            if (generation != generations[index])
+              return true;
+          }
+        }
+        for (uint32_t index = first; index != wait->count; ++index)
+          matches |= entries[index].stable_id == eventID;
+      }
+      // Each scheduler record contributes once; native tokens have a disjoint
+      // tag and both scheduler inventories enforce unique process identities.
+      if (matches)
+        processes.push_back(token);
+      return true;
+    };
+    for (const ScheduledProcess &process : context->scheduledProcesses) {
+      const uint64_t token =
+          OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | process.token;
+      if (!process.instance || !process.started ||
+          process.instance == context->activeNativeProcess ||
+          token == context->activeLogicalProcessToken)
+        continue;
+      if (!inspect(
+              token, process.suspendKind,
+              static_cast<const uint8_t *>(process.instance->frame),
+              process.instance->frame_size, process.waitOffset,
+              process.waitSize, process.waitGenerations, process.waitOrderIndex,
+              process.waitOrderReady || process.waitOrderFailed,
+              process.signalTriggered, process.instance->descriptor->execution))
+        return OBELISK_RT_INVALID_FRAME;
+    }
+    for (const ScheduledDesignTask &task : context->scheduledDesignTasks) {
+      if (task.terminated || !task.started ||
+          task.id == context->activeLogicalProcessToken)
+        continue;
+      if (task.scratchOffset > task.frame.size() ||
+          !inspect(task.id, task.suspendKind, task.frame.data(),
+                   task.scratchOffset, task.waitOffset, task.waitSize,
+                   task.waitGenerations, task.waitOrderIndex,
+                   task.waitOrderReady || task.waitOrderFailed,
+                   task.signalTriggered, context->execution))
+        return OBELISK_RT_INVALID_FRAME;
+    }
+    outProcesses = std::move(processes);
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+}
+
 bool obelisk_rt_initialize_event_order_wait_unlocked(
     obelisk_rt_context *context, const obelisk_rt_wait_record_v1 *wait,
     uint32_t &index, bool &ready, bool &failed) {

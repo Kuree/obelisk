@@ -1148,6 +1148,33 @@ LogicalResult SimVPITypespecDeclOp::verify() {
                                reflectionDefinitionLoc(*this));
 }
 
+LogicalResult SimVPIEventBindingOp::verify() {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("requires a simulation.design owner");
+  if (failed(verifyNonnegative(*this, getEventIdAttr(), "event ID")))
+    return failure();
+  for (auto other :
+       (*this)->getParentOp()->getRegion(0).getOps<SimVPIEventBindingOp>())
+    if (other != *this && other.getEventAttr() == getEventAttr())
+      return emitOpError("duplicates a named-event binding");
+  return success();
+}
+
+LogicalResult
+SimVPIEventBindingOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  auto anchor = symbols.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+      *this, getEventAttr());
+  if (!anchor || anchor->getParentOp() != (*this)->getParentOp() ||
+      anchor.getVpiKind() !=
+          static_cast<uint32_t>(
+              obelisk::reflection::VPIObjectKind::NamedEvent) ||
+      anchor.getBackingAttr() || anchor.getVpiTypeAttr() ||
+      anchor.getMemberIndicesAttr())
+    return emitOpError("event must name an unbacked scalar named-event anchor "
+                       "in the same design");
+  return success();
+}
+
 LogicalResult SimVPIClassMemberDeclOp::verify() {
   if (failed(verifyNonnegative(*this, getIdAttr(), "VPI source inventory ID")) ||
       failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")) ||

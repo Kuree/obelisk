@@ -1701,6 +1701,8 @@ struct DesignDatabaseCache {
   uint64_t modportBindingCount = 0;
   uint64_t mailboxElementBindings = 0;
   uint64_t mailboxElementBindingCount = 0;
+  uint64_t eventBindings = 0;
+  uint64_t eventBindingCount = 0;
   uint64_t relationIndices = 0;
   uint64_t relationIndexCount = 0;
   uint64_t relationIndexDimensions = 0;
@@ -3178,6 +3180,12 @@ obelisk_rt_status obelisk_rt_mailbox_snapshot(
     const obelisk_rt_element_type_v1 **outElement,
     std::vector<uint8_t> &outValues);
 
+// Snapshot exact live threads still blocked on a named event. Event IDs are
+// executable event identities; UINT64_MAX is the language null event.
+obelisk_rt_status
+obelisk_rt_named_event_waiters(obelisk_rt_context *context, uint64_t eventID,
+                               std::vector<uint64_t> &outProcesses);
+
 // Returns logical process tokens, including the native-process tag. The
 // caller holds an active lane and no lease for object; the helper does not
 // change wait readiness or scheduler state and promises no iteration order.
@@ -3772,6 +3780,13 @@ obelisk_rt_status obelisk_rt_cached_vpi_class_typespec(
 obelisk_rt_status
 obelisk_rt_cached_vpi_scope(const obelisk_rt_context *context, uint64_t scopeID,
                             obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+// Returns EOF when the source event uses a mutable cell or has no executable
+// binding in this image. A successful lookup may return event identity zero.
+obelisk_rt_status
+obelisk_rt_cached_vpi_event_binding(const obelisk_rt_context *context,
+                                    obelisk_rt_design_cursor_v1 event,
+                                    uint64_t *outEventID) noexcept;
+
 obelisk_rt_status
 obelisk_rt_cached_vpi_modport_binding(const obelisk_rt_context *context,
                                       obelisk_rt_design_cursor_v1 modport,

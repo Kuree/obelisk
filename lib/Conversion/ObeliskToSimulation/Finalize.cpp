@@ -326,7 +326,7 @@ void ObeliskSimFinalizePass::runOnOperation() {
   module.walk([&](Operation *op) {
     if (!isa<sim::SimCovergroupDeclOp, sim::SimVPIObjectAnchorOp,
              sim::SimVPINettypeDeclOp, sim::SimVPITypespecDeclOp,
-             sim::SimVPIClassMemberDeclOp,
+             sim::SimVPIClassMemberDeclOp, sim::SimVPIEventBindingOp,
              sim::SimClassDeclOp, sim::SimClassFieldDeclOp,
              sim::SimClassMethodDeclOp, sim::SimRandomConstraintTemplateOp,
              sim::SimFuncOp>(op))
