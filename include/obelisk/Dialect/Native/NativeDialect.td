@@ -98,6 +98,7 @@ def NativeDialect : Dialect {
     "::mlir::StringAttr":$container_pattern_plan_global,
     "::mlir::IntegerAttr":$container_pattern_plan_size,
     "::mlir::IntegerAttr":$box_type_id,
+    "::mlir::IntegerAttr":$vpi_local_id,
     "::mlir::IntegerAttr":$vpi_call_id
   );
 }

@@ -857,6 +857,18 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         obelisk_rt_v1_mailbox_num(readManaged(inputRegister(0)), &count);
     return status == OBELISK_RT_OK ? sentinel(0, count) : status;
   }
+  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_BIND: {
+    auto id = scalar(0);
+    Layout reference = layoutAt(image, frame.function, inputRegister(1));
+    const uint8_t *address = frame.data + reference.offset;
+    uint64_t stable = 0;
+    if (!id ||
+        read32(address) !=
+            (kAutomaticHandleKind | OBELISK_RT_DESCRIPTOR_STORAGE) ||
+        !encodeCanonicalHandle(address, stable))
+      return OBELISK_RT_INVALID_BYTECODE;
+    return obelisk_rt_v1_vpi_frame_bind(context, *id, stable);
+  }
   case OBELISK_RT_INTRINSIC_V1_BOX_BIND_TYPE: {
     auto id = scalar(1);
     return id ? obelisk_rt_v1_box_bind_type(context,

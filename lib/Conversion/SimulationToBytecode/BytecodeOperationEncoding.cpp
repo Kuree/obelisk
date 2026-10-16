@@ -17,6 +17,17 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   if (std::optional<LogicalResult> encoded =
           encodeArithmeticOperation(plan, operation))
     return *encoded;
+  if (auto op = dyn_cast<sim::SimVPIFrameBindOp>(operation)) {
+    auto declaration =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimVPILocalDeclOp>(
+            op, op.getDeclarationAttr());
+    if (!declaration)
+      return op.emitOpError("local declaration was not preserved");
+    return emitIntrinsicRegisters(plan, kIntrinsicVPIFrameBind,
+                                  {emitU64Constant(plan, declaration.getId()),
+                                   reg(plan, op.getReference())},
+                                  {});
+  }
   auto binary = [&](uint16_t opcode, Value result, Value left, Value right) {
     emit({opcode, 0, reg(plan, result), reg(plan, left), reg(plan, right)});
     return success();

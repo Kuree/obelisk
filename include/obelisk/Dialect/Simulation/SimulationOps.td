@@ -299,6 +299,25 @@ def SimVPILocalDeclOp : SimOp<"vpi_local.decl", [
   let hasVerifier = 1;
 }
 
+def SimVPIFrameBindOp : SimOp<"vpi.frame.bind", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemRead<SimStorageResource>, MemWrite<SimExternalResource>]>
+  ]> {
+  let summary = "bind an exact automatic local declaration to its live storage";
+  let description = [{
+    The reference names an owned automatic allocation of the declaration's
+    exact normalized type. The active frame must own that declaration's
+    lexical scope. This establishes a weak observation binding: it neither
+    initializes the source variable nor retains its storage or managed values.
+    Source lowering keeps the allocation's observation borrow alive through
+    the corresponding frame exit. Ref/inout aliases require their own explicit
+    alias representation and must not be passed as owned local allocations.
+  }];
+  let arguments = (ins SimContextType:$context, SimRefType:$reference,
+                       FlatSymbolRefAttr:$declaration);
+  let assemblyFormat = "$context `,` $reference `to` $declaration attr-dict `:` type($reference)";
+}
+
 def SimVPICallDeclOp : SimOp<"vpi_call.decl", [
     Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
   ]> {

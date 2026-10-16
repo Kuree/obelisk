@@ -586,7 +586,7 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
         destination.push_back(
             {path.str(), *type, isAutomaticLocalSymbol(referencedSymbol),
              isa<semantic::SVPatternVarSymbolOp>(referencedSymbol), observerNet,
-             covergroupRef});
+             covergroupRef, referencedSymbol});
         referencedSymbol->walk<WalkOrder::PreOrder>(
             [&](Operation *initializerNode) {
               collectBinding(initializerNode);

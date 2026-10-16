@@ -5345,6 +5345,53 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         builder, relation.location, relation.source, relation.selector,
         sim::VPIRelationMode::Iterate, ordinal++, relation.target);
   }
+  // Freeze automatic declarations with the same typedef remapping as static
+  // inventory. Preparation later knows their exact procedural code-unit and
+  // statement-scope owners; no display-name reconstruction is needed there.
+  if (preserveVPIMethodBindings) {
+    llvm::DenseSet<Attribute> materializedAliases;
+    for (auto declaration : design.getOps<sim::SimVPITypespecDeclOp>())
+      materializedAliases.insert(
+          FlatSymbolRefAttr::get(declaration.getSymNameAttr()));
+    semanticRoot->walk([&](Operation *source) {
+      bool automatic = false;
+      if (auto variable = dyn_cast<semantic::SVVariableSymbolOp>(source))
+        automatic =
+            variable.getLifetime() == semantic::SVVariableLifetime::Automatic &&
+            !isStaticReturnVariable(source);
+      else if (auto formal =
+                   dyn_cast<semantic::SVFormalArgumentSymbolOp>(source))
+        automatic = !isStaticFormal(formal);
+      if (!automatic || !isNestedInCodeUnit(source))
+        return;
+      auto type = source->getAttrOfType<TypeAttr>("semantic_type");
+      if (!type)
+        return;
+      auto converted =
+          makeVPITypeSemantics(type.getValue(), getSemanticLocation(source),
+                               typedefLayersFor(source), source);
+      if (failed(converted)) {
+        invalid = true;
+        return;
+      }
+      bool complete = true;
+      AttrTypeWalker aliases;
+      aliases.addWalk([&](sim::VPITypeSemanticsAttr current) {
+        if (auto names = current.getTypedefAliases())
+          for (Attribute name : names)
+            complete &= materializedAliases.contains(name);
+        if (current.getKind() == sim::VPITypeKind::Enum &&
+            !current.getTypedefAliases())
+          complete &= enumTypespecsByIdentity.count(
+                          getEnumIdentity(source, current)) != 0;
+      });
+      aliases.walk(*converted);
+      // Block-local typedef/enum ownership is retained by the procedural type
+      // inventory follow-up. Do not substitute an outer owner or erase aliases.
+      if (complete)
+        sim::set<sim::metadata::VpiDeclaredType>(source, *converted);
+    });
+  }
   // Gather first, then emit: creating declarations inside the IR walk would
   // invalidate its operation iterator. AttrTypeWalker memoizes the attribute
   // DAG, so shared nested semantic types are visited once in deterministic
@@ -5361,6 +5408,12 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     observedOwner = operation;
     for (NamedAttribute attribute : operation->getAttrs())
       semanticWalker.walk(attribute.getValue());
+  });
+  semanticRoot->walk([&](Operation *source) {
+    if (auto declared = sim::get<sim::metadata::VpiDeclaredType>(source)) {
+      observedOwner = source;
+      semanticWalker.walk(declared);
+    }
   });
   for (auto [semantic, owner] : observedBuiltins)
     internBuiltinTypespec(semantic, owner, /*requireSource=*/false);

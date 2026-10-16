@@ -90,6 +90,42 @@ void SimFuncOp::print(OpAsmPrinter &printer) {
       getArgAttrsAttrName(), getResAttrsAttrName());
 }
 
+static LogicalResult verifyVPILocalBinding(Operation *operation,
+                                           SimFuncOp function,
+                                           FlatSymbolRefAttr reference,
+                                           Type valueType,
+                                           SymbolTableCollection &symbols) {
+  auto local =
+      symbols.lookupNearestSymbolFrom<SimVPILocalDeclOp>(operation, reference);
+  if (!local)
+    return operation->emitOpError(
+        "declaration must name a simulation.vpi_local.decl");
+  if (valueType != local.getValueType())
+    return operation->emitOpError(
+        "automatic reference type must match its local declaration");
+  auto design = operation->getParentOfType<SimDesignOp>();
+  if (!function || !design || !function.getCodeUnitId())
+    return operation->emitOpError(
+        "requires an exact executable code-unit owner");
+  if (*function.getCodeUnitId() == local.getCodeUnitId())
+    return success();
+  // Outlined forks retain original source ownership through their exact
+  // statement-origin binding. No execution helper invents a lexical scope.
+  SimCodeUnitDeclOp executable;
+  for (auto unit : design.getOps<SimCodeUnitDeclOp>())
+    if (unit.getId() == *function.getCodeUnitId())
+      executable = unit;
+  if (executable && executable.getInternal())
+    for (auto origin : design.getOps<SimVPIThreadOriginBindingOp>())
+      if (origin.getCodeUnitId() == *function.getCodeUnitId())
+        for (auto statement : design.getOps<SimStatementDeclOp>())
+          if (statement.getId() == origin.getStatementId() &&
+              statement.getCodeUnitId() == local.getCodeUnitId())
+            return success();
+  return operation->emitOpError(
+      "local declaration belongs to a different lexical code unit");
+}
+
 LogicalResult verifyUnitBindings(SimFuncOp function) {
   // The simulation dialect verifies that the bindings are an array.
   ArrayAttr bindings = sim::get<sim::metadata::Bindings>(function);
@@ -109,6 +145,24 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
   llvm::StringMap<PathState> paths;
   SmallVector<std::optional<unsigned>> argumentBindings(type.getNumInputs());
   std::optional<unsigned> returnBinding;
+  SymbolTableCollection localSymbols;
+  llvm::DenseSet<Attribute> localDeclarations;
+  auto verifyLocal = [&](FlatSymbolRefAttr reference, Type valueType,
+                         StringRef path) -> LogicalResult {
+    if (!reference)
+      return success();
+    if (failed(verifyVPILocalBinding(function, function, reference, valueType,
+                                     localSymbols)))
+      return failure();
+    auto declaration = localSymbols.lookupNearestSymbolFrom<SimVPILocalDeclOp>(
+        function, reference);
+    if (declaration.getHierarchicalName() != path)
+      return function.emitOpError(
+          "local binding path must match its exact VPI declaration");
+    if (!localDeclarations.insert(reference).second)
+      return function.emitOpError("duplicates a VPI local declaration binding");
+    return success();
+  };
 
   auto claimProvider = [&](StringRef path, unsigned index,
                            ProviderKind kind) -> LogicalResult {
@@ -147,6 +201,9 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
       continue;
     }
     if (auto local = dyn_cast<LocalBindingAttr>(binding)) {
+      if (failed(verifyLocal(local.getVpiLocal(), local.getType(),
+                             local.getPath().getValue())))
+        return failure();
       if (failed(claimProvider(local.getPath().getValue(), index,
                                ProviderKind::Local)))
         return failure();
@@ -199,6 +256,9 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
     argumentBindings[argumentIndex] = index;
 
     Type argumentType = type.getInput(argument.getArgument());
+    if (failed(verifyLocal(argument.getVpiLocal(), argumentType,
+                           argument.getPath().getValue())))
+      return failure();
     StringRef path = argument.getPath().getValue();
     PathState &state = paths[path];
     switch (argument.getKind()) {
@@ -586,6 +646,13 @@ LogicalResult verifyVPICallSite(Operation *operation,
     }
   }
   return success();
+}
+
+LogicalResult
+SimVPIFrameBindOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  return verifyVPILocalBinding(
+      *this, (*this)->getParentOfType<SimFuncOp>(), getDeclarationAttr(),
+      getReference().getType().getElementType(), symbols);
 }
 
 LogicalResult SimCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {

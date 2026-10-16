@@ -74,6 +74,7 @@ using AggregateBitstreamPlanGlobal =
 using ContainerPatternPlanGlobal =
     NativeDialect::ContainerPatternPlanGlobalAttrHelper;
 using BoxTypeId = NativeDialect::BoxTypeIdAttrHelper;
+using VpiLocalId = NativeDialect::VpiLocalIdAttrHelper;
 using VpiCallId = NativeDialect::VpiCallIdAttrHelper;
 using ContainerPatternPlanSize =
     NativeDialect::ContainerPatternPlanSizeAttrHelper;

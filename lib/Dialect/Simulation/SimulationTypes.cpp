@@ -245,9 +245,12 @@ FrozenConstantAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 LogicalResult
 ArgumentBindingAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                             StringAttr path, uint64_t, UnitArgumentKind kind,
-                            bool copyOut, IntegerAttr lvalueNode, bool copyIn) {
+                            bool copyOut, IntegerAttr lvalueNode, bool copyIn,
+                            FlatSymbolRefAttr vpiLocal) {
   if (!path || path.getValue().empty())
     return emitError() << "argument binding path must not be empty";
+  if (vpiLocal && kind != UnitArgumentKind::FormalLocal)
+    return emitError() << "VPI local binding requires an owned value formal";
   if (!copyIn && kind != UnitArgumentKind::FormalLocal)
     return emitError()
            << "skipping copy-in is valid only for a formal-local argument "
@@ -279,7 +282,7 @@ LogicalResult DescriptorBindingAttr::verify(
 LogicalResult
 LocalBindingAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
                          StringAttr path, Type type, bool automatic,
-                         bool patternVariable, bool) {
+                         bool patternVariable, bool, FlatSymbolRefAttr) {
   if (!path || path.getValue().empty())
     return emitError() << "local binding path must not be empty";
   if (!type || !isNormalizedValueType(type))

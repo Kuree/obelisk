@@ -1041,6 +1041,12 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && managed(input(0)) &&
            twoStateBits(output(0), 32);
+  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_BIND:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 0 && twoStateBits(input(0), 64) &&
+           input(0)->flags == 0 && input(0)->size == 8 && handle(input(1)) &&
+           input(1)->flags == 0 && input(1)->width == 256 &&
+           input(1)->size == 32;
   case OBELISK_RT_INTRINSIC_V1_BOX_BIND_TYPE:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 0 && managed(input(0)) &&

@@ -12,12 +12,13 @@
 #include "LowerUnit.h"
 #include "PrepareCaptures.h"
 #include "PrepareDeclarations.h"
+#include "PrepareLocals.h"
 #include "PrepareNetTopology.h"
 #include "PrepareRandomFunctions.h"
 #include "PrepareRandomIteration.h"
 #include "PrepareRandomTemplates.h"
-#include "PrepareTopology.h"
 #include "PrepareStatements.h"
+#include "PrepareTopology.h"
 #include "PrepareUnits.h"
 #include "PrepareValidation.h"
 #include "obelisk/Dialect/DPI/DPIDialect.h"
@@ -9230,6 +9231,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       *preparedUnits, descriptors, semanticSymbols, classSources);
   if (failed(preparedCaptures))
     return abort();
+  if (failed(materializeProceduralLocals(design, *preparedUnits,
+                                         *preparedCaptures, builder)))
+    return abort();
   auto &unitCaptures = preparedCaptures->descriptors;
   auto &unitReadCaptures = preparedCaptures->readDescriptors;
   auto &unitWrittenCaptures = preparedCaptures->writtenDescriptors;
@@ -10075,7 +10079,9 @@ void ObeliskSimPreparePass::runOnOperation() {
           subroutine && subroutine.getReturnVariablePath() == local.path;
       bindings.push_back(sim::LocalBindingAttr::get(
           context, builder.getStringAttr(local.path), local.type,
-          local.automatic, local.patternVariable, isReturn));
+          local.automatic, local.patternVariable, isReturn,
+          local.source ? sim::get<sim::metadata::VpiLocal>(local.source)
+                       : FlatSymbolRefAttr{}));
     }
     for (const PreparedConstant &constant : constants)
       bindings.push_back(sim::ConstantBindingAttr::get(
@@ -10186,7 +10192,9 @@ void ObeliskSimPreparePass::runOnOperation() {
               argument,
               isRef ? sim::UnitArgumentKind::Direct
                     : sim::UnitArgumentKind::FormalLocal,
-              copyOut, IntegerAttr{}, copyIn));
+              copyOut, IntegerAttr{}, copyIn,
+              isRef ? FlatSymbolRefAttr{}
+                    : sim::get<sim::metadata::VpiLocal>(formal)));
           if (directTask && copyOut) {
             unsigned destinationArgument = reordered.size();
             reordered.push_back(sim::RefType::get(context, *type));
@@ -10220,7 +10228,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           formalBindings.push_back(sim::ArgumentBindingAttr::get(
               context, argument.getPath(), argument.getArgument() + offset,
               argument.getKind(), argument.getCopyOut(),
-              argument.getLvalueNode(), argument.getCopyIn()));
+              argument.getLvalueNode(), argument.getCopyIn(),
+              argument.getVpiLocal()));
         }
         inputs = std::move(reordered);
         argAttrs = std::move(reorderedAttrs);

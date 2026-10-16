@@ -103,6 +103,13 @@ LogicalResult
 prepareManagedClassInventory(ModuleOp module,
                              const llvm::DataLayout &dataLayout,
                              llvm::StringMap<ManagedClassLayout> &layouts) {
+  module.walk([&](sim::SimVPIFrameBindOp op) {
+    auto declaration =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimVPILocalDeclOp>(
+            op, op.getDeclarationAttr());
+    if (declaration)
+      native::set<native::VpiLocalId>(op, declaration.getIdAttr());
+  });
   SmallVector<sim::SimClassDeclOp> classes;
   SmallVector<sim::SimClassMethodDeclOp> methods;
   module.walk([&](sim::SimVPICallPrepareOp op) {

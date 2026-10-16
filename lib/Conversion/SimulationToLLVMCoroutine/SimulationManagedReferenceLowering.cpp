@@ -73,6 +73,35 @@ UnpackedArgumentReference unpackArgumentReference(OpBuilder &builder,
   return {owner, payload, managed};
 }
 
+class VPIFrameBindConversion final
+    : public OpConversionPattern<sim::SimVPIFrameBindOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimVPIFrameBindOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto id = native::get<native::VpiLocalId>(op);
+    if (!id || adaptor.getContext().size() != 1 ||
+        adaptor.getReference().size() != 1)
+      return rewriter.notifyMatchFailure(
+          op, "missing verified local declaration ID");
+    Value context = adaptor.getContext().front();
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_vpi_frame_bind"),
+            ValueRange{context,
+                       llvmConstant(rewriter, op.getLoc(),
+                                    rewriter.getI64Type(), id.getInt()),
+                       adaptor.getReference().front()})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 class ArgumentRefFromRefConversion final
     : public OpConversionPattern<sim::SimArgumentRefFromRefOp> {
 public:
@@ -1057,6 +1086,7 @@ void populateManagedReferenceToLLVMConversionPatterns(
     RewritePatternSet &patterns, TypeConverter &converter,
     const llvm::DataLayout &dataLayout, uint64_t stateBitCount) {
   MLIRContext *context = patterns.getContext();
+  patterns.add<VPIFrameBindConversion>(converter, context);
   patterns.add<ArgumentRefFromRefConversion, ArgumentRefFromManagedConversion,
                ArgumentRefRetypeConversion, ArgumentRefFromPathConversion>(
       converter, context);

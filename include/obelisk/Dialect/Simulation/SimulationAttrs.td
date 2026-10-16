@@ -148,9 +148,17 @@ def SimArgumentBindingAttr : SimAttr<"ArgumentBinding", "argument_binding"> {
       // IEEE 1800-2017 13.5.1: an input or inout formal takes the caller's
       // value at the call. An output formal does not, which a static subroutine
       // can tell apart: its formal keeps what the previous call left in it.
-      DefaultValuedParameter<"bool", "true">:$copyIn);
+      DefaultValuedParameter<"bool", "true">:$copyIn,
+      OptionalParameter<"::mlir::FlatSymbolRefAttr">:$vpiLocal);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
+  let extraClassDeclaration = [{
+    static ArgumentBindingAttr get(::mlir::MLIRContext *context,
+        ::mlir::StringAttr path, uint64_t argument, UnitArgumentKind kind,
+        bool copyOut, ::mlir::IntegerAttr lvalueNode, bool copyIn) {
+      return get(context, path, argument, kind, copyOut, lvalueNode, copyIn, {});
+    }
+  }];
 }
 
 def SimDescriptorBindingAttr
@@ -165,9 +173,17 @@ def SimDescriptorBindingAttr
 def SimLocalBindingAttr : SimAttr<"LocalBinding", "local_binding"> {
   let summary = "source name bound to activation-local storage";
   let parameters = (ins "::mlir::StringAttr":$path, "::mlir::Type":$type,
-      "bool":$automatic, "bool":$patternVariable, "bool":$isReturn);
+      "bool":$automatic, "bool":$patternVariable, "bool":$isReturn,
+      OptionalParameter<"::mlir::FlatSymbolRefAttr">:$vpiLocal);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
+  let extraClassDeclaration = [{
+    static LocalBindingAttr get(::mlir::MLIRContext *context,
+        ::mlir::StringAttr path, ::mlir::Type type, bool automatic,
+        bool patternVariable, bool isReturn) {
+      return get(context, path, type, automatic, patternVariable, isReturn, {});
+    }
+  }];
 }
 
 def SimConstantBindingAttr : SimAttr<"ConstantBinding", "constant_binding"> {
