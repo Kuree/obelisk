@@ -2178,6 +2178,35 @@ public:
   }
 };
 
+class BoxBindTypeConversion final
+    : public OpConversionPattern<sim::SimBoxBindTypeOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimBoxBindTypeOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto id = native::get<native::BoxTypeId>(op);
+    if (!id || adaptor.getInput().size() != 1)
+      return rewriter.notifyMatchFailure(op,
+                                         "missing verified box descriptor ID");
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_box_bind_type"),
+            ValueRange{context,
+                       managedObjectPointer(rewriter, op.getLoc(),
+                                            adaptor.getInput().front()),
+                       llvmConstant(rewriter, op.getLoc(),
+                                    rewriter.getI64Type(), id.getInt())})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 class BoxIsTypeConversion final
     : public OpConversionPattern<sim::SimBoxIsTypeOp> {
 public:
@@ -2221,7 +2250,7 @@ void populateManagedContainerToLLVMConversionPatterns(
       MailboxTryReadConversion<sim::SimMailboxTryGetOp, true>,
       BoxCastConversion<sim::SimBoxPackOp>,
       BoxCastConversion<sim::SimBoxCastOp>, BoxIsTypeConversion,
-      ContainerReadConversion, ContainerWriteConversion,
+      BoxBindTypeConversion, ContainerReadConversion, ContainerWriteConversion,
       RandomInitializationEnterConversion, RandomInitializationLeaveConversion,
       RandomNextConversion, LegacyRandomConversion, RandomStateConversion,
       RandomSetStateConversion, RandomSeedConversion, RandomBoundedConversion,

@@ -93,7 +93,8 @@ mlir::FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     ir::SVRootSymbolOp semanticRoot, const PreparedPortAliases &portAliases,
     const PreparedScopeDeclarations &scopes,
     const PreparedClassDeclarations &classes, uint64_t designPrecisionFs,
-    bool preserveVPIMethodBindings, mlir::OpBuilder &builder);
+    bool preserveVPIMethodBindings, bool preserveVPIBoxBindings,
+    mlir::OpBuilder &builder);
 
 } // namespace obelisk::simlowering
 

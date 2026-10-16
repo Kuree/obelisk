@@ -111,7 +111,10 @@ stored values in index order and copied key expressions through `vpiIndex`,
 including wide integral, string, composite, and wildcard keys. Default values
 are excluded from the stored-entry inventory. Nested unpacked-array iteration
 flattens to leaf variables while indexed access retains intermediate arrays.
-Untyped mailbox message snapshots are still being completed.
+Untyped mailbox messages retain an exact source type descriptor for each boxed
+value, preserving signedness, typedefs, and heterogeneous aggregate contents
+through ordinary value copies. A legacy box without a source descriptor reports
+a notice when queried.
 
 Virtual-interface variables expose their current `vpiActual` interface or
 exact modport; a null variable returns a quiet null handle. `vpiIsModPort`

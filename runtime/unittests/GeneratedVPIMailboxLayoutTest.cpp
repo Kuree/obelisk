@@ -73,7 +73,7 @@ TEST(GeneratedDesignDatabase, MailboxElementLayouts) {
     elements[index] = edge.child;
     EXPECT_EQ(obelisk_rt_cached_vpi_mailbox_element_type(
                   runtime, owners[index], edge.child, &physical[index]),
-              index == 6 ? OBELISK_RT_EOF : OBELISK_RT_OK);
+              OBELISK_RT_OK);
   }
   // Arrays preserve their source direction and actual element stride; the
   // record contains padding before/after its managed string field.
@@ -193,14 +193,14 @@ TEST(GeneratedDesignDatabase, MailboxElementLayouts) {
   const HeaderView header(encoded->designDatabase.data());
   const SemanticDirectoryView directory(encoded->designDatabase.data() +
                                         header.getReserved());
-  const uint64_t rows = directory.getMailboxElementBindingOffset();
-  const uint64_t count = directory.getMailboxElementBindingCount();
+  const uint64_t rows = directory.getValueElementBindingOffset();
+  const uint64_t count = directory.getValueElementBindingCount();
   ASSERT_GT(count, 2u);
   auto original = [&] {
     return std::vector<uint8_t>(encoded->designDatabase.begin(),
                                 encoded->designDatabase.end());
   };
-  auto rejected = [&](std::vector<uint8_t> image) {
+  auto checked = [&](std::vector<uint8_t> image, obelisk_rt_status expected) {
     uint64_t hash = UINT64_C(14695981039346656037);
     for (size_t index = 0; index != image.size(); ++index) {
       hash ^=
@@ -212,38 +212,33 @@ TEST(GeneratedDesignDatabase, MailboxElementLayouts) {
     HeaderWriter(image.data()).setChecksum(hash);
     execution.design_database = image.data();
     execution.design_database_size = image.size();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&execution),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(obelisk_rt_v1_design_validate(&execution), expected);
+  };
+  auto rejected = [&](std::vector<uint8_t> image) {
+    checked(std::move(image), OBELISK_RT_INVALID_DESIGN);
   };
   // Exact sparse pairs are unique, canonical, reachable and fully typed.
   auto image = original();
-  std::memcpy(image.data() + rows + MailboxElementBindingLayout.size,
-              image.data() + rows, MailboxElementBindingLayout.size);
+  std::memcpy(image.data() + rows + ValueElementBindingLayout.size,
+              image.data() + rows, ValueElementBindingLayout.size);
   rejected(std::move(image));
   image = original();
-  MailboxElementBindingWriter(image.data() + rows)
-      .setTypespecIndexAndTable(UINT32_MAX);
+  ValueElementBindingWriter(image.data() + rows).setOwnerIndex(UINT32_MAX);
   rejected(std::move(image));
   image = original();
-  MailboxElementBindingWriter(image.data() + rows)
+  ValueElementBindingWriter(image.data() + rows)
       .setSemanticTypeIndex(directory.getSemanticTypeCount());
   rejected(std::move(image));
   image = original();
-  MailboxElementBindingWriter(image.data() + rows)
+  ValueElementBindingWriter(image.data() + rows)
       .setPhysicalTypeIndex(header.getTypeCount());
   rejected(std::move(image));
   image = original();
-  // The last owner has two rows. Removing only its last row leaves a partial
-  // layout graph, even though that physical leaf also belongs to other roots.
-  SemanticDirectoryWriter(image.data() + header.getReserved())
-      .setMailboxElementBindingCount(count - 1);
+  // Owner tags are a generated closed namespace, not arbitrary table kinds.
+  ValueElementBindingWriter(image.data() + rows).setOwnerKind(UINT32_MAX);
   rejected(std::move(image));
-  image = original();
   const uint32_t scalarIndex = static_cast<uint32_t>(
       (physical[1].offset - header.getTypeOffset()) / TypeLayout.size);
-  MailboxElementBindingWriter(image.data() + rows)
-      .setPhysicalTypeIndex(scalarIndex);
-  rejected(std::move(image));
   auto packedOwner = [&](size_t index) {
     uint32_t packed = UINT32_MAX;
     EXPECT_GE(owners[index].offset, header.getObjectOffset());
@@ -258,54 +253,117 @@ TEST(GeneratedDesignDatabase, MailboxElementLayouts) {
                           packed));
     return packed;
   };
+  // Replacing the exact array layout with a scalar must fail. Select its
+  // canonical owner/root pair explicitly: storage owner rows precede mailbox
+  // typespec rows and may legitimately already use this scalar type.
+  uint64_t arrayRootRow = UINT64_MAX;
+  for (uint64_t index = 0; index != count; ++index) {
+    ValueElementBindingView row(encoded->designDatabase.data() + rows +
+                                index * ValueElementBindingLayout.size);
+    if (row.getOwnerKind() ==
+            static_cast<uint32_t>(ValueLayoutOwnerKind::ReflectedObject) &&
+        row.getOwnerIndex() == packedOwner(0) &&
+        row.getSemanticTypeIndex() + 1 == elements[0].offset) {
+      ASSERT_NE(row.getPhysicalTypeIndex(), scalarIndex);
+      arrayRootRow = index;
+    }
+  }
+  ASSERT_NE(arrayRootRow, UINT64_MAX);
+  image = original();
+  ValueElementBindingWriter(image.data() + rows +
+                            arrayRootRow * ValueElementBindingLayout.size)
+      .setPhysicalTypeIndex(scalarIndex);
+  rejected(std::move(image));
+
   const uint32_t queueOwner = packedOwner(1);
   uint64_t hiddenChildRow = UINT64_MAX;
   for (uint64_t index = 0; index != count; ++index) {
-    MailboxElementBindingView row(encoded->designDatabase.data() + rows +
-                                  index * MailboxElementBindingLayout.size);
-    if (row.getTypespecIndexAndTable() == queueOwner &&
+    ValueElementBindingView row(encoded->designDatabase.data() + rows +
+                                index * ValueElementBindingLayout.size);
+    if (row.getOwnerIndex() == queueOwner &&
         row.getSemanticTypeIndex() + 1 == recordSemantic.child.offset)
       hiddenChildRow = index;
   }
   ASSERT_NE(hiddenChildRow, UINT64_MAX);
   image = original();
   std::memmove(image.data() + rows +
-                   hiddenChildRow * MailboxElementBindingLayout.size,
+                   hiddenChildRow * ValueElementBindingLayout.size,
                image.data() + rows +
-                   (hiddenChildRow + 1) * MailboxElementBindingLayout.size,
-               (count - hiddenChildRow - 1) * MailboxElementBindingLayout.size);
+                   (hiddenChildRow + 1) * ValueElementBindingLayout.size,
+               (count - hiddenChildRow - 1) * ValueElementBindingLayout.size);
   SemanticDirectoryWriter(image.data() + header.getReserved())
-      .setMailboxElementBindingCount(count - 1);
+      .setValueElementBindingCount(count - 1);
   rejected(std::move(image));
 
   // Relocate the complete table and append one sorted, otherwise valid row for
   // the owner's outer mailbox node. It is not reachable from its element DAG.
   image = original();
-  std::vector<std::array<uint32_t, 3>> bindings;
+  std::vector<std::array<uint32_t, 4>> bindings;
   for (uint64_t index = 0; index != count; ++index) {
-    MailboxElementBindingView row(image.data() + rows +
-                                  index * MailboxElementBindingLayout.size);
-    bindings.push_back({row.getTypespecIndexAndTable(),
+    ValueElementBindingView row(image.data() + rows +
+                                index * ValueElementBindingLayout.size);
+    bindings.push_back({row.getOwnerKind(), row.getOwnerIndex(),
                         row.getSemanticTypeIndex(),
                         row.getPhysicalTypeIndex()});
   }
-  bindings.push_back({packedOwner(0),
-                      static_cast<uint32_t>(roots[0].offset - 1), scalarIndex});
+  bindings.push_back(
+      {static_cast<uint32_t>(ValueLayoutOwnerKind::ReflectedObject),
+       packedOwner(0), static_cast<uint32_t>(roots[0].offset - 1),
+       scalarIndex});
   std::sort(bindings.begin(), bindings.end());
   const uint64_t relocated = (image.size() + 7) & ~uint64_t{7};
-  image.resize(relocated + bindings.size() * MailboxElementBindingLayout.size);
+  image.resize(relocated + bindings.size() * ValueElementBindingLayout.size);
   for (size_t index = 0; index != bindings.size(); ++index) {
-    MailboxElementBindingWriter writer(
-        image.data() + relocated + index * MailboxElementBindingLayout.size);
-    writer.setTypespecIndexAndTable(bindings[index][0]);
-    writer.setSemanticTypeIndex(bindings[index][1]);
-    writer.setPhysicalTypeIndex(bindings[index][2]);
+    ValueElementBindingWriter writer(image.data() + relocated +
+                                     index * ValueElementBindingLayout.size);
+    writer.setOwnerKind(bindings[index][0]);
+    writer.setOwnerIndex(bindings[index][1]);
+    writer.setSemanticTypeIndex(bindings[index][2]);
+    writer.setPhysicalTypeIndex(bindings[index][3]);
   }
   HeaderWriter(image.data()).setImageSize(image.size());
   SemanticDirectoryWriter(image.data() + header.getReserved())
-      .setMailboxElementBindingOffset(relocated);
+      .setValueElementBindingOffset(relocated);
   SemanticDirectoryWriter(image.data() + header.getReserved())
-      .setMailboxElementBindingCount(bindings.size());
+      .setValueElementBindingCount(bindings.size());
   rejected(std::move(image));
+  // Legacy mailbox-only layout rows still use the same exact graph proof.
+  image = original();
+  std::vector<std::array<uint32_t, 3>> legacy;
+  for (uint64_t index = 0; index != count; ++index) {
+    ValueElementBindingView row(image.data() + rows +
+                                index * ValueElementBindingLayout.size);
+    if (row.getOwnerKind() !=
+        static_cast<uint32_t>(ValueLayoutOwnerKind::ReflectedObject))
+      continue;
+    bool mailbox = false;
+    for (size_t owner = 0; owner != owners.size(); ++owner)
+      mailbox |= row.getOwnerIndex() == packedOwner(owner);
+    SemanticTypeView semantic(image.data() + directory.getSemanticTypeOffset() +
+                              uint64_t{row.getSemanticTypeIndex()} *
+                                  SemanticTypeLayout.size);
+    if (mailbox && (semantic.getKindAndFlags() & UINT32_C(0xff)) !=
+                       OBELISK_RT_DESIGN_SEMANTIC_ENUM)
+      legacy.push_back({row.getOwnerIndex(), row.getSemanticTypeIndex(),
+                        row.getPhysicalTypeIndex()});
+  }
+  const uint64_t legacyOffset = (image.size() + 7) & ~uint64_t{7};
+  image.resize(legacyOffset + legacy.size() * MailboxElementBindingLayout.size);
+  for (size_t index = 0; index != legacy.size(); ++index) {
+    MailboxElementBindingWriter writer(
+        image.data() + legacyOffset + index * MailboxElementBindingLayout.size);
+    writer.setTypespecIndexAndTable(legacy[index][0]);
+    writer.setSemanticTypeIndex(legacy[index][1]);
+    writer.setPhysicalTypeIndex(legacy[index][2]);
+  }
+  HeaderWriter(image.data()).setImageSize(image.size());
+  SemanticDirectoryWriter legacyDirectory(image.data() + header.getReserved());
+  legacyDirectory.setMailboxElementBindingOffset(legacyOffset);
+  legacyDirectory.setMailboxElementBindingCount(legacy.size());
+  // The same owner cannot be claimed by both old and common tables.
+  rejected(image);
+  legacyDirectory.setValueElementBindingOffset(0);
+  legacyDirectory.setValueElementBindingCount(0);
+  checked(std::move(image), OBELISK_RT_OK);
 }
 } // namespace

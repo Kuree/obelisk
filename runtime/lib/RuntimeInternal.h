@@ -11,6 +11,7 @@
 #include "StrengthFormat.h"
 #include "TimedUpdateQueue.h"
 #include "obelisk/Coverage/CoverageDatabase.h"
+#include "obelisk/Reflection/DesignReflection.h"
 #include "obelisk/Runtime/EvalNBAQueue.h"
 #include "obelisk/Runtime/ReadySet.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -1701,6 +1702,10 @@ struct DesignDatabaseCache {
   uint64_t modportBindingCount = 0;
   uint64_t mailboxElementBindings = 0;
   uint64_t mailboxElementBindingCount = 0;
+  uint64_t boxTypeBindings = 0;
+  uint64_t boxTypeBindingCount = 0;
+  uint64_t valueElementBindings = 0;
+  uint64_t valueElementBindingCount = 0;
   uint64_t eventBindings = 0;
   uint64_t eventBindingCount = 0;
   uint64_t eventArrayStorageBindings = 0;
@@ -3206,6 +3211,13 @@ obelisk_rt_container_snapshot(obelisk_rt_object_v1 *container,
                               const obelisk_rt_element_type_v1 **outElement,
                               std::vector<uint8_t> &outValues);
 
+// Copy the complete value/unknown planes of a one-element boxed array. The
+// caller holds an active lane until conversion of any copied managed words.
+// Type ID zero denotes an unbound legacy box, not an inferred source type.
+obelisk_rt_status
+obelisk_rt_box_snapshot(obelisk_rt_object_v1 *box, uint64_t *outTypeID,
+                        const obelisk_rt_element_type_v1 **outElement,
+                        std::vector<uint8_t> &outPlanes);
 // Copies one sequential-container element under the same owner/buffer access
 // as its size and descriptor. A missing index requests metadata only; an index
 // outside the current size returns EOF. Mailboxes and associative arrays are
@@ -3867,6 +3879,41 @@ obelisk_rt_cached_vpi_modport(const obelisk_rt_context *context,
                               obelisk_rt_design_cursor_v1 *outCursor) noexcept;
 // Return the immutable normalized storage type for a node in a canonical
 // mailbox's effective element DAG. Legacy images without bindings return EOF.
+// Exact layout ownership stays separate from source object identity. Box
+// descriptors are rows in their own validated table, never packed VPI objects.
+struct VPIValueLayoutOwner {
+  obelisk::reflection::ValueLayoutOwnerKind kind =
+      obelisk::reflection::ValueLayoutOwnerKind::ReflectedObject;
+  uint32_t index = 0;
+};
+struct VPIBoxTypeBinding {
+  VPIValueLayoutOwner layout;
+  obelisk_rt_design_cursor_v1 semantic{};
+  obelisk_rt_design_cursor_v1 physical{};
+};
+obelisk_rt_status obelisk_rt_cached_vpi_value_layout_owner(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 owner,
+    VPIValueLayoutOwner *outOwner) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_value_element_type(
+    const obelisk_rt_context *context, VPIValueLayoutOwner owner,
+    obelisk_rt_design_cursor_v1 semantic,
+    obelisk_rt_design_cursor_v1 *outType) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_value_element_type(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 owner,
+    obelisk_rt_design_cursor_v1 semantic,
+    obelisk_rt_design_cursor_v1 *outType) noexcept;
+// Validate a runtime element against exact reflected semantic/storage graphs.
+// Source signedness and descriptor IDs are independent of physical shape.
+obelisk_rt_status
+obelisk_rt_vpi_element_matches(const obelisk_rt_context *context,
+                               VPIValueLayoutOwner owner,
+                               obelisk_rt_design_cursor_v1 semantic,
+                               const obelisk_rt_element_type_v1 *element);
+
+obelisk_rt_status
+obelisk_rt_cached_vpi_box_type(const obelisk_rt_context *context, uint64_t id,
+                               VPIBoxTypeBinding *outType) noexcept;
+
 obelisk_rt_status obelisk_rt_cached_vpi_mailbox_element_type(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 typespec,
     obelisk_rt_design_cursor_v1 semantic,

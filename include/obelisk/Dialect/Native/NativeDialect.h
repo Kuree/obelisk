@@ -73,6 +73,7 @@ using AggregateBitstreamPlanGlobal =
     NativeDialect::AggregateBitstreamPlanGlobalAttrHelper;
 using ContainerPatternPlanGlobal =
     NativeDialect::ContainerPatternPlanGlobalAttrHelper;
+using BoxTypeId = NativeDialect::BoxTypeIdAttrHelper;
 using ContainerPatternPlanSize =
     NativeDialect::ContainerPatternPlanSizeAttrHelper;
 

@@ -5076,7 +5076,7 @@ snapshotMailboxValue(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
 // hidden behind managed container handles. Scalar enum representation is
 // deliberately canonicalized by the compiler and does not need a layout row.
 bool messageElementDescriptor(__vpiHandle *source,
-                              obelisk_rt_design_cursor_v1 mailboxType,
+                              std::optional<VPIValueLayoutOwner> layoutOwner,
                               obelisk_rt_design_cursor_v1 semantic,
                               obelisk_rt_element_type_v1 &element) {
   element = {};
@@ -5101,9 +5101,10 @@ bool messageElementDescriptor(__vpiHandle *source,
              info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION) {
     obelisk_rt_design_cursor_v1 physical{};
     obelisk_rt_design_type_info_v1 layout{};
-    if (obelisk_rt_cached_vpi_mailbox_element_type(
-            source->owner->context, mailboxType, semantic, &physical) !=
-            OBELISK_RT_OK ||
+    if (!layoutOwner ||
+        obelisk_rt_cached_vpi_value_element_type(source->owner->context,
+                                                 *layoutOwner, semantic,
+                                                 &physical) != OBELISK_RT_OK ||
         obelisk_rt_cached_design_type_info(source->owner->context, physical,
                                            &layout) != OBELISK_RT_OK ||
         !layout.bit_width || layout.bit_width > UINT64_MAX - 7) {
@@ -5162,7 +5163,7 @@ struct VPISnapshotRequest {
 
 std::shared_ptr<VPISnapshotValue>
 snapshotMessageNode(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
-                    obelisk_rt_design_cursor_v1 mailboxType,
+                    std::optional<VPIValueLayoutOwner> layoutOwner,
                     obelisk_rt_design_cursor_v1 semantic,
                     const obelisk_rt_element_type_v1 &element,
                     const uint8_t *bytes,
@@ -5338,7 +5339,7 @@ snapshotMessageNode(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
         keySemantic = keyEdge.child;
         obelisk_rt_design_semantic_type_info_v1 keyInfo{};
         if (!semanticTypeInfo(source, keySemantic, keyInfo) ||
-            !messageElementDescriptor(source, mailboxType, keySemantic,
+            !messageElementDescriptor(source, layoutOwner, keySemantic,
                                       keyElement))
           return {};
         bool matches = false;
@@ -5470,9 +5471,10 @@ snapshotMessageNode(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
   }
   obelisk_rt_design_cursor_v1 physical{};
   obelisk_rt_design_type_info_v1 layout{};
-  if (obelisk_rt_cached_vpi_mailbox_element_type(source->owner->context,
-                                                 mailboxType, semantic,
-                                                 &physical) != OBELISK_RT_OK ||
+  if (!layoutOwner ||
+      obelisk_rt_cached_vpi_value_element_type(source->owner->context,
+                                               *layoutOwner, semantic,
+                                               &physical) != OBELISK_RT_OK ||
       obelisk_rt_cached_design_type_info(source->owner->context, physical,
                                          &layout) != OBELISK_RT_OK) {
     setError(source->owner, "mailbox aggregate has no exact storage layout",
@@ -5571,7 +5573,7 @@ snapshotMessageNode(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
         continue;
     }
     obelisk_rt_element_type_v1 childElement{};
-    if (!messageElementDescriptor(source, mailboxType, childSemantic,
+    if (!messageElementDescriptor(source, layoutOwner, childSemantic,
                                   childElement))
       return {};
     const bool childFour =
@@ -5584,8 +5586,9 @@ snapshotMessageNode(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
     if (childElement.kind == OBELISK_RT_ELEMENT_AGGREGATE) {
       obelisk_rt_design_cursor_v1 childPhysical{};
       obelisk_rt_design_type_info_v1 childLayout{};
-      if (obelisk_rt_cached_vpi_mailbox_element_type(
-              source->owner->context, mailboxType, childSemantic,
+      if (!layoutOwner ||
+          obelisk_rt_cached_vpi_value_element_type(
+              source->owner->context, *layoutOwner, childSemantic,
               &childPhysical) != OBELISK_RT_OK ||
           obelisk_rt_cached_design_type_info(source->owner->context,
                                              childPhysical,
@@ -5620,7 +5623,7 @@ snapshotMessageNode(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
 
 std::shared_ptr<const VPISnapshotValue>
 snapshotMessageValue(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
-                     obelisk_rt_design_cursor_v1 mailboxType,
+                     std::optional<VPIValueLayoutOwner> layoutOwner,
                      obelisk_rt_design_cursor_v1 semantic,
                      const obelisk_rt_element_type_v1 &element,
                      const uint8_t *bytes) {
@@ -5630,7 +5633,7 @@ snapshotMessageValue(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
   std::vector<std::shared_ptr<VPISnapshotValue>> aggregates;
   auto arena =
       std::make_shared<std::vector<std::shared_ptr<const VPISnapshotValue>>>();
-  auto result = snapshotMessageNode(source, lane, mailboxType, semantic,
+  auto result = snapshotMessageNode(source, lane, layoutOwner, semantic,
                                     element, bytes, pending, aggregates);
   if (!result)
     return {};
@@ -5641,7 +5644,7 @@ snapshotMessageValue(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
     auto child = request.prepared
                      ? std::move(request.prepared)
                      : snapshotMessageNode(
-                           source, lane, mailboxType, request.semantic,
+                           source, lane, layoutOwner, request.semantic,
                            request.element, request.bytes.data(), pending,
                            aggregates, request.variableView, request.readable);
     if (!child)
@@ -5818,6 +5821,55 @@ vpiHandle snapshotChildren(__vpiHandle *source, PLI_INT32 selector) {
   }
 }
 
+// A physical box type cannot distinguish source types such as int and
+// bit [31:0]. Use the exact immutable descriptor bound when the box was made.
+std::shared_ptr<const VPISnapshotValue>
+snapshotBoxedMessage(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
+                     const uint8_t *bytes) {
+  obelisk_rt_managed_word_v1 word = 0;
+  std::memcpy(&word, bytes, sizeof(word));
+  auto *box = obelisk_rt_object_from_managed_word(word);
+  {
+    ManagedObjectLease lease;
+    if (!word || !box || word != obelisk_rt_managed_word_from_object(box) ||
+        obelisk_rt_managed_object_acquire(
+            lane, box, OBELISK_RT_MANAGED_CONTAINER, &lease) != OBELISK_RT_OK) {
+      setError(source->owner, "invalid box in untyped mailbox", vpiInternal);
+      return {};
+    }
+  }
+  uint64_t typeID = 0;
+  const obelisk_rt_element_type_v1 *element = nullptr;
+  std::vector<uint8_t> contents;
+  const auto status = obelisk_rt_box_snapshot(box, &typeID, &element, contents);
+  if (status != OBELISK_RT_OK || !element) {
+    setError(source->owner, "could not snapshot untyped mailbox message",
+             status == OBELISK_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
+    return {};
+  }
+  if (!typeID) {
+    setError(source->owner, "boxed message has no source type metadata",
+             vpiNotice);
+    return {};
+  }
+  VPIBoxTypeBinding binding;
+  if (obelisk_rt_cached_vpi_box_type(source->owner->context, typeID,
+                                     &binding) != OBELISK_RT_OK) {
+    setError(source->owner, "invalid boxed message type metadata", vpiInternal);
+    return {};
+  }
+  const size_t planes =
+      (element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) ? 2 : 1;
+  if (!element->value_size || element->value_size > SIZE_MAX / planes ||
+      contents.size() != element->value_size * planes) {
+    setError(source->owner, "invalid boxed message snapshot storage",
+             vpiInternal);
+    return {};
+  }
+  return snapshotMessageValue(source, lane, binding.layout, binding.semantic,
+                              *element, contents.data());
+}
+
 vpiHandle classMessages(__vpiHandle *source) {
   if (!source->dynamicObject)
     return nullptr;
@@ -5843,6 +5895,20 @@ vpiHandle classMessages(__vpiHandle *source) {
   obelisk_rt_design_cursor_v1 semantic{}, mailboxType{};
   if (!mailboxElementSemantic(source, semantic, mailboxType))
     return nullptr;
+  obelisk_rt_design_semantic_type_info_v1 info{};
+  if (!semanticTypeInfo(source, semantic, info))
+    return nullptr;
+  const bool untyped = info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNTYPED;
+  std::optional<VPIValueLayoutOwner> layoutOwner;
+  if (mailboxType.offset) {
+    VPIValueLayoutOwner resolved;
+    if (obelisk_rt_cached_vpi_value_layout_owner(
+            source->owner->context, mailboxType, &resolved) != OBELISK_RT_OK) {
+      setError(source->owner, "invalid mailbox layout owner", vpiInternal);
+      return nullptr;
+    }
+    layoutOwner = resolved;
+  }
   const obelisk_rt_element_type_v1 *element = nullptr;
   std::vector<uint8_t> bytes;
   const auto status =
@@ -5854,6 +5920,14 @@ vpiHandle classMessages(__vpiHandle *source) {
   }
   if (bytes.empty())
     return nullptr;
+  if (untyped && (element->kind != OBELISK_RT_ELEMENT_CONTAINER_HANDLE ||
+                  element->value_size != sizeof(obelisk_rt_managed_word_v1) ||
+                  element->bit_width != 0 ||
+                  (element->flags & OBELISK_RT_ELEMENT_FOUR_STATE))) {
+    setError(source->owner, "untyped mailbox has invalid box storage",
+             vpiInternal);
+    return nullptr;
+  }
   const uint64_t planes =
       (element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) ? 2 : 1;
   if (element->value_size == 0 || element->value_size > UINT64_MAX / planes ||
@@ -5873,8 +5947,11 @@ vpiHandle classMessages(__vpiHandle *source) {
     iterator->snapshotItems.reserve(bytes.size() / stride);
     for (size_t offset = 0; offset != bytes.size(); offset += stride) {
       auto value =
-          snapshotMessageValue(source, managed.getLane(), mailboxType, semantic,
-                               *element, bytes.data() + offset);
+          untyped
+              ? snapshotBoxedMessage(source, managed.getLane(),
+                                     bytes.data() + offset)
+              : snapshotMessageValue(source, managed.getLane(), layoutOwner,
+                                     semantic, *element, bytes.data() + offset);
       if (!value)
         return nullptr;
       iterator->snapshotItems.push_back(std::move(value));

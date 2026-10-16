@@ -258,6 +258,22 @@ bool validateReflectionSchema(const RecordKeeper &records) {
       return false;
     }
   }
+  DenseSet<uint32_t> valueOwnerValues;
+  StringSet<> valueOwnerNames;
+  for (const Record *kind :
+       records.getAllDerivedDefinitions("ReflectionValueLayoutOwnerKind")) {
+    StringRef name;
+    uint32_t value = 0;
+    if (!getCppName(*kind, "value layout owner kind", name) ||
+        !getU32(*kind, "value", 0, value))
+      return false;
+    if (!valueOwnerNames.insert(name).second ||
+        !valueOwnerValues.insert(value).second) {
+      PrintError(kind->getLoc(),
+                 "duplicate value layout owner kind name or value");
+      return false;
+    }
+  }
   return true;
 }
 
@@ -481,6 +497,26 @@ bool emitReflectionLayouts(const RecordKeeper &records, raw_ostream &os) {
         "constexpr uint32_t unpackRecordKindPayload(uint32_t value) {\n"
         "  return value >> recordKindPayloadShift;\n"
         "}\n\n";
+
+  auto ownerKindRecords =
+      records.getAllDerivedDefinitions("ReflectionValueLayoutOwnerKind");
+  SmallVector<const Record *> ownerKinds(ownerKindRecords.begin(),
+                                         ownerKindRecords.end());
+  llvm::sort(ownerKinds, [](const Record *left, const Record *right) {
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
+  });
+  os << "enum class ValueLayoutOwnerKind : uint32_t {\n";
+  for (const Record *kind : ownerKinds)
+    os << formatv("  {0} = {1},\n", kind->getValueAsString("cppName"),
+                  kind->getValueAsInt("value"));
+  os << "};\n\n"
+        "constexpr bool isValidValueLayoutOwnerKind(ValueLayoutOwnerKind kind) "
+        "{\n"
+        "  switch (kind) {\n";
+  for (const Record *kind : ownerKinds)
+    os << formatv("  case ValueLayoutOwnerKind::{0}:\n",
+                  kind->getValueAsString("cppName"));
+  os << "    return true;\n  }\n  return false;\n}\n\n";
 
   auto tableKindRecords =
       records.getAllDerivedDefinitions("ReflectionTableKind");

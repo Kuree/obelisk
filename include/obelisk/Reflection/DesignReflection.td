@@ -44,6 +44,17 @@ def ObjectTable : ReflectionTableKind<"Object", 1>;
 def StatementTable : ReflectionTableKind<"Statement", 2>;
 def StaticObjectTable : ReflectionTableKind<"StaticObject", 3>;
 
+// Layout owners are explicit namespaces. A box descriptor is not a reflected
+// source object and must never be encoded with a forged object-table kind.
+class ReflectionValueLayoutOwnerKind<string cppName_, int value_> {
+  string cppName = cppName_;
+  int value = value_;
+}
+def ReflectedValueLayoutOwner
+    : ReflectionValueLayoutOwnerKind<"ReflectedObject", 0>;
+def BoxValueLayoutOwner
+    : ReflectionValueLayoutOwnerKind<"BoxDescriptor", 1>;
+
 def HeaderMagic : ReflectionField<"Magic", 0, Bytes8>;
 def HeaderVersion : ReflectionField<"Version", 8, U32LE>;
 def HeaderReserved : ReflectionField<"Reserved", 12, U32LE>;
@@ -295,6 +306,27 @@ def MailboxElementBindingType : ReflectionField<"PhysicalTypeIndex", 8, U32LE>;
 def MailboxElementBinding : ReflectionLayout<"MailboxElementBinding", 12,
   [MailboxElementBindingTypespec, MailboxElementBindingSemantic,
    MailboxElementBindingType]>;
+
+// Stable runtime box identity binds to roots in the existing semantic and
+// physical graphs. IDs are positive and unique; rows are sorted by ID.
+def BoxTypeBindingID : ReflectionField<"ID", 0, U64LE>;
+def BoxTypeBindingSemantic : ReflectionField<"SemanticTypeIndex", 8, U32LE>;
+def BoxTypeBindingPhysical : ReflectionField<"PhysicalTypeIndex", 12, U32LE>;
+def BoxTypeBinding : ReflectionLayout<"BoxTypeBinding", 16,
+  [BoxTypeBindingID, BoxTypeBindingSemantic, BoxTypeBindingPhysical]>;
+
+// Exact value-layout pairs use a typed owner namespace. ReflectedObject uses
+// a packed Object/StaticObject reference; BoxDescriptor uses a BoxTypeBinding
+// row index. Rows are sorted by (owner kind, owner index, semantic type).
+// Legacy MailboxElementBinding rows remain readable, but cannot overlap an
+// owner group in this table. New writers use this common table.
+def ValueElementBindingOwnerKind : ReflectionField<"OwnerKind", 0, U32LE>;
+def ValueElementBindingOwnerIndex : ReflectionField<"OwnerIndex", 4, U32LE>;
+def ValueElementBindingSemantic : ReflectionField<"SemanticTypeIndex", 8, U32LE>;
+def ValueElementBindingPhysical : ReflectionField<"PhysicalTypeIndex", 12, U32LE>;
+def ValueElementBinding : ReflectionLayout<"ValueElementBinding", 16,
+  [ValueElementBindingOwnerKind, ValueElementBindingOwnerIndex,
+   ValueElementBindingSemantic, ValueElementBindingPhysical]>;
 
 // Sparse class declaration bindings. Flags bit 0 is static and bit 1 is a
 // method. Nonapplicable byte offsets/event IDs use UINT64_MAX, and absent
@@ -660,7 +692,15 @@ def SemanticDirectoryThreadOriginBindingOffset
     : ReflectionField<"ThreadOriginBindingOffset", 512, U64LE>;
 def SemanticDirectoryThreadOriginBindingCount
     : ReflectionField<"ThreadOriginBindingCount", 520, U64LE>;
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 528,
+def SemanticDirectoryBoxTypeBindingOffset
+    : ReflectionField<"BoxTypeBindingOffset", 528, U64LE>;
+def SemanticDirectoryBoxTypeBindingCount
+    : ReflectionField<"BoxTypeBindingCount", 536, U64LE>;
+def SemanticDirectoryValueElementBindingOffset
+    : ReflectionField<"ValueElementBindingOffset", 544, U64LE>;
+def SemanticDirectoryValueElementBindingCount
+    : ReflectionField<"ValueElementBindingCount", 552, U64LE>;
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 560,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -723,7 +763,11 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 528,
    SemanticDirectoryEventArrayStorageBindingOffset,
    SemanticDirectoryEventArrayStorageBindingCount,
    SemanticDirectoryThreadOriginBindingOffset,
-   SemanticDirectoryThreadOriginBindingCount]>;
+   SemanticDirectoryThreadOriginBindingCount,
+   SemanticDirectoryBoxTypeBindingOffset,
+   SemanticDirectoryBoxTypeBindingCount,
+   SemanticDirectoryValueElementBindingOffset,
+   SemanticDirectoryValueElementBindingCount]>;
 
 // Sparse exact code-unit identity to immutable source statement mapping.
 def ThreadOriginBindingCodeUnitID : ReflectionField<"CodeUnitID", 0, U64LE>;

@@ -857,6 +857,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         obelisk_rt_v1_mailbox_num(readManaged(inputRegister(0)), &count);
     return status == OBELISK_RT_OK ? sentinel(0, count) : status;
   }
+  case OBELISK_RT_INTRINSIC_V1_BOX_BIND_TYPE: {
+    auto id = scalar(1);
+    return id ? obelisk_rt_v1_box_bind_type(context,
+                                            readManaged(inputRegister(0)), *id)
+              : OBELISK_RT_INVALID_BYTECODE;
+  }
   case OBELISK_RT_INTRINSIC_V1_BOX_IS_TYPE: {
     auto typeID = scalar(1);
     return typeID ? sentinel(0, obelisk_rt_v1_box_is_type(

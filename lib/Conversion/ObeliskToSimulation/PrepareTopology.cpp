@@ -906,7 +906,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
                              const PreparedClassDeclarations &classes,
                              uint64_t designPrecisionFs,
                              bool preserveVPIMethodBindings,
-                             OpBuilder &builder) {
+                             bool preserveVPIBoxBindings, OpBuilder &builder) {
   OpBuilder::InsertionGuard insertionGuard(builder);
   builder.setInsertionPointToEnd(&design.getBody().front());
   llvm::StringMap<DescriptorInfo> descriptors;
@@ -3943,6 +3943,52 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
       emitMember(classTypespecSymbols.lookup(classType));
       if (!isa<semantic::SVGenericClassDefSymbolOp>(classType->getParentOp()))
         emitMember(classDefinitionSymbols.lookup(classType));
+    }
+  }
+
+  if (preserveVPIBoxBindings) {
+    SmallVector<Operation *> boxedArguments;
+    semanticRoot.walk([&](semantic::SVCallExpressionOp call) {
+      if (call.getCalleeName() != "put" && call.getCalleeName() != "try_put")
+        return;
+      auto children = getChildren(call);
+      if (children.size() != 2)
+        return;
+      auto receiver = getNormalizedSemanticType(children.front());
+      auto mailbox = succeeded(receiver) ? dyn_cast<sim::MailboxType>(*receiver)
+                                         : sim::MailboxType{};
+      if (mailbox && isa<sim::BoxType>(mailbox.getElementType()))
+        boxedArguments.push_back(children[1]);
+    });
+    DenseMap<std::pair<Type, Attribute>, FlatSymbolRefAttr> boxTypes;
+    uint64_t nextBoxTypeID = 1;
+    for (Operation *source : boxedArguments) {
+      auto sourceType = source->getAttrOfType<TypeAttr>("semantic_type");
+      auto normalized = getNormalizedSemanticType(source);
+      if (!sourceType || failed(normalized)) {
+        source->emitError("boxed VPI value has no exact source storage type");
+        invalid = true;
+        continue;
+      }
+      auto semantic = makeVPITypeSemantics(sourceType.getValue(),
+                                           getSemanticLocation(source),
+                                           typedefLayersFor(source), source);
+      if (failed(semantic)) {
+        invalid = true;
+        continue;
+      }
+      auto key = std::make_pair(*normalized, Attribute(*semantic));
+      auto [found, inserted] = boxTypes.try_emplace(key, FlatSymbolRefAttr{});
+      if (inserted) {
+        const uint64_t id = nextBoxTypeID++;
+        auto descriptor = sim::SimVPIBoxTypeDeclOp::create(
+            builder, getSemanticLocation(source),
+            "__obelisk_vpi_box_type_" + std::to_string(id), id, *normalized,
+            *semantic);
+        retainVPISourceTypeIdentity(source, descriptor, *semantic);
+        found->second = FlatSymbolRefAttr::get(descriptor);
+      }
+      sim::set<sim::metadata::VpiBoxType>(source, found->second);
     }
   }
 

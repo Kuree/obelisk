@@ -195,6 +195,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           sim::ContainerKind::DynamicArray, 0);
       sim::SimContainerWriteOp::create(builder, location, array, zero,
                                        cloneSequentialValue(value, location));
+      if (auto binding = sim::get<sim::metadata::VpiBoxType>(source))
+        sim::SimBoxBindTypeOp::create(builder, location, array, binding);
       return sim::SimBoxPackOp::create(builder, location,
                                        sim::BoxType::get(function.getContext()),
                                        array)

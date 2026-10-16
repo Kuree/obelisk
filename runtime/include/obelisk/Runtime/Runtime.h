@@ -1299,6 +1299,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM = UINT32_C(0x00010464),
   OBELISK_RT_INTRINSIC_V1_AGGREGATE_EXPORT_BITSTREAM = UINT32_C(0x00010465),
   OBELISK_RT_INTRINSIC_V1_AGGREGATE_IMPORT_BITSTREAM = UINT32_C(0x00010466),
+  OBELISK_RT_INTRINSIC_V1_BOX_BIND_TYPE = UINT32_C(0x00010418),
   OBELISK_RT_INTRINSIC_V1_BOX_IS_TYPE = UINT32_C(0x00010417),
   OBELISK_RT_INTRINSIC_V1_STRING_LITERAL = UINT32_C(0x00010420),
   OBELISK_RT_INTRINSIC_V1_STRING_FROM_PACKED = UINT32_C(0x00010421),
@@ -3011,6 +3012,13 @@ obelisk_rt_v1_semaphore_try_get(obelisk_rt_object_v1 *semaphore, int32_t keys,
                                 uint32_t *out_success);
 uint64_t obelisk_rt_v1_container_size(obelisk_rt_object_v1 *container);
 uint32_t obelisk_rt_v1_box_is_type(obelisk_rt_object_v1 *box, uint64_t type_id);
+// Bind the exact reflection descriptor of a one-element boxed array. The ID
+// belongs to this context's validated design image, independently of executable
+// element type IDs. A conflicting existing binding is rejected.
+obelisk_rt_status obelisk_rt_v1_box_bind_type(obelisk_rt_context *context,
+                                              obelisk_rt_object_v1 *box,
+                                              uint64_t descriptor_id);
+
 obelisk_rt_status obelisk_rt_v1_container_read(obelisk_rt_object_v1 *container,
                                                int64_t index, void *out_value,
                                                void *out_unknown);

@@ -1171,6 +1171,52 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                                reflectionDefinitionLoc(*this));
 }
 
+LogicalResult SimVPIBoxTypeDeclOp::verify() {
+  if (getId() <= 0)
+    return emitOpError("box type ID must be positive");
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("must be directly contained in a simulation design");
+  auto emit = [&] { return emitOpError(); };
+  if (!getElementDescriptor(getValueType()))
+    return emitOpError("requires exact concrete value storage");
+  return verifyVPITypeSemantics(emit, getValueType(), getVpiType());
+}
+
+LogicalResult
+SimVPIBoxTypeDeclOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  SmallVector<VPITypeSemanticsAttr> pending{getVpiType()};
+  DenseSet<Attribute> visited;
+  while (!pending.empty()) {
+    auto semantic = pending.pop_back_val();
+    if (!visited.insert(semantic).second)
+      continue;
+    if (auto symbol = semantic.getSymbol();
+        symbol && !symbols.lookupNearestSymbolFrom(*this, symbol))
+      return emitOpError("references an unknown semantic type symbol ")
+             << symbol;
+    if (ArrayAttr aliases = semantic.getTypedefAliases())
+      for (Attribute alias : aliases)
+        if (!symbols.lookupNearestSymbolFrom<SimVPITypespecDeclOp>(
+                *this, cast<SymbolRefAttr>(alias)))
+          return emitOpError("references an unknown typedef symbol ") << alias;
+    for (Attribute child : semantic.getChildren())
+      pending.push_back(cast<VPITypeSemanticsAttr>(child));
+  }
+  return success();
+}
+
+LogicalResult
+SimBoxBindTypeOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  auto descriptor = symbols.lookupNearestSymbolFrom<SimVPIBoxTypeDeclOp>(
+      *this, getDescriptorAttr());
+  if (!descriptor)
+    return emitOpError("descriptor must name a VPI box type declaration");
+  if (cast<DynamicArrayType>(getInput().getType()).getElementType() !=
+      descriptor.getValueType())
+    return emitOpError("input element type must exactly match the descriptor");
+  return success();
+}
+
 LogicalResult SimVPITypespecDeclOp::verify() {
   if (failed(verifyNonnegative(*this, getIdAttr(), "typespec ID")) ||
       failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")) ||
@@ -3177,6 +3223,7 @@ LogicalResult SimDesignOp::verifyRegions() {
   SmallVector<SimVPIObjectAnchorOp> vpiAnchors;
   SmallVector<SimVPINettypeDeclOp> nettypes;
   SmallVector<SimVPITypespecDeclOp> typespecs;
+  DenseSet<uint64_t> boxTypeIDs;
   SmallVector<SimVPIClassMemberDeclOp> classMembers;
   SmallVector<SimVPIEnumConstDeclOp> enumConstants;
   SmallVector<SimStorageDeclOp> storages;
@@ -3964,7 +4011,11 @@ LogicalResult SimDesignOp::verifyRegions() {
       return failure();
   for (Operation &op : getBody().front()) {
     VPITypeSemanticsAttr semantic;
-    if (auto storage = dyn_cast<SimStorageDeclOp>(op))
+    if (auto descriptor = dyn_cast<SimVPIBoxTypeDeclOp>(op)) {
+      if (!boxTypeIDs.insert(descriptor.getId()).second)
+        return descriptor.emitOpError("duplicates a box type ID");
+      semantic = descriptor.getVpiType();
+    } else if (auto storage = dyn_cast<SimStorageDeclOp>(op))
       semantic = storage.getVpiTypeAttr();
     else if (auto net = dyn_cast<SimNetDeclOp>(op))
       semantic = net.getVpiTypeAttr();

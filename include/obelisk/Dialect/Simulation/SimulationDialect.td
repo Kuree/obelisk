@@ -549,6 +549,8 @@ def ObeliskSimulationDialect : Dialect {
     // storage remains in the execution layout but is omitted from the VPI
     // object inventory.
     "::mlir::FlatSymbolRefAttr":$vpi_identity_delegated,
+    // Original untyped-mailbox argument: exact immutable box type identity.
+    "::mlir::FlatSymbolRefAttr":$vpi_box_type,
     // Exact frontend enum identity retained solely to reconnect a value object
     // to its anonymous enum typespec in the immutable VPI relation image.
     "::mlir::IntegerAttr":$vpi_source_type_identity,

@@ -105,6 +105,13 @@ prepareManagedClassInventory(ModuleOp module,
                              llvm::StringMap<ManagedClassLayout> &layouts) {
   SmallVector<sim::SimClassDeclOp> classes;
   SmallVector<sim::SimClassMethodDeclOp> methods;
+  module.walk([&](sim::SimBoxBindTypeOp op) {
+    auto descriptor =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimVPIBoxTypeDeclOp>(
+            op, op.getDescriptorAttr());
+    if (descriptor)
+      native::set<native::BoxTypeId>(op, descriptor.getIdAttr());
+  });
   module.walk([&](sim::SimClassDeclOp op) { classes.push_back(op); });
   module.walk([&](sim::SimClassMethodDeclOp op) { methods.push_back(op); });
   if (classes.empty())

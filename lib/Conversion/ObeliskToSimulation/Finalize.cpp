@@ -326,10 +326,11 @@ void ObeliskSimFinalizePass::runOnOperation() {
   module.walk([&](Operation *op) {
     if (!isa<sim::SimCovergroupDeclOp, sim::SimVPIObjectAnchorOp,
              sim::SimVPINettypeDeclOp, sim::SimVPITypespecDeclOp,
-             sim::SimVPIClassMemberDeclOp, sim::SimVPIEventBindingOp,
-             sim::SimVPIThreadOriginBindingOp, sim::SimClassDeclOp,
-             sim::SimClassFieldDeclOp, sim::SimClassMethodDeclOp,
-             sim::SimRandomConstraintTemplateOp, sim::SimFuncOp>(op))
+             sim::SimVPIBoxTypeDeclOp, sim::SimVPIClassMemberDeclOp,
+             sim::SimVPIEventBindingOp, sim::SimVPIThreadOriginBindingOp,
+             sim::SimClassDeclOp, sim::SimClassFieldDeclOp,
+             sim::SimClassMethodDeclOp, sim::SimRandomConstraintTemplateOp,
+             sim::SimFuncOp>(op))
       return;
     if (auto name =
             op->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()))
@@ -372,6 +373,7 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   // Source inventory may outlive executable code. Only a VPI profile needs
   // method bindings to retain otherwise unreachable implementations for queries.
   prepareOptions.preserveVPIMethodBindings = vpiMode != "off";
+  prepareOptions.preserveVPIBoxBindings = vpiMode != "off";
   manager.addPass(createObeliskSimPreparePass(std::move(prepareOptions)));
   // Preparation freezes dynamic class dispatch, factory initialization, and
   // external entry points into explicit symbol references. Prune unreachable

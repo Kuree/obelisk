@@ -58,6 +58,10 @@ constexpr uint64_t kEventArrayStorageBindingSize =
     obelisk::reflection::EventArrayStorageBindingLayout.size;
 constexpr uint64_t kModportBindingSize =
     obelisk::reflection::ModportBindingLayout.size;
+constexpr uint64_t kBoxTypeBindingSize =
+    obelisk::reflection::BoxTypeBindingLayout.size;
+constexpr uint64_t kValueElementBindingSize =
+    obelisk::reflection::ValueElementBindingLayout.size;
 constexpr uint64_t kMailboxElementBindingSize =
     obelisk::reflection::MailboxElementBindingLayout.size;
 constexpr uint64_t kRelationIndexSize =
@@ -260,6 +264,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
   uint64_t classMemberBindingOffset = 0, classMemberBindingCount = 0;
   uint64_t modportBindingOffset = 0, modportBindingCount = 0;
   uint64_t mailboxElementBindingOffset = 0, mailboxElementBindingCount = 0;
+  uint64_t boxTypeBindingOffset = 0, boxTypeBindingCount = 0;
+  uint64_t valueElementBindingOffset = 0, valueElementBindingCount = 0;
   uint64_t eventBindingOffset = 0, eventBindingCount = 0;
   uint64_t eventArrayStorageBindingOffset = 0,
            eventArrayStorageBindingCount = 0;
@@ -361,6 +367,10 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     modportBindingCount = reader.getModportBindingCount();
     mailboxElementBindingOffset = reader.getMailboxElementBindingOffset();
     mailboxElementBindingCount = reader.getMailboxElementBindingCount();
+    boxTypeBindingOffset = reader.getBoxTypeBindingOffset();
+    boxTypeBindingCount = reader.getBoxTypeBindingCount();
+    valueElementBindingOffset = reader.getValueElementBindingOffset();
+    valueElementBindingCount = reader.getValueElementBindingCount();
     eventBindingOffset = reader.getEventBindingOffset();
     eventBindingCount = reader.getEventBindingCount();
     eventArrayStorageBindingOffset = reader.getEventArrayStorageBindingOffset();
@@ -404,6 +414,10 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               modportBindingCount,
               mailboxElementBindingOffset,
               mailboxElementBindingCount,
+              boxTypeBindingOffset,
+              boxTypeBindingCount,
+              valueElementBindingOffset,
+              valueElementBindingCount,
               eventBindingOffset,
               eventBindingCount,
               eventArrayStorageBindingOffset,
@@ -486,6 +500,10 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
          kModportBindingSize},
         {database.mailboxElementBindings, database.mailboxElementBindingCount,
          kMailboxElementBindingSize},
+        {database.boxTypeBindings, database.boxTypeBindingCount,
+         kBoxTypeBindingSize},
+        {database.valueElementBindings, database.valueElementBindingCount,
+         kValueElementBindingSize},
         {database.eventBindings, database.eventBindingCount, kEventBindingSize},
         {database.eventArrayStorageBindings,
          database.eventArrayStorageBindingCount, kEventArrayStorageBindingSize},
@@ -565,6 +583,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         database.classMemberBindingCount != 0 ||
         database.modportBindingCount != 0 ||
         database.mailboxElementBindingCount != 0 ||
+        database.boxTypeBindingCount != 0 ||
+        database.valueElementBindingCount != 0 ||
         database.eventBindingCount != 0 ||
         database.eventArrayStorageBindingCount != 0 ||
         database.threadOriginBindingCount != 0 ||
@@ -619,6 +639,11 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
                   database.size) ||
       !validRange(database.modportBindings, database.modportBindingCount,
                   kModportBindingSize, database.size) ||
+      !validRange(database.boxTypeBindings, database.boxTypeBindingCount,
+                  kBoxTypeBindingSize, database.size) ||
+      !validRange(database.valueElementBindings,
+                  database.valueElementBindingCount, kValueElementBindingSize,
+                  database.size) ||
       !validRange(database.mailboxElementBindings,
                   database.mailboxElementBindingCount,
                   kMailboxElementBindingSize, database.size) ||
@@ -703,6 +728,10 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        database.classMemberBindings < kHeaderSize) ||
       (database.modportBindingCount != 0 &&
        database.modportBindings < kHeaderSize) ||
+      (database.boxTypeBindingCount != 0 &&
+       database.boxTypeBindings < kHeaderSize) ||
+      (database.valueElementBindingCount != 0 &&
+       database.valueElementBindings < kHeaderSize) ||
       (database.mailboxElementBindingCount != 0 &&
        database.mailboxElementBindings < kHeaderSize) ||
       (database.eventBindingCount != 0 &&
@@ -784,6 +813,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       database.classMemberBindingCount > UINT32_MAX ||
       database.modportBindingCount > UINT32_MAX ||
       database.mailboxElementBindingCount > UINT32_MAX ||
+      database.boxTypeBindingCount > UINT32_MAX ||
+      database.valueElementBindingCount > UINT32_MAX ||
       database.eventBindingCount > UINT32_MAX ||
       database.eventArrayStorageBindingCount > UINT32_MAX ||
       database.threadOriginBindingCount > UINT32_MAX ||
@@ -1007,6 +1038,10 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        kModportBindingSize},
       {database.mailboxElementBindings, database.mailboxElementBindingCount,
        kMailboxElementBindingSize},
+      {database.boxTypeBindings, database.boxTypeBindingCount,
+       kBoxTypeBindingSize},
+      {database.valueElementBindings, database.valueElementBindingCount,
+       kValueElementBindingSize},
       {database.eventBindings, database.eventBindingCount, kEventBindingSize},
       {database.eventArrayStorageBindings,
        database.eventArrayStorageBindingCount, kEventArrayStorageBindingSize},
@@ -2367,6 +2402,24 @@ bool validateDatabaseImpl(const Database &database) {
                    uint64_t{binding.getPhysicalTypeIndex()} * kTypeSize))
       return false;
   }
+  for (uint64_t index = 0; index != database.boxTypeBindingCount; ++index) {
+    obelisk::reflection::BoxTypeBindingView binding(
+        database.data + database.boxTypeBindings + index * kBoxTypeBindingSize);
+    if (binding.getPhysicalTypeIndex() >= database.typeCount ||
+        !visitType(database.types +
+                   uint64_t{binding.getPhysicalTypeIndex()} * kTypeSize))
+      return false;
+  }
+  for (uint64_t index = 0; index != database.valueElementBindingCount;
+       ++index) {
+    obelisk::reflection::ValueElementBindingView binding(
+        database.data + database.valueElementBindings +
+        index * kValueElementBindingSize);
+    if (binding.getPhysicalTypeIndex() >= database.typeCount ||
+        !visitType(database.types +
+                   uint64_t{binding.getPhysicalTypeIndex()} * kTypeSize))
+      return false;
+  }
   if (std::any_of(typeState.begin(), typeState.end(),
                   [](uint8_t state) { return state != 2; }))
     return false;
@@ -3151,14 +3204,75 @@ bool validateDatabaseImpl(const Database &database) {
   if (canonicalClassRootBindings.size() != canonicalClassRoots.size())
     return false;
 
-  // A mailbox's canonical semantic element and its normalized storage graph
-  // are paired explicitly. Managed containers hide their children in the
-  // physical graph, so their element values have separate bindings. Enum
-  // values and associative keys are whole packed leaves: normalization may
-  // scalarize their semantic shape. The table is optional for older images,
-  // but a present layout graph must include all remaining reachable values.
-  std::unordered_map<uint32_t, std::unordered_map<uint32_t, uint32_t>>
-      mailboxLayouts;
+  // Each value layout owns a complete pairing between one semantic value
+  // graph and exact normalized storage. Legacy mailbox rows share the proof,
+  // but never overlap a common-owner group.
+  using LayoutOwnerKind = obelisk::reflection::ValueLayoutOwnerKind;
+  struct ValueLayout {
+    uint32_t root = UINT32_MAX;
+    uint32_t physicalRoot = UINT32_MAX;
+    bool legacy = false;
+    std::unordered_map<uint32_t, uint32_t> pairs;
+  };
+  std::unordered_map<uint64_t, ValueLayout> valueLayouts;
+  auto ownerKey = [](LayoutOwnerKind kind, uint32_t index) {
+    return (uint64_t{static_cast<uint32_t>(kind)} << 32) | index;
+  };
+  auto mailboxRoot = [&](uint32_t owner, uint32_t &root) {
+    auto canonical = canonicalClassRoots.find(owner);
+    if (canonical == canonicalClassRoots.end())
+      return false;
+    const uint8_t *mailbox = semanticRecord(canonical->second);
+    if ((read32(mailbox) & UINT32_C(0xff)) !=
+        OBELISK_RT_DESIGN_SEMANTIC_MAILBOX)
+      return false;
+    root = read32(database.data + database.semanticTypeEdges +
+                  uint64_t{read32(mailbox + 4)} * kSemanticTypeEdgeSize);
+    return true;
+  };
+  std::unordered_set<uint32_t> classFieldLayoutOwners;
+  for (uint64_t index = 0; index != database.classMemberBindingCount; ++index) {
+    obelisk::reflection::ClassMemberBindingView binding(
+        database.data + database.classMemberBindings +
+        index * kClassMemberBindingSize);
+    if ((binding.getFlags() & 2) == 0)
+      classFieldLayoutOwners.insert(binding.getMemberIndexAndTable());
+  }
+  auto reflectedRoot = [&](uint32_t owner, ValueLayout &layout) {
+    if (mailboxRoot(owner, layout.root))
+      return true;
+    uint64_t offset = 0;
+    if (!packedObjectReferenceOffset(database, owner, offset) ||
+        !isObjectOffset(database, offset) ||
+        !findSemanticRootBinding(database, owner, layout.root))
+      return false;
+    const uint8_t *record = database.data + offset;
+    if (recordKind(record) != OBELISK_RT_DESIGN_RECORD_STORAGE &&
+        !(recordKind(record) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+          classFieldLayoutOwners.count(owner)))
+      return false;
+    const uint64_t physical = read64(record + 48);
+    if (!isTypeOffset(database, physical))
+      return false;
+    layout.physicalRoot =
+        static_cast<uint32_t>((physical - database.types) / kTypeSize);
+    return true;
+  };
+  uint64_t previousBoxID = 0;
+  for (uint64_t index = 0; index != database.boxTypeBindingCount; ++index) {
+    obelisk::reflection::BoxTypeBindingView binding(
+        database.data + database.boxTypeBindings + index * kBoxTypeBindingSize);
+    if (binding.getID() == 0 || binding.getID() > INT64_MAX ||
+        binding.getID() <= previousBoxID ||
+        binding.getSemanticTypeIndex() >= database.semanticTypeCount ||
+        binding.getPhysicalTypeIndex() >= database.typeCount)
+      return false;
+    auto &layout =
+        valueLayouts[ownerKey(LayoutOwnerKind::BoxDescriptor, index)];
+    layout.root = binding.getSemanticTypeIndex();
+    layout.physicalRoot = binding.getPhysicalTypeIndex();
+    previousBoxID = binding.getID();
+  }
   uint64_t previousMailboxElement = 0;
   for (uint64_t index = 0; index != database.mailboxElementBindingCount;
        ++index) {
@@ -3169,23 +3283,54 @@ bool validateDatabaseImpl(const Database &database) {
     const uint32_t semantic = binding.getSemanticTypeIndex();
     const uint32_t physical = binding.getPhysicalTypeIndex();
     const uint64_t key = (uint64_t{owner} << 32) | semantic;
-    auto canonical = canonicalClassRoots.find(owner);
+    auto &layout =
+        valueLayouts[ownerKey(LayoutOwnerKind::ReflectedObject, owner)];
     if ((index && key <= previousMailboxElement) ||
         semantic >= database.semanticTypeCount ||
-        physical >= database.typeCount ||
-        canonical == canonicalClassRoots.end() ||
-        (read32(semanticRecord(canonical->second)) & UINT32_C(0xff)) !=
-            OBELISK_RT_DESIGN_SEMANTIC_MAILBOX)
+        physical >= database.typeCount || !mailboxRoot(owner, layout.root))
       return false;
-    mailboxLayouts[owner].emplace(semantic, physical);
+    layout.legacy = true;
+    layout.pairs.emplace(semantic, physical);
     previousMailboxElement = key;
   }
-  for (const auto &[owner, layouts] : mailboxLayouts) {
-    const uint8_t *mailbox = semanticRecord(canonicalClassRoots.at(owner));
-    const uint8_t *element =
-        database.data + database.semanticTypeEdges +
-        uint64_t{read32(mailbox + 4)} * kSemanticTypeEdgeSize;
-    std::vector<uint32_t> work{read32(element)};
+  std::tuple<uint32_t, uint32_t, uint32_t> previousValueElement{};
+  for (uint64_t index = 0; index != database.valueElementBindingCount;
+       ++index) {
+    obelisk::reflection::ValueElementBindingView binding(
+        database.data + database.valueElementBindings +
+        index * kValueElementBindingSize);
+    const uint32_t encodedKind = binding.getOwnerKind();
+    if (!obelisk::reflection::isValidValueLayoutOwnerKind(
+            static_cast<LayoutOwnerKind>(encodedKind)))
+      return false;
+    const auto kind = static_cast<LayoutOwnerKind>(encodedKind);
+    const uint32_t owner = binding.getOwnerIndex();
+    const uint32_t semantic = binding.getSemanticTypeIndex();
+    const uint32_t physical = binding.getPhysicalTypeIndex();
+    const auto key = std::make_tuple(encodedKind, owner, semantic);
+    if ((index && key <= previousValueElement) ||
+        semantic >= database.semanticTypeCount ||
+        physical >= database.typeCount ||
+        (kind == LayoutOwnerKind::BoxDescriptor &&
+         owner >= database.boxTypeBindingCount))
+      return false;
+    auto &layout = valueLayouts[ownerKey(kind, owner)];
+    if (layout.legacy || (layout.root == UINT32_MAX &&
+                          (kind != LayoutOwnerKind::ReflectedObject ||
+                           !reflectedRoot(owner, layout))))
+      return false;
+    layout.pairs.emplace(semantic, physical);
+    previousValueElement = key;
+  }
+  for (const auto &entry : valueLayouts) {
+    const auto &layout = entry.second;
+    const auto &layouts = layout.pairs;
+    auto root = layouts.find(layout.root);
+    if (!layout.legacy &&
+        (root == layouts.end() || (layout.physicalRoot != UINT32_MAX &&
+                                   root->second != layout.physicalRoot)))
+      return false;
+    std::vector<uint32_t> work{layout.root};
     std::unordered_set<uint32_t> visited;
     std::unordered_set<uint32_t> voidMembers;
     while (!work.empty()) {
@@ -3193,8 +3338,8 @@ bool validateDatabaseImpl(const Database &database) {
       work.pop_back();
       // Enumeration constants use their total packed width. Executable enum
       // storage can scalarize a composite source base; it has no layout view.
-      if ((read32(semanticRecord(semanticIndex)) & UINT32_C(0xff)) ==
-          OBELISK_RT_DESIGN_SEMANTIC_ENUM)
+      if (layout.legacy && (read32(semanticRecord(semanticIndex)) &
+                            UINT32_C(0xff)) == OBELISK_RT_DESIGN_SEMANTIC_ENUM)
         continue;
       if (!visited.insert(semanticIndex).second)
         continue;
@@ -3222,8 +3367,8 @@ bool validateDatabaseImpl(const Database &database) {
       auto matchesChildPhysical = [&](uint32_t ordinal, uint64_t offset) {
         const uint32_t childIndex = read32(childEdge(ordinal));
         const uint8_t *childSemantic = semanticRecord(childIndex);
-        if ((read32(childSemantic) & UINT32_C(0xff)) ==
-            OBELISK_RT_DESIGN_SEMANTIC_ENUM) {
+        if (layout.legacy && (read32(childSemantic) & UINT32_C(0xff)) ==
+                                 OBELISK_RT_DESIGN_SEMANTIC_ENUM) {
           uint64_t width = 0;
           const uint8_t *childPhysical = database.data + offset;
           const uint32_t flags = read32(childPhysical + 4) >> 8;
@@ -3239,7 +3384,9 @@ bool validateDatabaseImpl(const Database &database) {
         return child != layouts.end() &&
                offset == database.types + uint64_t{child->second} * kTypeSize;
       };
-      for (uint32_t ordinal = 0; ordinal != count; ++ordinal) {
+      for (uint32_t ordinal = 0;
+           semanticKind != OBELISK_RT_DESIGN_SEMANTIC_ENUM && ordinal != count;
+           ++ordinal) {
         // Integral associative keys similarly normalize to the runtime lookup
         // domain. Their copied values use descriptor width, never field layout.
         const uint32_t childKind =
@@ -3266,6 +3413,15 @@ bool validateDatabaseImpl(const Database &database) {
         work.push_back(read32(childEdge(ordinal)));
       }
       switch (semanticKind) {
+      case OBELISK_RT_DESIGN_SEMANTIC_ENUM: {
+        uint64_t width = 0;
+        if (!physicalPacked || physicalFourState != fourState ||
+            semanticPackedBitWidth(database, semanticIndex, &width) !=
+                OBELISK_RT_OK ||
+            width == 0 || read64(physical + 8) != width)
+          return false;
+        break;
+      }
       case OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY:
       case OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY:
         if (physicalKind != OBELISK_RT_DESIGN_TYPE_ARRAY ||
@@ -5711,6 +5867,10 @@ bool sameDatabase(const Database &left, const Database &right) noexcept {
          left.modportBindingCount == right.modportBindingCount &&
          left.mailboxElementBindings == right.mailboxElementBindings &&
          left.mailboxElementBindingCount == right.mailboxElementBindingCount &&
+         left.boxTypeBindings == right.boxTypeBindings &&
+         left.boxTypeBindingCount == right.boxTypeBindingCount &&
+         left.valueElementBindings == right.valueElementBindings &&
+         left.valueElementBindingCount == right.valueElementBindingCount &&
          left.eventBindings == right.eventBindings &&
          left.eventBindingCount == right.eventBindingCount &&
          left.eventArrayStorageBindings == right.eventArrayStorageBindings &&
@@ -7732,10 +7892,11 @@ obelisk_rt_status obelisk_rt_cached_vpi_class_member(
   return OBELISK_RT_OK;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_mailbox_element_type(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 typespec,
-    obelisk_rt_design_cursor_v1 semantic,
-    obelisk_rt_design_cursor_v1 *outType) noexcept {
+static obelisk_rt_status
+cachedLegacyMailboxElementType(const obelisk_rt_context *context,
+                               obelisk_rt_design_cursor_v1 typespec,
+                               obelisk_rt_design_cursor_v1 semantic,
+                               obelisk_rt_design_cursor_v1 *outType) noexcept {
   if (!outType)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outType = {};
@@ -7772,6 +7933,134 @@ obelisk_rt_status obelisk_rt_cached_vpi_mailbox_element_type(
   outType->offset =
       database->types + uint64_t{binding.getPhysicalTypeIndex()} * kTypeSize;
   return OBELISK_RT_OK;
+}
+
+obelisk_rt_status obelisk_rt_cached_vpi_value_layout_owner(
+    const obelisk_rt_context *context,
+    obelisk_rt_design_cursor_v1 reflectedOwner,
+    VPIValueLayoutOwner *outOwner) noexcept {
+  if (!outOwner)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outOwner = {};
+  const Database *database = cachedDatabase(context);
+  uint32_t packed = 0;
+  if (!database ||
+      !packedObjectReferenceForCursor(*database, reflectedOwner.offset, packed))
+    return OBELISK_RT_INVALID_HANDLE;
+  outOwner->kind = obelisk::reflection::ValueLayoutOwnerKind::ReflectedObject;
+  outOwner->index = packed;
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status
+obelisk_rt_cached_vpi_box_type(const obelisk_rt_context *context, uint64_t id,
+                               VPIBoxTypeBinding *outType) noexcept {
+  if (!outType)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outType = {};
+  const Database *database = cachedDatabase(context);
+  if (!database)
+    return OBELISK_RT_INVALID_HANDLE;
+  uint64_t low = 0, high = database->boxTypeBindingCount;
+  while (low != high) {
+    const uint64_t middle = low + (high - low) / 2;
+    obelisk::reflection::BoxTypeBindingView binding(
+        database->data + database->boxTypeBindings +
+        middle * kBoxTypeBindingSize);
+    if (binding.getID() < id)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == database->boxTypeBindingCount)
+    return OBELISK_RT_EOF;
+  obelisk::reflection::BoxTypeBindingView binding(
+      database->data + database->boxTypeBindings + low * kBoxTypeBindingSize);
+  if (binding.getID() != id)
+    return OBELISK_RT_EOF;
+  outType->layout = {obelisk::reflection::ValueLayoutOwnerKind::BoxDescriptor,
+                     static_cast<uint32_t>(low)};
+  outType->semantic.offset = uint64_t{binding.getSemanticTypeIndex()} + 1;
+  outType->physical.offset =
+      database->types + uint64_t{binding.getPhysicalTypeIndex()} * kTypeSize;
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status obelisk_rt_cached_vpi_value_element_type(
+    const obelisk_rt_context *context, VPIValueLayoutOwner owner,
+    obelisk_rt_design_cursor_v1 semantic,
+    obelisk_rt_design_cursor_v1 *outType) noexcept {
+  if (!outType)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outType = {};
+  const Database *database = cachedDatabase(context);
+  uint64_t reflectedOffset = 0;
+  using OwnerKind = obelisk::reflection::ValueLayoutOwnerKind;
+  if (!database || semantic.offset == 0 ||
+      semantic.offset > database->semanticTypeCount ||
+      !obelisk::reflection::isValidValueLayoutOwnerKind(owner.kind) ||
+      (owner.kind == OwnerKind::BoxDescriptor &&
+       owner.index >= database->boxTypeBindingCount) ||
+      (owner.kind == OwnerKind::ReflectedObject &&
+       !packedObjectReferenceOffset(*database, owner.index, reflectedOffset)))
+    return OBELISK_RT_INVALID_HANDLE;
+  const auto key =
+      std::make_tuple(static_cast<uint32_t>(owner.kind), owner.index,
+                      static_cast<uint32_t>(semantic.offset - 1));
+  uint64_t low = 0, high = database->valueElementBindingCount;
+  while (low != high) {
+    const uint64_t middle = low + (high - low) / 2;
+    obelisk::reflection::ValueElementBindingView binding(
+        database->data + database->valueElementBindings +
+        middle * kValueElementBindingSize);
+    const auto candidate =
+        std::make_tuple(binding.getOwnerKind(), binding.getOwnerIndex(),
+                        binding.getSemanticTypeIndex());
+    if (candidate < key)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low != database->valueElementBindingCount) {
+    obelisk::reflection::ValueElementBindingView binding(
+        database->data + database->valueElementBindings +
+        low * kValueElementBindingSize);
+    if (std::make_tuple(binding.getOwnerKind(), binding.getOwnerIndex(),
+                        binding.getSemanticTypeIndex()) == key) {
+      outType->offset = database->types +
+                        uint64_t{binding.getPhysicalTypeIndex()} * kTypeSize;
+      return OBELISK_RT_OK;
+    }
+  }
+  return owner.kind == OwnerKind::ReflectedObject
+             ? cachedLegacyMailboxElementType(context, {reflectedOffset},
+                                              semantic, outType)
+             : OBELISK_RT_EOF;
+}
+
+obelisk_rt_status obelisk_rt_cached_vpi_value_element_type(
+    const obelisk_rt_context *context,
+    obelisk_rt_design_cursor_v1 reflectedOwner,
+    obelisk_rt_design_cursor_v1 semantic,
+    obelisk_rt_design_cursor_v1 *outType) noexcept {
+  VPIValueLayoutOwner owner;
+  auto status =
+      obelisk_rt_cached_vpi_value_layout_owner(context, reflectedOwner, &owner);
+  if (status != OBELISK_RT_OK) {
+    if (outType)
+      *outType = {};
+    return outType ? status : OBELISK_RT_INVALID_ARGUMENT;
+  }
+  return obelisk_rt_cached_vpi_value_element_type(context, owner, semantic,
+                                                  outType);
+}
+
+obelisk_rt_status obelisk_rt_cached_vpi_mailbox_element_type(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 typespec,
+    obelisk_rt_design_cursor_v1 semantic,
+    obelisk_rt_design_cursor_v1 *outType) noexcept {
+  return obelisk_rt_cached_vpi_value_element_type(context, typespec, semantic,
+                                                  outType);
 }
 
 obelisk_rt_status obelisk_rt_cached_vpi_semantic_class_typespec(

@@ -492,6 +492,25 @@ def SimVPINettypeDeclOp : SimOp<"vpi_nettype.decl", [
   let hasVerifier = 1;
 }
 
+def SimVPIBoxTypeDeclOp : SimOp<"vpi_box_type.decl", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable exact source type and storage layout for boxed values";
+  let description = [{
+    A positive stable ID binds a boxed runtime value to its exact source
+    semantics and normalized element storage type. This is a typed descriptor,
+    not a source VPI object. Its semantic and physical DAGs use the ordinary
+    reflection image graphs. No source type may be inferred from the executable
+    element type ID. The declaration survives executable symbol optimization.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
+                       TypeAttr:$value_type,
+                       SimVPITypeSemanticsAttr:$vpi_type);
+  let assemblyFormat = "$sym_name `id` $id `:` $value_type attr-dict";
+  let hasVerifier = 1;
+}
+
 def SimVPITypespecDeclOp : SimOp<"vpi_typespec.decl", [
     Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemWrite<SimInventoryResource>]>
@@ -1704,6 +1723,24 @@ def SimBoxPackOp : SimOp<"box.pack", [Pure]> {
   let arguments = (ins SimDynamicArrayType:$input);
   let results = (outs SimBoxType:$result);
   let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+}
+
+def SimBoxBindTypeOp : SimOp<"box.bind_type", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "bind a boxed value's immutable exact source type descriptor";
+  let description = [{
+    The typed input is the one-element dynamic-array representation before
+    box.pack erases its element type. The descriptor's normalized value type
+    must match exactly. At runtime, the array must have one element and belong
+    to the executing context. A first binding is immutable; repeating the same
+    binding is permitted and a different binding is rejected. The operation
+    has an explicit heap write effect; box.pack remains a pure identity cast.
+  }];
+  let arguments = (ins SimDynamicArrayType:$input,
+                       FlatSymbolRefAttr:$descriptor);
+  let assemblyFormat = "$input `to` $descriptor attr-dict `:` type($input)";
 }
 
 def SimBoxCastOp : SimOp<"box.cast", [Pure]> {

@@ -2177,6 +2177,9 @@ ABI_FUNCTION(obelisk_rt_v1_semaphore_try_get,
                                    uint32_t *));
 ABI_FUNCTION(obelisk_rt_v1_container_size,
              uint64_t (*)(obelisk_rt_object_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_box_bind_type,
+             obelisk_rt_status (*)(obelisk_rt_context *, obelisk_rt_object_v1 *,
+                                   uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_box_is_type,
              uint32_t (*)(obelisk_rt_object_v1 *, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_container_read,

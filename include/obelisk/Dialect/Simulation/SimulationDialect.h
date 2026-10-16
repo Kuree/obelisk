@@ -696,6 +696,7 @@ using VpiCellInstance = ObeliskSimulationDialect::VpiCellInstanceAttrHelper;
 using VpiDefinitionName = ObeliskSimulationDialect::VpiDefinitionNameAttrHelper;
 using VpiIdentityDelegated =
     ObeliskSimulationDialect::VpiIdentityDelegatedAttrHelper;
+using VpiBoxType = ObeliskSimulationDialect::VpiBoxTypeAttrHelper;
 using VpiSourceTypeIdentity =
     ObeliskSimulationDialect::VpiSourceTypeIdentityAttrHelper;
 using VpiTop = ObeliskSimulationDialect::VpiTopAttrHelper;

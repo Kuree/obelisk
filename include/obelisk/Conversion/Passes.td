@@ -25,7 +25,9 @@ def ObeliskSimPreparePass
     Option<"pruneUnusedCoverage", "prune-unused-coverage", "bool", "true",
            "Prune unreferenced embedded covergroups before declaration materialization">,
     Option<"preserveVPIMethodBindings", "preserve-vpi-method-bindings", "bool", "true",
-           "Retain executable class method bindings for VPI reflection">
+           "Retain executable class method bindings for VPI reflection">,
+    Option<"preserveVPIBoxBindings", "preserve-vpi-box-bindings", "bool", "true",
+           "Retain exact untyped mailbox value type bindings for VPI reflection">
   ];
   let dependentDialects = [
     "obelisk::sim::ObeliskSimulationDialect",
