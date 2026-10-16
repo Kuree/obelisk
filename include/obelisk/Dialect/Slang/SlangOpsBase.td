@@ -152,6 +152,10 @@ class SlangParameterSymbolASTNodeOp<string mnemonic>
         OptionalAttr<UnitAttr>:$is_local_param,
         OptionalAttr<UnitAttr>:$has_explicit_range)>;
 
+class SlangTypeParameterSymbolASTNodeOp<string mnemonic>
+    : SlangSymbolASTNodeOp<mnemonic, [],
+        (ins OptionalAttr<UnitAttr>:$is_local_param)>;
+
 class SlangDirectedSymbolASTNodeOp<string mnemonic>
     : SlangSymbolASTNodeOp<mnemonic, [], (ins SlangArgumentDirection:$direction)>;
 

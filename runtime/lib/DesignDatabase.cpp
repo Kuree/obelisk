@@ -2657,11 +2657,12 @@ bool validateDatabaseImpl(const Database &database) {
     if (!packedObjectReferenceOffset(database, read32(binding), objectOffset))
       return false;
     uint32_t root = read32(binding + 4);
-    const auto *kind = obelisk::reflection::findVPIObjectKind(
-        objectReferenceVPIKind(database, objectOffset));
-    if (!kind || (kind->families &
-                  obelisk::reflection::vpiFamilyMask(
-                      obelisk::reflection::VPIObjectFamily::Typespec)) == 0)
+    // A type parameter is itself a typespec while unresolved (37.25), but
+    // its elaborated semantic root describes its effective type (37.28).
+    // Only concrete typespec declarations share their root's exact kind.
+    if (!obelisk::reflection::vpiObjectSetContains(
+            obelisk::reflection::VPIObjectSetID::ConcreteTypespecObjects,
+            objectReferenceVPIKind(database, objectOffset)))
       continue;
     uint32_t rootKind = (read32(database.data + database.semanticTypes +
                                 uint64_t{root} * kSemanticTypeSize) &
@@ -2768,8 +2769,14 @@ bool validateDatabaseImpl(const Database &database) {
                               uint64_t{canonicalRoot} * kSemanticTypeSize;
     if (owner != canonical->second && owner != read32(classType + 16))
       return false;
-    classMemberParents.insert((uint64_t{owner} << 32) | member);
     uint32_t kind = objectReferenceVPIKind(database, memberOffset);
+    const auto *scopeEdge = obelisk::reflection::findVPITraversal(
+        kind, static_cast<uint32_t>(obelisk::reflection::VPIRelationKind::ScopeRel),
+        obelisk::reflection::VPITraversalMode::Handle);
+    if (scopeEdge && obelisk::reflection::vpiObjectSetContains(
+                         scopeEdge->targets,
+                         objectReferenceVPIKind(database, ownerOffset)))
+      classMemberParents.insert((uint64_t{owner} << 32) | member);
     bool isStatic = (binding.getFlags() & 1) != 0;
     bool isMethod = (binding.getFlags() & 2) != 0;
     bool hasStorage = binding.getStorageIndexAndTable() != UINT32_MAX;
@@ -4237,9 +4244,18 @@ bool validateDatabaseImpl(const Database &database) {
         database.data + database.objects + uint64_t{index} * kObjectSize;
     const auto *access =
         obelisk::reflection::findVPIIndexedAccess(recordVPIKind(object));
+    // A typed class event array uses its field's physical array shape and
+    // receiver binding. Lexical event arrays instead own relation-index
+    // members; the two representations cannot describe the same object.
+    bool classEventArray =
+        recordVPIKind(object) == static_cast<uint32_t>(
+                                    obelisk::reflection::VPIObjectKind::
+                                        NamedEventArray) &&
+        boundClassFields.count(relationEndpoint(
+            obelisk::reflection::TableKind::Object, index)) != 0;
     bool requiresIndex =
         recordKind(object) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
-        access &&
+        !classEventArray && access &&
         access->accessKind ==
             obelisk::reflection::VPIIndexedAccessKind::RelationElement;
     if (requiresIndex != relationIndexedObjects[index])
@@ -4966,6 +4982,16 @@ obelisk_rt_status designInfo(const Database &database,
     outInfo->bit_width = read64(record + 56);
     outInfo->range_left = readI64(record + 64);
     outInfo->range_right = readI64(record + 72);
+  }
+  if (kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT) {
+    // Class-owned parameters use full records to retain their distinct
+    // lexical and specialization identities, with the same frozen value
+    // metadata as compact parameters and no executable storage type.
+    uint32_t packedSource = 0;
+    VPIFrozenValue frozen{};
+    if (packedObjectReferenceForCursor(database, cursor.offset, packedSource) &&
+        findFrozenValue(database, packedSource, frozen))
+      outInfo->bit_width = frozen.bitWidth;
   }
   return OBELISK_RT_OK;
 }
@@ -6373,7 +6399,9 @@ obelisk_rt_status obelisk_rt_cached_vpi_class_member(
     return OBELISK_RT_INVALID_DESIGN;
   outBinding->name = reinterpret_cast<const uint8_t *>(name.data());
   outBinding->nameSize = name.size();
-  if (obelisk_rt_cached_vpi_class_typespec(context, binding.getClassID(),
+  if (!packedObjectReferenceOffset(*database, binding.getOwnerIndexAndTable(),
+                                   outBinding->ownerScope.offset) ||
+      obelisk_rt_cached_vpi_class_typespec(context, binding.getClassID(),
                                           &outBinding->ownerTypespec) != OBELISK_RT_OK ||
       (binding.getStorageIndexAndTable() != UINT32_MAX &&
        !packedObjectReferenceOffset(*database, binding.getStorageIndexAndTable(),

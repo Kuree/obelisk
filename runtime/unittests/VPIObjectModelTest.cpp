@@ -871,6 +871,15 @@ TEST(VPIObjectModel, AutomaticRelationsAreExplicitStructuralEdges) {
   EXPECT_EQ(requireTraversal(vpiClassTypespec, vpiMethods, Mode::Iterate)
                 .automaticRelation,
             Automatic::DirectChild);
+  EXPECT_EQ(requireTraversal(vpiClassDefn, vpiParameter, Mode::Iterate)
+                .automaticRelation,
+            Automatic::DirectChild);
+  EXPECT_EQ(requireTraversal(vpiClassTypespec, vpiParameter, Mode::Iterate)
+                .automaticRelation,
+            Automatic::DirectChild);
+  EXPECT_EQ(requireTraversal(vpiPackage, vpiParameter, Mode::Iterate)
+                .automaticRelation,
+            Automatic::DirectChild);
   EXPECT_EQ(
       requireTraversal(vpiModule, vpiNet, Mode::Iterate).automaticRelation,
       Automatic::DirectChild);
@@ -3226,6 +3235,12 @@ TEST(VPIObjectModel, RootTraversalsHaveExactSpecialTargetsAndOrders) {
 // relationships.  These negative cases prevent a generic Scope/Array family
 // from leaking into a relation with a narrower LRM node.
 TEST(VPIObjectModel, InstanceScopeAndArrayRelationsDoNotLeak) {
+  for (uint32_t owner : {vpiModule, vpiPackage, vpiClassDefn,
+                         vpiClassTypespec, vpiClassObj, vpiPropertyDecl,
+                         vpiSequenceDecl})
+    expectContains(owner, vpiVariables, Mode::Iterate,
+                   {vpiIntVar, vpiRegArray, vpiVirtualInterfaceVar},
+                   {vpiNamedEvent, vpiNamedEventArray, vpiParameter});
   expectTargetsExactly(vpiModport, vpiInterface, Mode::Handle, {vpiInterface});
   expectTargetsExactly(vpiInterfaceTfDecl, vpiTask, Mode::Iterate, {vpiTask});
   expectTargetsExactly(vpiInterfaceTfDecl, vpiFunction, Mode::Iterate,

@@ -243,8 +243,10 @@ def AutomaticImageObjects : VPIObjectSet<"AutomaticImageObjects",
 def TaskFunctionCallObjects : VPIObjectSet<"TaskFunctionCallObjects",
   [FuncCall, TaskCall, SysFuncCall, SysTaskCall, MethodFuncCall,
    MethodTaskCall]>;
+// 37.10 and 37.12 expose parameters and named events through separate
+// relations from the data-variable inventory.
 def DataVariableObjects : VPIObjectSet<"DataVariableObjects", [],
-  [VariableFamily], [Parameter, SpecParam]>;
+  [VariableFamily], [Parameter, SpecParam, NamedEvent, NamedEventArray]>;
 def ValueParameterObjects : VPIObjectSet<"ValueParameterObjects",
   [Parameter, SpecParam]>;
 def PortObjects : VPIObjectSet<"PortObjects", [Port, PortBit]>;
@@ -994,7 +996,7 @@ def ValidProperty : VPIProperty<"vpiValid", 64, IntegerProperty,
 def LocalParamProperty : VPIProperty<"vpiLocalParam", 70, BooleanProperty,
   ReadParameterObjects, "37.28; 37.31; 37.85", StaticProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
-  FixedImageProperty, ReadValueParameterObjects>;
+  FixedImageProperty, ReadParameterObjects>;
 def ModPathHasIfNoneProperty : VPIProperty<"vpiModPathHasIfNone", 71,
   BooleanProperty, ReadModPathObjects, "37.39">;
 def IndexedPartSelectTypeProperty : VPIProperty<"vpiIndexedPartSelectType",
@@ -1101,7 +1103,7 @@ def IsFinalProperty : VPIProperty<"vpiIsFinal", 670, IntegerProperty,
 // image record. Runtime-created handles, executable processes, statements,
 // nets, and ordinary design storage use their dedicated representations.
 def StaticImageObjects : VPIObjectSet<"StaticImageObjects",
-  [Package, Parameter, ClassDefn, Task, Function, ClockingBlock, GenScope,
+  [Package, Parameter, TypeParameter, ClassDefn, Task, Function, ClockingBlock, GenScope,
    PropertyDecl,
    SequenceDecl, Gate, Switch, Udp, NamedEvent, ModuleArray, InterfaceArray,
    ProgramArray, GateArray, SwitchArray, UdpArray, NamedEventArray,
@@ -1377,9 +1379,11 @@ def InstanceNamedEventArrays : VPITraversalEdge<InstanceObjects,
   NamedEventArray, IterateMode, NamedEventArrayObjects, NoOrder, "37.10", 0,
   AutomaticDirectChild>;
 def InstanceParameters : VPITraversalEdge<InstanceObjects, Parameter,
-  IterateMode, ParameterIterationObjects, NoOrder, "37.10">;
+  IterateMode, ParameterIterationObjects, NoOrder, "37.10", 0,
+  AutomaticDirectChild>;
 def InstanceTypeParameters : VPITraversalEdge<InstanceObjects, TypeParameter,
-  IterateMode, TypeParameterObjects, NoOrder, "37.10">;
+  IterateMode, TypeParameterObjects, NoOrder, "37.10", 0,
+  AutomaticDirectChild>;
 def InstanceSpecParams : VPITraversalEdge<InstanceObjects, SpecParam,
   IterateMode, SpecParamObjects, NoOrder, "37.10">;
 def InstanceAssertions : VPITraversalEdge<InstanceObjects, AssertionRel,
@@ -1413,7 +1417,8 @@ def ScopeVirtualInterfaces : VPITraversalEdge<
   VirtualInterfaceVar, IterateMode, VirtualInterfaceObjects, NoOrder,
   "37.12">;
 def ScopeParameters : VPITraversalEdge<NonInstanceScopeObjects, Parameter,
-  IterateMode, ParameterIterationObjects, NoOrder, "37.12; 37.85">;
+  IterateMode, ParameterIterationObjects, NoOrder, "37.12; 37.85", 0,
+  AutomaticDirectChild>;
 def ScopeInternalScopes : VPITraversalEdge<ScopeWithoutModuleObjects,
   InternalScopeRel,
   IterateMode, ScopeObjects, NoOrder, "37.12; 37.85", 0,

@@ -1758,6 +1758,9 @@ struct VPIRelationRange {
 struct VPIClassMemberBinding {
   uint64_t classID = 0;
   uint64_t byteOffset = UINT64_MAX;
+  // Preserve the lexical ClassDefn or canonical specialization that owns this
+  // declaration separately from the runtime class's canonical specialization.
+  obelisk_rt_design_cursor_v1 ownerScope{};
   obelisk_rt_design_cursor_v1 ownerTypespec{};
   obelisk_rt_design_cursor_v1 backingStorage{};
   uint64_t staticEventID = UINT64_MAX;

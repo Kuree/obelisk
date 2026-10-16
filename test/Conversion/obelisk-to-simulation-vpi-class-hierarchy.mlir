@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0 early-symbol-dce=false' -o %t
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=vpi=read' -o %t
 // RUN: FileCheck %s < %t
 // RUN: FileCheck %s --check-prefix=COUNT < %t
 

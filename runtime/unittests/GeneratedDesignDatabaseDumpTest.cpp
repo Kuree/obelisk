@@ -16,6 +16,7 @@
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Parser/Parser.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/DataLayout.h"
 
 #include "sv_vpi_user.h"
@@ -2454,6 +2455,125 @@ TEST(GeneratedDesignDatabase, LiveClassObjectTypes) {
   obelisk_rt_v1_context_destroy(runtime);
 }
 
+TEST(GeneratedDesignDatabase, ClassParameters) {
+  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  ASSERT_NE(inputPath, nullptr);
+  mlir::DialectRegistry registry;
+  registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
+                  obelisk::sim::ObeliskSimulationDialect>();
+  mlir::MLIRContext context(registry);
+  auto module = mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
+  ASSERT_TRUE(module);
+  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
+  obelisk::SimulationBytecodeOptions options;
+  options.vpi = "read";
+  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  ASSERT_TRUE(mlir::succeeded(encoded));
+  uint64_t bytecodeChecksum = 0;
+  for (unsigned byte = 0; byte != 8; ++byte)
+    bytecodeChecksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
+  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+                                               encoded->executionFlags,
+                                               0,
+                                               encoded->bytecode.data(),
+                                               encoded->bytecode.size(),
+                                               encoded->designDatabase.data(),
+                                               encoded->designDatabase.size(),
+                                               encoded->stateBitCount,
+                                               bytecodeChecksum};
+  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+  obelisk_rt_context *runtime = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  char className[] = "C";
+  char aliasName[] = "$unit::word";
+  vpiHandle definition = vpi_handle_by_name(className, nullptr);
+  vpiHandle alias = vpi_handle_by_name(aliasName, nullptr);
+  ASSERT_NE(definition, nullptr);
+  ASSERT_NE(alias, nullptr);
+  vpiHandle types = vpi_iterate(vpiClassTypespec, definition);
+  ASSERT_NE(types, nullptr);
+  vpiHandle canonical = vpi_scan(types);
+  ASSERT_NE(canonical, nullptr);
+  EXPECT_EQ(vpi_scan(types), nullptr);
+  std::vector<vpiHandle> parameters;
+  for (vpiHandle owner : {definition, canonical}) {
+    vpiHandle iterator = vpi_iterate(vpiParameter, owner);
+    ASSERT_NE(iterator, nullptr);
+    vpiHandle value = vpi_scan(iterator);
+    vpiHandle type = vpi_scan(iterator);
+    ASSERT_NE(value, nullptr);
+    ASSERT_NE(type, nullptr);
+    EXPECT_EQ(vpi_scan(iterator), nullptr);
+    EXPECT_EQ(vpi_get(vpiType, value), vpiParameter);
+    EXPECT_EQ(vpi_get(vpiType, type), vpiTypeParameter);
+    EXPECT_STREQ(vpi_get_str(vpiName, value), "P");
+    EXPECT_STREQ(vpi_get_str(vpiName, type), "T");
+    EXPECT_STREQ(vpi_get_str(vpiFullName, type), "C::T");
+    EXPECT_EQ(vpi_get(vpiLocalParam, value), 1);
+    EXPECT_EQ(vpi_get(vpiLocalParam, type), 1);
+    s_vpi_value actual{};
+    actual.format = vpiIntVal;
+    vpi_get_value(value, &actual);
+    EXPECT_EQ(actual.value.integer, 7);
+    for (vpiHandle parameter : {value, type}) {
+      vpiHandle declared = vpi_handle(vpiTypespec, parameter);
+      ASSERT_NE(declared, nullptr);
+      EXPECT_EQ(vpi_compare_objects(declared, alias), 1);
+      EXPECT_EQ(vpi_free_object(declared), 1);
+      vpiHandle scope = vpi_handle(vpiScope, parameter);
+      ASSERT_NE(scope, nullptr);
+      EXPECT_EQ(vpi_compare_objects(scope, owner), 1);
+      EXPECT_EQ(vpi_free_object(scope), 1);
+      parameters.push_back(parameter);
+    }
+  }
+  EXPECT_EQ(vpi_compare_objects(parameters[0], parameters[2]), 0);
+  EXPECT_EQ(vpi_compare_objects(parameters[1], parameters[3]), 0);
+  char genericName[] = "G";
+  vpiHandle generic = vpi_handle_by_name(genericName, nullptr);
+  ASSERT_NE(generic, nullptr);
+  vpiHandle specializations = vpi_iterate(vpiClassTypespec, generic);
+  ASSERT_NE(specializations, nullptr);
+  std::vector<int> effectiveKinds;
+  while (vpiHandle specialization = vpi_scan(specializations)) {
+    vpiHandle iterator = vpi_iterate(vpiParameter, specialization);
+    ASSERT_NE(iterator, nullptr);
+    vpiHandle type = vpi_scan(iterator);
+    ASSERT_NE(type, nullptr);
+    EXPECT_EQ(vpi_scan(iterator), nullptr);
+    EXPECT_EQ(vpi_get(vpiType, type), vpiTypeParameter);
+    EXPECT_EQ(vpi_get(vpiLocalParam, type), 0);
+    EXPECT_STREQ(vpi_get_str(vpiName, type), "T");
+    vpiHandle declared = vpi_handle(vpiTypespec, type);
+    ASSERT_NE(declared, nullptr);
+    int effectiveKind = vpi_get(vpiType, declared);
+    effectiveKinds.push_back(effectiveKind);
+    EXPECT_STREQ(vpi_get_str(vpiFullName, type),
+                 effectiveKind == vpiIntTypespec ? "G#(int)::T"
+                                                 : "G#(bit)::T");
+    vpiHandle scope = vpi_handle(vpiScope, type);
+    ASSERT_NE(scope, nullptr);
+    EXPECT_EQ(vpi_compare_objects(scope, specialization), 1);
+    EXPECT_EQ(vpi_free_object(scope), 1);
+    EXPECT_EQ(vpi_free_object(declared), 1);
+    EXPECT_EQ(vpi_free_object(type), 1);
+    EXPECT_EQ(vpi_free_object(specialization), 1);
+  }
+  llvm::sort(effectiveKinds);
+  EXPECT_EQ(effectiveKinds, (std::vector<int>{vpiIntTypespec, vpiBitTypespec}));
+  EXPECT_EQ(vpi_free_object(generic), 1);
+  for (vpiHandle parameter : parameters)
+    EXPECT_EQ(vpi_free_object(parameter), 1);
+  EXPECT_EQ(vpi_free_object(alias), 1);
+  EXPECT_EQ(vpi_free_object(canonical), 1);
+  EXPECT_EQ(vpi_free_object(definition), 1);
+  obelisk_rt_v1_context_destroy(runtime);
+}
+
 TEST(GeneratedDesignDatabase, LiveClassMembers) {
   const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
   ASSERT_NE(inputPath, nullptr);
@@ -3056,6 +3176,355 @@ TEST(GeneratedDesignDatabase, InheritedClassMembers) {
     }
   for (vpiHandle handle :
        {methods.at("ping"), baseType, derivedType, variableHandle})
+    EXPECT_EQ(vpi_release_handle(handle), 1);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(runtime);
+}
+
+TEST(GeneratedDesignDatabase, ClassMemberArrays) {
+  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  ASSERT_NE(inputPath, nullptr);
+  mlir::DialectRegistry registry;
+  registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
+                  obelisk::sim::ObeliskSimulationDialect>();
+  mlir::MLIRContext context(registry);
+  auto module = mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
+  ASSERT_TRUE(module);
+  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
+  auto layouts = obelisk::analysis::ManagedClassLayoutAnalysis::compute(
+      design,
+      llvm::DataLayout((*module)
+                           ->getAttrOfType<mlir::StringAttr>("llvm.data_layout")
+                           .getValue()));
+  ASSERT_TRUE(mlir::succeeded(layouts));
+  obelisk::SimulationBytecodeOptions options;
+  options.vpi = "full";
+  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  ASSERT_TRUE(mlir::succeeded(encoded));
+  uint64_t checksum = 0;
+  for (unsigned byte = 0; byte != 8; ++byte)
+    checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
+  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+                                               encoded->executionFlags,
+                                               0,
+                                               encoded->bytecode.data(),
+                                               encoded->bytecode.size(),
+                                               encoded->designDatabase.data(),
+                                               encoded->designDatabase.size(),
+                                               encoded->stateBitCount,
+                                               checksum};
+  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+  obelisk_rt_context *runtime = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(runtime, &lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  const auto *layout = layouts->lookup(uint64_t{1});
+  ASSERT_NE(layout, nullptr);
+  std::unordered_map<std::string, uint64_t> offsets;
+  for (const auto &field : layout->fields) {
+    auto declaration = field.declaration;
+    offsets.emplace(declaration.getSymName().str(), field.offset);
+  }
+  obelisk_rt_class_descriptor_v1 descriptor{};
+  descriptor.version = OBELISK_RT_VERSION;
+  descriptor.class_id = 1;
+  descriptor.instance_size = layout->size;
+  descriptor.instance_alignment = layout->alignment;
+  ASSERT_EQ(obelisk_rt_v1_class_register(runtime, &descriptor), OBELISK_RT_OK);
+  obelisk_rt_object_v1 *object = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &descriptor, &object),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 root{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &object), OBELISK_RT_OK);
+  std::array<uint64_t, 9> eventIDs{};
+  for (auto &id : eventIDs)
+    ASSERT_EQ(obelisk_rt_v1_scheduler_event_create(runtime, &id),
+              OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_write(object, offsets.at("ready"),
+                                       eventIDs.data(), sizeof(uint64_t)),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_write(object, offsets.at("events"),
+                                       eventIDs.data() + 1,
+                                       4 * sizeof(uint64_t)),
+            OBELISK_RT_OK);
+  obelisk_rt_design_cursor_v1 canonicalCursor{};
+  ASSERT_EQ(obelisk_rt_cached_vpi_class_typespec(runtime, 1, &canonicalCursor),
+            OBELISK_RT_OK);
+  VPIRelationRange arrayRange{};
+  ASSERT_EQ(obelisk_rt_cached_vpi_relation_range(runtime, canonicalCursor,
+                                                 vpiNamedEventArray, true,
+                                                 &arrayRange),
+            OBELISK_RT_OK);
+  ASSERT_EQ(arrayRange.count, 2u);
+  obelisk_rt_design_cursor_v1 staticStorage{};
+  for (uint64_t index = 0; index != arrayRange.count; ++index) {
+    obelisk_rt_design_cursor_v1 member{};
+    uint32_t kind = 0;
+    bool statement = false;
+    ASSERT_EQ(obelisk_rt_cached_vpi_relation_target(runtime,
+                                                    arrayRange.first + index,
+                                                    &member, &kind, &statement),
+              OBELISK_RT_OK);
+    VPIClassMemberBinding binding{};
+    ASSERT_EQ(obelisk_rt_cached_vpi_class_member(runtime, member, &binding),
+              OBELISK_RT_OK);
+    if (binding.isStatic) {
+      staticStorage = binding.backingStorage;
+    } else {
+      EXPECT_EQ(binding.byteOffset, offsets.at("events"));
+    }
+  }
+  ASSERT_NE(staticStorage.offset, 0u);
+  ASSERT_EQ(obelisk_rt_v1_design_write(runtime, staticStorage,
+                                       eventIDs.data() + 5, nullptr, 256),
+            OBELISK_RT_OK);
+  char variableName[] = "top.obj";
+  obelisk_rt_design_cursor_v1 variable{};
+  ASSERT_EQ(obelisk_rt_cached_design_lookup(
+                runtime, reinterpret_cast<const uint8_t *>(variableName),
+                sizeof(variableName) - 1, &variable),
+            OBELISK_RT_OK);
+  uint64_t word = obelisk_rt_managed_word_from_object(object);
+  ASSERT_EQ(obelisk_rt_v1_design_write(runtime, variable, &word, nullptr, 64),
+            OBELISK_RT_OK);
+  vpiHandle variableHandle = vpi_handle_by_name(variableName, nullptr);
+  ASSERT_NE(variableHandle, nullptr);
+  vpiHandle objectHandle = vpi_handle(vpiClassObj, variableHandle);
+  vpiHandle canonical = vpi_handle(vpiClassTypespec, variableHandle);
+  ASSERT_NE(objectHandle, nullptr);
+  ASSERT_NE(canonical, nullptr);
+  auto inventory = [](PLI_INT32 selector, vpiHandle owner) {
+    std::unordered_map<std::string, vpiHandle> result;
+    vpiHandle iterator = vpi_iterate(selector, owner);
+    EXPECT_NE(iterator, nullptr);
+    if (!iterator)
+      return result;
+    while (vpiHandle member = vpi_scan(iterator)) {
+      const char *name = vpi_get_str(vpiName, member);
+      EXPECT_NE(name, nullptr);
+      if (name) {
+        EXPECT_TRUE(result.emplace(name, member).second);
+      }
+    }
+    return result;
+  };
+  auto integer = [](vpiHandle handle) {
+    s_vpi_value value{};
+    value.format = vpiIntVal;
+    vpi_get_value(handle, &value);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    return value.value.integer;
+  };
+  auto arrays = inventory(vpiNamedEventArray, objectHandle);
+  auto typeArrays = inventory(vpiNamedEventArray, canonical);
+  vpiHandle definition = vpi_handle(vpiClassDefn, canonical);
+  ASSERT_NE(definition, nullptr);
+  auto lexicalArrays = inventory(vpiNamedEventArray, definition);
+  auto events = inventory(vpiNamedEvent, objectHandle);
+  ASSERT_EQ(arrays.size(), 2u);
+  ASSERT_EQ(typeArrays.size(), 2u);
+  ASSERT_EQ(lexicalArrays.size(), 1u);
+  ASSERT_EQ(events.size(), 1u);
+  EXPECT_EQ(events.count("ready"), 1u);
+  EXPECT_EQ(vpi_iterate(vpiIndex, events.at("ready")), nullptr);
+  EXPECT_EQ(vpi_get(vpiAutomatic, events.at("ready")), 1);
+  EXPECT_EQ(vpi_get(vpiAutomatic, arrays.at("events")), 1);
+  EXPECT_EQ(vpi_get(vpiAutomatic, arrays.at("shared_events")), 0);
+  EXPECT_EQ(vpi_compare_objects(arrays.at("shared_events"),
+                                typeArrays.at("shared_events")),
+            1);
+  for (auto [owner, rootArray] :
+       {std::pair{objectHandle, arrays.at("events")},
+        std::pair{canonical, typeArrays.at("events")},
+        std::pair{canonical, arrays.at("shared_events")},
+        std::pair{definition, lexicalArrays.at("shared_events")}}) {
+    const char *rootName = vpi_get_str(vpiName, rootArray);
+    ASSERT_NE(rootName, nullptr);
+    const std::string prefix(rootName);
+    bool shared = prefix == "shared_events";
+    vpiHandle iterator = vpi_iterate(vpiNamedEvent, rootArray);
+    ASSERT_NE(iterator, nullptr);
+    std::vector<std::string> names;
+    while (vpiHandle event = vpi_scan(iterator)) {
+      EXPECT_EQ(vpi_get(vpiType, event), vpiNamedEvent);
+      const char *name = vpi_get_str(vpiName, event);
+      ASSERT_NE(name, nullptr);
+      names.emplace_back(name);
+      EXPECT_EQ(vpi_release_handle(event), 1);
+    }
+    EXPECT_EQ(names, (std::vector<std::string>{
+                         prefix + "[1][-1]", prefix + "[1][0]",
+                         prefix + "[0][-1]", prefix + "[0][0]"}));
+    PLI_INT32 indices[]{0, -1};
+    vpiHandle selected = vpi_handle_by_multi_index(rootArray, 2, indices);
+    ASSERT_NE(selected, nullptr);
+    EXPECT_EQ(vpi_get(vpiArrayMember, selected), 1);
+    EXPECT_EQ(vpi_get(vpiAutomatic, selected), shared ? 0 : 1);
+    vpiHandle parent = vpi_handle(vpiParent, selected);
+    ASSERT_NE(parent, nullptr);
+    EXPECT_EQ(vpi_compare_objects(parent, rootArray), 1);
+    EXPECT_EQ(vpi_release_handle(parent), 1);
+    vpiHandle scope = vpi_handle(vpiScope, selected);
+    ASSERT_NE(scope, nullptr);
+    EXPECT_EQ(vpi_compare_objects(scope, owner), 1);
+    EXPECT_EQ(vpi_release_handle(scope), 1);
+    vpiHandle indicesIterator = vpi_iterate(vpiIndex, selected);
+    ASSERT_NE(indicesIterator, nullptr);
+    for (int expected : {-1, 0}) {
+      vpiHandle index = vpi_scan(indicesIterator);
+      ASSERT_NE(index, nullptr);
+      EXPECT_EQ(integer(index), expected);
+      EXPECT_EQ(vpi_release_handle(index), 1);
+    }
+    EXPECT_EQ(vpi_scan(indicesIterator), nullptr);
+    vpiHandle ranges = vpi_iterate(vpiRange, rootArray);
+    ASSERT_NE(ranges, nullptr);
+    for (auto expected : {std::pair{1, 0}, std::pair{-1, 0}}) {
+      vpiHandle range = vpi_scan(ranges);
+      ASSERT_NE(range, nullptr);
+      vpiHandle left = vpi_handle(vpiLeftRange, range);
+      vpiHandle right = vpi_handle(vpiRightRange, range);
+      ASSERT_NE(left, nullptr);
+      ASSERT_NE(right, nullptr);
+      EXPECT_EQ(integer(left), expected.first);
+      EXPECT_EQ(integer(right), expected.second);
+      for (vpiHandle handle : {left, right, range})
+        EXPECT_EQ(vpi_release_handle(handle), 1);
+    }
+    EXPECT_EQ(vpi_scan(ranges), nullptr);
+    vpiHandle partial = vpi_handle_by_index(rootArray, 0);
+    ASSERT_NE(partial, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, partial), vpiNamedEventArray);
+    vpiHandle partialIterator = vpi_iterate(vpiNamedEvent, partial);
+    ASSERT_NE(partialIterator, nullptr);
+    for (const char *suffix : {"[0][-1]", "[0][0]"}) {
+      vpiHandle event = vpi_scan(partialIterator);
+      ASSERT_NE(event, nullptr);
+      EXPECT_STREQ(vpi_get_str(vpiName, event), (prefix + suffix).c_str());
+      EXPECT_EQ(vpi_release_handle(event), 1);
+    }
+    EXPECT_EQ(vpi_scan(partialIterator), nullptr);
+    vpiHandle leaf = vpi_handle_by_index(partial, -1);
+    ASSERT_NE(leaf, nullptr);
+    EXPECT_EQ(vpi_compare_objects(leaf, selected), 1);
+    for (vpiHandle handle : {partial, leaf, selected})
+      EXPECT_EQ(vpi_release_handle(handle), 1);
+  }
+  char eventPath[] = "top.obj.events[0][-1]";
+  vpiHandle selectedEvent = vpi_handle_by_name(eventPath, nullptr);
+  ASSERT_NE(selectedEvent, nullptr);
+  vpiHandle eventType = vpi_handle(vpiTypespec, selectedEvent);
+  ASSERT_NE(eventType, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, eventType), vpiEventTypespec);
+  PLI_INT32 selectedIndices[]{0, -1};
+  vpiHandle lexicalEvent = vpi_handle_by_multi_index(
+      lexicalArrays.at("shared_events"), 2, selectedIndices);
+  ASSERT_NE(lexicalEvent, nullptr);
+  s_vpi_value trigger{};
+  trigger.format = vpiSuppressVal;
+  EXPECT_EQ(vpi_put_value(lexicalEvent, &trigger, nullptr, vpiNoDelay),
+            nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+  vpiHandle staticEvent =
+      vpi_handle_by_multi_index(arrays.at("shared_events"), 2, selectedIndices);
+  ASSERT_NE(staticEvent, nullptr);
+  vpiHandle staticType = vpi_handle(vpiTypespec, staticEvent);
+  ASSERT_NE(staticType, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, staticType), vpiEventTypespec);
+
+  auto variables = inventory(vpiVariables, objectHandle);
+  auto typeVariables = inventory(vpiVariables, canonical);
+  ASSERT_EQ(variables.size(), 2u);
+  ASSERT_EQ(typeVariables.size(), 2u);
+  EXPECT_EQ(vpi_get(vpiType, variables.at("ports")), vpiArrayVar);
+  EXPECT_EQ(vpi_get(vpiType, variables.at("single_port")),
+            vpiVirtualInterfaceVar);
+  auto ports = inventory(vpiVirtualInterfaceVar, objectHandle);
+  auto typePorts = inventory(vpiVirtualInterfaceVar, canonical);
+  ASSERT_EQ(ports.size(), 5u);
+  ASSERT_EQ(typePorts.size(), 5u);
+  vpiHandle interfaceType =
+      vpi_handle(vpiTypespec, variables.at("single_port"));
+  ASSERT_NE(interfaceType, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, interfaceType), vpiInterfaceTypespec);
+  for (const char *name : {"single_port", "ports[2][-1]", "ports[2][0]",
+                           "ports[1][-1]", "ports[1][0]"}) {
+    ASSERT_EQ(ports.count(name), 1u);
+    ASSERT_EQ(typePorts.count(name), 1u);
+    EXPECT_EQ(vpi_get(vpiType, ports.at(name)), vpiVirtualInterfaceVar);
+    EXPECT_EQ(vpi_get(vpiArrayMember, ports.at(name)),
+              std::string_view(name) != "single_port");
+    vpiHandle type = vpi_handle(vpiTypespec, ports.at(name));
+    ASSERT_NE(type, nullptr);
+    EXPECT_EQ(vpi_compare_objects(type, interfaceType), 1);
+    EXPECT_EQ(vpi_release_handle(type), 1);
+    vpiHandle scope = vpi_handle(vpiScope, ports.at(name));
+    ASSERT_NE(scope, nullptr);
+    EXPECT_EQ(vpi_compare_objects(scope, objectHandle), 1);
+    EXPECT_EQ(vpi_release_handle(scope), 1);
+    std::string path = "top.obj." + std::string(name);
+    vpiHandle named = vpi_handle_by_name(path.data(), nullptr);
+    ASSERT_NE(named, nullptr);
+    EXPECT_EQ(vpi_compare_objects(named, ports.at(name)), 1);
+    EXPECT_EQ(vpi_release_handle(named), 1);
+  }
+  EXPECT_EQ(
+      vpi_compare_objects(ports.at("ports[2][-1]"), ports.at("ports[2][0]")),
+      0);
+  vpiHandle pendingEvents = vpi_iterate(vpiNamedEvent, arrays.at("events"));
+  vpiHandle pendingPorts = vpi_iterate(vpiVirtualInterfaceVar, objectHandle);
+  ASSERT_NE(pendingEvents, nullptr);
+  ASSERT_NE(pendingPorts, nullptr);
+  bool enteredArray = false;
+  while (vpiHandle port = vpi_scan(pendingPorts)) {
+    const char *name = vpi_get_str(vpiName, port);
+    ASSERT_NE(name, nullptr);
+    enteredArray = std::string_view(name).substr(0, 6) == "ports[";
+    EXPECT_EQ(vpi_release_handle(port), 1);
+    if (enteredArray)
+      break;
+  }
+  ASSERT_TRUE(enteredArray);
+  vpiHandle use = vpi_handle(vpiUse, pendingPorts);
+  ASSERT_NE(use, nullptr);
+  EXPECT_EQ(vpi_compare_objects(use, objectHandle), 1);
+  word = 0;
+  ASSERT_EQ(obelisk_rt_v1_design_write(runtime, variable, &word, nullptr, 64),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  for (vpiHandle stale :
+       {selectedEvent, arrays.at("events"), ports.at("ports[2][-1]"), use}) {
+    EXPECT_EQ(vpi_get(vpiType, stale), vpiUndefined);
+    EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  }
+  for (vpiHandle iterator : {pendingEvents, pendingPorts}) {
+    EXPECT_EQ(vpi_scan(iterator), nullptr);
+    EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  }
+  EXPECT_EQ(vpi_get(vpiType, staticEvent), vpiNamedEvent);
+  EXPECT_EQ(vpi_get(vpiType, lexicalEvent), vpiNamedEvent);
+  EXPECT_EQ(vpi_put_value(lexicalEvent, &trigger, nullptr, vpiNoDelay),
+            nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+  EXPECT_EQ(vpi_get(vpiType, arrays.at("shared_events")), vpiNamedEventArray);
+  EXPECT_EQ(vpi_get(vpiType, eventType), vpiEventTypespec);
+  EXPECT_EQ(vpi_get(vpiType, interfaceType), vpiInterfaceTypespec);
+  for (auto *handles :
+       {&typeArrays, &lexicalArrays, &typeVariables, &typePorts})
+    for (auto [name, handle] : *handles) {
+      EXPECT_NE(vpi_get(vpiType, handle), vpiUndefined);
+      EXPECT_EQ(vpi_release_handle(handle), 1);
+    }
+  for (vpiHandle handle :
+       {arrays.at("shared_events"), staticEvent, staticType, lexicalEvent,
+        definition, eventType, interfaceType, canonical, variableHandle})
     EXPECT_EQ(vpi_release_handle(handle), 1);
   ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);

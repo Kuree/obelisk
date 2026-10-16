@@ -151,6 +151,10 @@ class ObeliskParameterSymbolASTNodeOp<string mnemonic>
         OptionalAttr<UnitAttr>:$is_local_param,
         OptionalAttr<UnitAttr>:$has_explicit_range)>;
 
+class ObeliskTypeParameterSymbolASTNodeOp<string mnemonic>
+    : ObeliskSymbolASTNodeOp<mnemonic, [],
+        (ins OptionalAttr<UnitAttr>:$is_local_param)>;
+
 class ObeliskDirectedSymbolASTNodeOp<string mnemonic>
     : ObeliskSymbolASTNodeOp<mnemonic, [],
         (ins ObeliskSVArgumentDirection:$direction)>;

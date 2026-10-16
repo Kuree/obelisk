@@ -650,6 +650,7 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
   case Kind::Udp:
   case Kind::NamedEvent:
   case Kind::Parameter:
+  case Kind::TypeParameter:
   case Kind::Assert:
   case Kind::Assume:
   case Kind::Cover:
@@ -708,7 +709,10 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
     return emitOpError("interconnect-net anchor requires a net backing");
   const bool hasVPIType = static_cast<bool>(getVpiTypeAttr());
   const bool hasImmutableValue = static_cast<bool>(getImmutableValueAttr());
-  if (hasVPIType != hasImmutableValue)
+  if (anchorKind == Kind::TypeParameter && (!hasVPIType || hasImmutableValue))
+    return emitOpError(
+        "type parameter requires a source type and no immutable value");
+  if (anchorKind != Kind::TypeParameter && hasVPIType != hasImmutableValue)
     return emitOpError(
         "immutable source type and value must be present together");
   if (getHasExplicitParameterRangeAttr() && anchorKind != Kind::Parameter)
@@ -913,6 +917,7 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
           isDeclarationScope(parentKind) || parentKind == Kind::ClockingBlock;
       break;
     case Kind::Parameter:
+    case Kind::TypeParameter:
       legal = isDeclarationScope(parentKind);
       break;
     case Kind::ClockingBlock:
@@ -3663,6 +3668,8 @@ LogicalResult SimDesignOp::verifyRegions() {
       semantic = specialization.getEffectiveTypeAttr();
     else if (auto member = dyn_cast<SimVPIClassMemberDeclOp>(op))
       semantic = member.getVpiType();
+    else if (auto anchor = dyn_cast<SimVPIObjectAnchorOp>(op))
+      semantic = anchor.getVpiTypeAttr();
     if (!semantic)
       continue;
     if (failed(verifyTypeReferences(&op, semantic)))

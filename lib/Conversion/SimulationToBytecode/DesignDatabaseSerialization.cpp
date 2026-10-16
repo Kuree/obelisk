@@ -1954,6 +1954,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       if (*indexedOrdinal)
         lexicalOrdinal = **indexedOrdinal;
       if (lexicalEdge &&
+          lexicalEdge->automaticRelation != VPIAutomaticRelation::DirectChild &&
           vpiObjectSetContains(lexicalEdge->targets, target.vpiKind) &&
           failed(addRelation(parent, source.table, source.index,
                              source.vpiKind, lexicalSelector,
@@ -2170,51 +2171,53 @@ SmallVector<uint8_t> serializeDesignDatabase(
         return {};
     }
 
-    for (auto [sourceIndex, object] : llvm::enumerate(objects)) {
+    auto addDeclaredTypespec = [&](Operation *identity,
+                                   ImageObjectRef source) -> LogicalResult {
       sim::VPITypeSemanticsAttr semantic;
       if (auto storage =
-              dyn_cast_if_present<sim::SimStorageDeclOp>(object.identity))
+              dyn_cast_if_present<sim::SimStorageDeclOp>(identity))
         semantic = storage.getVpiTypeAttr();
       else if (auto net =
-                   dyn_cast_if_present<sim::SimNetDeclOp>(object.identity))
+                   dyn_cast_if_present<sim::SimNetDeclOp>(identity))
         semantic = net.getVpiTypeAttr();
-      else if (auto identity =
+      else if (auto netIdentity =
                    dyn_cast_if_present<sim::SimVPINetIdentityDeclOp>(
-                       object.identity))
-        semantic = identity.getVpiTypeAttr();
+                       identity))
+        semantic = netIdentity.getVpiTypeAttr();
       else if (auto port =
-                   dyn_cast_if_present<sim::SimPortDeclOp>(object.identity))
+                   dyn_cast_if_present<sim::SimPortDeclOp>(identity))
         semantic = port.getVpiTypeAttr();
       else if (auto nettype = dyn_cast_if_present<sim::SimVPINettypeDeclOp>(
-                   object.identity))
+                   identity))
         semantic = nettype.getTargetType();
       else if (auto member = dyn_cast_if_present<sim::SimVPIClassMemberDeclOp>(
-                   object.identity))
+                   identity))
         semantic = member.getVpiType();
+      else if (auto anchor = dyn_cast_if_present<sim::SimVPIObjectAnchorOp>(
+                   identity))
+        semantic = anchor.getVpiTypeAttr();
       if (!semantic)
-        continue;
+        return success();
       FlatSymbolRefAttr declaredNettype;
-      if (auto net = dyn_cast_if_present<sim::SimNetDeclOp>(object.identity))
+      if (auto net = dyn_cast_if_present<sim::SimNetDeclOp>(identity))
         declaredNettype = net.getNettypeAttr();
-      else if (auto identity =
+      else if (auto netIdentity =
                    dyn_cast_if_present<sim::SimVPINetIdentityDeclOp>(
-                       object.identity))
-        declaredNettype = identity.getNettypeAttr();
+                       identity))
+        declaredNettype = netIdentity.getNettypeAttr();
       if (declaredNettype) {
         auto target = nettypesBySymbol.find(declaredNettype.getValue());
         if (target == nettypesBySymbol.end()) {
-          object.identity->emitError("VPI nettype target was not serialized");
-          return {};
+          return identity->emitError("VPI nettype target was not serialized");
         }
         ImageObjectRef targetRef = nettypeRefs.lookup(target->second);
-        if (failed(addRelation(object.identity, TableKind::Object,
-                               static_cast<uint32_t>(sourceIndex),
-                               object.vpiKind,
+        if (failed(addRelation(identity, source.table, source.index,
+                               source.vpiKind,
                                static_cast<uint32_t>(VPIObjectKind::Typespec),
                                VPITraversalMode::Handle, targetRef.table,
                                targetRef.index, targetRef.vpiKind)))
-          return {};
-        continue;
+          return failure();
+        return success();
       }
       SymbolRefAttr reference;
       if (ArrayAttr aliases = semantic.getTypedefAliases();
@@ -2227,36 +2230,42 @@ SmallVector<uint8_t> serializeDesignDatabase(
         auto target =
             typespecsBySymbol.find(reference.getRootReference().getValue());
         if (target == typespecsBySymbol.end()) {
-          object.identity->emitError("VPI typespec target was not preserved");
-          return {};
+          return identity->emitError("VPI typespec target was not preserved");
         }
         targetTypespec = target->second;
       } else if (semantic.getKind() == sim::VPITypeKind::Enum) {
-        auto identity =
-            sim::get<sim::metadata::VpiSourceTypeIdentity>(object.identity);
-        if (!identity) {
-          object.identity->emitError(
+        auto sourceTypeIdentity =
+            sim::get<sim::metadata::VpiSourceTypeIdentity>(identity);
+        if (!sourceTypeIdentity) {
+          return identity->emitError(
               "anonymous enum VPI value has no source type identity");
-          return {};
         }
         targetTypespec = anonymousTypespecsByIdentity.lookup(
-            identity.getValue().getZExtValue());
+            sourceTypeIdentity.getValue().getZExtValue());
         if (!targetTypespec) {
-          object.identity->emitError(
+          return identity->emitError(
               "anonymous enum VPI value has no matching typespec identity");
-          return {};
         }
       }
       if (!targetTypespec)
-        continue;
+        return success();
       ImageObjectRef targetRef = typespecRefs.lookup(targetTypespec);
-      if (failed(addRelation(object.identity, TableKind::Object,
-                             static_cast<uint32_t>(sourceIndex), object.vpiKind,
+      return addRelation(identity, source.table, source.index, source.vpiKind,
                              static_cast<uint32_t>(VPIObjectKind::Typespec),
                              VPITraversalMode::Handle, targetRef.table,
-                             targetRef.index, targetRef.vpiKind)))
+                             targetRef.index, targetRef.vpiKind);
+    };
+    for (auto [index, object] : llvm::enumerate(objects))
+      if (failed(addDeclaredTypespec(
+              object.identity, {TableKind::Object, static_cast<uint32_t>(index),
+                                object.vpiKind})))
         return {};
-    }
+    for (auto [index, object] : llvm::enumerate(staticObjects))
+      if (failed(addDeclaredTypespec(
+              object.identity,
+              {TableKind::StaticObject, static_cast<uint32_t>(index),
+               object.vpiKind})))
+        return {};
   }
 
   auto memberOwnerRef = [&](FlatSymbolRefAttr owner) -> ImageObjectRef {
@@ -2345,7 +2354,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
                              memberOrdinals[{packedOwner, selector}]++)))
         return {};
     }
-    if (failed(addRelation(member, target.table, target.index, target.vpiKind,
+    const auto *scopeEdge = findVPITraversal(
+        target.vpiKind, static_cast<uint32_t>(VPIRelationKind::ScopeRel),
+        VPITraversalMode::Handle);
+    if (scopeEdge && vpiObjectSetContains(scopeEdge->targets, source.vpiKind) &&
+        failed(addRelation(member, target.table, target.index, target.vpiKind,
                            static_cast<uint32_t>(VPIRelationKind::ScopeRel),
                            VPITraversalMode::Handle, source.table, source.index,
                            source.vpiKind)))

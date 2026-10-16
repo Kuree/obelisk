@@ -364,6 +364,8 @@ def SimVPIObjectAnchorOp : SimOp<"vpi_object.anchor", [
     `primitive_input_count` preserves the IEEE 37.33 vpiSize value for scalar
     primitive anchors. `vpi_type` and `immutable_value` preserve the exact
     source type and elaborated value of static-only objects such as parameters.
+    Type parameters retain only `vpi_type`; their resolved data type is not a
+    value and does not allocate immutable value storage.
     `has_explicit_parameter_range` records whether a value parameter directly
     declared a packed range, rather than inheriting one from a built-in or
     typedef type. These attributes remain reflection metadata and never

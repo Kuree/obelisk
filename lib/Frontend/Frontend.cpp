@@ -3540,10 +3540,13 @@ private:
                   builder.getStringAttr(formatConstant(*folded)));
     }
 
-    if constexpr (std::same_as<T, slang::ast::ParameterSymbol>) {
+    if constexpr (std::same_as<T, slang::ast::ParameterSymbol> ||
+                  std::same_as<T, slang::ast::TypeParameterSymbol>) {
       if (node.isLocalParam())
         SET_OP_ATTR(IsLocalParam, builder.getUnitAttr());
+    }
 
+    if constexpr (std::same_as<T, slang::ast::ParameterSymbol>) {
       // IEEE 1800-2023 37.28 distinguishes a directly declared packed range
       // from the resolved range of a built-in or typedef type. Inspect only
       // dimensions written on this declaration; resolved dimensions would
