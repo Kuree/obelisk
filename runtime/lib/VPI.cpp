@@ -734,6 +734,21 @@ uint32_t semanticTypespecKind(VPIState *state,
   return info.public_vpi_kind;
 }
 
+// A terminal packed selection and the element of a direct bit/logic vector
+// have an unsigned one-bit type. This is a view of the immutable type graph;
+// the enclosing integer, enum, aggregate, and typedef identities do not become
+// identities of the selected bit.
+void projectScalarBitTypespec(obelisk_rt_design_semantic_type_info_v1 &info) {
+  const bool fourState =
+      (info.flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0;
+  info = {};
+  info.kind = fourState ? OBELISK_RT_DESIGN_SEMANTIC_LOGIC
+                        : OBELISK_RT_DESIGN_SEMANTIC_BIT;
+  info.flags = fourState ? OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE : 0;
+  info.public_vpi_kind = fourState ? vpiLogicTypespec : vpiBitTypespec;
+  info.bit_width = 1;
+}
+
 vpiHandle makeTypespecHandle(VPIState *state, obelisk_rt_design_cursor_v1 base,
                              obelisk_rt_design_cursor_v1 semanticCursor,
                              bool honorAlias = true,
@@ -742,6 +757,10 @@ vpiHandle makeTypespecHandle(VPIState *state, obelisk_rt_design_cursor_v1 base,
   if (!state || obelisk_rt_cached_design_semantic_type_info(
                     state->context, semanticCursor, &info) != OBELISK_RT_OK)
     return nullptr;
+  if (suppressDimension) {
+    projectScalarBitTypespec(info);
+    honorAlias = false;
+  }
   if (honorAlias && info.alias_object.offset != 0) {
     uint32_t exactType = 0;
     if (obelisk_rt_cached_vpi_type(state->context, info.alias_object,
@@ -770,7 +789,7 @@ vpiHandle makeTypespecHandle(VPIState *state, obelisk_rt_design_cursor_v1 base,
     if (status != OBELISK_RT_EOF)
       return nullptr;
   }
-  uint32_t exactType = semanticTypespecKind(state, semanticCursor);
+  uint32_t exactType = info.public_vpi_kind;
   if (exactType == 0)
     return nullptr;
   bool isProtected = false;
@@ -1829,8 +1848,12 @@ bool semanticCursorFor(__vpiHandle *handle,
 bool semanticTypeInfo(__vpiHandle *handle, obelisk_rt_design_cursor_v1 cursor,
                       obelisk_rt_design_semantic_type_info_v1 &info) {
   if (obelisk_rt_cached_design_semantic_type_info(
-          handle->owner->context, cursor, &info) == OBELISK_RT_OK)
+          handle->owner->context, cursor, &info) == OBELISK_RT_OK) {
+    if (handle->suppressSemanticDimension &&
+        cursor.offset == handle->semanticCursor.offset)
+      projectScalarBitTypespec(info);
     return true;
+  }
   setError(handle->owner, "VPI semantic type metadata lookup failed",
            vpiInternal);
   return false;
@@ -3216,8 +3239,9 @@ vpiHandle makeSemanticRelation(__vpiHandle *handle, PLI_INT32 selector) {
       return nullptr;
     // 37.32 detail 1: a class variable outside a lexical class definition
     // denotes its specialization, even when declared through a typedef.
-    bool honorAlias = sourceType != vpiClassVar ||
-                      handle->classDefinitionOrigin;
+    bool honorAlias =
+        !handle->suppressSemanticDimension &&
+        (sourceType != vpiClassVar || handle->classDefinitionOrigin);
     uint32_t targetType = info.public_vpi_kind;
     if ((honorAlias && info.alias_object.offset != 0) ||
         (info.kind == OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE &&
