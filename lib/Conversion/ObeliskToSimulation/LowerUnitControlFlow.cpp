@@ -809,6 +809,12 @@ UnitLowering::lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op) {
           << "automatic variable declaration has no frozen binding type";
       return failure();
     }
+    // An uninitialized event denotes a fresh synchronization object each time
+    // the automatic declaration executes (IEEE 1800-2023 6.17). Reusing the
+    // entry-block default would alias separate loop/block activations.
+    if (children.empty() && isa<sim::EventType>(initial.getType()))
+      initial =
+          sim::SimEventCreateOp::create(builder, location, initial.getType());
     if (!children.empty() && !aggregateMemberInitializers) {
       FailureOr<Value> lowered = lowerExpression(children.front());
       if (failed(lowered))

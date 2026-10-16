@@ -380,8 +380,12 @@ UnitLowering::UnitLowering(sim::SimFuncOp function,
     // says `event alias = source` aliases `source`; creating another event as
     // an unused placeholder would consume a synchronization object that the
     // declaration never denotes.
+    // Automatic declarations allocate their event at the declaration on each
+    // block entry. This entry-block value carries only the initial type.
     Value initial =
-        isa<sim::EventType>(type) && explicitlyInitializedLocals.contains(path)
+        isa<sim::EventType>(type) &&
+                (explicitlyInitializedLocals.contains(path) ||
+                 (localBinding.getAutomatic() && !localBinding.getIsReturn()))
             ? sim::SimEventNullOp::create(builder, function.getLoc(), type)
                   .getResult()
             : createDefaultValue(builder, function.getLoc(), type);
