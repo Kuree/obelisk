@@ -301,8 +301,13 @@ source class types, with exact `vpiClassDefn`, `vpiExtends`, and transitive
 `vpiParamAssign` objects whose `vpiRhs` shares the corresponding declaration's
 original default; missing defaults remain absent and unsupported defaults
 report a notice. These lexical types never appear in the specialization
-inventory. Explicit class actuals and constructor arguments retain unavailable
-source evidence and report a notice until their expression forms are supported.
+inventory. Named and ordered class actuals retain exact formal identities and
+`vpiConnByName`. Supported explicit RHS forms include integral literals, pure
+operators, conditional expressions, direct derived-class parameter references,
+and independent primitive types. Named empty actuals and omitted formals share
+the original declared default. Unsupported RHS forms retain their own notice
+without hiding the other assignments. Constructor arguments retain unavailable
+source evidence until their expression forms are supported.
 Dependent or imported base names without exact source proof keep an Extends
 occurrence and report a notice for the unresolved base type. Lexical class types
 do not expose specialization member inventories. Their parameter iteration

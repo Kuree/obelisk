@@ -36,7 +36,7 @@ module {
 
 module {
   obelisk.sv.symbol.generic_class_def @g attributes {name = "G", hierarchical_name = "G", node_id = 1 : i64, is_interface = false, specialization_count = 0 : i64} {
-    // expected-error @+1 {{source extends cannot carry an effective type or body}}
+    // expected-error @+1 {{source extends cannot carry an effective type}}
     obelisk.sv.source.class_extends attributes {node_id = 2 : i64, unavailable_base = "T", semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {}
   }
 }

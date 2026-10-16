@@ -2680,7 +2680,9 @@ constexpr uint32_t lexicalInheritanceFlags =
     OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_BASE |
     OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CONSTRUCTOR_ARGUMENTS |
     OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETERS |
-    OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT;
+    OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT |
+    OBELISK_RT_DESIGN_CAP_EXPLICIT_CLASS_PARAMETER_ASSIGNMENT |
+    OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETER_RHS;
 
 bool validateLexicalInheritance(
     const Database &database,
@@ -2719,6 +2721,16 @@ bool validateLexicalInheritance(
                ? database.scopes +
                      uint64_t{read32(database.data + offset + 8)} * kScopeSize
                : read64(database.data + offset + 16);
+  };
+  auto isUnnamed = [&](uint32_t packed) {
+    uint64_t offset = offsetFor(packed);
+    if (!offset)
+      return false;
+    uint64_t name = isStaticObjectOffset(database, offset)
+                        ? database.strings + read32(database.data + offset + 16)
+                        : read64(database.data + offset + 40);
+    std::string_view value;
+    return getString(database, name, value) && value.empty();
   };
   auto handle = [&](uint32_t packed, uint32_t selector) {
     auto table = unpackTableIndexKind(packed);
@@ -2788,9 +2800,16 @@ bool validateLexicalInheritance(
         return false;
       types.insert(packed);
     } else if (caps &
-               OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT) {
-      if (kind != static_cast<uint32_t>(Kind::ParamAssign) ||
-          caps != OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT)
+               (OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT |
+                OBELISK_RT_DESIGN_CAP_EXPLICIT_CLASS_PARAMETER_ASSIGNMENT)) {
+      bool originalDefault =
+          caps & OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT;
+      uint32_t allowed =
+          originalDefault
+              ? OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT
+              : OBELISK_RT_DESIGN_CAP_EXPLICIT_CLASS_PARAMETER_ASSIGNMENT |
+                    OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETER_RHS;
+      if (kind != static_cast<uint32_t>(Kind::ParamAssign) || (caps & ~allowed))
         return false;
       assignments.insert(packed);
     } else if (kind != static_cast<uint32_t>(Kind::Extends) ||
@@ -2806,7 +2825,7 @@ bool validateLexicalInheritance(
         database.data + database.fixedProperties + index * kFixedPropertySize;
     uint32_t source = read32(property);
     if ((types.count(source) && read16(property + 4) != 2) ||
-        assignments.count(source) ||
+        (assignments.count(source) && read16(property + 4) != 21) ||
         (capsFor(source) &
          (OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_BASE |
           OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CONSTRUCTOR_ARGUMENTS)))
@@ -2881,6 +2900,7 @@ bool validateLexicalInheritance(
         !iterate(clause, static_cast<uint32_t>(Rel::ArgumentRel)).empty())
       return false;
   }
+  std::unordered_map<uint32_t, uint32_t> actualTypeOwners;
   for (uint32_t type : types) {
     uint32_t owner = handle(type, static_cast<uint32_t>(Rel::ScopeRel));
     uint32_t definition = handle(type, static_cast<uint32_t>(Kind::ClassDefn));
@@ -2914,10 +2934,47 @@ bool validateLexicalInheritance(
             handle(actuals[index], static_cast<uint32_t>(Rel::ScopeRel)) !=
                 type ||
             handle(actuals[index], static_cast<uint32_t>(Rel::LhsRel)) !=
-                formals[index] ||
-            handle(actuals[index], static_cast<uint32_t>(Rel::RhsRel)) !=
-                handle(formals[index], static_cast<uint32_t>(Rel::ExprRel)))
+                formals[index])
           return false;
+        uint32_t actual = actuals[index];
+        uint32_t rhs = handle(actual, static_cast<uint32_t>(Rel::RhsRel));
+        uint32_t caps = capsFor(actual);
+        if (caps & OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT) {
+          if (rhs !=
+              handle(formals[index], static_cast<uint32_t>(Rel::ExprRel)))
+            return false;
+          continue;
+        }
+        if (caps & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETER_RHS) {
+          if (rhs != missing)
+            return false;
+          continue;
+        }
+        if (rhs == missing)
+          return false;
+        bool typeActual = kindFor(formals[index]) ==
+                          static_cast<uint32_t>(Kind::TypeParameter);
+        uint32_t rhsKind = kindFor(rhs);
+        if (rhsKind == static_cast<uint32_t>(typeActual ? Kind::TypeParameter
+                                                        : Kind::Parameter)) {
+          auto derivedParameters =
+              iterate(owner, static_cast<uint32_t>(Kind::Parameter));
+          if (std::find(derivedParameters.begin(), derivedParameters.end(),
+                        rhs) == derivedParameters.end() ||
+              isLocalParameter(rhs))
+            return false;
+        } else if (typeActual) {
+          if (!vpiObjectSetContains(VPIObjectSetID::ConcreteTypespecObjects,
+                                    rhsKind) ||
+              (capsFor(rhs) & OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) ||
+              !isUnnamed(rhs) || scopeFor(rhs) != scopeFor(actual) ||
+              !actualTypeOwners.emplace(rhs, actual).second)
+            return false;
+        } else if ((rhsKind != static_cast<uint32_t>(Kind::Constant) &&
+                    rhsKind != static_cast<uint32_t>(Kind::Operation)) ||
+                   scopeFor(rhs) != scopeFor(actual)) {
+          return false;
+        }
       }
     }
     uint32_t inheritedClause =
@@ -2935,6 +2992,29 @@ bool validateLexicalInheritance(
       if (!seen.insert(cursor).second)
         return false;
       cursor = handle(cursor, static_cast<uint32_t>(Rel::ExtendsRel));
+    }
+  }
+  for (uint64_t index = 0; index != database.relationCount; ++index) {
+    auto relation = relationAt(database, index);
+    auto owner = actualTypeOwners.find(relation.getTargetIndexAndTable());
+    if (owner == actualTypeOwners.end())
+      continue;
+    uint32_t source = relationEndpoint(
+        unpackRelationSourceTable(relation.getSourceKindAndTable()),
+        relation.getSourceIndex());
+    bool reverseEnum =
+        !relationSourceIsIterate(relation.getSourceKindAndTable()) &&
+        relation.getSelector() == static_cast<uint32_t>(Kind::EnumTypespec) &&
+        kindFor(source) == static_cast<uint32_t>(Kind::EnumConst);
+    if (reverseEnum) {
+      auto members =
+          iterate(owner->first, static_cast<uint32_t>(Kind::EnumConst));
+      if (std::find(members.begin(), members.end(), source) == members.end())
+        return false;
+    } else if (source != owner->second ||
+               relationSourceIsIterate(relation.getSourceKindAndTable()) ||
+               relation.getSelector() != static_cast<uint32_t>(Rel::RhsRel)) {
+      return false;
     }
   }
   return assignmentOwners.size() == assignments.size();
@@ -3061,7 +3141,9 @@ bool validateDatabaseImpl(const Database &database) {
         kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
         (intrinsicKind == static_cast<uint32_t>(VPIKind::Extends) ||
          (intrinsicKind == static_cast<uint32_t>(VPIKind::ParamAssign) &&
-          (caps & OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT)));
+          (caps &
+           (OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT |
+            OBELISK_RT_DESIGN_CAP_EXPLICIT_CLASS_PARAMETER_ASSIGNMENT))));
     if (!getString(database, nameOffset, name) ||
         (sourceExpression
              ? !name.empty()
@@ -6267,6 +6349,8 @@ bool validateDatabaseImpl(const Database &database) {
   std::unordered_map<uint32_t, uint64_t> unresolvedParameterParents;
   std::unordered_map<uint32_t, uint32_t> expressionParents;
   std::unordered_map<uint32_t, uint32_t> expressionOperandCounts;
+  std::unordered_set<uint32_t> explicitClassAssignments;
+  std::unordered_map<uint32_t, uint32_t> actualScopes, lexicalClassScopes;
   std::vector<std::pair<uint32_t, uint32_t>> expressionReferences;
   std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>>
       parameterPositions;
@@ -6714,6 +6798,23 @@ bool validateDatabaseImpl(const Database &database) {
     bool targetExpression = sourceExpressionObjects.count(packedTarget) != 0;
     using Kind = obelisk::reflection::VPIObjectKind;
     using Relation = obelisk::reflection::VPIRelationKind;
+    bool explicitClassAssignment =
+        sourceKind == static_cast<uint32_t>(Kind::ParamAssign) &&
+        sourceTable == obelisk::reflection::TableKind::Object &&
+        recordKind(sourceRecord) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+        (read32(sourceRecord + 4) &
+         OBELISK_RT_DESIGN_CAP_EXPLICIT_CLASS_PARAMETER_ASSIGNMENT);
+    if (explicitClassAssignment) {
+      explicitClassAssignments.insert(sourceEndpoint);
+      if (!iterate && selector == static_cast<uint32_t>(Relation::ScopeRel))
+        actualScopes.emplace(sourceEndpoint, packedTarget);
+    }
+    if (!iterate && selector == static_cast<uint32_t>(Relation::ScopeRel) &&
+        sourceKind == static_cast<uint32_t>(Kind::ClassTypespec) &&
+        sourceTable == obelisk::reflection::TableKind::Object &&
+        (read32(sourceRecord + 4) &
+         OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC))
+      lexicalClassScopes.emplace(sourceEndpoint, packedTarget);
     bool sharedClassDefault =
         !iterate && selector == static_cast<uint32_t>(Relation::RhsRel) &&
         sourceKind == static_cast<uint32_t>(Kind::ParamAssign) &&
@@ -6729,8 +6830,17 @@ bool validateDatabaseImpl(const Database &database) {
                      selector == static_cast<uint32_t>(Relation::OperandRel) &&
                      sourceExpression &&
                      sourceKind == static_cast<uint32_t>(Kind::Operation);
-      if ((!defaultRoot && !operand) ||
+      bool actualRoot = !iterate && explicitClassAssignment &&
+                        selector == static_cast<uint32_t>(Relation::RhsRel);
+      if ((!defaultRoot && !operand && !actualRoot) ||
           !expressionParents.emplace(packedTarget, sourceEndpoint).second)
+        return false;
+      uint64_t ownerScope =
+          sourceTable == obelisk::reflection::TableKind::StaticObject
+              ? database.scopes +
+                    uint64_t{read32(sourceRecord + 8)} * kScopeSize
+              : read64(sourceRecord + 16);
+      if (read64(target + 16) != ownerScope)
         return false;
     }
     bool parameterLeaf = targetKind == static_cast<uint32_t>(Kind::Parameter);
@@ -7073,7 +7183,8 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
       cursor = parent->second;
       if (sourceExpressionObjects.count(cursor) == 0) {
-        if (parameterPositions.count(cursor) == 0)
+        if (parameterPositions.count(cursor) == 0 &&
+            explicitClassAssignments.count(cursor) == 0)
           return false;
         root = cursor;
         break;
@@ -7093,6 +7204,25 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t root = known == expressionRoots.end() ? source : known->second;
     auto declaration = parameterPositions.find(root);
     auto target = parameterPositions.find(reference);
+    if (explicitClassAssignments.count(root)) {
+      auto actualScope = actualScopes.find(root);
+      auto lexicalScope = actualScope == actualScopes.end()
+                              ? lexicalClassScopes.end()
+                              : lexicalClassScopes.find(actualScope->second);
+      if (lexicalScope == lexicalClassScopes.end() ||
+          target == parameterPositions.end() ||
+          target->second.first != lexicalScope->second ||
+          namedParameters.count(reference) == 0)
+        return false;
+      for (uint64_t index = 0; index != database.fixedPropertyCount; ++index) {
+        const uint8_t *property = database.data + database.fixedProperties +
+                                  index * kFixedPropertySize;
+        if (read32(property) == reference && read16(property + 4) == 70 &&
+            read64(property + 8))
+          return false;
+      }
+      continue;
+    }
     if (declaration == parameterPositions.end() ||
         target == parameterPositions.end() ||
         declaration->second.first != target->second.first ||

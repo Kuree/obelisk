@@ -1133,6 +1133,24 @@ def SourceClassExtendsOp
   let hasVerifier = 1;
 }
 
+def SourceClassParameterActualOp
+    : SlangASTNodeOp<"sv.source.class_parameter_actual",
+                     [DeclareOpInterfaceMethods<SymbolUserOpInterface>],
+                     (ins SymbolRefAttr:$parameter,
+                         OptionalAttr<UnitAttr>:$is_named,
+                         OptionalAttr<UnitAttr>:$use_default,
+                         OptionalAttr<StrAttr>:$unavailable_rhs)> {
+  let summary = "an exact lexical class parameter connection";
+  let description = [{
+    The parameter is the exact nonlocal declaration of the referenced base.
+    A supported explicit value or type is its single child. A named empty
+    connection carries use_default and no child, preserving the original
+    declaration default. An unsupported expression retains unavailable_rhs
+    instead, without an effective value or type.
+  }];
+  let hasVerifier = 1;
+}
+
 def SourceClassConstraintSymbolOp
     : SlangSymbolASTNodeOp<"sv.source.class_constraint", [], (ins
         OptionalAttr<UnitAttr>:$is_static,

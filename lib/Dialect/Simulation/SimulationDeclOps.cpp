@@ -1076,7 +1076,8 @@ static Operation *lookupVPILexicalOwner(Operation *from,
                                         FlatSymbolRefAttr reference,
                                         SymbolTableCollection &symbolTable) {
   Operation *owner = symbolTable.lookupNearestSymbolFrom(from, reference);
-  if (isa_and_nonnull<SimVPIObjectAnchorOp>(owner))
+  if (isa_and_nonnull<SimVPIObjectAnchorOp, SimVPIClassParameterAssignDeclOp>(
+          owner))
     return owner;
   auto typespec = dyn_cast_or_null<SimVPITypespecDeclOp>(owner);
   return typespec && (typespec.getOrigin() ==
@@ -1089,12 +1090,16 @@ static Operation *lookupVPILexicalOwner(Operation *from,
 static uint32_t getVPILexicalOwnerKind(Operation *owner) {
   if (auto anchor = dyn_cast<SimVPIObjectAnchorOp>(owner))
     return anchor.getVpiKind();
-  return static_cast<uint32_t>(reflection::VPIObjectKind::ClassTypespec);
+  return static_cast<uint32_t>(isa<SimVPIClassParameterAssignDeclOp>(owner)
+                                   ? reflection::VPIObjectKind::ParamAssign
+                                   : reflection::VPIObjectKind::ClassTypespec);
 }
 
 static uint64_t getVPILexicalOwnerScope(Operation *owner) {
   if (auto anchor = dyn_cast<SimVPIObjectAnchorOp>(owner))
     return anchor.getEnclosingScopeId();
+  if (auto assignment = dyn_cast<SimVPIClassParameterAssignDeclOp>(owner))
+    return assignment.getScopeId();
   return cast<SimVPITypespecDeclOp>(owner).getScopeId();
 }
 
@@ -1108,6 +1113,9 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     using Kind = reflection::VPIObjectKind;
     Kind childKind = static_cast<Kind>(getVpiKind());
     Kind parentKind = static_cast<Kind>(getVPILexicalOwnerKind(owner));
+    if ((childKind == Kind::Constant || childKind == Kind::Operation) &&
+        getEnclosingScopeId() != getVPILexicalOwnerScope(owner))
+      return emitOpError("source expression scope must match its exact owner");
     if (getUnresolvedValueParameterAttr() && parentKind != Kind::ClassDefn)
       return emitOpError("unresolved value parameter requires a lexical class "
                          "definition owner");
@@ -1164,7 +1172,8 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     switch (childKind) {
     case Kind::Constant:
     case Kind::Operation:
-      legal = parentKind == Kind::Parameter || parentKind == Kind::Operation;
+      legal = parentKind == Kind::Parameter || parentKind == Kind::Operation ||
+              parentKind == Kind::ParamAssign;
       break;
     case Kind::Module:
     case Kind::Interface:
@@ -1448,6 +1457,11 @@ SimVPIClassExtendsDeclOp::verifySymbolUses(SymbolTableCollection &symbols) {
 LogicalResult SimVPIClassParameterAssignDeclOp::verify() {
   if (failed(verifySourceClassInventory(*this, getIdAttr(), getScopeIdAttr())))
     return failure();
+  if (failed(verifySourceClassSyntax(*this, getUnavailableRhsAttr())))
+    return failure();
+  if (getRhsAttr() && getUnavailableRhsAttr())
+    return emitOpError(
+        "explicit RHS and unavailable RHS are mutually exclusive");
   return verifyNonnegative(*this, getOrdinalAttr(),
                            "parameter assignment ordinal");
 }
@@ -1460,7 +1474,7 @@ LogicalResult SimVPIClassParameterAssignDeclOp::verifySymbolUses(
   if (!owner || owner.getScopeId() != getScopeId() ||
       owner.getUnavailableParametersAttr())
     return emitOpError(
-        "owner must be a lexical class type with default actuals "
+        "owner must be a lexical class type with known formal assignments "
         "in the same scope");
   auto parameter = symbols.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
       *this, getParameterAttr());
@@ -1479,6 +1493,47 @@ LogicalResult SimVPIClassParameterAssignDeclOp::verifySymbolUses(
         return emitOpError(
             "local parameter cannot have a class actual assignment");
     }
+  if (auto rhs = getRhsAttr()) {
+    Operation *target = symbols.lookupNearestSymbolFrom(*this, rhs);
+    auto anchor = dyn_cast_or_null<SimVPIObjectAnchorOp>(target);
+    bool typeParameter =
+        parameter.getVpiKind() == static_cast<uint32_t>(Kind::TypeParameter);
+    if (auto concrete = dyn_cast_or_null<SimVPITypespecDeclOp>(target)) {
+      if (!typeParameter ||
+          concrete.getOrigin() != VPITypespecOrigin::SourceDefault ||
+          concrete.getOwnerAttr() != FlatSymbolRefAttr::get(getSymNameAttr()) ||
+          concrete.getScopeId() != getScopeId())
+        return emitOpError(
+            "type actual must preserve its exact owned source typespec");
+    } else if (anchor &&
+               anchor.getVpiKind() ==
+                   static_cast<uint32_t>(typeParameter ? Kind::TypeParameter
+                                                       : Kind::Parameter)) {
+      if (anchor.getParentAttr() != owner.getOwnerAttr())
+        return emitOpError(
+            "actual reference must name a parameter in the derived class");
+      if (auto properties = reflectionProperties(anchor))
+        for (Attribute attribute : properties.getProperties()) {
+          auto property = cast<VPIPropertyAttr>(attribute);
+          if (property.getSelector().getValue().getZExtValue() == 70 &&
+              cast<BoolAttr>(property.getValue()).getValue())
+            return emitOpError(
+                "actual reference cannot name a body local parameter");
+        }
+    } else if (!typeParameter && anchor &&
+               (anchor.getVpiKind() == static_cast<uint32_t>(Kind::Constant) ||
+                anchor.getVpiKind() ==
+                    static_cast<uint32_t>(Kind::Operation)) &&
+               anchor.getParentAttr() ==
+                   FlatSymbolRefAttr::get(getSymNameAttr()) &&
+               anchor.getOwnerOrdinal() == 0 &&
+               anchor.getEnclosingScopeId() == getScopeId()) {
+      // The design-level expression proof validates the entire occurrence tree.
+    } else {
+      return emitOpError(
+          "explicit RHS must match the exact formal parameter kind");
+    }
+  }
   return success();
 }
 
@@ -1877,12 +1932,24 @@ SimVPITypespecDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError("typespec must be owned by a VPI anchor");
   if (getVPILexicalOwnerScope(owner) != getScopeId())
     return emitOpError("scope ID does not match the owner anchor");
+  if (isa<SimVPIClassParameterAssignDeclOp>(owner) &&
+      getOrigin() != VPITypespecOrigin::SourceDefault)
+    return emitOpError("class actual owner requires source-default origin");
   if (getOrigin() == VPITypespecOrigin::SourceDefault) {
     auto parameter = dyn_cast<SimVPIObjectAnchorOp>(owner);
+    auto assignment = dyn_cast<SimVPIClassParameterAssignDeclOp>(owner);
+    if (assignment) {
+      parameter = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+          assignment, assignment.getParameterAttr());
+      if (assignment.getRhsAttr() != FlatSymbolRefAttr::get(getSymNameAttr()))
+        return emitOpError(
+            "source actual typespec must be its owner's exact RHS");
+    }
     if (!parameter ||
         parameter.getVpiKind() !=
             static_cast<uint32_t>(reflection::VPIObjectKind::TypeParameter))
-      return emitOpError("source default requires a type parameter owner");
+      return emitOpError(
+          "source default requires a type parameter or type actual owner");
   }
   if (getOrigin() == VPITypespecOrigin::ClassSpecialization) {
     if (getVPILexicalOwnerKind(owner) !=
@@ -4378,13 +4445,13 @@ LogicalResult SimDesignOp::verifyRegions() {
       return left.getOrdinal() < right.getOrdinal();
     });
     if (assignments.size() != formals.size())
-      return type.emitOpError("default actual assignments must cover every "
+      return type.emitOpError("class actual assignments must cover every "
                               "non-local base parameter");
     for (auto [ordinal, assignment] : llvm::enumerate(assignments))
       if (assignment.getOrdinal() != ordinal ||
           assignment.getParameterAttr() !=
               FlatSymbolRefAttr::get(formals[ordinal].getSymNameAttr()))
-        return assignment.emitOpError("default assignments must preserve dense "
+        return assignment.emitOpError("class assignments must preserve dense "
                                       "parameter declaration order");
   }
 
@@ -5471,18 +5538,26 @@ LogicalResult SimDesignOp::verifyRegions() {
     expressionOutgoing[relation.sourceIdentity].push_back(&relation);
     expressionIncoming[relation.targetIdentity].push_back(&relation);
   }
-  auto parameterRoot =
-      [&](SimVPIObjectAnchorOp anchor) -> SimVPIObjectAnchorOp {
+  auto expressionRoot = [&](SimVPIObjectAnchorOp anchor) -> Operation * {
     SmallPtrSet<Operation *, 8> ancestry;
-    while (anchor &&
-           anchor.getVpiKind() !=
-               static_cast<uint32_t>(reflection::VPIObjectKind::Parameter)) {
-      if (!ancestry.insert(anchor).second || !anchor.getParentAttr())
-        return {};
-      anchor = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
-          anchor, anchor.getParentAttr());
+    Operation *cursor = anchor;
+    while (cursor) {
+      if (!ancestry.insert(cursor).second)
+        return nullptr;
+      if (isa<SimVPIClassParameterAssignDeclOp>(cursor))
+        return cursor;
+      auto declaration = dyn_cast<SimVPIObjectAnchorOp>(cursor);
+      if (!declaration)
+        return nullptr;
+      if (declaration.getVpiKind() ==
+          static_cast<uint32_t>(reflection::VPIObjectKind::Parameter))
+        return declaration;
+      cursor = declaration.getParentAttr()
+                   ? symbolTable.lookupNearestSymbolFrom(
+                         declaration, declaration.getParentAttr())
+                   : nullptr;
     }
-    return anchor;
+    return nullptr;
   };
   for (SimVPIObjectAnchorOp anchor : vpiAnchors) {
     using Kind = reflection::VPIObjectKind;
@@ -5491,32 +5566,44 @@ LogicalResult SimDesignOp::verifyRegions() {
     if (!expression && kind != Kind::Parameter)
       continue;
     uint64_t identity = declarationIds.lookup(anchor);
-    auto root = parameterRoot(anchor);
+    Operation *root = expressionRoot(anchor);
     if (!root)
-      return anchor.emitOpError(
-          "source expression requires an acyclic parameter default root");
+      return anchor.emitOpError("source expression requires an acyclic "
+                                "parameter default or class actual root");
     if (expression) {
-      auto parent = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
-          anchor, anchor.getParentAttr());
-      if (!parent)
-        return anchor.emitOpError("source expression requires an anchor owner");
-      bool operand =
-          parent.getVpiKind() == static_cast<uint32_t>(Kind::Operation);
-      uint32_t selector = static_cast<uint32_t>(
-          operand ? reflection::VPIRelationKind::OperandRel
-                  : reflection::VPIRelationKind::ExprRel);
-      uint32_t mode = static_cast<uint32_t>(operand ? VPIRelationMode::Iterate
-                                                    : VPIRelationMode::Handle);
+      Operation *parent =
+          symbolTable.lookupNearestSymbolFrom(anchor, anchor.getParentAttr());
       auto incoming = expressionIncoming.lookup(identity);
-      if (incoming.size() != 1)
-        return anchor.emitOpError("source expression requires one owning "
-                                  "default or operand relation");
-      auto &edge = *incoming.front();
-      if (edge.sourceIdentity != declarationIds.lookup(parent) ||
-          edge.selector != selector || edge.mode != mode ||
-          (!operand && edge.ordinal != anchor.getOwnerOrdinal()))
-        return edge.relation.emitOpError(
-            "source expression relation disagrees with exact ownership");
+      if (auto assignment =
+              dyn_cast_or_null<SimVPIClassParameterAssignDeclOp>(parent)) {
+        if (assignment.getRhsAttr() !=
+                FlatSymbolRefAttr::get(anchor.getSymNameAttr()) ||
+            !incoming.empty() || anchor.getOwnerOrdinal() != 0 ||
+            anchor.getEnclosingScopeId() != assignment.getScopeId())
+          return anchor.emitOpError(
+              "source actual requires its exact owning RHS relation");
+      } else {
+        auto owner = dyn_cast_or_null<SimVPIObjectAnchorOp>(parent);
+        if (!owner)
+          return anchor.emitOpError(
+              "source expression requires an anchor or class actual owner");
+        bool operand =
+            owner.getVpiKind() == static_cast<uint32_t>(Kind::Operation);
+        uint32_t selector = static_cast<uint32_t>(
+            operand ? reflection::VPIRelationKind::OperandRel
+                    : reflection::VPIRelationKind::ExprRel);
+        uint32_t mode = static_cast<uint32_t>(
+            operand ? VPIRelationMode::Iterate : VPIRelationMode::Handle);
+        if (incoming.size() != 1)
+          return anchor.emitOpError("source expression requires one owning "
+                                    "default or operand relation");
+        auto &edge = *incoming.front();
+        if (edge.sourceIdentity != declarationIds.lookup(parent) ||
+            edge.selector != selector || edge.mode != mode ||
+            (!operand && edge.ordinal != anchor.getOwnerOrdinal()))
+          return edge.relation.emitOpError(
+              "source expression relation disagrees with exact ownership");
+      }
     }
     unsigned operands = 0;
     uint64_t ownedOrdinal = 0;
@@ -5542,12 +5629,32 @@ LogicalResult SimDesignOp::verifyRegions() {
         return relation.emitOpError(
             "original value expression requires an exact anchor target");
       if (target.getVpiKind() == static_cast<uint32_t>(Kind::Parameter)) {
-        if (target.getParentAttr() != root.getParentAttr() ||
-            target.getOwnerOrdinal() >= root.getOwnerOrdinal() ||
-            target.getDebugName().empty())
-          return relation.emitOpError(
-              "source reference requires an exact preceding parameter in the "
-              "same declaration scope");
+        if (auto parameter = dyn_cast<SimVPIObjectAnchorOp>(root)) {
+          if (target.getParentAttr() != parameter.getParentAttr() ||
+              target.getOwnerOrdinal() >= parameter.getOwnerOrdinal() ||
+              target.getDebugName().empty())
+            return relation.emitOpError(
+                "source reference requires an exact preceding parameter in the "
+                "same declaration scope");
+        } else {
+          auto assignment = cast<SimVPIClassParameterAssignDeclOp>(root);
+          auto type =
+              symbolTable
+                  .lookupNearestSymbolFrom<SimVPILexicalClassTypespecDeclOp>(
+                      assignment, assignment.getOwnerAttr());
+          if (!type || target.getParentAttr() != type.getOwnerAttr() ||
+              target.getDebugName().empty())
+            return relation.emitOpError(
+                "class actual reference must name an exact derived parameter");
+          if (auto properties = reflectionProperties(target))
+            for (Attribute attribute : properties.getProperties()) {
+              auto property = cast<VPIPropertyAttr>(attribute);
+              if (property.getSelector().getValue().getZExtValue() == 70 &&
+                  cast<BoolAttr>(property.getValue()).getValue())
+                return relation.emitOpError("class actual reference cannot "
+                                            "name a body local parameter");
+            }
+        }
       } else if ((target.getVpiKind() !=
                       static_cast<uint32_t>(Kind::Constant) &&
                   target.getVpiKind() !=
@@ -5803,6 +5910,9 @@ LogicalResult SimDesignOp::verifyRegions() {
       FlatSymbolRefAttr parent;
       if (auto object = dyn_cast<SimVPIObjectAnchorOp>(cursor))
         parent = object.getParentAttr();
+      else if (isa<SimVPIClassParameterAssignDeclOp>(cursor))
+        break; // Its lexical type owner has a separate acyclic inheritance
+               // proof.
       else
         parent = cast<SimVPITypespecDeclOp>(cursor).getOwnerAttr();
       cursor = parent ? lookupVPILexicalOwner(cursor, parent, symbolTable)

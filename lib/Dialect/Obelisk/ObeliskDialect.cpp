@@ -675,9 +675,9 @@ LogicalResult SVSourceUnavailableTypeOp::verify() {
 }
 
 LogicalResult SVSourceClassExtendsOp::verify() {
-  return sourceclass::verifyExtends<SVGenericClassDefSymbolOp,
-                                    SVSourceClassDefinitionSymbolOp,
-                                    SVClassTypeOp>(*this);
+  return sourceclass::verifyExtends<
+      SVGenericClassDefSymbolOp, SVSourceClassDefinitionSymbolOp, SVClassTypeOp,
+      SVSourceClassParameterActualOp>(*this);
 }
 
 LogicalResult
@@ -685,6 +685,23 @@ SVSourceClassExtendsOp::verifySymbolUses(SymbolTableCollection &symbols) {
   return sourceclass::verifyExtendsReference<SVGenericClassDefSymbolOp,
                                              SVSourceClassDefinitionSymbolOp,
                                              SVClassTypeOp>(*this, symbols);
+}
+
+LogicalResult SVSourceClassParameterActualOp::verify() {
+  return sourceclass::verifyParameterActual<
+      SVSourceClassExtendsOp, SVSourceTypeDefaultOp,
+      SVSourceTypeReferenceDefaultOp, SVSourceUnaryExpressionOp,
+      SVSourceBinaryExpressionOp, SVSourceConditionalExpressionOp,
+      SVSourceParameterReferenceOp, SVIntegerLiteralOp>(*this);
+}
+
+LogicalResult SVSourceClassParameterActualOp::verifySymbolUses(
+    SymbolTableCollection &symbols) {
+  return sourceclass::verifyParameterActualReference<
+      SVSourceClassExtendsOp, SVSourceValueParameterSymbolOp,
+      SVParameterSymbolOp, SVSourceTypeParameterSymbolOp,
+      SVTypeParameterSymbolOp, SVSourceTypeDefaultOp,
+      SVSourceTypeReferenceDefaultOp>(*this, symbols);
 }
 
 LogicalResult SVSourceClassConstraintSymbolOp::verify() {
@@ -741,16 +758,18 @@ LogicalResult SVSourceValueDefaultOp::verify() {
 
 LogicalResult SVSourceParameterReferenceOp::verify() {
   return sourceparameter::verifyValueExpression<
-      SVSourceValueDefaultOp, SVSourceUnaryExpressionOp,
-      SVSourceBinaryExpressionOp, SVSourceConditionalExpressionOp,
-      SVSourceParameterReferenceOp, SVIntegerLiteralOp>(*this, 0);
+      SVSourceValueDefaultOp, SVSourceClassParameterActualOp,
+      SVSourceUnaryExpressionOp, SVSourceBinaryExpressionOp,
+      SVSourceConditionalExpressionOp, SVSourceParameterReferenceOp,
+      SVIntegerLiteralOp>(*this, 0);
 }
 
 LogicalResult
 SVSourceParameterReferenceOp::verifySymbolUses(SymbolTableCollection &symbols) {
   return sourceparameter::verifyValueReference<SVSourceValueParameterSymbolOp,
-                                               SVParameterSymbolOp>(*this,
-                                                                    symbols);
+                                               SVParameterSymbolOp,
+                                               SVSourceClassParameterActualOp>(
+      *this, symbols);
 }
 
 LogicalResult SVSourceUnaryExpressionOp::verify() {
@@ -764,9 +783,10 @@ LogicalResult SVSourceUnaryExpressionOp::verify() {
     break;
   }
   return sourceparameter::verifyValueExpression<
-      SVSourceValueDefaultOp, SVSourceUnaryExpressionOp,
-      SVSourceBinaryExpressionOp, SVSourceConditionalExpressionOp,
-      SVSourceParameterReferenceOp, SVIntegerLiteralOp>(*this, 1);
+      SVSourceValueDefaultOp, SVSourceClassParameterActualOp,
+      SVSourceUnaryExpressionOp, SVSourceBinaryExpressionOp,
+      SVSourceConditionalExpressionOp, SVSourceParameterReferenceOp,
+      SVIntegerLiteralOp>(*this, 1);
 }
 
 LogicalResult SVSourceBinaryExpressionOp::verify() {
@@ -774,16 +794,18 @@ LogicalResult SVSourceBinaryExpressionOp::verify() {
     return emitOpError(
         "original default operator has no VPI expression encoding");
   return sourceparameter::verifyValueExpression<
-      SVSourceValueDefaultOp, SVSourceUnaryExpressionOp,
-      SVSourceBinaryExpressionOp, SVSourceConditionalExpressionOp,
-      SVSourceParameterReferenceOp, SVIntegerLiteralOp>(*this, 2);
+      SVSourceValueDefaultOp, SVSourceClassParameterActualOp,
+      SVSourceUnaryExpressionOp, SVSourceBinaryExpressionOp,
+      SVSourceConditionalExpressionOp, SVSourceParameterReferenceOp,
+      SVIntegerLiteralOp>(*this, 2);
 }
 
 LogicalResult SVSourceConditionalExpressionOp::verify() {
   return sourceparameter::verifyValueExpression<
-      SVSourceValueDefaultOp, SVSourceUnaryExpressionOp,
-      SVSourceBinaryExpressionOp, SVSourceConditionalExpressionOp,
-      SVSourceParameterReferenceOp, SVIntegerLiteralOp>(*this, 3);
+      SVSourceValueDefaultOp, SVSourceClassParameterActualOp,
+      SVSourceUnaryExpressionOp, SVSourceBinaryExpressionOp,
+      SVSourceConditionalExpressionOp, SVSourceParameterReferenceOp,
+      SVIntegerLiteralOp>(*this, 3);
 }
 
 LogicalResult SVSourceTypeDefaultOp::verify() {
@@ -792,9 +814,9 @@ LogicalResult SVSourceTypeDefaultOp::verify() {
              SVSourceTypeReferenceDefaultOp, SVSourceUnsupportedDefaultOp>(
           *this)))
     return failure();
-  if (failed(
-          sourceparameter::verifyDefaultOwner<SVSourceTypeParameterSymbolOp,
-                                              SVTypeParameterSymbolOp>(*this)))
+  if (failed(sourceparameter::verifyDefaultOwner<
+             SVSourceTypeParameterSymbolOp, SVTypeParameterSymbolOp,
+             SVSourceClassParameterActualOp>(*this)))
     return failure();
   bool unresolved = false;
   getSemanticType().walk([&](Type type) {
@@ -816,12 +838,15 @@ LogicalResult SVSourceTypeReferenceDefaultOp::verify() {
   if ((*this)->hasAttr("semantic_type"))
     return emitOpError("unbound source default cannot carry an effective type");
   return sourceparameter::verifyDefaultOwner<SVSourceTypeParameterSymbolOp,
-                                             SVTypeParameterSymbolOp>(*this);
+                                             SVTypeParameterSymbolOp,
+                                             SVSourceClassParameterActualOp>(
+      *this);
 }
 
 LogicalResult SVSourceTypeReferenceDefaultOp::verifySymbolUses(
     SymbolTableCollection &symbols) {
-  return sourceparameter::verifyTypeReference<SVSourceTypeParameterSymbolOp,
+  return sourceparameter::verifyTypeReference<SVSourceClassParameterActualOp,
+                                              SVSourceTypeParameterSymbolOp,
                                               SVTypeParameterSymbolOp>(*this,
                                                                        symbols);
 }

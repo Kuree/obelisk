@@ -68,11 +68,26 @@ mlir::LogicalResult verifyDefaultOwner(Default op) {
   return mlir::success();
 }
 
-template <typename... Parameters, typename Reference>
+inline bool isLocalParameter(mlir::Operation *parameter) {
+  auto local = parameter->getAttr("is_local_param");
+  return mlir::isa_and_nonnull<mlir::UnitAttr>(local) ||
+         (mlir::isa_and_nonnull<mlir::BoolAttr>(local) &&
+          mlir::cast<mlir::BoolAttr>(local).getValue());
+}
+
+template <typename Actual, typename... Parameters, typename Reference>
 mlir::LogicalResult verifyTypeReference(Reference op,
                                         mlir::SymbolTableCollection &symbols) {
   auto *owner = op->getParentOp();
   auto *target = symbols.lookupNearestSymbolFrom(op, op.getParameterAttr());
+  if (mlir::isa_and_nonnull<Actual>(owner)) {
+    if (!mlir::isa_and_nonnull<Parameters...>(target) ||
+        target->getParentOp() != owner->getParentOp()->getParentOp() ||
+        isLocalParameter(target))
+      return op.emitOpError("class actual type reference must name a type "
+                            "parameter in the enclosing class header");
+    return mlir::success();
+  }
   if (!mlir::isa_and_nonnull<Parameters...>(owner) ||
       !mlir::isa_and_nonnull<Parameters...>(target) ||
       target->getParentOp() != owner->getParentOp())
@@ -114,13 +129,14 @@ mlir::LogicalResult verifyValueParameter(Parameter op) {
   return mlir::success();
 }
 
-template <typename Root, typename Unary, typename Binary, typename Conditional,
-          typename Reference, typename Literal, typename Expression>
+template <typename Root, typename Actual, typename Unary, typename Binary,
+          typename Conditional, typename Reference, typename Literal,
+          typename Expression>
 mlir::LogicalResult verifyValueExpression(Expression op, unsigned operands) {
   if (op->hasAttr("semantic_type"))
     return op.emitOpError(
         "unbound source expression cannot carry an effective type");
-  if (!mlir::isa_and_nonnull<Root, Unary, Binary, Conditional>(
+  if (!mlir::isa_and_nonnull<Root, Actual, Unary, Binary, Conditional>(
           op->getParentOp()))
     return op.emitOpError(
         "source expression requires an original value default owner");
@@ -135,13 +151,22 @@ mlir::LogicalResult verifyValueExpression(Expression op, unsigned operands) {
 }
 
 template <typename SourceParameter, typename EffectiveParameter,
-          typename Reference>
+          typename Actual, typename Reference>
 mlir::LogicalResult verifyValueReference(Reference op,
                                          mlir::SymbolTableCollection &symbols) {
   mlir::Operation *owner = op->getParentOp();
-  while (owner && !mlir::isa<SourceParameter, EffectiveParameter>(owner))
+  while (owner &&
+         !mlir::isa<SourceParameter, EffectiveParameter, Actual>(owner))
     owner = owner->getParentOp();
   auto *target = symbols.lookupNearestSymbolFrom(op, op.getParameterAttr());
+  if (mlir::isa_and_nonnull<Actual>(owner)) {
+    if (!mlir::isa_and_nonnull<SourceParameter, EffectiveParameter>(target) ||
+        target->getParentOp() != owner->getParentOp()->getParentOp() ||
+        isLocalParameter(target))
+      return op.emitOpError("class actual value reference must name a value "
+                            "parameter in the enclosing class header");
+    return mlir::success();
+  }
   if (!owner ||
       !mlir::isa_and_nonnull<SourceParameter, EffectiveParameter>(target) ||
       owner->getParentOp() != target->getParentOp())

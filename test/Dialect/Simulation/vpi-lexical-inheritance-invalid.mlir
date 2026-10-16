@@ -103,7 +103,7 @@ module {
     simulation.vpi_object.anchor @base id 1 type 652 in 0 parent @pkg ordinal 0 hierarchy "pkg::Base" debug "Base"
     simulation.vpi_object.anchor @derived id 2 type 652 in 0 parent @pkg ordinal 1 hierarchy "pkg::Derived" debug "Derived"
     simulation.vpi_object.anchor @t id 3 type 609 in 0 parent @base ordinal 0 hierarchy "pkg::Base::T" debug "T" {unresolved_type_parameter}
-    // expected-error @+1 {{default actual assignments must cover every non-local base parameter}}
+    // expected-error @+1 {{class actual assignments must cover every non-local base parameter}}
     simulation.vpi_lexical_class_typespec.decl @type id 0 in 0 owner @derived definition @base debug "Base"
     simulation.vpi_class_extends.decl @clause id 4 in 0 owner @derived {base_typespec = @type}
   }
@@ -120,7 +120,7 @@ module {
     simulation.vpi_object.anchor @t id 3 type 609 in 0 parent @base ordinal 0 hierarchy "pkg::Base::T" debug "T" {unresolved_type_parameter}
     simulation.vpi_lexical_class_typespec.decl @type id 0 in 0 owner @derived definition @base debug "Base"
     simulation.vpi_class_extends.decl @clause id 4 in 0 owner @derived {base_typespec = @type}
-    // expected-error @+1 {{default assignments must preserve dense parameter declaration order}}
+    // expected-error @+1 {{class assignments must preserve dense parameter declaration order}}
     simulation.vpi_class_parameter_assign.decl @a id 5 in 0 owner @type parameter @t ordinal 1
   }
 }

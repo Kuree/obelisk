@@ -835,6 +835,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
         continue;
       auto type = dyn_cast<sim::SimVPILexicalClassTypespecDeclOp>(operation);
       auto clause = dyn_cast<sim::SimVPIClassExtendsDeclOp>(operation);
+      auto assignment =
+          dyn_cast<sim::SimVPIClassParameterAssignDeclOp>(operation);
       uint64_t ordinal = cast<IntegerAttr>(operation.getAttr("id")).getInt();
       auto id = staticInventoryID(&operation, ordinal, type ? 1 : 0);
       if (!id)
@@ -847,6 +849,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
           type     ? OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC
           : clause ? 0
                    : OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT;
+      if (assignment &&
+          (assignment.getRhsAttr() || assignment.getUnavailableRhsAttr()))
+        caps = OBELISK_RT_DESIGN_CAP_EXPLICIT_CLASS_PARAMETER_ASSIGNMENT;
+      if (assignment && assignment.getUnavailableRhsAttr())
+        caps |= OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETER_RHS;
       if (type && type.getUnavailableParametersAttr())
         caps |= OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETERS;
       if (clause && clause.getUnavailableBaseAttr())
@@ -2291,12 +2298,17 @@ SmallVector<uint8_t> serializeDesignDatabase(
                sim::VPITypespecOrigin::ClassSpecialization ||
            found->second.getOrigin() == sim::VPITypespecOrigin::BuiltinClass))
         return found->second;
-      return nullptr;
+      auto *declaration = SymbolTable::lookupSymbolIn(design, symbol);
+      return isa_and_nonnull<sim::SimVPIClassParameterAssignDeclOp>(declaration)
+                 ? declaration
+                 : nullptr;
     };
     auto lexicalOwnerRef = [&](Operation *owner) {
-      return isa<sim::SimVPIObjectAnchorOp>(owner)
-                 ? anchorRefs.lookup(owner)
-                 : typespecRefs.lookup(owner);
+      if (isa<sim::SimVPIObjectAnchorOp>(owner))
+        return anchorRefs.lookup(owner);
+      if (isa<sim::SimVPIClassParameterAssignDeclOp>(owner))
+        return sourceInheritanceRefs.lookup(owner);
+      return typespecRefs.lookup(owner);
     };
     DenseMap<Operation *, DenseMap<int64_t, uint32_t>> sparseArrayOrdinals;
     auto arrayElementOrdinal = [&](sim::SimVPIObjectAnchorOp array,
@@ -2461,6 +2473,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
           FlatSymbolRefAttr ancestorParent;
           if (auto object = dyn_cast<sim::SimVPIObjectAnchorOp>(ancestor))
             ancestorParent = object.getParentAttr();
+          else if (isa<sim::SimVPIClassParameterAssignDeclOp>(ancestor))
+            break;
           else
             ancestorParent =
                 cast<sim::SimVPITypespecDeclOp>(ancestor).getOwnerAttr();
@@ -2737,6 +2751,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
                 VPITraversalMode::Handle,
                 sourceSymbolRef(assignment.getOwnerAttr()))))
           return {};
+        if (auto rhs = assignment.getRhsAttr()) {
+          if (failed(inheritanceRelation(
+                  assignment, self,
+                  static_cast<uint32_t>(VPIRelationKind::RhsRel),
+                  VPITraversalMode::Handle, sourceSymbolRef(rhs))))
+            return {};
+        }
+        if (assignment.getRhsAttr() || assignment.getUnavailableRhsAttr())
+          continue;
         for (auto relation : generalRelationDeclarations)
           if (relation.getSource().getKind() == sim::VPIObjectRefKind::Symbol &&
               relation.getSource().getSymbol() ==
@@ -4860,6 +4883,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
           typespec && typespec.getOrigin() == sim::VPITypespecOrigin::Typedef)
         if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
                                     typespec.getDebugNameAttr())))
+          return failure();
+      if (auto assignment =
+              dyn_cast<sim::SimVPIClassParameterAssignDeclOp>(operation))
+        if (assignment.getIsNamedAttr() &&
+            failed(addFixedProperty(operation, packedSource, exactKind, 21,
+                                    BoolAttr::get(design.getContext(), true))))
           return failure();
       if (auto type =
               dyn_cast<sim::SimVPILexicalClassTypespecDeclOp>(operation))

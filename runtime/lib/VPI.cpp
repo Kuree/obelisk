@@ -1439,6 +1439,10 @@ bool rejectUnavailableInheritanceRelation(__vpiHandle *handle,
   else if (iterate && selector == vpiParamAssign &&
            (caps & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETERS))
     message = "explicit class parameter source assignments are unavailable";
+  else if (!iterate && selector == vpiRhs &&
+           (caps & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETER_RHS))
+    message =
+        "explicit class parameter source expression or type is unavailable";
   else if (iterate && (caps & OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC) &&
            (selector == vpiVariables || selector == vpiMethods ||
             selector == vpiConstraint || selector == vpiNamedEvent ||
@@ -9957,10 +9961,6 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   if (property == vpiClassType &&
       (inheritanceCaps & OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC))
     return vpiUserDefinedClass;
-  if (property == vpiConnByName &&
-      (inheritanceCaps &
-       OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT))
-    return 0;
   if (property == vpiLocalParam && isUnresolvedTypeAlias(handle)) {
     setError(handle->owner, "unresolved typedef is not a parameter declaration",
              vpiNotice);

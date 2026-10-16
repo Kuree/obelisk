@@ -817,8 +817,13 @@ def DefLineNoProperty : VPIProperty<"vpiDefLineNo", 16, IntegerProperty,
   DefinitionInstanceObjects>;
 def ExplicitNameProperty : VPIProperty<"vpiExplicitName", 19,
   BooleanProperty, PortObjects, "37.14">;
-def ConnByNameProperty : VPIProperty<"vpiConnByName", 21, BooleanProperty,
-  PortAndParamAssignObjects, "37.14; 37.28">;
+def ClassParameterAssignmentObjects
+    : VPIObjectSet<"ClassParameterAssignmentObjects", [ParamAssign]>;
+def ConnByNameProperty
+    : VPIProperty<"vpiConnByName", 21, BooleanProperty,
+                  PortAndParamAssignObjects, "37.14; 37.28", StaticProperty,
+                  DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
+                  DerivedProperty, ClassParameterAssignmentObjects>;
 def NetTypeProperty : VPIProperty<"vpiNetType", 22, IntegerProperty,
   NetPropertyObjects, "37.16", StaticProperty, DeniedWhenProtected, 1,
   NoPropertyObjects, NoPropertyObjects, FixedImageProperty>;

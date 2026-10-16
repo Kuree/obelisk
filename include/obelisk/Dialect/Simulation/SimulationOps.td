@@ -777,15 +777,20 @@ def SimVPIClassParameterAssignDeclOp
     : SimOp<"vpi_class_parameter_assign.decl",
             [Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
              MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
-  let summary = "omitted class actual referring to its exact original default";
+  let summary = "source class parameter assignment with exact RHS provenance";
   let description = [{
     The Lhs is a parameter of the lexical class named by `owner`'s definition.
-    Rhs shares that declaration's Expr identity and never uses an elaborated
-    value. Missing and unsupported declaration defaults remain distinguishable.
-    The ordinal is dense in declaration order among non-local parameters.
+    An explicit `rhs` names its exact source expression or type. An explicit
+    unsupported RHS retains `unavailable_rhs`; with neither attribute, Rhs
+    shares the formal declaration's original Expr. `is_named` preserves named
+    syntax, including an empty named actual selecting the original default.
+    No assignment substitutes an elaborated value. The ordinal is dense in
+    declaration order among non-local parameters.
   }];
   let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id, I64Attr:$scope_id,
-      FlatSymbolRefAttr:$owner, FlatSymbolRefAttr:$parameter, I64Attr:$ordinal);
+      FlatSymbolRefAttr:$owner, FlatSymbolRefAttr:$parameter, I64Attr:$ordinal,
+      OptionalAttr<FlatSymbolRefAttr>:$rhs,
+      OptionalAttr<StrAttr>:$unavailable_rhs, OptionalAttr<UnitAttr>:$is_named);
   let assemblyFormat = [{
     $sym_name `id` $id `in` $scope_id `owner` $owner `parameter` $parameter
     `ordinal` $ordinal attr-dict

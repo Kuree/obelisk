@@ -6,8 +6,10 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/SymbolTable.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include <optional>
 #include <type_traits>
 
 namespace obelisk::sourceclass {
@@ -120,7 +122,7 @@ mlir::LogicalResult verifyConstraint(Constraint op) {
 }
 
 template <typename GenericClass, typename SourceClass, typename ClassType,
-          typename Extends>
+          typename Actual, typename Extends>
 mlir::LogicalResult verifyExtends(Extends op) {
   if (!mlir::isa_and_nonnull<GenericClass, SourceClass, ClassType>(
           op->getParentOp()))
@@ -139,10 +141,25 @@ mlir::LogicalResult verifyExtends(Extends op) {
     if (generic.getLexicalDefinitionAttr())
       return op.emitOpError(
           "source extends requires the original lexical owner");
-  if (op->hasAttr("semantic_type") ||
-      (!op.getBody().empty() && !op.getBody().front().empty()))
-    return op.emitOpError(
-        "source extends cannot carry an effective type or body");
+  if (op->hasAttr("semantic_type"))
+    return op.emitOpError("source extends cannot carry an effective type");
+  if (!op.getBody().empty()) {
+    llvm::SmallDenseSet<mlir::Attribute, 8> actuals;
+    std::optional<bool> named;
+    for (mlir::Operation &child : op.getBody().front()) {
+      auto actual = mlir::dyn_cast<Actual>(child);
+      if (!actual || !op.getBaseDefinitionAttr() ||
+          op.getParameterArgumentsAttr())
+        return op.emitOpError(
+            "source extends children require exact parameter connections");
+      if (!actuals.insert(actual.getParameterAttr()).second)
+        return op.emitOpError("duplicates a class parameter connection");
+      bool isNamed = bool(actual.getIsNamedAttr());
+      if (named && *named != isNamed)
+        return op.emitOpError("cannot mix ordered and named class connections");
+      named = isNamed;
+    }
+  }
   if (bool(op.getBaseDefinitionAttr()) == bool(op.getUnavailableBaseAttr()))
     return op.emitOpError(
         "source extends requires exactly one base declaration "
@@ -198,6 +215,93 @@ verifyExtendsReference(Extends op, mlir::SymbolTableCollection &symbols) {
     target = next && next.getBaseDefinitionAttr()
                  ? lookupDefinition(next, next.getBaseDefinitionAttr(), symbols)
                  : nullptr;
+  }
+  return mlir::success();
+}
+
+inline bool isLocalParameter(mlir::Operation *parameter) {
+  auto local = parameter->getAttr("is_local_param");
+  return mlir::isa_and_nonnull<mlir::UnitAttr>(local) ||
+         (mlir::isa_and_nonnull<mlir::BoolAttr>(local) &&
+          mlir::cast<mlir::BoolAttr>(local).getValue());
+}
+
+template <typename Extends, typename TypeDefault, typename TypeReference,
+          typename Unary, typename Binary, typename Conditional,
+          typename ValueReference, typename Literal, typename Actual>
+mlir::LogicalResult verifyParameterActual(Actual op) {
+  if (!mlir::isa_and_nonnull<Extends>(op->getParentOp()) ||
+      op->hasAttr("semantic_type"))
+    return op.emitOpError(
+        "source connection requires an unbound extends owner");
+  size_t count =
+      op.getBody().empty() ? 0 : op.getBody().front().getOperations().size();
+  bool isDefault = bool(op.getUseDefaultAttr());
+  auto unavailable = op.getUnavailableRhsAttr();
+  if (isDefault && (!op.getIsNamedAttr() || unavailable))
+    return op.emitOpError("explicit default connection requires named syntax "
+                          "and no unavailable RHS");
+  if (unavailable &&
+      (unavailable.getValue().empty() || unavailable.getValue().contains('\0')))
+    return op.emitOpError("unavailable RHS must retain nonempty source syntax");
+  if (isDefault || unavailable) {
+    if (count != 0)
+      return op.emitOpError(
+          "default or unavailable connection cannot contain an expression");
+    return mlir::success();
+  }
+  if (count != 1 ||
+      !mlir::isa<TypeDefault, TypeReference, Unary, Binary, Conditional,
+                 ValueReference, Literal>(op.getBody().front().front()))
+    return op.emitOpError(
+        "source connection requires one typed source expression");
+  return mlir::success();
+}
+
+template <typename Extends, typename SourceValue, typename Value,
+          typename SourceType, typename Type, typename TypeDefault,
+          typename TypeReference, typename Actual>
+mlir::LogicalResult
+verifyParameterActualReference(Actual op,
+                               mlir::SymbolTableCollection &symbols) {
+  auto clause = mlir::dyn_cast<Extends>(op->getParentOp());
+  auto *target = lookupDefinition(op, op.getParameterAttr(), symbols);
+  auto *base =
+      clause && clause.getBaseDefinitionAttr()
+          ? lookupDefinition(clause, clause.getBaseDefinitionAttr(), symbols)
+          : nullptr;
+  if (!mlir::isa_and_nonnull<SourceValue, Value, SourceType, Type>(target) ||
+      target->getParentOp() != base || isLocalParameter(target))
+    return op.emitOpError("connection must name an overridable parameter of "
+                          "the exact base class");
+  if (!op.getIsNamedAttr()) {
+    size_t ordinal = 0;
+    for (mlir::Operation &sibling : clause.getBody().front()) {
+      if (&sibling == op.getOperation())
+        break;
+      ordinal += mlir::isa<Actual>(sibling);
+    }
+    mlir::Operation *expected = nullptr;
+    for (mlir::Operation &member : base->getRegion(0).front()) {
+      if (!mlir::isa<SourceValue, Value, SourceType, Type>(member) ||
+          isLocalParameter(&member))
+        continue;
+      if (ordinal-- == 0) {
+        expected = &member;
+        break;
+      }
+    }
+    if (expected != target)
+      return op.emitOpError(
+          "ordered connection must follow base parameter declaration order");
+  }
+  if (!op.getUseDefaultAttr() && !op.getUnavailableRhsAttr()) {
+    bool isType = mlir::isa<SourceType, Type>(target);
+    bool typeExpression =
+        mlir::isa<TypeDefault, TypeReference>(op.getBody().front().front());
+    if (isType != typeExpression)
+      return op.emitOpError(
+          "connection expression must agree with the formal parameter kind");
   }
   return mlir::success();
 }

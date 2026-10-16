@@ -1709,6 +1709,10 @@ enum {
   OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETERS = UINT32_C(1) << 17,
   // ParamAssign whose Rhs is the exact Lhs declaration's original Expr.
   OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT = UINT32_C(1) << 18,
+  // ParamAssign with an explicit source actual, never an effective value.
+  OBELISK_RT_DESIGN_CAP_EXPLICIT_CLASS_PARAMETER_ASSIGNMENT = UINT32_C(1) << 19,
+  // Explicit actual is present but its original RHS form is unsupported.
+  OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETER_RHS = UINT32_C(1) << 20,
   // Definition-backed vpiIODecl views use these record-kind-specific bits
   // for the exact IEEE direction, including vpiRef and undefined.
   OBELISK_RT_DESIGN_CAP_IO_DIRECTION_SHIFT = 8,
