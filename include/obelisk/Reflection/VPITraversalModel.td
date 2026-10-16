@@ -775,9 +775,12 @@ def ReadClassTypespecObjects : VPIObjectSet<"ReadClassTypespecObjects",
 def InterfaceTypePropertyObjects : VPIObjectSet<
   "InterfaceTypePropertyObjects", [VirtualInterfaceVar, InterfaceTypespec]>;
 
+def ExactDeclarationNameObjects : VPIObjectSet<"ExactDeclarationNameObjects",
+  [Parameter, Task, Function]>;
+
 def NameProperty : VPIProperty<"vpiName", 2, StringProperty,
   NamedPropertyObjects, "37.4-37.85", StaticProperty, DeniedWhenProtected, 0,
-  NoPropertyObjects, NoPropertyObjects, DerivedProperty, ReadValueParameterObjects>;
+  NoPropertyObjects, NoPropertyObjects, DerivedProperty, ExactDeclarationNameObjects>;
 def FullNameProperty : VPIProperty<"vpiFullName", 3, StringProperty,
   FullNamePropertyObjects, "37.10-37.85">;
 def TopModuleProperty : VPIProperty<"vpiTopModule", 7, BooleanProperty,
@@ -1032,7 +1035,12 @@ def StructUnionMemberProperty : VPIProperty<"vpiStructUnionMember", 615,
   BooleanProperty, StructUnionMemberPropertyObjects,
   "37.16; 37.17; 37.18">;
 def VisibilityProperty : VPIProperty<"vpiVisibility", 620, IntegerProperty,
-  VisibilityPropertyObjects, "37.17; 37.41">;
+  VisibilityPropertyObjects, "37.17; 37.41", StaticProperty,
+  DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
+  DerivedProperty, TaskFunctionDeclObjects>;
+def VisibilityPublic : VPIIntegerPropertyValue<VisibilityProperty, 1>;
+def VisibilityProtected : VPIIntegerPropertyValue<VisibilityProperty, 2>;
+def VisibilityLocal : VPIIntegerPropertyValue<VisibilityProperty, 3>;
 def AlwaysTypeProperty : VPIProperty<"vpiAlwaysType", 624,
   IntegerProperty, AlwaysObjects, "37.63", StaticProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
@@ -1062,7 +1070,9 @@ def SoftProperty : VPIProperty<"vpiSoft", 639, BooleanProperty,
 def ClassTypeProperty : VPIProperty<"vpiClassType", 640, IntegerProperty,
   ReadClassTypespecObjects, "37.32">;
 def MethodProperty : VPIProperty<"vpiMethod", 645, BooleanProperty,
-  TaskFunctionDeclObjects, "37.41">;
+  TaskFunctionDeclObjects, "37.41", StaticProperty, DeniedWhenProtected, 0,
+  NoPropertyObjects, NoPropertyObjects, FixedImageProperty>;
+
 def IsClockInferredProperty : VPIProperty<"vpiIsClockInferred", 649,
   BooleanProperty, ConcurrentAssertionPropertyObjects, "37.50">;
 def QualifierProperty : VPIProperty<"vpiQualifier", 650, IntegerProperty,

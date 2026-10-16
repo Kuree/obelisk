@@ -29,6 +29,7 @@
 #include "slang/ast/ASTVisitor.h"
 #include "slang/ast/EvalContext.h"
 #include "slang/ast/Lookup.h"
+#include "slang/ast/SemanticFacts.h"
 #include "slang/ast/expressions/Operator.h"
 #include "slang/ast/symbols/PortSymbols.h"
 #include "slang/ast/symbols/SubroutineSymbols.h"
@@ -5740,10 +5741,65 @@ private:
     node.getBody().emplaceBlock();
   }
 
-  // The invalid specialization supplies source declaration identity and syntax
-  // only. Never query its bound parameter type or value.
+  template <typename Method>
   void
-  importSourceParameters(const slang::ast::GenericClassDefSymbol &definition) {
+  importSourceClassMethod(const Method &method,
+                          const slang::ast::GenericClassDefSymbol &definition) {
+    using MF = slang::ast::MethodFlags;
+    // Implicit methods have no declaration in the lexical class inventory.
+    if (!method.getSyntax() || method.flags.has(MF::BuiltIn))
+      return;
+    if constexpr (std::same_as<Method, slang::ast::SubroutineSymbol>) {
+      // An extern implementation is represented by its class prototype.
+      if (method.getPrototype())
+        return;
+    }
+    auto attrs = originalSourceAttributes(getSourceRange(method));
+    attrs.set("sym_name", getInternalSymbolName(method));
+    attrs.set("name", builder.getStringAttr(method.name));
+    attrs.set("hierarchical_name",
+              builder.getStringAttr(getSymbolPath(definition) +
+                                    "::" + std::string(method.name)));
+    attrs.set("subroutine_kind",
+              slangir::SubroutineKindAttr::get(
+                  builder.getContext(), convertEnum(method.subroutineKind)));
+    attrs.set("member_visibility",
+              slangir::VisibilityAttr::get(builder.getContext(),
+                                           convertEnum(method.visibility)));
+    auto lifetime = slang::ast::VariableLifetime::Automatic;
+    if constexpr (std::same_as<Method, slang::ast::SubroutineSymbol>) {
+      lifetime = method.defaultLifetime;
+    } else {
+      if (auto *syntax =
+              method.getSyntax()
+                  ->template as_if<slang::syntax::ClassMethodPrototypeSyntax>())
+        lifetime = slang::ast::SemanticFacts::getVariableLifetime(
+                       syntax->prototype->lifetime)
+                       .value_or(lifetime);
+      if (!method.flags.has(MF::Pure))
+        attrs.set("is_extern", builder.getUnitAttr());
+    }
+    attrs.set("default_lifetime",
+              slangir::VariableLifetimeAttr::get(builder.getContext(),
+                                                 convertEnum(lifetime)));
+    if (method.flags.has(MF::Static))
+      attrs.set("is_static", builder.getUnitAttr());
+    if (method.flags.has(MF::Virtual))
+      attrs.set("is_declared_virtual", builder.getUnitAttr());
+    if (method.flags.has(MF::Pure))
+      attrs.set("is_pure", builder.getUnitAttr());
+    if (method.flags.has(MF::Constructor))
+      attrs.set("is_constructor", builder.getUnitAttr());
+    auto declaration = slangir::SourceClassMethodSymbolOp::create(
+        builder, sourceLocation(method.location), TypeRange{}, ValueRange{},
+        attrs.getAttrs());
+    declaration.getBody().emplaceBlock();
+  }
+
+  // The invalid specialization supplies source declaration identity and syntax
+  // only. Never bind its signatures, bodies, parameter types, or values.
+  void importSourceClassMembers(
+      const slang::ast::GenericClassDefSymbol &definition) {
     if (const auto *scope = definition.getParentScope();
         scope && scope->asSymbol().kind == slang::ast::SymbolKind::Package &&
         scope->asSymbol().name == "std" &&
@@ -5756,9 +5812,20 @@ private:
     const auto &source = invalidType.as<slang::ast::ClassType>();
     auto parameters = originalParameterMap(source);
     for (const auto &member : source.members()) {
-      if (member.getParentScope() != &source ||
-          (member.kind != slang::ast::SymbolKind::Parameter &&
-           member.kind != slang::ast::SymbolKind::TypeParameter))
+      if (member.getParentScope() != &source)
+        continue;
+      if (member.kind == slang::ast::SymbolKind::Subroutine) {
+        importSourceClassMethod(member.as<slang::ast::SubroutineSymbol>(),
+                                definition);
+        continue;
+      }
+      if (member.kind == slang::ast::SymbolKind::MethodPrototype) {
+        importSourceClassMethod(member.as<slang::ast::MethodPrototypeSymbol>(),
+                                definition);
+        continue;
+      }
+      if (member.kind != slang::ast::SymbolKind::Parameter &&
+          member.kind != slang::ast::SymbolKind::TypeParameter)
         continue;
       const slang::ast::ParameterSymbolBase &parameter =
           member.kind == slang::ast::SymbolKind::Parameter
@@ -5968,7 +6035,7 @@ private:
       llvm::sort(specializations, [](const auto &lhs, const auto &rhs) {
         return lhs.first < rhs.first;
       });
-      importSourceParameters(node);
+      importSourceClassMembers(node);
       for (const auto &entry : specializations)
         entry.second->visit(*this);
     } else if constexpr (std::same_as<T, slang::ast::ClassType>) {

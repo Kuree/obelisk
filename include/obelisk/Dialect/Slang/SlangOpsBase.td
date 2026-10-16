@@ -1053,6 +1053,27 @@ class SlangRandSeqASTNodeOp<string mnemonic>
 // Source declarations exist independently of any selected generic class
 // specialization. Their default subtrees preserve original syntax semantics;
 // they never carry an elaborated replacement for an unresolved parameter.
+// A generic class's own lexical method identity does not depend on any
+// specialization or require binding its signature or body.
+def SourceClassMethodSymbolOp
+    : SlangSymbolASTNodeOp<"sv.source.class_method", [], (ins
+        SlangSubroutineKind:$subroutine_kind,
+        SlangVariableLifetime:$default_lifetime,
+        SlangVisibility:$member_visibility,
+        OptionalAttr<UnitAttr>:$is_static,
+        OptionalAttr<UnitAttr>:$is_declared_virtual,
+        OptionalAttr<UnitAttr>:$is_pure,
+        OptionalAttr<UnitAttr>:$is_constructor,
+        OptionalAttr<UnitAttr>:$is_extern)> {
+  let summary = "lexical generic-class method without an effective signature";
+  let description = [{
+    Directly owned by a generic class definition, with an empty body and no
+    semantic_type. The symbol preserves declaration identity and source-only
+    modifiers; it does not designate a specialized executable method.
+  }];
+  let hasVerifier = 1;
+}
+
 def SourceTypeParameterSymbolOp
     : SlangSymbolASTNodeOp<"sv.source.type_parameter", [],
         (ins OptionalAttr<UnitAttr>:$is_local_param)> {

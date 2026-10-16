@@ -57,7 +57,11 @@ binary expressions. Parameter references preserve declaration identity, and
 `vpiDecompile` preserves expression precedence and escaped identifiers. An absent
 default returns a quiet null; an unsupported default form returns a notice.
 Unresolved lexical parameters have no elaborated value or type, and those
-queries report a notice. Other lexical members without a realized
+queries report a notice. Generic lexical methods are retained without a
+realized specialization, including constructors, tasks, static methods, extern
+declarations, and pure virtual declarations. Their exact names, declaration
+order, scope, lifetime, and visibility remain queryable without resolving
+dependent signatures or bodies. Other lexical members without a realized
 specialization and broader original-default expression forms remain incomplete.
 
 Mailbox, semaphore, and process variables also expose `vpiClassObj` and

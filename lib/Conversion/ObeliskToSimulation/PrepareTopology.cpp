@@ -1227,6 +1227,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     if (!isa<semantic::SVCompilationUnitSymbolOp, semantic::SVPackageSymbolOp,
              semantic::SVClassTypeOp, semantic::SVGenericClassDefSymbolOp,
              semantic::SVSubroutineSymbolOp,
+             semantic::SVSourceClassMethodSymbolOp,
              semantic::SVConstraintBlockSymbolOp, semantic::SVPropertySymbolOp,
              semantic::SVSequenceSymbolOp, semantic::SVClockingBlockSymbolOp,
              semantic::SVModportSymbolOp, semantic::SVVariableSymbolOp,
@@ -1254,6 +1255,11 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     if (isa<semantic::SVCompilationUnitSymbolOp, semantic::SVPackageSymbolOp>(
             operation))
       return VPIKind::Package;
+    if (auto method =
+            dyn_cast<semantic::SVSourceClassMethodSymbolOp>(operation))
+      return method.getSubroutineKind() == semantic::SVSubroutineKind::Task
+                 ? VPIKind::Task
+                 : VPIKind::Function;
     if (isa<semantic::SVSourceTypeParameterSymbolOp,
             semantic::SVSourceValueParameterSymbolOp>(operation)) {
       auto owner = dyn_cast<semantic::SVGenericClassDefSymbolOp>(
@@ -1518,11 +1524,37 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(source))
       isAutomatic = subroutine.getDefaultLifetime() ==
                     semantic::SVVariableLifetime::Automatic;
+    if (auto method = dyn_cast<semantic::SVSourceClassMethodSymbolOp>(source))
+      isAutomatic = method.getDefaultLifetime() ==
+                    semantic::SVVariableLifetime::Automatic;
     // Named event anchors preserve the declaration lifetime even when no
     // activation frame currently exists.
     if (auto variable = dyn_cast<semantic::SVVariableSymbolOp>(source))
       isAutomatic = variable.getLifetime() ==
                     semantic::SVVariableLifetime::Automatic;
+    auto addMethodProperties = [&](semantic::SVVisibility visibility,
+                                   bool isMethod) {
+      int32_t value = 1; // vpiPublicVis
+      switch (visibility) {
+      case semantic::SVVisibility::Public:
+        break;
+      case semantic::SVVisibility::Protected:
+        value = 2;
+        break;
+      case semantic::SVVisibility::Local:
+        value = 3;
+        break;
+      }
+      properties.push_back(sim::VPIPropertyAttr::get(
+          builder.getContext(), builder.getI32IntegerAttr(620),
+          builder.getI32IntegerAttr(value)));
+      addBoolean(645, isMethod);
+    };
+    if (auto method = dyn_cast<semantic::SVSourceClassMethodSymbolOp>(source))
+      addMethodProperties(method.getMemberVisibility(), true);
+    if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(source))
+      addMethodProperties(subroutine.getMemberVisibility(),
+                          isa<semantic::SVClassTypeOp>(source->getParentOp()));
     if (auto parameter =
             dyn_cast<semantic::SVSourceValueParameterSymbolOp>(source))
       addBoolean(70, static_cast<bool>(parameter.getIsLocalParamAttr()));
@@ -1574,6 +1606,10 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
 
     if (properties.empty())
       return sim::VPIPropertySetAttr{};
+    llvm::sort(properties, [](Attribute lhs, Attribute rhs) {
+      return cast<sim::VPIPropertyAttr>(lhs).getSelector().getInt() <
+             cast<sim::VPIPropertyAttr>(rhs).getSelector().getInt();
+    });
     return sim::VPIPropertySetAttr::get(builder.getContext(),
                                         builder.getArrayAttr(properties));
   };

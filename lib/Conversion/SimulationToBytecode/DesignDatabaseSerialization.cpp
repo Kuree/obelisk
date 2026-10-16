@@ -3860,7 +3860,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
                                       uint32_t exactKind) -> LogicalResult {
       if (auto anchor = dyn_cast<sim::SimVPIObjectAnchorOp>(operation);
           anchor &&
-          exactKind == static_cast<uint32_t>(VPIObjectKind::Parameter) &&
+          (exactKind == static_cast<uint32_t>(VPIObjectKind::Parameter) ||
+           exactKind == static_cast<uint32_t>(VPIObjectKind::Task) ||
+           exactKind == static_cast<uint32_t>(VPIObjectKind::Function)) &&
           !anchor.getDebugName().empty())
         if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
                                     anchor.getDebugNameAttr())))

@@ -653,14 +653,15 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
   } else if (getHierarchicalName().empty()) {
     return emitOpError("requires a nonempty source hierarchy name");
   }
-  if (anchorKind == Kind::Parameter)
+  if (anchorKind == Kind::Parameter || anchorKind == Kind::Task ||
+      anchorKind == Kind::Function)
     if (auto properties = reflectionProperties(*this))
       for (Attribute attribute : properties.getProperties()) {
         auto property = cast<VPIPropertyAttr>(attribute);
         if (property.getSelector().getValue().getZExtValue() == 2 &&
             property.getValue() != getDebugNameAttr())
           return emitOpError(
-              "parameter Name property must equal its exact declaration name");
+              "Name property must equal its exact declaration name");
       }
   if (getClassMethodAttr() && anchorKind != Kind::Task &&
       anchorKind != Kind::Function)

@@ -2,6 +2,7 @@
 
 #include "obelisk/Dialect/ForeachLoopMetadata.h"
 #include "obelisk/Dialect/Obelisk/ObeliskOps.h"
+#include "obelisk/Dialect/SourceClassMetadata.h"
 #include "obelisk/Dialect/SourceParameterMetadata.h"
 
 #include "mlir/IR/AttrTypeSubElements.h"
@@ -592,6 +593,13 @@ LogicalResult SVRandCaseStatementOp::verify() {
   if (astBodySize(*this) != expected)
     return emitOpError("malformed randcase item inventory");
   return success();
+}
+
+LogicalResult SVSourceClassMethodSymbolOp::verify() {
+  return sourceclass::verifyMethod<SVGenericClassDefSymbolOp,
+                                   SVSourceValueParameterSymbolOp,
+                                   SVSourceTypeParameterSymbolOp>(
+      *this, getSubroutineKind() == SVSubroutineKind::Task);
 }
 
 LogicalResult SVSourceTypeParameterSymbolOp::verify() {

@@ -2113,7 +2113,9 @@ TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
         descriptor.property == vpiLocalParam)
       expected = PropertyRealization::FixedImage;
     if ((descriptor.property == vpiName &&
-         descriptor.sourceType == vpiParameter) ||
+         (descriptor.sourceType == vpiParameter ||
+          descriptor.sourceType == vpiTask ||
+          descriptor.sourceType == vpiFunction)) ||
         (descriptor.property == vpiConstType &&
          descriptor.sourceType == vpiConstant) ||
         (descriptor.property == vpiOpType &&
@@ -2122,6 +2124,11 @@ TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
     if ((descriptor.property == vpiTopModule ||
          descriptor.property == vpiCellInstance) &&
         descriptor.sourceType == vpiModule)
+      expected = PropertyRealization::FixedImage;
+    if ((descriptor.sourceType == vpiTask ||
+         descriptor.sourceType == vpiFunction) &&
+        (descriptor.property == vpiMethod ||
+         descriptor.property == vpiVisibility))
       expected = PropertyRealization::FixedImage;
     if (descriptor.property == vpiDefName &&
         descriptor.sourceType == vpiPackage)

@@ -248,6 +248,7 @@ module attributes {
 // SPARSE: fixed_property source_table=0 source=1 selector=7 kind=0 value=true
 // SPARSE-NEXT: fixed_property source_table=0 source=1 selector=9 kind=3 value=top_def
 // SPARSE: fixed_property source_table=0 source=1 selector=600 kind=0 value=true
+// SPARSE-NEXT: fixed_property source_table=1 source={{[0-9]+}} selector=2 kind=3 value=method
 // SPARSE-NEXT: fixed_property source_table=1 source={{[0-9]+}} selector=624 kind=1 value=1
 // SPARSE-NEXT: fixed_property source_table=1 source={{[0-9]+}} selector=624 kind=1 value=2
 // SPARSE-NEXT: fixed_property source_table=1 source={{[0-9]+}} selector=624 kind=1 value=3

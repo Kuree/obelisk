@@ -8696,20 +8696,26 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     }
   }
   // Older declaration images derive vpiName from their hierarchy. New
-  // parameter declarations retain the exact identifier, including separators
-  // inside escaped names, in the ordinary fixed-property table.
-  VPIFixedPropertyValue parameterName{};
-  const bool parameter = handle->form == VPIObjectForm::Design &&
-                         vpiTypeForHandle(handle) == vpiParameter;
-  const bool hasParameterName =
-      parameter && (property == vpiName || property == vpiDecompile) &&
+  // parameter and method declarations retain the exact identifier, including
+  // separators inside escaped names, in the ordinary fixed-property table.
+  VPIFixedPropertyValue declarationName{};
+  const auto declarationKind = vpiTypeForHandle(handle);
+  const bool parameter =
+      handle->form == VPIObjectForm::Design && declarationKind == vpiParameter;
+  const bool namedDeclaration =
+      handle->form == VPIObjectForm::Design &&
+      (declarationKind == vpiParameter || declarationKind == vpiTask ||
+       declarationKind == vpiFunction);
+  const bool hasDeclarationName =
+      ((namedDeclaration && property == vpiName) ||
+       (parameter && property == vpiDecompile)) &&
       obelisk_rt_cached_vpi_fixed_property(handle->owner->context,
                                            handle->cursor, vpiName,
-                                           &parameterName) == OBELISK_RT_OK;
-  if (property == vpiName && hasParameterName) {
+                                           &declarationName) == OBELISK_RT_OK;
+  if (property == vpiName && hasDeclarationName) {
     OBELISK_RT_TRY {
-      scratch.assign(reinterpret_cast<const char *>(parameterName.stringData),
-                     static_cast<size_t>(parameterName.stringSize));
+      scratch.assign(reinterpret_cast<const char *>(declarationName.stringData),
+                     static_cast<size_t>(declarationName.stringSize));
       return scratch.data();
     }
     OBELISK_RT_CATCH_ALL {
@@ -8772,7 +8778,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     }
   }
   if (property == vpiDecompile) {
-    if (hasParameterName)
+    if (parameter && hasDeclarationName)
       return decompileSourceExpression(handle, scratch) ? scratch.data()
                                                         : nullptr;
     const auto type = vpiTypeForHandle(handle);
