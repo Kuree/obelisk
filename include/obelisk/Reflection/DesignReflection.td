@@ -402,6 +402,8 @@ def FixedProperty : ReflectionLayout<"FixedProperty", 16,
 // are sorted by that key for allocation-free binary lookup. Relative string
 // offsets are 32-bit offsets into the canonical image string pool.
 def DefinitionVPIKind : ReflectionField<"VPIKind", 0, U16LE>;
+// Kind data: zero for module/interface/program, validated vpiPrimType
+// for built-in primitive definitions. No per-instance property copy.
 def DefinitionFlags : ReflectionField<"Flags", 2, U16LE>;
 def DefinitionName : ReflectionField<"Name", 4, U32LE>;
 def DefinitionFile : ReflectionField<"File", 8, U32LE>;

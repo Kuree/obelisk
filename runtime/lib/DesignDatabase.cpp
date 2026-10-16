@@ -5827,11 +5827,19 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t firstRelation = read32(definition + 24);
     uint32_t relationCount = read32(definition + 28);
     using Kind = obelisk::reflection::VPIObjectKind;
-    if ((kind != static_cast<uint16_t>(Kind::Module) &&
-         kind != static_cast<uint16_t>(Kind::Interface) &&
-         kind != static_cast<uint16_t>(Kind::Program)) ||
-        flags != 0 || name == 0 || line > INT32_MAX ||
-        (file == 0) != (line == 0) ||
+    bool primitive = kind == static_cast<uint16_t>(Kind::Gate) ||
+                     kind == static_cast<uint16_t>(Kind::Switch);
+    const auto *primitiveType =
+        primitive ? obelisk::reflection::findVPIBuiltinPrimitive(flags)
+                  : nullptr;
+    if ((primitive ? !primitiveType || primitiveType->objectKind != kind ||
+                         file != 0 || line != 0 || memberCount != 0 ||
+                         relationCount != 0
+                   : (kind != static_cast<uint16_t>(Kind::Module) &&
+                      kind != static_cast<uint16_t>(Kind::Interface) &&
+                      kind != static_cast<uint16_t>(Kind::Program)) ||
+                         flags != 0) ||
+        name == 0 || line > INT32_MAX || (file == 0) != (line == 0) ||
         (memberCount != 0 && firstMember != nextDefinitionMember) ||
         firstMember > database.definitionMemberCount ||
         memberCount > database.definitionMemberCount - firstMember ||
@@ -5841,6 +5849,7 @@ bool validateDatabaseImpl(const Database &database) {
       return false;
     std::string_view text;
     if (!getRelativeString(name, text) || text.empty() ||
+        (primitive && text != primitiveType->sourceName) ||
         (file != 0 && !getRelativeString(file, text)))
       return false;
 
@@ -5940,7 +5949,8 @@ bool validateDatabaseImpl(const Database &database) {
                                 uint64_t{definitionIndex} * kDefinitionSize;
     uint32_t firstMember = read32(definition + 16);
     uint32_t memberCount = read32(definition + 20);
-    if (bindingCount != memberCount)
+    // Built-in primitive definitions have no effective-type specialization.
+    if (read16(definition + 2) != 0 || bindingCount != memberCount)
       return false;
     uint32_t previousMember = 0;
     for (uint32_t ordinal = 0; ordinal != bindingCount; ++ordinal) {
@@ -5976,24 +5986,37 @@ bool validateDatabaseImpl(const Database &database) {
     auto table = obelisk::reflection::unpackTableIndexKind(packedSource);
     uint32_t sourceIndex = obelisk::reflection::unpackTableIndex(packedSource);
     if ((index != 0 && packedSource <= previousDefinitionSource) ||
-        table != obelisk::reflection::TableKind::Scope ||
-        sourceIndex >= database.scopeCount ||
+        (table == obelisk::reflection::TableKind::Scope
+             ? sourceIndex >= database.scopeCount
+             : table != obelisk::reflection::TableKind::Object ||
+                   sourceIndex >= database.objectCount) ||
         definitionIndex >= database.definitionCount ||
         firstMemberEndpoint != nextDefinitionMemberEndpoint ||
         (specializationIndex != UINT32_MAX &&
          specializationIndex >= database.definitionSpecializationCount))
       return false;
     previousDefinitionSource = packedSource;
-    const uint8_t *scope =
-        database.data + database.scopes + uint64_t{sourceIndex} * kScopeSize;
+    bool primitive = table == obelisk::reflection::TableKind::Object;
+    const uint8_t *source =
+        database.data + (primitive ? database.objects : database.scopes) +
+        uint64_t{sourceIndex} * (primitive ? kObjectSize : kScopeSize);
     const uint8_t *definition = database.data + database.definitions +
                                 uint64_t{definitionIndex} * kDefinitionSize;
+    if (primitive &&
+        (recordKind(source) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+         (recordVPIKind(source) !=
+              static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Gate) &&
+          recordVPIKind(source) !=
+              static_cast<uint32_t>(
+                  obelisk::reflection::VPIObjectKind::Switch)) ||
+         specializationIndex != UINT32_MAX))
+      return false;
     uint32_t memberCount = read32(definition + 20);
     if (firstMemberEndpoint > database.definitionMemberEndpointCount ||
         memberCount >
             database.definitionMemberEndpointCount - firstMemberEndpoint)
       return false;
-    if (recordVPIKind(scope) != read16(definition))
+    if (recordVPIKind(source) != read16(definition))
       return false;
     if (specializationIndex == UINT32_MAX && read32(definition + 20) != 0)
       return false;
@@ -6082,7 +6105,8 @@ bool validateDatabaseImpl(const Database &database) {
       if (propertySource != packedSource)
         break;
       uint16_t selector = read16(property + 4);
-      if (selector == 9 || selector == 15 || selector == 16)
+      if (selector == 9 || selector == 15 || selector == 16 ||
+          (primitive && selector == 33))
         return false;
       ++fixedPropertyIndex;
     }
@@ -8699,10 +8723,10 @@ obelisk_rt_status designVPIFixedProperty(const Database &database,
     return OBELISK_RT_INVALID_HANDLE;
 
   // Definition-backed properties are the common path for elaborated module,
-  // interface, and program instances. Validated images cannot also carry a
-  // fixed row for these selectors on a bound source, so avoid a guaranteed
-  // miss in the larger general property table.
-  if (selector == 9 || selector == 15 || selector == 16) {
+  // interface, program, and built-in primitive instances. Validated images
+  // cannot also carry a fixed row for these selectors on a bound source, so
+  // avoid a guaranteed miss in the larger general property table.
+  if (selector == 9 || selector == 15 || selector == 16 || selector == 33) {
     uint32_t low = 0;
     uint32_t high = static_cast<uint32_t>(database.definitionBindingCount);
     while (low != high) {
@@ -8723,6 +8747,15 @@ obelisk_rt_status designVPIFixedProperty(const Database &database,
           return OBELISK_RT_INVALID_DESIGN;
         const uint8_t *definition = database.data + database.definitions +
                                     uint64_t{definitionIndex} * kDefinitionSize;
+        if (selector == 33) {
+          uint16_t primitiveType = read16(definition + 2);
+          if (primitiveType == 0)
+            return OBELISK_RT_EOF;
+          outValue->kind = static_cast<uint8_t>(
+              obelisk::reflection::VPIPropertyValueKind::Integer);
+          outValue->payload = primitiveType;
+          return OBELISK_RT_OK;
+        }
         if (selector == 16) {
           uint32_t line = read32(definition + 12);
           if (line == 0)

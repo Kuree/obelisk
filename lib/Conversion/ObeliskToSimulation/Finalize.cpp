@@ -661,6 +661,10 @@ verifyExecutableSubtree(Operation *root, ModuleOp module,
             ((isa<sim::SimScopeDeclOp>(op) &&
               named.getName() == sim::SimScopeDeclOp::getVpiDefinitionAttrName(
                                      op->getName())) ||
+             (isa<sim::SimVPIDefinitionBindingOp>(op) &&
+              named.getName() ==
+                  sim::SimVPIDefinitionBindingOp::getDefinitionAttrName(
+                      op->getName())) ||
              (isa<sim::SimVPIDefinitionMemberDeclOp>(op) &&
               named.getName() ==
                   sim::SimVPIDefinitionMemberDeclOp::getDefinitionAttrName(

@@ -33,7 +33,7 @@ module {
 
 module {
   simulation.design @invalid_definition_kind {
-    // expected-error @+1 {{VPI definition kind must be a module, interface, or program}}
+    // expected-error @+1 {{VPI definition kind must be a module, interface, program, gate, or switch}}
     simulation.vpi_definition.decl @bad type 600 name "bad"
     simulation.scope.decl 0 hierarchy "$root"
   }

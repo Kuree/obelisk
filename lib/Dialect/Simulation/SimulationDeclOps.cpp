@@ -313,12 +313,47 @@ LogicalResult SimVPIDefinitionDeclOp::verify() {
   case Kind::Module:
   case Kind::Interface:
   case Kind::Program:
+    if (getPrimitiveTypeAttr())
+      return emitOpError(
+          "only primitive definitions may specify a primitive type");
     return verifyDefinitionLocation(*this, getVpiKind(),
                                     getDefinitionLocAttr());
-  default:
-    return emitOpError(
-        "VPI definition kind must be a module, interface, or program");
+  case Kind::Gate:
+  case Kind::Switch: {
+    if (!getPrimitiveTypeAttr())
+      return emitOpError("primitive definition requires a primitive type");
+    const auto *primitive =
+        reflection::findVPIBuiltinPrimitive(*getPrimitiveType());
+    if (!primitive || primitive->objectKind != getVpiKind() ||
+        primitive->sourceName != getDefinitionName())
+      return emitOpError(
+          "primitive type, object kind, and definition name must agree");
+    if (getDefinitionLocAttr())
+      return emitOpError(
+          "built-in primitive definitions have no source definition location");
+    return success();
   }
+  default:
+    return emitOpError("VPI definition kind must be a module, interface, "
+                       "program, gate, or switch");
+  }
+}
+
+LogicalResult SimVPIDefinitionBindingOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  auto source = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+      *this, getSourceAttr());
+  auto definition = symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionDeclOp>(
+      *this, getDefinitionAttr());
+  if (!source || !definition)
+    return emitOpError("requires a primitive anchor and a shared definition");
+  using Kind = reflection::VPIObjectKind;
+  if ((source.getVpiKind() != static_cast<uint32_t>(Kind::Gate) &&
+       source.getVpiKind() != static_cast<uint32_t>(Kind::Switch)) ||
+      source.getBackingAttr() || source.getVpiKind() != definition.getVpiKind())
+    return emitOpError(
+        "primitive source and shared definition kinds must agree");
+  return success();
 }
 
 LogicalResult SimVPIDefinitionMemberDeclOp::verify() {
@@ -343,14 +378,20 @@ LogicalResult SimVPIDefinitionMemberDeclOp::verifySymbolUses(
       *this, getDefinitionAttr());
   if (!definition)
     return emitOpError("references an unknown VPI definition");
+  if (definition.getPrimitiveTypeAttr())
+    return emitOpError("built-in primitive definitions cannot have members");
   return success();
 }
 
 LogicalResult SimVPIDefinitionSpecializationDeclOp::verifySymbolUses(
     SymbolTableCollection &symbolTable) {
-  if (!symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionDeclOp>(
-          *this, getDefinitionAttr()))
+  auto definition = symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionDeclOp>(
+      *this, getDefinitionAttr());
+  if (!definition)
     return emitOpError("references an unknown VPI definition");
+  if (definition.getPrimitiveTypeAttr())
+    return emitOpError(
+        "built-in primitive definitions cannot have specializations");
   return success();
 }
 
@@ -3769,6 +3810,7 @@ LogicalResult SimDesignOp::verifyRegions() {
   llvm::DenseMap<Attribute, SimVPIClassCallDispatchOp> vpiClassDispatchCalls;
   SmallVector<SimVPIStatementRelationDeclOp> statementRelations;
   SmallVector<SimVPIRelationDeclOp> vpiRelations;
+  DenseSet<Attribute> primitiveDefinitionSources;
   SmallVector<SimVPIDefinitionMemberDeclOp> definitionMembers;
   SmallVector<SimVPIDefinitionSpecializationDeclOp> definitionSpecializations;
   SmallVector<SimVPIDefinitionMemberSpecializationOp>
@@ -3859,6 +3901,9 @@ LogicalResult SimDesignOp::verifyRegions() {
       statementRelations.push_back(relation);
     } else if (auto relation = dyn_cast<SimVPIRelationDeclOp>(op)) {
       vpiRelations.push_back(relation);
+    } else if (auto binding = dyn_cast<SimVPIDefinitionBindingOp>(op)) {
+      if (!primitiveDefinitionSources.insert(binding.getSourceAttr()).second)
+        return binding.emitOpError("duplicate primitive definition binding");
     } else if (auto member = dyn_cast<SimVPIDefinitionMemberDeclOp>(op)) {
       definitionMembers.push_back(member);
     } else if (auto specialization =

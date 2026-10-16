@@ -1893,7 +1893,7 @@ FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
       definitionLoc = file;
     sim::SimVPIDefinitionDeclOp::create(builder, location, symbol, vpiKind,
                                         definitionName.getValue(),
-                                        definitionLoc);
+                                        definitionLoc, IntegerAttr{});
     FlatSymbolRefAttr result =
         FlatSymbolRefAttr::get(builder.getContext(), symbol);
     definitionSymbols[definition] = {result, definitionName};

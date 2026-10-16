@@ -1481,6 +1481,71 @@ TEST(VPIObjectModel, SymbolicStringPropertiesExactlyMatchLrm) {
   EXPECT_EQ(actual, expected);
 }
 
+TEST(VPIObjectModel, PrimitiveTypesMatchLrmConstantsAndSourceSpellings) {
+  struct Entry {
+    uint32_t value;
+    const char *name;
+    const char *source;
+    uint32_t kind;
+  };
+  const Entry expected[] = {
+      {vpiAndPrim, "vpiAndPrim", "and", vpiGate},
+      {vpiNandPrim, "vpiNandPrim", "nand", vpiGate},
+      {vpiNorPrim, "vpiNorPrim", "nor", vpiGate},
+      {vpiOrPrim, "vpiOrPrim", "or", vpiGate},
+      {vpiXorPrim, "vpiXorPrim", "xor", vpiGate},
+      {vpiXnorPrim, "vpiXnorPrim", "xnor", vpiGate},
+      {vpiBufPrim, "vpiBufPrim", "buf", vpiGate},
+      {vpiNotPrim, "vpiNotPrim", "not", vpiGate},
+      {vpiBufif0Prim, "vpiBufif0Prim", "bufif0", vpiGate},
+      {vpiBufif1Prim, "vpiBufif1Prim", "bufif1", vpiGate},
+      {vpiNotif0Prim, "vpiNotif0Prim", "notif0", vpiGate},
+      {vpiNotif1Prim, "vpiNotif1Prim", "notif1", vpiGate},
+      {vpiNmosPrim, "vpiNmosPrim", "nmos", vpiSwitch},
+      {vpiPmosPrim, "vpiPmosPrim", "pmos", vpiSwitch},
+      {vpiCmosPrim, "vpiCmosPrim", "cmos", vpiSwitch},
+      {vpiRnmosPrim, "vpiRnmosPrim", "rnmos", vpiSwitch},
+      {vpiRpmosPrim, "vpiRpmosPrim", "rpmos", vpiSwitch},
+      {vpiRcmosPrim, "vpiRcmosPrim", "rcmos", vpiSwitch},
+      {vpiRtranPrim, "vpiRtranPrim", "rtran", vpiSwitch},
+      {vpiRtranif0Prim, "vpiRtranif0Prim", "rtranif0", vpiSwitch},
+      {vpiRtranif1Prim, "vpiRtranif1Prim", "rtranif1", vpiSwitch},
+      {vpiTranPrim, "vpiTranPrim", "tran", vpiSwitch},
+      {vpiTranif0Prim, "vpiTranif0Prim", "tranif0", vpiSwitch},
+      {vpiTranif1Prim, "vpiTranif1Prim", "tranif1", vpiSwitch},
+      {vpiPullupPrim, "vpiPullupPrim", "pullup", vpiGate},
+      {vpiPulldownPrim, "vpiPulldownPrim", "pulldown", vpiGate},
+      {vpiSeqPrim, "vpiSeqPrim", "", vpiUdp},
+      {vpiCombPrim, "vpiCombPrim", "", vpiUdp},
+  };
+  for (const auto &entry : expected) {
+    SCOPED_TRACE(entry.name);
+    const auto *value = findVPIIntegerPropertyValue(vpiPrimType, entry.value);
+    ASSERT_NE(value, nullptr);
+    EXPECT_STREQ(value->symbolicName, entry.name);
+    VPIObjectModelImageIntegerPropertyValue image{};
+    ASSERT_TRUE(findVPIObjectModelImageIntegerPropertyValue(
+        vpiObjectModelImage, vpiPrimType, entry.value, image));
+    EXPECT_STREQ(reinterpret_cast<const char *>(image.symbolicName),
+                 entry.name);
+    const auto *primitive = findVPIBuiltinPrimitive(entry.value);
+    if (entry.kind == vpiUdp) {
+      EXPECT_EQ(primitive, nullptr);
+      continue;
+    }
+    ASSERT_NE(primitive, nullptr);
+    EXPECT_EQ(primitive->objectKind, entry.kind);
+    EXPECT_STREQ(primitive->sourceName, entry.source);
+    EXPECT_EQ(findVPIBuiltinPrimitive(entry.source), primitive);
+  }
+  for (uint32_t invalid : {0u, 29u, UINT32_MAX}) {
+    EXPECT_EQ(findVPIIntegerPropertyValue(vpiPrimType, invalid), nullptr);
+    EXPECT_EQ(findVPIBuiltinPrimitive(invalid), nullptr);
+  }
+  EXPECT_EQ(findVPIBuiltinPrimitive("AND"), nullptr);
+  EXPECT_EQ(findVPIBuiltinPrimitive("user_udp"), nullptr);
+}
+
 TEST(VPIObjectModel, AlwaysTypeNumericDomainMatchesLrmConstants) {
   struct Entry {
     uint32_t value;
@@ -2283,6 +2348,11 @@ TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
     if (definitionInstance && (descriptor.property == vpiDefName ||
                                descriptor.property == vpiDefFile ||
                                descriptor.property == vpiDefLineNo))
+      expected = PropertyRealization::DefinitionImage;
+    if ((descriptor.sourceType == vpiGate ||
+         descriptor.sourceType == vpiSwitch) &&
+        (descriptor.property == vpiDefName ||
+         descriptor.property == vpiPrimType))
       expected = PropertyRealization::DefinitionImage;
     if (instance &&
         (descriptor.property == vpiAutomatic || descriptor.property == vpiTop ||

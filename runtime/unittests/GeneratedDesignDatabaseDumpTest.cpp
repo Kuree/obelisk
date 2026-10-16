@@ -815,8 +815,9 @@ TEST(GeneratedDesignDatabase, Dump) {
     const size_t sourceTable = static_cast<size_t>(
         unpackTableIndexKind(binding.getSourceIndexAndTable()));
     const uint32_t source = unpackTableIndex(binding.getSourceIndexAndTable());
-    ASSERT_EQ(sourceTable, static_cast<size_t>(TableKind::Scope));
-    ASSERT_LT(source, scopeIndexNames.size());
+    ASSERT_TRUE(sourceTable == static_cast<size_t>(TableKind::Scope) ||
+                sourceTable == static_cast<size_t>(TableKind::Object));
+    ASSERT_LT(source, tableNames[sourceTable]->size());
     ASSERT_LT(binding.getDefinition(), definitionNames.size());
     if (binding.getSpecialization() != UINT32_MAX) {
       ASSERT_LT(binding.getSpecialization(), specializationDefinitions.size());
@@ -830,7 +831,7 @@ TEST(GeneratedDesignDatabase, Dump) {
       output << "none";
     else
       output << binding.getSpecialization();
-    output << " source_name=" << scopeIndexNames[source]
+    output << " source_name=" << (*tableNames[sourceTable])[source]
            << " first_member_endpoint=" << binding.getFirstMemberEndpoint()
            << '\n';
     const DefinitionView definition(image + definitionOffset +

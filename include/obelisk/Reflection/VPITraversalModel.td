@@ -800,7 +800,8 @@ def DefNameProperty : VPIProperty<"vpiDefName", 9, StringProperty,
   DefinitionNameObjects, "37.10; 37.15; 37.30; 37.35; 37.36",
   StaticProperty, DeniedWhenProtected, 0, NoPropertyObjects,
   NoPropertyObjects, DerivedProperty, PackageSource, NoPropertyObjects,
-  DefinitionInstanceObjects>;
+  VPIObjectSet<"SharedDefinitionNameObjects",
+               [Module, Interface, Program, Gate, Switch]>>;
 def ProtectedProperty : VPIProperty<"vpiProtected", 10, BooleanProperty,
   ProtectedLegacyObjects, "37.10; 37.36; 37.85">;
 def DefNetTypeProperty : VPIProperty<"vpiDefNetType", 13, IntegerProperty,
@@ -904,7 +905,45 @@ def Strength1Strong : VPIIntegerPropertyValue<Strength1Property, 64>;
 def Strength1Supply : VPIIntegerPropertyValue<Strength1Property, 128>;
 def PrimTypeProperty : VPIProperty<"vpiPrimType", 33, IntegerProperty,
   PrimitiveDefinitionObjects, "37.35; 37.36", StaticProperty,
-  DeniedWhenProtected, 1>;
+  DeniedWhenProtected, 1, NoPropertyObjects, NoPropertyObjects, DerivedProperty,
+  NoPropertyObjects, NoPropertyObjects,
+  VPIObjectSet<"SharedPrimitiveDefinitionObjects", [Gate, Switch]>>;
+
+// Built-in definitions preserve the standard subtype and source spelling once.
+class VPIBuiltinPrimitive<int value_, string apiName_, string sourceName_,
+                          VPIObjectKind objectKind_>
+    : VPISymbolicPropertyValue<PrimTypeProperty, value_, apiName_> {
+  string sourceName = sourceName_;
+  VPIObjectKind objectKind = objectKind_;
+}
+def PrimitiveAnd : VPIBuiltinPrimitive<1, "vpiAndPrim", "and", Gate>;
+def PrimitiveNand : VPIBuiltinPrimitive<2, "vpiNandPrim", "nand", Gate>;
+def PrimitiveNor : VPIBuiltinPrimitive<3, "vpiNorPrim", "nor", Gate>;
+def PrimitiveOr : VPIBuiltinPrimitive<4, "vpiOrPrim", "or", Gate>;
+def PrimitiveXor : VPIBuiltinPrimitive<5, "vpiXorPrim", "xor", Gate>;
+def PrimitiveXnor : VPIBuiltinPrimitive<6, "vpiXnorPrim", "xnor", Gate>;
+def PrimitiveBuf : VPIBuiltinPrimitive<7, "vpiBufPrim", "buf", Gate>;
+def PrimitiveNot : VPIBuiltinPrimitive<8, "vpiNotPrim", "not", Gate>;
+def PrimitiveBufif0 : VPIBuiltinPrimitive<9, "vpiBufif0Prim", "bufif0", Gate>;
+def PrimitiveBufif1 : VPIBuiltinPrimitive<10, "vpiBufif1Prim", "bufif1", Gate>;
+def PrimitiveNotif0 : VPIBuiltinPrimitive<11, "vpiNotif0Prim", "notif0", Gate>;
+def PrimitiveNotif1 : VPIBuiltinPrimitive<12, "vpiNotif1Prim", "notif1", Gate>;
+def PrimitiveNmos : VPIBuiltinPrimitive<13, "vpiNmosPrim", "nmos", Switch>;
+def PrimitivePmos : VPIBuiltinPrimitive<14, "vpiPmosPrim", "pmos", Switch>;
+def PrimitiveCmos : VPIBuiltinPrimitive<15, "vpiCmosPrim", "cmos", Switch>;
+def PrimitiveRnmos : VPIBuiltinPrimitive<16, "vpiRnmosPrim", "rnmos", Switch>;
+def PrimitiveRpmos : VPIBuiltinPrimitive<17, "vpiRpmosPrim", "rpmos", Switch>;
+def PrimitiveRcmos : VPIBuiltinPrimitive<18, "vpiRcmosPrim", "rcmos", Switch>;
+def PrimitiveRtran : VPIBuiltinPrimitive<19, "vpiRtranPrim", "rtran", Switch>;
+def PrimitiveRtranif0 : VPIBuiltinPrimitive<20, "vpiRtranif0Prim", "rtranif0", Switch>;
+def PrimitiveRtranif1 : VPIBuiltinPrimitive<21, "vpiRtranif1Prim", "rtranif1", Switch>;
+def PrimitiveTran : VPIBuiltinPrimitive<22, "vpiTranPrim", "tran", Switch>;
+def PrimitiveTranif0 : VPIBuiltinPrimitive<23, "vpiTranif0Prim", "tranif0", Switch>;
+def PrimitiveTranif1 : VPIBuiltinPrimitive<24, "vpiTranif1Prim", "tranif1", Switch>;
+def PrimitivePullup : VPIBuiltinPrimitive<25, "vpiPullupPrim", "pullup", Gate>;
+def PrimitivePulldown : VPIBuiltinPrimitive<26, "vpiPulldownPrim", "pulldown", Gate>;
+def PrimitiveSeq : VPISymbolicPropertyValue<PrimTypeProperty, 27, "vpiSeqPrim">;
+def PrimitiveComb : VPISymbolicPropertyValue<PrimTypeProperty, 28, "vpiCombPrim">;
 def PolarityProperty : VPIProperty<"vpiPolarity", 34, IntegerProperty,
   ReadModPathObjects, "37.39">;
 def DataPolarityProperty : VPIProperty<"vpiDataPolarity", 35,

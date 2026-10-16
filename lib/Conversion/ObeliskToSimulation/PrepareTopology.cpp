@@ -1437,6 +1437,7 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     anchorKinds[operation] = *kind;
   });
   llvm::DenseMap<Operation *, FlatSymbolRefAttr> anchorSymbols;
+  llvm::StringMap<FlatSymbolRefAttr> builtinPrimitiveDefinitions;
   llvm::DenseMap<Operation *, uint64_t> anchorInventoryIds;
   llvm::DenseMap<Operation *, sim::SimVPIObjectAnchorOp> anchorDeclarations;
   llvm::DenseMap<Operation *, SmallVector<sim::SimVPIObjectAnchorOp>>
@@ -1924,6 +1925,33 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
         preserveVPIMethodBindings ? classes.methodSymbols.lookup(source)
                                   : FlatSymbolRefAttr{},
         UnitAttr{}, StringAttr{}, UnitAttr{});
+    if (auto primitive =
+            dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(source);
+        primitive && !primitive->hasAttr("udp_metadata")) {
+      auto name = primitive->getAttrOfType<StringAttr>("primitive_name");
+      const auto *subtype = name ? reflection::findVPIBuiltinPrimitive(
+                                       std::string_view(name.getValue()))
+                                 : nullptr;
+      if (!subtype || subtype->objectKind != anchor.getVpiKind()) {
+        primitive.emitOpError("has no exact built-in VPI primitive definition");
+        invalid = true;
+        continue;
+      }
+      auto &definition = builtinPrimitiveDefinitions[name.getValue()];
+      if (!definition) {
+        std::string symbol = (Twine("__obelisk_vpi_primitive_definition_") +
+                              Twine(subtype->value))
+                                 .str();
+        auto declared = sim::SimVPIDefinitionDeclOp::create(
+            builder, getSemanticLocation(source), symbol, subtype->objectKind,
+            name.getValue(), LocationAttr{},
+            builder.getI32IntegerAttr(subtype->value));
+        definition = FlatSymbolRefAttr::get(declared);
+      }
+      sim::SimVPIDefinitionBindingOp::create(
+          builder, getSemanticLocation(source), FlatSymbolRefAttr::get(anchor),
+          definition);
+    }
     if (isa<semantic::SVSourceTypeParameterSymbolOp>(source))
       anchor.setUnresolvedTypeParameterAttr(builder.getUnitAttr());
     if (isa<semantic::SVSourceValueParameterSymbolOp>(source))

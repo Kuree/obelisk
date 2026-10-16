@@ -78,19 +78,31 @@ def SimVPIDefinitionDeclOp : SimOp<"vpi_definition.decl", [
   ]> {
   let summary = "shared source definition identity for VPI instances";
   let description = [{
-    Preserves one source module, interface, or program definition independently
-    of its elaborated instances. Definition-invariant VPI metadata can therefore
+    Preserves one source module, interface, program, or built-in primitive
+    definition independently of its elaborated instances. Definition-invariant VPI metadata can therefore
     be serialized once and reached through compact instance bindings. This is
     reflection inventory only and never participates in executable scheduling.
   }];
   let arguments = (ins SymbolNameAttr:$sym_name, I32Attr:$vpi_kind,
                        StrAttr:$definition_name,
-                       OptionalAttr<LocationAttr>:$definition_loc);
+                       OptionalAttr<LocationAttr>:$definition_loc,
+                       OptionalAttr<I32Attr>:$primitive_type);
   let assemblyFormat = [{
     $sym_name `type` $vpi_kind `name` $definition_name
-    (`definition_loc` $definition_loc^)? attr-dict
+    (`definition_loc` $definition_loc^)?
+    (`primitive_type` $primitive_type^)? attr-dict
   }];
   let hasVerifier = 1;
+}
+
+def SimVPIDefinitionBindingOp : SimOp<"vpi_definition.bind", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "bind an exact primitive instance to its shared definition";
+  let arguments = (ins FlatSymbolRefAttr:$source,
+                       FlatSymbolRefAttr:$definition);
+  let assemblyFormat = "$source `to` $definition attr-dict";
 }
 
 def SimVPIDefinitionMemberDeclOp : SimOp<"vpi_definition_member.decl", [

@@ -408,6 +408,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   DenseMap<Operation *, sim::SimVPIObjectAnchorOp> eventArrayStorage;
   DenseMap<Operation *, sim::VPITypeSemanticsAttr> eventArraySemantics;
   SmallVector<sim::SimVPIEnumConstDeclOp> enumConstants;
+  SmallVector<sim::SimVPIDefinitionBindingOp> primitiveDefinitionBindings;
   SmallVector<sim::SimVPIDefinitionDeclOp> definitionDeclarations;
   SmallVector<sim::SimVPIDefinitionMemberDeclOp> definitionMemberDeclarations;
   SmallVector<sim::SimVPIDefinitionSpecializationDeclOp>
@@ -519,6 +520,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
         definitionDeclarations.push_back(definition);
         definitionsBySymbol[definition.getSymName()] = definition;
       }
+    } else if (auto binding =
+                   dyn_cast<sim::SimVPIDefinitionBindingOp>(operation)) {
+      if (includeStatements)
+        primitiveDefinitionBindings.push_back(binding);
     } else if (auto member =
                    dyn_cast<sim::SimVPIDefinitionMemberDeclOp>(operation)) {
       if (includeStatements) {
@@ -1241,6 +1246,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
       physicalStorageObjectIndices;
   for (auto [index, scope] : llvm::enumerate(scopes))
     scopeIndices[scope.getId()] = static_cast<uint32_t>(index);
+  for (auto [index, object] : llvm::enumerate(objects))
+    if (object.identity)
+      objectIndices[object.identity] = static_cast<uint32_t>(index);
 
   auto automaticEdges = [](uint32_t sourceKind) {
     auto first = std::lower_bound(
@@ -1263,6 +1271,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
       auto found = definitionsBySymbol.find(reference.getValue());
       if (found == definitionsBySymbol.end()) {
         scope.emitOpError(
+            "references a VPI definition that was not serialized");
+        return {};
+      }
+      referencedDefinitions.insert(found->second);
+    }
+    for (auto binding : primitiveDefinitionBindings) {
+      auto found = definitionsBySymbol.find(binding.getDefinition());
+      if (found == definitionsBySymbol.end()) {
+        binding.emitOpError(
             "references a VPI definition that was not serialized");
         return {};
       }
@@ -1446,6 +1463,27 @@ SmallVector<uint8_t> serializeDesignDatabase(
       definitionForSource[packedSource] =
           definitionIndices.lookup(found->second);
     }
+    for (auto binding : primitiveDefinitionBindings) {
+      auto source = anchorsBySymbol.find(binding.getSource());
+      auto definition = definitionsBySymbol.find(binding.getDefinition());
+      uint32_t packedSource = 0;
+      if (source == anchorsBySymbol.end() ||
+          definition == definitionsBySymbol.end() ||
+          !objectIndices.count(source->second) ||
+          !definitionIndices.count(definition->second) ||
+          definitionBindings.size() >= kVirtualBindingLimit ||
+          !tryPackTableIndex(TableKind::Object,
+                             objectIndices.lookup(source->second),
+                             packedSource) ||
+          definitionForSource.count(packedSource)) {
+        binding.emitOpError("primitive definition binding cannot be encoded");
+        return {};
+      }
+      uint32_t definitionIndex = definitionIndices.lookup(definition->second);
+      definitionBindings.push_back(
+          {packedSource, definitionIndex, UINT32_MAX, 0});
+      definitionForSource[packedSource] = definitionIndex;
+    }
     llvm::sort(definitionBindings, [](const DefinitionBindingRecord &left,
                                       const DefinitionBindingRecord &right) {
       return left.sourceIndexAndTable < right.sourceIndexAndTable;
@@ -1465,8 +1503,6 @@ SmallVector<uint8_t> serializeDesignDatabase(
     }
   }
   for (auto [index, object] : llvm::enumerate(objects)) {
-    if (object.identity)
-      objectIndices[object.identity] = static_cast<uint32_t>(index);
     if (object.kind == OBELISK_RT_DESIGN_RECORD_PROCESS ||
         object.kind == OBELISK_RT_DESIGN_RECORD_FUNCTION)
       codeUnitObjectIndices[object.id] = static_cast<uint32_t>(index);
@@ -4847,6 +4883,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
           auto integer = dyn_cast<IntegerAttr>(value);
           agrees = integer && definition.source.lineColumn >> 32 ==
                                   integer.getValue().getZExtValue();
+        } else if (selector == 33) {
+          auto integer = dyn_cast<IntegerAttr>(value);
+          agrees = integer && definition.declaration.getPrimitiveType() &&
+                   *definition.declaration.getPrimitiveType() ==
+                       integer.getValue().getZExtValue();
         }
         if (!agrees)
           return operation->emitError(
@@ -6087,7 +6128,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
                             index * DefinitionLayout.size);
     writer.setVPIKind(
         static_cast<uint16_t>(definition.declaration.getVpiKind()));
-    writer.setFlags(0);
+    writer.setFlags(definition.declaration.getPrimitiveType().value_or(0));
     writer.setName(static_cast<uint32_t>(
         intern(definition.declaration.getDefinitionName())));
     writer.setFile(definition.source.file.empty()

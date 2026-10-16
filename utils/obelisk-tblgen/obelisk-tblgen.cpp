@@ -1980,6 +1980,47 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         "  return nullptr;\n"
         "}\n\n";
 
+  auto primitiveRecords =
+      records.getAllDerivedDefinitions("VPIBuiltinPrimitive");
+  SmallVector<const Record *> primitives(primitiveRecords.begin(),
+                                         primitiveRecords.end());
+  llvm::sort(primitives, [](const Record *left, const Record *right) {
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
+  });
+  DenseSet<int64_t> primitiveValues;
+  DenseSet<StringRef> primitiveNames;
+  os << "struct VPIBuiltinPrimitiveDescriptor {\n"
+        "  const char *sourceName;\n"
+        "  uint16_t value;\n"
+        "  uint16_t objectKind;\n"
+        "};\n\n"
+        "inline constexpr VPIBuiltinPrimitiveDescriptor vpiBuiltinPrimitives[] "
+        "= {\n";
+  for (const Record *primitive : primitives) {
+    auto name = primitive->getValueAsString("sourceName");
+    auto value = primitive->getValueAsInt("value");
+    auto kind = primitive->getValueAsDef("objectKind")->getValueAsInt("value");
+    if (name.empty() || value <= 0 || value > UINT16_MAX || kind <= 0 ||
+        kind > UINT16_MAX || !primitiveValues.insert(value).second ||
+        !primitiveNames.insert(name).second)
+      PrintFatalError(primitive->getLoc(),
+                      "invalid or duplicate built-in primitive");
+    os << formatv("  {{\"{0}\", {1}, {2}},\n", name, value, kind);
+  }
+  os << "};\n\n"
+        "inline constexpr const VPIBuiltinPrimitiveDescriptor "
+        "*findVPIBuiltinPrimitive(uint32_t value) {\n"
+        "  for (const auto &primitive : vpiBuiltinPrimitives)\n"
+        "    if (primitive.value == value) return &primitive;\n"
+        "  return nullptr;\n"
+        "}\n\n"
+        "inline constexpr const VPIBuiltinPrimitiveDescriptor "
+        "*findVPIBuiltinPrimitive(std::string_view sourceName) {\n"
+        "  for (const auto &primitive : vpiBuiltinPrimitives)\n"
+        "    if (sourceName == primitive.sourceName) return &primitive;\n"
+        "  return nullptr;\n"
+        "}\n\n";
+
   auto familyRecords = records.getAllDerivedDefinitions("VPIObjectFamily");
   SmallVector<const Record *> families(familyRecords.begin(),
                                        familyRecords.end());
