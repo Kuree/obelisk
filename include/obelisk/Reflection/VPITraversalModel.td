@@ -239,7 +239,7 @@ def TaskFunctionDeclObjects : VPIObjectSet<"TaskFunctionDeclObjects",
   [Task, Function]>;
 def AutomaticImageObjects : VPIObjectSet<"AutomaticImageObjects",
   [Package, Module, Interface, Program, Task, Function, NamedEvent,
-   NamedEventArray]>;
+   NamedEventArray, Constraint]>;
 def TaskFunctionCallObjects : VPIObjectSet<"TaskFunctionCallObjects",
   [FuncCall, TaskCall, SysFuncCall, SysTaskCall, MethodFuncCall,
    MethodTaskCall]>;
@@ -1013,7 +1013,9 @@ def UnitProperty : VPIProperty<"vpiUnit", 602, BooleanProperty,
 def JoinTypeProperty : VPIProperty<"vpiJoinType", 603, IntegerProperty,
   ForkObjects, "37.12">;
 def AccessTypeProperty : VPIProperty<"vpiAccessType", 604, IntegerProperty,
-  AccessTypePropertyObjects, "37.8; 37.34; 37.41">;
+  AccessTypePropertyObjects, "37.8; 37.34; 37.41", StaticProperty,
+  DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects, DerivedProperty,
+  ReadConstraintObjects>;
 def IsRandomizedProperty : VPIProperty<"vpiIsRandomized", 608,
   BooleanProperty, OrdinaryVariablePropertyObjects, "37.17", DynamicProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
@@ -1103,8 +1105,8 @@ def IsFinalProperty : VPIProperty<"vpiIsFinal", 670, IntegerProperty,
 // image record. Runtime-created handles, executable processes, statements,
 // nets, and ordinary design storage use their dedicated representations.
 def StaticImageObjects : VPIObjectSet<"StaticImageObjects",
-  [Package, Parameter, TypeParameter, ClassDefn, Task, Function, ClockingBlock, GenScope,
-   PropertyDecl,
+  [Package, Parameter, TypeParameter, ClassDefn, Constraint, Modport, Task,
+   Function, ClockingBlock, GenScope, PropertyDecl,
    SequenceDecl, Gate, Switch, Udp, NamedEvent, ModuleArray, InterfaceArray,
    ProgramArray, GateArray, SwitchArray, UdpArray, NamedEventArray,
    GenScopeArray, InterconnectArray, LongIntTypespec, ShortRealTypespec,
@@ -1324,7 +1326,7 @@ def ModuleInstanceArrays : VPITraversalEdge<ModuleSource, InstanceArrayRel,
 def InterfaceTfDecls : VPITraversalEdge<InterfaceObjects, InterfaceTfDecl,
   IterateMode, InterfaceTfDeclObjects, NoOrder, "37.6">;
 def InterfaceModports : VPITraversalEdge<InterfaceObjects, Modport,
-  IterateMode, ModportObjects, NoOrder, "37.6">;
+  IterateMode, ModportObjects, NoOrder, "37.6", 0, AutomaticDirectChild>;
 def InterfaceModPaths : VPITraversalEdge<InterfaceObjects, ModPath,
   IterateMode, ModPathObjects, NoOrder, "37.6">;
 def InterfaceContAssigns : VPITraversalEdge<InterfaceObjects, ContAssign,

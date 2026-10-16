@@ -618,6 +618,13 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
     return emitOpError("class_method requires a task or function anchor");
   if (getClassMethodAttr() && getDebugName().empty())
     return emitOpError("class_method requires a nonempty declaration name");
+  if (anchorKind == Kind::Modport &&
+      (!getParentAttr() || getDebugName().empty()))
+    return emitOpError(
+        "modport requires an interface parent and a nonempty declaration name");
+  if (anchorKind == Kind::Constraint &&
+      (!getParentAttr() || getDebugName().empty()))
+    return emitOpError("constraint requires a named class-owned declaration");
   if (failed(verifyFixedReflection(*this, getVpiKind(),
                                    reflectionProperties(*this),
                                    reflectionDefinitionLoc(*this))))
@@ -625,10 +632,12 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
   switch (anchorKind) {
   case Kind::Module:
   case Kind::Interface:
+  case Kind::Modport:
   case Kind::Program:
   case Kind::Package:
   case Kind::ClassDefn:
   case Kind::Extends:
+  case Kind::Constraint:
   case Kind::Task:
   case Kind::Function:
   case Kind::ClockingBlock:
@@ -910,6 +919,20 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       break;
     case Kind::Extends:
       legal = parentKind == Kind::ClassDefn;
+      break;
+    case Kind::Modport: {
+      auto interface = dyn_cast<SimVPIObjectAnchorOp>(owner);
+      legal =
+          parentKind == Kind::Interface && interface &&
+          interface.getBackingAttr() &&
+          interface.getBackingAttr().getKind() == VPIObjectBackingKind::Scope &&
+          interface.getBackingAttr().getId().getValue().getZExtValue() ==
+              getEnclosingScopeId();
+      break;
+    }
+    case Kind::Constraint:
+      legal =
+          parentKind == Kind::ClassDefn || parentKind == Kind::ClassTypespec;
       break;
     case Kind::PropertyDecl:
     case Kind::SequenceDecl:
@@ -3337,8 +3360,25 @@ LogicalResult SimDesignOp::verifyRegions() {
   }
 
   llvm::DenseMap<Attribute, SimVPIObjectAnchorOp> anchorsBySymbol;
-  for (SimVPIObjectAnchorOp anchor : vpiAnchors)
+  DenseSet<std::pair<Attribute, Attribute>> modportNames;
+  DenseSet<std::pair<Attribute, Attribute>> constraintNames;
+  for (SimVPIObjectAnchorOp anchor : vpiAnchors) {
     anchorsBySymbol[FlatSymbolRefAttr::get(anchor.getSymNameAttr())] = anchor;
+    if (anchor.getVpiKind() ==
+            static_cast<uint32_t>(reflection::VPIObjectKind::Modport) &&
+        !modportNames
+             .insert({anchor.getParentAttr(), anchor.getDebugNameAttr()})
+             .second)
+      return anchor.emitOpError(
+          "duplicates a modport declaration name in the same interface");
+    if (anchor.getVpiKind() ==
+            static_cast<uint32_t>(reflection::VPIObjectKind::Constraint) &&
+        !constraintNames
+             .insert({anchor.getParentAttr(), anchor.getDebugNameAttr()})
+             .second)
+      return anchor.emitOpError(
+          "duplicates a constraint declaration name in the same class");
+  }
 
   llvm::DenseMap<Operation *, llvm::DenseSet<uint32_t>> arrayMemberOrdinals;
   llvm::DenseMap<Operation *, uint32_t> arrayElementCounts;

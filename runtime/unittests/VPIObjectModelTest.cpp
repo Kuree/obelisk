@@ -871,6 +871,11 @@ TEST(VPIObjectModel, AutomaticRelationsAreExplicitStructuralEdges) {
   EXPECT_EQ(requireTraversal(vpiClassTypespec, vpiMethods, Mode::Iterate)
                 .automaticRelation,
             Automatic::DirectChild);
+  for (uint32_t owner : {vpiClassDefn, vpiClassTypespec}) {
+    const auto &edge = requireTraversal(owner, vpiConstraint, Mode::Iterate);
+    EXPECT_EQ(edge.automaticRelation, Automatic::DirectChild);
+    EXPECT_EQ(edge.order, Order::Declaration);
+  }
   EXPECT_EQ(requireTraversal(vpiClassDefn, vpiParameter, Mode::Iterate)
                 .automaticRelation,
             Automatic::DirectChild);
@@ -2132,8 +2137,12 @@ TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
     if ((descriptor.sourceType == vpiTask ||
          descriptor.sourceType == vpiFunction ||
          descriptor.sourceType == vpiNamedEvent ||
-         descriptor.sourceType == vpiNamedEventArray) &&
+         descriptor.sourceType == vpiNamedEventArray ||
+         descriptor.sourceType == vpiConstraint) &&
         descriptor.property == vpiAutomatic)
+      expected = PropertyRealization::FixedImage;
+    if (descriptor.sourceType == vpiConstraint &&
+        descriptor.property == vpiAccessType)
       expected = PropertyRealization::FixedImage;
     if (descriptor.property == vpiNetType ||
         descriptor.property == vpiExplicitScalared ||

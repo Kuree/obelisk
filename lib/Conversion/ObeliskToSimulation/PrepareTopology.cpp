@@ -1224,9 +1224,10 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   auto sourceAnchorKind = [&](Operation *operation) -> std::optional<VPIKind> {
     if (!isa<semantic::SVCompilationUnitSymbolOp, semantic::SVPackageSymbolOp,
              semantic::SVClassTypeOp, semantic::SVGenericClassDefSymbolOp,
-             semantic::SVSubroutineSymbolOp,
+             semantic::SVSubroutineSymbolOp, semantic::SVConstraintBlockSymbolOp,
              semantic::SVPropertySymbolOp, semantic::SVSequenceSymbolOp,
-             semantic::SVClockingBlockSymbolOp, semantic::SVVariableSymbolOp,
+             semantic::SVClockingBlockSymbolOp, semantic::SVModportSymbolOp,
+             semantic::SVVariableSymbolOp,
              semantic::SVParameterSymbolOp, semantic::SVTypeParameterSymbolOp,
              semantic::SVInstanceArraySymbolOp,
              semantic::SVGenerateBlockArraySymbolOp,
@@ -1287,6 +1288,15 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         return std::nullopt;
       return VPIKind::ClassDefn;
     }
+    if (isa<semantic::SVConstraintBlockSymbolOp>(operation)) {
+      // Only declarations directly owned by this class belong to its
+      // constraint inventory. Inherited constraints are reached through
+      // extends, and inline randomize constraints have no declaration here.
+      auto owner = dyn_cast<semantic::SVClassTypeOp>(operation->getParentOp());
+      if (!owner || owner.getIsUninstantiated() || !classes.symbols.count(owner))
+        return std::nullopt;
+      return VPIKind::Constraint;
+    }
     if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(operation)) {
       if (subroutine.getIsBuiltin().value_or(false))
         return std::nullopt;
@@ -1300,6 +1310,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
       return VPIKind::SequenceDecl;
     if (isa<semantic::SVClockingBlockSymbolOp>(operation))
       return VPIKind::ClockingBlock;
+    if (isa<semantic::SVModportSymbolOp>(operation))
+      return VPIKind::Modport;
     if (isa<semantic::SVVariableSymbolOp>(operation)) {
       if (namedEventArrayRanges.count(operation))
         return VPIKind::NamedEventArray;
@@ -1464,6 +1476,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     if (auto variable = dyn_cast<semantic::SVVariableSymbolOp>(source))
       isAutomatic = variable.getLifetime() ==
                     semantic::SVVariableLifetime::Automatic;
+    if (auto constraint = dyn_cast<semantic::SVConstraintBlockSymbolOp>(source))
+      isAutomatic = !constraint.getIsStatic().value_or(false);
     if (sourceKind == VPIKind::Module) {
       addBoolean(7, top);                     // vpiTopModule
       addBoolean(8, cell && cell.getValue()); // vpiCellInstance
@@ -1496,6 +1510,12 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
       addBoolean(70, static_cast<bool>(parameter.getIsLocalParamAttr()));
     if (auto parameter = dyn_cast<semantic::SVTypeParameterSymbolOp>(source))
       addBoolean(70, static_cast<bool>(parameter.getIsLocalParamAttr()));
+    if (auto constraint = dyn_cast<semantic::SVConstraintBlockSymbolOp>(source))
+      properties.push_back(sim::VPIPropertyAttr::get(
+          builder.getContext(), builder.getI32IntegerAttr(604), // vpiAccessType
+          builder.getI32IntegerAttr(constraint.getOutOfBlockIndex() != 0
+                                       ? 2  // vpiExternAcc
+                                       : 0)));
     addBoolean(600, top); // vpiTop
     addBoolean(602, isa<semantic::SVCompilationUnitSymbolOp>(source));
 
@@ -2568,8 +2588,10 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
       Operation *source = method ? method.getOperation() : child;
       bool parameter = isa<semantic::SVParameterSymbolOp,
                            semantic::SVTypeParameterSymbolOp>(source);
+      bool constraint = isa<semantic::SVConstraintBlockSymbolOp>(source);
       sim::SimVPIObjectAnchorOp lexical = anchorDeclarations.lookup(source);
-      if (!lexical || (!parameter && !classes.methodSymbols.count(method)))
+      if (!lexical ||
+          (!parameter && !constraint && !classes.methodSymbols.count(method)))
         continue;
       auto specialized =
           cast<sim::SimVPIObjectAnchorOp>(builder.clone(*lexical));

@@ -4525,6 +4525,11 @@ private:
         SET_OP_ATTR(IsExtends, builder.getUnitAttr());
       if (node.flags.has(CF::Final))
         SET_OP_ATTR(IsFinal, builder.getUnitAttr());
+      // Resolving a prototype records the actual out-of-block definition's
+      // index. The Extern flag alone also includes pure prototypes, which
+      // have no external definition (IEEE 1800-2023 37.34).
+      if (node.flags.has(CF::Extern))
+        (void)node.getConstraints();
       SET_OP_ATTR(OutOfBlockIndex,
                   builder.getI64IntegerAttr(
                       static_cast<uint32_t>(node.getOutOfBlockIndex())));

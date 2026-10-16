@@ -226,6 +226,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
     std::string name;
   };
   SmallVector<ClassMemberBindingRecord> classMemberBindings;
+  struct ModportBindingRecord {
+    uint32_t modport, scope;
+    std::string name;
+  };
+  SmallVector<ModportBindingRecord> modportBindings;
   struct FrozenValueRecord {
     uint32_t kindAndFlags = 0;
     uint64_t bitWidth = 0;
@@ -855,9 +860,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
   // Direct lookup of a static property denotes its class declaration view.
   // Its backing storage is implementation identity, not a second VPI object.
   for (Record &object : objects)
-    if (auto storage = dyn_cast_if_present<sim::SimStorageDeclOp>(object.identity);
-        storage && classStaticStorage.contains(storage.getId()))
+    if (auto storage =
+            dyn_cast_if_present<sim::SimStorageDeclOp>(object.identity);
+        storage && classStaticStorage.contains(storage.getId())) {
       object.indexName = false;
+      object.caps |= OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR;
+    }
   // The compact format uses Name != 0 as its global-lookup root. Preserve
   // ambiguous static names in the full object table, where the existing
   // relation-only representation can retain a display name without indexing
@@ -1321,6 +1329,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
       classMemberRefs;
   DenseSet<uint32_t> lexicallyAnchoredObjectIndices;
   if (includeStatements) {
+    for (auto [index, object] : llvm::enumerate(objects))
+      if (auto storage =
+              dyn_cast_if_present<sim::SimStorageDeclOp>(object.identity);
+          storage && classStaticStorage.contains(storage.getId()))
+        lexicallyAnchoredObjectIndices.insert(static_cast<uint32_t>(index));
     for (sim::SimVPIObjectAnchorOp anchor : anchors) {
       sim::VPIObjectBackingAttr backing = anchor.getBackingAttr();
       if (!backing || backing.getKind() == sim::VPIObjectBackingKind::Class) {
@@ -1934,6 +1947,17 @@ SmallVector<uint8_t> serializeDesignDatabase(
       }
       ImageObjectRef source = lexicalOwnerRef(parent);
       ImageObjectRef target = anchorRefs.lookup(anchor);
+      if (target.vpiKind == static_cast<uint32_t>(VPIObjectKind::Modport)) {
+        uint32_t packed = 0;
+        if (source.table != TableKind::Scope ||
+            source.vpiKind != static_cast<uint32_t>(VPIObjectKind::Interface) ||
+            !tryPackTableIndex(target.table, target.index, packed)) {
+          anchor.emitOpError("modport has no physical interface owner");
+          return {};
+        }
+        modportBindings.push_back(
+            {packed, source.index, anchor.getDebugName().str()});
+      }
       uint32_t lexicalSelector = target.vpiKind;
       const VPIIndexedAccessDescriptor *indexed =
           findVPIIndexedAccess(source.vpiKind);
@@ -3908,6 +3932,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       intern(edge.name);
   for (const ClassMemberBindingRecord &member : classMemberBindings)
     intern(member.name);
+  for (const ModportBindingRecord &modport : modportBindings)
+    intern(modport.name);
   for (DefinitionRecord &definition : definitions) {
     intern(definition.declaration.getDefinitionName());
     if (!definition.source.file.empty())
@@ -3967,8 +3993,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
   uint64_t classMemberBindingOffset =
       semanticClassBindingOffset +
       semanticClassBindings.size() * SemanticClassBindingLayout.size;
-  uint64_t relationIndexOffset = classMemberBindingOffset +
+  uint64_t modportBindingOffset =
+      classMemberBindingOffset +
       classMemberBindings.size() * ClassMemberBindingLayout.size;
+  uint64_t relationIndexOffset =
+      modportBindingOffset + modportBindings.size() * ModportBindingLayout.size;
   uint64_t relationIndexDimensionOffset =
       relationIndexOffset + relationIndices.size() * RelationIndexLayout.size;
   uint64_t relationIndexKeyOffset =
@@ -4281,6 +4310,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setSemanticClassBindingCount(semanticClassBindings.size());
     writer.setClassMemberBindingOffset(classMemberBindingOffset);
     writer.setClassMemberBindingCount(classMemberBindings.size());
+    writer.setModportBindingOffset(modportBindingOffset);
+    writer.setModportBindingCount(modportBindings.size());
     writer.setRelationIndexOffset(relationIndexOffset);
     writer.setRelationIndexCount(relationIndices.size());
     writer.setRelationIndexDimensionOffset(relationIndexDimensionOffset);
@@ -4417,6 +4448,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
                                   index * ClassTypeBindingLayout.size);
     writer.setClassID(binding.classID);
     writer.setTypespecIndexAndTable(binding.typespecIndexAndTable);
+  }
+  llvm::sort(modportBindings, [](const auto &left, const auto &right) {
+    return left.modport < right.modport;
+  });
+  for (auto [index, binding] : llvm::enumerate(modportBindings)) {
+    ModportBindingWriter writer(output.data() + modportBindingOffset +
+                                index * ModportBindingLayout.size);
+    writer.setModportIndexAndTable(binding.modport);
+    writer.setScopeIndex(binding.scope);
+    writer.setName(static_cast<uint32_t>(intern(binding.name)));
   }
   for (auto [index, binding] : llvm::enumerate(classMemberBindings)) {
     ClassMemberBindingWriter writer(output.data() + classMemberBindingOffset +

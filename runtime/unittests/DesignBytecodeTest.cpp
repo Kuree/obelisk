@@ -2186,11 +2186,15 @@ std::vector<uint8_t> makeProtectedScopeDatabase() {
 
 std::vector<uint8_t> makeManagedScalarDatabase(uint32_t exactType,
                                                bool protectedObject = false,
-                                               bool fourState = false) {
+                                               bool fourState = false,
+                                               uint32_t scopeVPIKind = 0) {
   std::vector<uint8_t> bytes =
       protectedObject ? makeFixedPropertyDatabase(true) : makeDatabase(true);
   constexpr uint64_t objectOffset = 240;
   constexpr uint64_t typeOffset = 336;
+  if (scopeVPIKind != 0)
+    put32(bytes, 176,
+          designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, scopeVPIKind));
   put32(bytes, objectOffset,
         designRecordKind(OBELISK_RT_DESIGN_RECORD_STORAGE, exactType));
   put32(bytes, objectOffset + 4,
@@ -14533,6 +14537,41 @@ TEST(DesignDatabase, TraversesLooksUpAndAccessesLiveState) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(DesignDatabase, LooksUpPhysicalScopeIDsWithoutAssumingTableOrder) {
+  Fixture fixture;
+  installStatementDatabase(fixture);
+  const uint64_t scopes = get64(fixture.database, 48);
+  const uint64_t second = scopes + obelisk::reflection::ScopeLayout.size;
+  put64(fixture.database, scopes + 8, 101);
+  put64(fixture.database, second + 8, 7);
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  ASSERT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  obelisk_rt_design_cursor_v1 cursor{};
+  ASSERT_EQ(obelisk_rt_cached_vpi_scope(context, 101, &cursor), OBELISK_RT_OK);
+  EXPECT_EQ(cursor.offset, scopes);
+  ASSERT_EQ(obelisk_rt_cached_vpi_scope(context, 7, &cursor), OBELISK_RT_OK);
+  EXPECT_EQ(cursor.offset, second);
+  // Zero is a null virtual interface; the process's ID is a different
+  // identity namespace and must not resolve as a scope.
+  for (uint64_t missing : {UINT64_C(0), UINT64_C(10), UINT64_MAX}) {
+    cursor.offset = scopes;
+    EXPECT_EQ(obelisk_rt_cached_vpi_scope(context, missing, &cursor),
+              OBELISK_RT_EOF);
+    EXPECT_EQ(cursor.offset, 0u);
+  }
+  cursor.offset = scopes;
+  EXPECT_EQ(obelisk_rt_cached_vpi_scope(nullptr, 101, &cursor),
+            OBELISK_RT_INVALID_HANDLE);
+  EXPECT_EQ(cursor.offset, 0u);
+  EXPECT_EQ(obelisk_rt_cached_vpi_scope(context, 101, nullptr),
+            OBELISK_RT_INVALID_ARGUMENT);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(DesignDatabase, ValidatedCacheTracksContextLifetime) {
   Fixture fixture;
   obelisk_rt_context *first = nullptr;
@@ -15962,6 +16001,43 @@ TEST(VPI, PhysicalArraysRetainTheirDeclaredContainmentQueries) {
   }
   EXPECT_EQ(vpi_release_handle(array), 1);
   EXPECT_EQ(vpi_release_handle(module), 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, VirtualInterfaceIterationDoesNotRequireOptionalVariableIndex) {
+  Fixture fixture;
+  fixture.database = makeManagedScalarDatabase(vpiVirtualInterfaceVar, false,
+                                               false, vpiModule);
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  char moduleName[] = "top";
+  char variableName[] = "top.value";
+  vpiHandle module = vpi_handle_by_name(moduleName, nullptr);
+  vpiHandle variable = vpi_handle_by_name(variableName, nullptr);
+  ASSERT_NE(module, nullptr);
+  ASSERT_NE(variable, nullptr);
+  vpiHandle iterator = vpi_iterate(vpiVirtualInterfaceVar, module);
+  ASSERT_NE(iterator, nullptr);
+  vpiHandle use = vpi_handle(vpiUse, iterator);
+  ASSERT_NE(use, nullptr);
+  EXPECT_EQ(vpi_compare_objects(use, module), 1);
+  vpiHandle child = vpi_scan(iterator);
+  ASSERT_NE(child, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, child), vpiVirtualInterfaceVar);
+  EXPECT_EQ(vpi_compare_objects(child, variable), 1);
+  vpiHandle scope = vpi_handle(vpiScope, child);
+  ASSERT_NE(scope, nullptr);
+  EXPECT_EQ(vpi_compare_objects(scope, module), 1);
+  EXPECT_EQ(vpi_scan(iterator), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  for (vpiHandle handle : {scope, child, use, variable, module})
+    EXPECT_EQ(vpi_release_handle(handle), 1);
   obelisk_rt_v1_context_destroy(context);
 }
 

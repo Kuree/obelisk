@@ -239,7 +239,7 @@ def VPIEarlyModPathInstance : VPITraversalEdge<ModPathObjects, InstanceRel,
 
 // 37.7 Modport and 37.8 interface task/function declaration.
 def VPIEarlyModportInterface : VPITraversalEdge<ModportObjects, Interface,
-  HandleMode, InterfaceObjects, NoOrder, "37.7">;
+  HandleMode, InterfaceObjects, NoOrder, "37.7", 0, AutomaticParentScope>;
 def VPIEarlyModportIODecls : VPITraversalEdge<ModportObjects, IODecl,
   IterateMode, IODeclObjects, NoOrder, "37.7">;
 def VPIEarlyIODeclModport : VPITraversalEdge<IODeclObjects, Modport,
@@ -745,7 +745,8 @@ def VPIEarlyClassDefnMethods : VPITraversalEdge<ClassDefnObjects, MethodsRel,
   IterateMode, VPIEarlyTaskFuncs, NoOrder, "37.31", 0,
   AutomaticDirectChild>;
 def VPIEarlyClassDefnConstraints : VPITraversalEdge<ClassDefnObjects,
-  Constraint, IterateMode, ConstraintObjects, DeclarationOrder, "37.31">;
+  Constraint, IterateMode, ConstraintObjects, DeclarationOrder, "37.31", 0,
+  AutomaticDirectChild>;
 def VPIEarlyClassTypespecClassDefn : VPITraversalEdge<ClassTypespecObjects,
   ClassDefn, HandleMode, ClassDefnObjects, NoOrder, "37.32">;
 def VPIEarlyClassTypespecExtends : VPITraversalEdge<ClassTypespecObjects,
@@ -754,7 +755,8 @@ def VPIEarlyClassTypespecMethods : VPITraversalEdge<ClassTypespecObjects,
   MethodsRel, IterateMode, VPIEarlyTaskFuncs, NoOrder, "37.32", 0,
   AutomaticDirectChild>;
 def VPIEarlyClassTypespecConstraints : VPITraversalEdge<ClassTypespecObjects,
-  Constraint, IterateMode, ConstraintObjects, DeclarationOrder, "37.32">;
+  Constraint, IterateMode, ConstraintObjects, DeclarationOrder, "37.32", 0,
+  AutomaticDirectChild>;
 def VPIEarlyClassVarObject : VPITraversalEdge<ClassVarObjects, ClassObj,
   HandleMode, ClassObjectObjects, NoOrder, "37.33">;
 def VPIEarlyClassVarTypespec : VPITraversalEdge<ClassVarObjects,

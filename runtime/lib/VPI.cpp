@@ -1571,7 +1571,7 @@ findMatchingDesignObject(VPIState *state, obelisk_rt_design_cursor_v1 cursor,
       return status;
     uint32_t exact =
         static_cast<uint32_t>(exactTypeFor(state, cursor, info.kind));
-    // Static reflection records and lexically anchored code units have a
+    // Static reflection records and lexically anchored backing records have a
     // physical scope owner only so the pointer-free database can validate and
     // reach every record. Their VPI ownership is carried exclusively by
     // generated relation records.
@@ -4001,6 +4001,61 @@ bool decodeValue(__vpiHandle *handle, const s_vpi_value *source, uint64_t width,
   }
 }
 
+vpiHandle virtualInterfaceActual(__vpiHandle *source) {
+  if (source->classDefinitionOrigin) {
+    setError(source->owner,
+             "a lexical virtual interface variable has no readable actual",
+             vpiNotice);
+    return nullptr;
+  }
+  ContextTransaction transaction(source->owner->context);
+  ManagedExecutionScope managed(source->owner->context);
+  if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane()) {
+    setError(source->owner, "virtual interface VPI query cannot enter GC scope",
+             vpiInternal);
+    return nullptr;
+  }
+  // Virtual interface values carry the elaborated interface scope identity.
+  // A selected modport is part of the declared semantic type, not the value.
+  uint64_t scopeID = 0;
+  if (!readManagedStateWord(source, scopeID) || scopeID == 0)
+    return nullptr;
+  obelisk_rt_design_cursor_v1 semantic{};
+  obelisk_rt_design_semantic_type_info_v1 info{};
+  if (!semanticCursorFor(source, semantic) ||
+      !semanticTypeInfo(source, semantic, info) ||
+      info.kind != OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE) {
+    setError(source->owner,
+             "virtual interface VPI type metadata is unavailable", vpiInternal);
+    return nullptr;
+  }
+  obelisk_rt_design_cursor_v1 actual{};
+  uint32_t actualType = 0;
+  if (obelisk_rt_cached_vpi_scope(source->owner->context, scopeID, &actual) !=
+          OBELISK_RT_OK ||
+      obelisk_rt_cached_vpi_type(source->owner->context, actual, &actualType) !=
+          OBELISK_RT_OK ||
+      actualType != vpiInterface) {
+    setError(source->owner, "invalid virtual interface reference in VPI state",
+             vpiInternal);
+    return nullptr;
+  }
+  if (info.modport_size != 0) {
+    obelisk_rt_design_cursor_v1 modport{};
+    if (obelisk_rt_cached_vpi_modport(source->owner->context, actual,
+                                      info.modport, info.modport_size,
+                                      &modport) != OBELISK_RT_OK) {
+      setError(source->owner,
+               "virtual interface modport metadata is unavailable",
+               vpiInternal);
+      return nullptr;
+    }
+    actual = modport;
+    actualType = vpiModport;
+  }
+  return makeHandle(source->owner, actual, actualType);
+}
+
 vpiHandle makeClassObjectHandle(__vpiHandle *source) {
   if (source->classDefinitionOrigin) {
     setError(source->owner,
@@ -4704,6 +4759,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
     return nullptr;
   if (sourceType == vpiClassVar && type == vpiClassObj)
     return makeClassObjectHandle(handle);
+  if (sourceType == vpiVirtualInterfaceVar && type == vpiActual)
+    return virtualInterfaceActual(handle);
   if (handle->form == VPIObjectForm::ClassObject)
     return type == vpiClassTypespec ? classObjectTypespec(handle) : nullptr;
   if (handle->dynamicObject && type == vpiParent && sourceType == vpiConstraint)
@@ -5240,15 +5297,23 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
              OBELISK_RT_OK) {
     return nullptr;
   }
-  if (reference &&
-      (sourceType == vpiClassObj || sourceType == vpiClassTypespec) &&
+  const bool classSource =
+      sourceType == vpiClassObj || sourceType == vpiClassTypespec;
+  const bool classInventory =
+      classSource &&
       (type == vpiVariables || type == vpiMethods || type == vpiNamedEvent ||
-       type == vpiNamedEventArray || type == vpiVirtualInterfaceVar ||
-       type == vpiParameter || type == vpiReg || type == vpiRegArray ||
-       type == vpiMemory)) {
+       type == vpiNamedEventArray || type == vpiParameter || type == vpiReg ||
+       type == vpiRegArray || type == vpiMemory);
+  const bool interfaceInventory =
+      type == vpiVirtualInterfaceVar &&
+      obelisk::reflection::findVPITraversal(
+          sourceType, vpiVirtualInterfaceVar,
+          obelisk::reflection::VPITraversalMode::Iterate);
+  if (reference && (classInventory || interfaceInventory)) {
     OBELISK_RT_TRY {
       std::vector<VPIRelationRange> ranges;
       std::set<uint64_t> visited;
+      bool foundVariableGroup = false;
       auto scope = parent;
       while (visited.insert(scope.offset).second) {
         bool isProtected = false;
@@ -5263,6 +5328,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
           if (type != vpiVirtualInterfaceVar)
             ranges.push_back(range);
           else {
+            foundVariableGroup = true;
             for (uint64_t index = 0; index != range.count; ++index) {
               __vpiHandle member;
               member.owner = state;
@@ -5283,6 +5349,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
             }
           }
         }
+        if (!classSource)
+          break;
         VPIRelationRange base{};
         if (obelisk_rt_cached_vpi_relation_range(state->context, scope,
                                                  vpiExtends, false,
@@ -5296,21 +5364,25 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
             baseType != vpiClassTypespec || statement)
           return nullptr;
       }
-      if (ranges.empty())
+      if (!ranges.empty()) {
+        auto iterator = std::make_unique<__vpiHandle>();
+        iterator->owner = state;
+        iterator->kind = VPIHandleKind::Iterator;
+        iterator->iteratorType = type;
+        iterator->relationIterator = true;
+        iterator->relationRange = ranges.front();
+        iterator->classMemberRanges = std::move(ranges);
+        copyUseRecipe(*iterator, *referenceHandle);
+        iterator->classDefinitionOrigin = sourceClassDefinitionOrigin;
+        return keepHandle(state, std::move(iterator));
+      }
+      if (classSource || !interfaceInventory || foundVariableGroup)
         return nullptr;
-      auto iterator = std::make_unique<__vpiHandle>();
-      iterator->owner = state;
-      iterator->kind = VPIHandleKind::Iterator;
-      iterator->iteratorType = type;
-      iterator->relationIterator = true;
-      iterator->relationRange = ranges.front();
-      iterator->classMemberRanges = std::move(ranges);
-      copyUseRecipe(*iterator, *referenceHandle);
-      iterator->classDefinitionOrigin = sourceClassDefinitionOrigin;
-      return keepHandle(state, std::move(iterator));
+      // The variable index is optional in older valid images. Preserve the
+      // direct selector and physical-child paths when it is absent.
     }
     OBELISK_RT_CATCH_ALL {
-      setError(state, "could not allocate class member iterator", vpiSystem);
+      setError(state, "could not allocate VPI declaration iterator", vpiSystem);
       return nullptr;
     }
   }
@@ -5910,6 +5982,18 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   if (property == vpiProtected)
     return 0;
   uint32_t objectType = static_cast<uint32_t>(vpiTypeForHandle(handle));
+  if (property == vpiIsModPort) {
+    obelisk_rt_design_cursor_v1 semantic{};
+    obelisk_rt_design_semantic_type_info_v1 info{};
+    if (!semanticCursorFor(handle, semantic) ||
+        !semanticTypeInfo(handle, semantic, info) ||
+        info.kind != OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE) {
+      setError(handle->owner,
+               "virtual interface VPI type metadata is unavailable", vpiNotice);
+      return vpiUndefined;
+    }
+    return info.modport_size != 0;
+  }
   if (property == vpiSize &&
       (objectType == vpiStringVar || objectType == vpiRefObj)) {
     obelisk_rt_design_info_v1 info{};
@@ -6598,6 +6682,23 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     }
   }
   if (property == vpiName || property == vpiFullName) {
+    if (property == vpiName && objectType == vpiModport) {
+      VPIModportBinding binding{};
+      if (obelisk_rt_cached_vpi_modport_binding(handle->owner->context,
+                                                handle->cursor,
+                                                &binding) != OBELISK_RT_OK)
+        return nullptr;
+      OBELISK_RT_TRY {
+        scratch.assign(reinterpret_cast<const char *>(binding.name),
+                       static_cast<size_t>(binding.nameSize));
+        return scratch.data();
+      }
+      OBELISK_RT_CATCH_ALL {
+        setError(handle->owner, "could not materialize modport name",
+                 vpiSystem);
+        return nullptr;
+      }
+    }
     if (property == vpiName) {
       VPIClassMemberBinding member{};
       if (obelisk_rt_cached_vpi_class_member(handle->owner->context,

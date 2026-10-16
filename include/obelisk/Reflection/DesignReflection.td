@@ -627,7 +627,11 @@ def SemanticDirectoryClassMemberBindingOffset
     : ReflectionField<"ClassMemberBindingOffset", 432, U64LE>;
 def SemanticDirectoryClassMemberBindingCount
     : ReflectionField<"ClassMemberBindingCount", 440, U64LE>;
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 448,
+def SemanticDirectoryModportBindingOffset
+    : ReflectionField<"ModportBindingOffset", 448, U64LE>;
+def SemanticDirectoryModportBindingCount
+    : ReflectionField<"ModportBindingCount", 456, U64LE>;
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 464,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -680,7 +684,20 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 448,
    SemanticDirectorySemanticClassBindingOffset,
    SemanticDirectorySemanticClassBindingCount,
    SemanticDirectoryClassMemberBindingOffset,
-   SemanticDirectoryClassMemberBindingCount]>;
+   SemanticDirectoryClassMemberBindingCount,
+   SemanticDirectoryModportBindingOffset,
+   SemanticDirectoryModportBindingCount]>;
+
+// Exact source names identify modports within a physical interface instance.
+// Hierarchy display strings may contain escaped separators. Entries are sorted
+// by packed modport endpoint and require matching interface traversal edges.
+def ModportBindingObject : ReflectionField<"ModportIndexAndTable", 0, U32LE>;
+def ModportBindingScope : ReflectionField<"ScopeIndex", 4, U32LE>;
+def ModportBindingName : ReflectionField<"Name", 8, U32LE>;
+def ModportBindingReserved : ReflectionField<"Reserved", 12, U32LE>;
+def ModportBinding : ReflectionLayout<"ModportBinding", 16,
+  [ModportBindingObject, ModportBindingScope, ModportBindingName,
+   ModportBindingReserved]>;
 
 def ScopeRecord : ReflectionRecordKind<"Scope", 1, Scope>;
 def StorageRecord : ReflectionRecordKind<"Storage", 2, Object>;

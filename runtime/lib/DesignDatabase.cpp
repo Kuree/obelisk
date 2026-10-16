@@ -49,6 +49,8 @@ constexpr uint64_t kSemanticClassBindingSize =
     obelisk::reflection::SemanticClassBindingLayout.size;
 constexpr uint64_t kClassMemberBindingSize =
     obelisk::reflection::ClassMemberBindingLayout.size;
+constexpr uint64_t kModportBindingSize =
+    obelisk::reflection::ModportBindingLayout.size;
 constexpr uint64_t kRelationIndexSize =
     obelisk::reflection::RelationIndexLayout.size;
 constexpr uint64_t kRelationIndexDimensionSize =
@@ -247,6 +249,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
   uint64_t classTypeBindingOffset = 0, classTypeBindingCount = 0;
   uint64_t semanticClassBindingOffset = 0, semanticClassBindingCount = 0;
   uint64_t classMemberBindingOffset = 0, classMemberBindingCount = 0;
+  uint64_t modportBindingOffset = 0, modportBindingCount = 0;
   uint64_t relationIndexOffset = 0, relationIndexCount = 0;
   uint64_t relationIndexDimensionOffset = 0, relationIndexDimensionCount = 0;
   uint64_t relationIndexKeyOffset = 0, relationIndexKeyCount = 0;
@@ -340,6 +343,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     semanticClassBindingCount = reader.getSemanticClassBindingCount();
     classMemberBindingOffset = reader.getClassMemberBindingOffset();
     classMemberBindingCount = reader.getClassMemberBindingCount();
+    modportBindingOffset = reader.getModportBindingOffset();
+    modportBindingCount = reader.getModportBindingCount();
   }
   database = {data,
               execution->design_database_size,
@@ -373,6 +378,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               semanticClassBindingCount,
               classMemberBindingOffset,
               classMemberBindingCount,
+              modportBindingOffset,
+              modportBindingCount,
               relationIndexOffset,
               relationIndexCount,
               relationIndexDimensionOffset,
@@ -445,6 +452,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
          kSemanticClassBindingSize},
         {database.classMemberBindings, database.classMemberBindingCount,
          kClassMemberBindingSize},
+        {database.modportBindings, database.modportBindingCount,
+         kModportBindingSize},
         {database.relationIndices, database.relationIndexCount,
          kRelationIndexSize},
         {database.relationIndexDimensions, database.relationIndexDimensionCount,
@@ -517,7 +526,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         database.classTypeBindingCount != 0 ||
         database.semanticClassBindingCount != 0 ||
         database.classMemberBindingCount != 0 ||
-        database.relationIndexCount != 0 ||
+        database.modportBindingCount != 0 || database.relationIndexCount != 0 ||
         database.relationIndexDimensionCount != 0 ||
         database.relationIndexKeyCount != 0 ||
         database.relationIndexMemberCount != 0 ||
@@ -563,8 +572,11 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       !validRange(database.semanticClassBindings,
                   database.semanticClassBindingCount, kSemanticClassBindingSize,
                   database.size) ||
-      !validRange(database.classMemberBindings, database.classMemberBindingCount,
-                  kClassMemberBindingSize, database.size) ||
+      !validRange(database.classMemberBindings,
+                  database.classMemberBindingCount, kClassMemberBindingSize,
+                  database.size) ||
+      !validRange(database.modportBindings, database.modportBindingCount,
+                  kModportBindingSize, database.size) ||
       !validRange(database.relationIndices, database.relationIndexCount,
                   kRelationIndexSize, database.size) ||
       !validRange(database.relationIndexDimensions,
@@ -636,6 +648,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        database.semanticClassBindings < kHeaderSize) ||
       (database.classMemberBindingCount != 0 &&
        database.classMemberBindings < kHeaderSize) ||
+      (database.modportBindingCount != 0 &&
+       database.modportBindings < kHeaderSize) ||
       (database.semanticRootBindingCount != 0 &&
        database.semanticRootBindings < kHeaderSize) ||
       (database.relationIndexCount != 0 &&
@@ -707,6 +721,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       database.classTypeBindingCount > UINT32_MAX ||
       database.semanticClassBindingCount > UINT32_MAX ||
       database.classMemberBindingCount > UINT32_MAX ||
+      database.modportBindingCount > UINT32_MAX ||
       database.relationIndexCount > UINT32_MAX ||
       database.relationIndexDimensionCount > UINT32_MAX ||
       database.relationIndexKeyCount > UINT32_MAX ||
@@ -923,6 +938,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        kSemanticClassBindingSize},
       {database.classMemberBindings, database.classMemberBindingCount,
        kClassMemberBindingSize},
+      {database.modportBindings, database.modportBindingCount,
+       kModportBindingSize},
       {database.relationIndices, database.relationIndexCount,
        kRelationIndexSize},
       {database.relationIndexDimensions, database.relationIndexDimensionCount,
@@ -1581,6 +1598,7 @@ bool validateDatabaseImpl(const Database &database) {
         (caps & OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0 &&
         (kind == OBELISK_RT_DESIGN_RECORD_PROCESS ||
          kind == OBELISK_RT_DESIGN_RECORD_FUNCTION ||
+         kind == OBELISK_RT_DESIGN_RECORD_STORAGE ||
          (kind == OBELISK_RT_DESIGN_RECORD_NET &&
           intrinsicKind == static_cast<uint32_t>(VPIKind::InterconnectNet)));
     bool explicitParameterRange =
@@ -2744,6 +2762,64 @@ bool validateDatabaseImpl(const Database &database) {
   if (canonicalClassRootBindings.size() != canonicalClassRoots.size())
     return false;
 
+  std::unordered_set<uint32_t> boundModports;
+  std::unordered_set<uint64_t> modportParents;
+  std::unordered_map<uint32_t, std::unordered_set<std::string_view>>
+      modportNames;
+  uint32_t previousModport = 0;
+  for (uint64_t index = 0; index != database.modportBindingCount; ++index) {
+    obelisk::reflection::ModportBindingView binding(
+        database.data + database.modportBindings + index * kModportBindingSize);
+    uint32_t modport = binding.getModportIndexAndTable();
+    uint32_t scope = binding.getScopeIndex();
+    uint64_t offset = 0;
+    std::string_view name;
+    if ((index && modport <= previousModport) || binding.getReserved() != 0 ||
+        scope >= database.scopeCount ||
+        !packedObjectReferenceOffset(database, modport, offset) ||
+        objectReferenceVPIKind(database, offset) !=
+            static_cast<uint32_t>(
+                obelisk::reflection::VPIObjectKind::Modport) ||
+        !getRelativeString(binding.getName(), name) || name.empty() ||
+        database.data[database.strings + binding.getName() - 1] != 0 ||
+        !modportNames[scope].insert(name).second)
+      return false;
+    uint64_t scopeOffset = database.scopes + uint64_t{scope} * kScopeSize;
+    if (recordVPIKind(database.data + scopeOffset) !=
+        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Interface))
+      return false;
+    if (isStaticObjectOffset(database, offset)) {
+      if (read32(database.data + offset + 8) != scope)
+        return false;
+    } else if (!isObjectOffset(database, offset) ||
+               recordKind(database.data + offset) !=
+                   OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+               read64(database.data + offset + 16) != scopeOffset) {
+      return false;
+    }
+    previousModport = modport;
+    boundModports.insert(modport);
+    modportParents.insert((uint64_t{scope} << 32) | modport);
+  }
+  auto modportHasBinding = [&](obelisk::reflection::TableKind table,
+                               uint32_t index, uint32_t kind) {
+    uint32_t packed = 0;
+    return kind != static_cast<uint32_t>(
+                       obelisk::reflection::VPIObjectKind::Modport) ||
+           (obelisk::reflection::tryPackTableIndex(table, index, packed) &&
+            boundModports.count(packed) != 0);
+  };
+  for (uint32_t index = 0; index != database.objectCount; ++index)
+    if (!modportHasBinding(obelisk::reflection::TableKind::Object, index,
+                           recordVPIKind(database.data + database.objects +
+                                         uint64_t{index} * kObjectSize)))
+      return false;
+  for (uint32_t index = 0; index != database.staticObjectCount; ++index)
+    if (!modportHasBinding(obelisk::reflection::TableKind::StaticObject, index,
+                           read16(database.data + database.staticObjects +
+                                  uint64_t{index} * kStaticObjectSize + 28)))
+      return false;
+
   std::unordered_set<uint32_t> boundClassFields;
   std::unordered_set<uint64_t> classBackingStorage;
   std::unordered_set<uint64_t> classMemberParents;
@@ -2817,6 +2893,17 @@ bool validateDatabaseImpl(const Database &database) {
       classBackingStorage.insert(storageOffset);
     }
     boundClassFields.insert(member);
+  }
+  // Class-static storage is only a backing value for its immutable member
+  // declaration. The marker excludes it from physical scope discovery and
+  // is valid only when a checked member binding proves that ownership.
+  for (uint32_t index = 0; index != database.objectCount; ++index) {
+    uint64_t offset = database.objects + uint64_t{index} * kObjectSize;
+    const uint8_t *object = database.data + offset;
+    if (recordKind(object) == OBELISK_RT_DESIGN_RECORD_STORAGE &&
+        (((read32(object + 4) & OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0) !=
+         (classBackingStorage.count(offset) != 0)))
+      return false;
   }
   // Variable kinds newly admitted to the immutable table are class
   // declarations, never synthetic executable storage. Existing source-only
@@ -4097,6 +4184,12 @@ bool validateDatabaseImpl(const Database &database) {
                      return staticLexicalParents.count(member) != 0;
                    }))
     return false;
+  if (!std::all_of(modportParents.begin(), modportParents.end(),
+                   [&](uint64_t modport) {
+                     return staticLexicalChildren.count(modport) != 0 &&
+                            staticLexicalParents.count(modport) != 0;
+                   }))
+    return false;
   if (haveStatementContainment &&
       std::any_of(incomingRelations.begin(), incomingRelations.end(),
                   [](const IncomingRelation &incoming) {
@@ -4637,6 +4730,8 @@ bool sameDatabase(const Database &left, const Database &right) noexcept {
          left.semanticClassBindingCount == right.semanticClassBindingCount &&
          left.classMemberBindings == right.classMemberBindings &&
          left.classMemberBindingCount == right.classMemberBindingCount &&
+         left.modportBindings == right.modportBindings &&
+         left.modportBindingCount == right.modportBindingCount &&
          left.relationIndices == right.relationIndices &&
          left.relationIndexCount == right.relationIndexCount &&
          left.relationIndexDimensions == right.relationIndexDimensions &&
@@ -6326,6 +6421,118 @@ obelisk_rt_status obelisk_rt_cached_design_semantic_root(
   const Database *database = cachedDatabase(context);
   return database ? designSemanticRoot(*database, object, outCursor)
                   : OBELISK_RT_INVALID_HANDLE;
+}
+
+obelisk_rt_status
+obelisk_rt_cached_vpi_scope(const obelisk_rt_context *context, uint64_t scopeID,
+                            obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+  if (!outCursor)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outCursor = {};
+  const Database *database = cachedDatabase(context);
+  if (!database)
+    return OBELISK_RT_INVALID_HANDLE;
+  if (scopeID == 0)
+    return OBELISK_RT_EOF;
+  // Validation guarantees unique scope IDs, but deliberately permits any
+  // physical table order. Do not binary-search compiler-specific ordering.
+  for (uint64_t index = 0; index != database->scopeCount; ++index) {
+    uint64_t offset = database->scopes + index * kScopeSize;
+    obelisk::reflection::ScopeView scope(database->data + offset);
+    if (scope.getID() == scopeID) {
+      outCursor->offset = offset;
+      return OBELISK_RT_OK;
+    }
+  }
+  return OBELISK_RT_EOF;
+}
+
+obelisk_rt_status
+obelisk_rt_cached_vpi_modport_binding(const obelisk_rt_context *context,
+                                      obelisk_rt_design_cursor_v1 modport,
+                                      VPIModportBinding *outBinding) noexcept {
+  if (!outBinding)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outBinding = {};
+  const Database *database = cachedDatabase(context);
+  uint32_t packed = 0;
+  if (!database ||
+      !packedObjectReferenceForCursor(*database, modport.offset, packed))
+    return OBELISK_RT_INVALID_HANDLE;
+  uint64_t low = 0, high = database->modportBindingCount;
+  while (low < high) {
+    uint64_t middle = low + (high - low) / 2;
+    obelisk::reflection::ModportBindingView binding(
+        database->data + database->modportBindings +
+        middle * kModportBindingSize);
+    if (binding.getModportIndexAndTable() < packed)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == database->modportBindingCount)
+    return OBELISK_RT_EOF;
+  obelisk::reflection::ModportBindingView binding(
+      database->data + database->modportBindings + low * kModportBindingSize);
+  if (binding.getModportIndexAndTable() != packed)
+    return OBELISK_RT_EOF;
+  std::string_view name;
+  if (!getString(*database, database->strings + binding.getName(), name))
+    return OBELISK_RT_INVALID_DESIGN;
+  outBinding->scope.offset =
+      database->scopes + uint64_t{binding.getScopeIndex()} * kScopeSize;
+  outBinding->name = reinterpret_cast<const uint8_t *>(name.data());
+  outBinding->nameSize = name.size();
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status
+obelisk_rt_cached_vpi_modport(const obelisk_rt_context *context,
+                              obelisk_rt_design_cursor_v1 scope,
+                              const uint8_t *name, uint64_t nameSize,
+                              obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+  if (!outCursor)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outCursor = {};
+  if (nameSize && !name)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const Database *database = cachedDatabase(context);
+  if (!database || !isScopeOffset(*database, scope.offset) ||
+      recordVPIKind(database->data + scope.offset) !=
+          static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Interface))
+    return OBELISK_RT_INVALID_HANDLE;
+  if (!nameSize)
+    return OBELISK_RT_EOF;
+  VPIRelationRange range{};
+  obelisk_rt_status status = obelisk_rt_cached_vpi_relation_range(
+      context, scope,
+      static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Modport), true,
+      &range);
+  if (status != OBELISK_RT_OK)
+    return status;
+  for (uint64_t index = 0; index != range.count; ++index) {
+    obelisk_rt_design_cursor_v1 modport{};
+    uint32_t type = 0;
+    bool statement = false;
+    status = obelisk_rt_cached_vpi_relation_target(context, range.first + index,
+                                                   &modport, &type, &statement);
+    if (status != OBELISK_RT_OK)
+      return status;
+    VPIModportBinding binding{};
+    if (statement ||
+        type != static_cast<uint32_t>(
+                    obelisk::reflection::VPIObjectKind::Modport) ||
+        obelisk_rt_cached_vpi_modport_binding(context, modport, &binding) !=
+            OBELISK_RT_OK ||
+        binding.scope.offset != scope.offset)
+      return OBELISK_RT_INVALID_DESIGN;
+    if (binding.nameSize == nameSize &&
+        std::memcmp(binding.name, name, nameSize) == 0) {
+      *outCursor = modport;
+      return OBELISK_RT_OK;
+    }
+  }
+  return OBELISK_RT_EOF;
 }
 
 obelisk_rt_status obelisk_rt_cached_vpi_class_typespec(

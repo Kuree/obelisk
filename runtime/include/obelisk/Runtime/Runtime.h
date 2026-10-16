@@ -1649,10 +1649,10 @@ enum {
   // direction is ref. Its execution-facing input/output bits remain available
   // to the scheduler and waveform backends.
   OBELISK_RT_DESIGN_CAP_PORT_REF = UINT32_C(1) << 7,
-  // The same record-kind-specific bit marks a process, function, or generic
-  // interconnect net whose lexical VPI owner is supplied by generated
-  // relations instead of its physical executable scope. These kinds cannot be
-  // typespec records.
+  // The same record-kind-specific bit marks a process, function, generic
+  // interconnect net, or class-static backing storage whose lexical VPI owner
+  // is supplied by generated relations or a class-member binding instead of
+  // its physical executable scope. These kinds cannot be typespec records.
   OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR = UINT32_C(1) << 7,
   // The same record-kind-specific bit marks a value parameter that directly
   // declares a packed range. Built-in and typedef-provided ranges do not set

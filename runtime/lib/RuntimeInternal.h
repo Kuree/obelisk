@@ -1697,6 +1697,8 @@ struct DesignDatabaseCache {
   uint64_t semanticClassBindingCount = 0;
   uint64_t classMemberBindings = 0;
   uint64_t classMemberBindingCount = 0;
+  uint64_t modportBindings = 0;
+  uint64_t modportBindingCount = 0;
   uint64_t relationIndices = 0;
   uint64_t relationIndexCount = 0;
   uint64_t relationIndexDimensions = 0;
@@ -1766,6 +1768,13 @@ struct VPIClassMemberBinding {
   uint64_t staticEventID = UINT64_MAX;
   bool isStatic = false;
   bool isMethod = false;
+  const uint8_t *name = nullptr;
+  uint64_t nameSize = 0;
+};
+
+// Exact source identity for a modport within one physical interface instance.
+struct VPIModportBinding {
+  obelisk_rt_design_cursor_v1 scope{};
   const uint8_t *name = nullptr;
   uint64_t nameSize = 0;
 };
@@ -3739,6 +3748,19 @@ obelisk_rt_status obelisk_rt_cached_design_semantic_root(
 obelisk_rt_status obelisk_rt_cached_vpi_class_typespec(
     const obelisk_rt_context *context, uint64_t classID,
     obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+// A virtual-interface value is its physical scope ID; zero denotes null.
+obelisk_rt_status
+obelisk_rt_cached_vpi_scope(const obelisk_rt_context *context, uint64_t scopeID,
+                            obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+obelisk_rt_status
+obelisk_rt_cached_vpi_modport_binding(const obelisk_rt_context *context,
+                                      obelisk_rt_design_cursor_v1 modport,
+                                      VPIModportBinding *outBinding) noexcept;
+obelisk_rt_status
+obelisk_rt_cached_vpi_modport(const obelisk_rt_context *context,
+                              obelisk_rt_design_cursor_v1 scope,
+                              const uint8_t *name, uint64_t nameSize,
+                              obelisk_rt_design_cursor_v1 *outCursor) noexcept;
 obelisk_rt_status obelisk_rt_cached_vpi_class_member(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 member,
     VPIClassMemberBinding *outBinding) noexcept;
