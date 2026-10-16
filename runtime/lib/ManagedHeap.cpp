@@ -375,8 +375,7 @@ public:
                  ? entry.kind != OBELISK_RT_TRACE_STRONG || mask == 0 ||
                        (mask & ~OBELISK_RT_MANAGED_ROOT_KIND_ALL) != 0
                  : entry.slot_kind < OBELISK_RT_MANAGED_SLOT_CLASS ||
-                       entry.slot_kind >
-                           OBELISK_RT_MANAGED_SLOT_REFERENCE_PATH ||
+                       entry.slot_kind > OBELISK_RT_MANAGED_SLOT_SEMAPHORE ||
                        (entry.kind == OBELISK_RT_TRACE_WEAK &&
                         entry.slot_kind != OBELISK_RT_MANAGED_SLOT_CLASS &&
                         entry.slot_kind !=
@@ -1028,9 +1027,20 @@ bool validateLayoutHandleWrite(
                      : (entry.slot_kind == OBELISK_RT_MANAGED_SLOT_CONTAINER
                             ? OBELISK_RT_MANAGED_CONTAINER
                             : OBELISK_RT_MANAGED_REFERENCE_PATH));
-      if (!referentMetadata || referentMetadata->heap != heap ||
-          referentMetadata->kind != expectedKind)
+      bool builtinSlot = entry.slot_kind == OBELISK_RT_MANAGED_SLOT_MAILBOX ||
+                         entry.slot_kind == OBELISK_RT_MANAGED_SLOT_SEMAPHORE;
+      if (!referentMetadata || referentMetadata->heap != heap)
         return false;
+      if (builtinSlot) {
+        BuiltinClassKind expected =
+            entry.slot_kind == OBELISK_RT_MANAGED_SLOT_MAILBOX
+                ? BuiltinClassKind::Mailbox
+                : BuiltinClassKind::Semaphore;
+        if (obelisk_rt_builtin_class_kind_unlocked(referent) != expected)
+          return false;
+      } else if (referentMetadata->kind != expectedKind) {
+        return false;
+      }
       if (referents)
         referents->push_back(referent);
     }
@@ -2638,6 +2648,22 @@ obelisk_rt_managed_object_class_descriptor(
              : nullptr;
 }
 
+BuiltinClassKind
+obelisk_rt_builtin_class_kind_unlocked(obelisk_rt_object_v1 *object) noexcept {
+  ObjectMetadata *metadata = metadataFor(object);
+  if (!metadata)
+    return BuiltinClassKind::None;
+  if (metadata->kind == OBELISK_RT_MANAGED_CONTAINER)
+    return obelisk_rt_builtin_container_kind(
+        static_cast<const uint8_t *>(metadata->object), metadata->extent);
+  if (metadata->kind == OBELISK_RT_MANAGED_CLASS)
+    for (const auto *descriptor = metadata->descriptor; descriptor;
+         descriptor = descriptor->base)
+      if (descriptor->builtin_base_kind != OBELISK_RT_BUILTIN_CLASS_NONE)
+        return static_cast<BuiltinClassKind>(descriptor->builtin_base_kind);
+  return BuiltinClassKind::None;
+}
+
 namespace {
 obelisk_rt_status validateClassDescriptor(
     const obelisk_rt_class_descriptor_v1 *descriptor,
@@ -2708,6 +2734,31 @@ obelisk_rt_status validateClassDescriptor(
          currentHandles->first().offset < sizeof(void *)) ||
         (current->layout && current->layout->size != current->instance_size))
       return OBELISK_RT_INVALID_DESIGN;
+    if (current->builtin_base_reserved != 0 ||
+        current->builtin_base_kind > OBELISK_RT_BUILTIN_CLASS_SEMAPHORE)
+      return OBELISK_RT_INVALID_DESIGN;
+    if (current->builtin_base_kind == OBELISK_RT_BUILTIN_CLASS_NONE) {
+      if (current->builtin_base_offset != 0)
+        return OBELISK_RT_INVALID_DESIGN;
+    } else {
+      if (base ||
+          (current->flags &
+           (OBELISK_RT_CLASS_INTERFACE | OBELISK_RT_CLASS_WEAK_WRAPPER)) != 0 ||
+          current->builtin_base_offset < sizeof(void *) ||
+          current->builtin_base_offset % alignof(obelisk_rt_managed_word_v1) ||
+          !checkedRange(current->builtin_base_offset,
+                        sizeof(obelisk_rt_managed_word_v1),
+                        current->instance_size))
+        return OBELISK_RT_INVALID_DESIGN;
+      auto payload = currentHandles->find(current->builtin_base_offset);
+      uint32_t expectedSlot =
+          current->builtin_base_kind == OBELISK_RT_BUILTIN_CLASS_MAILBOX
+              ? OBELISK_RT_MANAGED_SLOT_MAILBOX
+              : OBELISK_RT_MANAGED_SLOT_SEMAPHORE;
+      if (!payload || payload->kind != OBELISK_RT_TRACE_STRONG ||
+          payload->slotKind != expectedSlot)
+        return OBELISK_RT_INVALID_DESIGN;
+    }
     if (base) {
       const TraceHandleIndex *baseHandles = layouts.get(base->layout);
       if (!baseHandles)

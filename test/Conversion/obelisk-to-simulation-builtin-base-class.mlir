@@ -1,10 +1,13 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=vpi=full' -o %t.mlir
+// RUN: FileCheck %s --check-prefix=VPI < %t.mlir
+// RUN: env OBELISK_TEST_INPUT=%t.mlir %obj_root/test/obelisk-design-database-dump-test --gtest_filter=GeneratedDesignDatabase.BuiltinClassInheritance
 
 // IEEE 1800-2023 15.2: semaphore and mailbox are built-in classes usable as
 // base classes. A derived class holds its built-in base object in a private
 // `$base` field: super.new creates it (the implicit super.new() of a class
-// without one uses the default key count), an inherited built-in method acts
-// on it, and an upcast selects it, mapping a null handle to null.
+// without one uses the default key count). Builtin methods and upcasts retain
+// the outer object identity; runtime methods resolve the private payload.
 //
 // class S extends semaphore;
 //   function new(int n = 0); super.new(n); endfunction
@@ -13,16 +16,23 @@
 // class E extends semaphore; endclass
 // module top;
 //   S s; E e; semaphore b;
-//   initial begin s = new(1); s.give(); void'(s.try_get(1)); b = s; e = new; end
+//   initial begin
+//     s = new(1); s.give(); void'(s.try_get(1)); b = s;
+//     void'($cast(s, b)); e = new;
+//   end
 // endmodule
 //
 // The unused std::process, mailbox and weak_reference declarations and the
 // built-in randomization methods are omitted from the input below.
 
-// CHECK: simulation.class.decl @[[E:__obelisk_class_s[0-9]+_E]]
-// CHECK-NEXT: simulation.class.field @[[E_BASE:.+]] of @[[E]] at 0 : !simulation.semaphore {debug_name = "$base"
-// CHECK: simulation.class.decl @[[S:__obelisk_class_s[0-9]+_S]]
-// CHECK-NEXT: simulation.class.field @[[S_BASE:.+]] of @[[S]] at 0 : !simulation.semaphore {debug_name = "$base"
+// VPI-NOT: simulation.vpi_object.anchor {{.*}}hierarchy "std::semaphore"
+// VPI: simulation.vpi_typespec.decl {{.*}}hierarchy "std::semaphore"
+// VPI-NOT: simulation.vpi_object.anchor {{.*}}hierarchy "std::semaphore"
+
+// CHECK: simulation.class.decl @[[E:__obelisk_class_s[0-9]+_E]] {{.*}}builtin_base = @[[E_BASE:[^, }]+]]
+// CHECK-NEXT: simulation.class.field @[[E_BASE]] of @[[E]] at 0 : !simulation.semaphore {debug_name = "$base"
+// CHECK: simulation.class.decl @[[S:__obelisk_class_s[0-9]+_S]] {{.*}}builtin_base = @[[S_BASE:[^, }]+]]
+// CHECK-NEXT: simulation.class.field @[[S_BASE]] of @[[S]] at 0 : !simulation.semaphore {debug_name = "$base"
 
 // super.new(n)
 // CHECK-LABEL: simulation.func private @unit_0(
@@ -32,23 +42,21 @@
 
 // put(2) inside a method of S
 // CHECK-LABEL: simulation.func private @unit_1(
-// CHECK: %[[FIELD:.+]] = simulation.class.field_ref %arg1[@[[S_BASE]]]
-// CHECK: %[[BASE:.+]] = simulation.managed.load %[[FIELD]]
+// CHECK-NOT: simulation.class.field_ref
+// CHECK: %[[BASE:.+]] = simulation.class.builtin_upcast %arg1 : !simulation.class_handle<@[[S]]> to !simulation.semaphore
 // CHECK: simulation.semaphore.put %[[BASE]]
 
 // s.try_get(1), then b = s
 // CHECK-LABEL: simulation.func private @unit_2(
-// CHECK: %[[FIELD:.+]] = simulation.class.field_ref %{{.+}}[@[[S_BASE]]]
-// CHECK: %[[BASE:.+]] = simulation.managed.load %[[FIELD]]
+// CHECK: %[[BASE:.+]] = simulation.class.builtin_upcast %{{.+}} : !simulation.class_handle<@[[S]]> to !simulation.semaphore
 // CHECK: simulation.semaphore.try_get %[[BASE]]
 // CHECK: %[[HANDLE:.+]] = simulation.ref.load
-// CHECK: %[[NULL_HANDLE:.+]] = simulation.managed.is_null %[[HANDLE]]
-// CHECK: %[[NULL:.+]] = simulation.managed.null {{.*}}: !simulation.semaphore
-// CHECK: cf.cond_br %[[NULL_HANDLE]], ^[[MERGE:bb[0-9]+]](%[[NULL]] : !simulation.semaphore), ^[[SELECT:bb[0-9]+]]
-// CHECK: ^[[SELECT]]:
-// CHECK: simulation.class.field_ref %[[HANDLE]][@[[S_BASE]]]
-// CHECK: ^[[MERGE]](%[[UPCAST:.+]]: !simulation.semaphore):
+// CHECK: %[[UPCAST:.+]] = simulation.class.builtin_upcast %[[HANDLE]] : !simulation.class_handle<@[[S]]> to !simulation.semaphore
 // CHECK: simulation.ref.store %[[UPCAST]]
+// CHECK: %[[DOWN_SOURCE:.+]] = simulation.ref.load {{.*}} -> !simulation.semaphore
+// CHECK: simulation.class.cast %[[DOWN_SOURCE]] : !simulation.semaphore to !simulation.class_handle<@[[S]]>
+// CHECK: simulation.class.is_instance %[[DOWN_SOURCE]] is @[[S]]
+// CHECK: simulation.managed.is_null %[[DOWN_SOURCE]]
 
 // E's implicit constructor creates a semaphore without keys.
 // CHECK: simulation.func private @[[E]]_implicit_new(
@@ -57,7 +65,7 @@
 // CHECK: %[[FIELD:.+]] = simulation.class.field_ref %arg1[@[[E_BASE]]]
 // CHECK: simulation.managed.store %[[CREATED]] to %[[FIELD]]
 
-module attributes {coverage.language_version = 2023 : i32, obelisk.enum_domains = [{type = !obelisk.enum<"std::process", !obelisk.integral<32, true, false, 31 : 0, int>>, values = ["0", "1", "2", "3", "4"]}]} {
+module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", coverage.language_version = 2023 : i32, obelisk.enum_domains = [{type = !obelisk.enum<"std::process", !obelisk.integral<32, true, false, 31 : 0, int>>, values = ["0", "1", "2", "3", "4"]}]} {
   obelisk.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {
   }
   obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
@@ -160,6 +168,15 @@ module attributes {coverage.language_version = 2023 : i32, obelisk.enum_domains 
                     obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 92 : i64, referenced_path = "top.s", referenced_symbol = @s1.$root::@s42.top::@s43.top::@s44.s, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.S>} {
                     }
                   }
+                }
+              }
+              obelisk.sv.statement.expression_statement attributes {node_id = 150 : i64} {
+                obelisk.sv.expression.call attributes {argument_count = 2 : i64, callee_name = "$cast", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>, dynamic_cast_kind = 3 : i32, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = true, has_this_class = false, is_signed = true, is_super_class = false, is_system_call = true, is_void_casted, node_id = 151 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, subroutine_kind = 1 : i32} {
+                  obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 152 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.S>} {
+                    obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 153 : i64, referenced_path = "top.s", referenced_symbol = @s1.$root::@s42.top::@s43.top::@s44.s, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.S>} {}
+                    obelisk.sv.expression.empty_argument attributes {is_signed = false, node_id = 154 : i64, semantic_type = !obelisk.class_handle<@s1.$root::@s2::@s3.S>} {}
+                  }
+                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 155 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s42.top::@s43.top::@s46.b, semantic_type = !obelisk.class_handle<@s5.std::@s4.semaphore>} {}
                 }
               }
               obelisk.sv.statement.expression_statement attributes {node_id = 93 : i64} {

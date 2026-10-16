@@ -323,6 +323,16 @@ bool compatible(const Layout &left, const Layout &right) {
 }
 
 bool bitcastCompatible(const Layout &left, const Layout &right) {
+  // A builtin base view preserves the class object's managed word. Only
+  // the forward class-to-builtin conversion is implicit; the interpreter
+  // checks the allocated class's builtin ancestry before changing its view.
+  if (left.kind == OBELISK_RT_DBREG_MANAGED &&
+      right.kind == OBELISK_RT_DBREG_MANAGED)
+    return right.flags == OBELISK_RT_DBREG_CLASS_HANDLE &&
+           (left.flags == OBELISK_RT_DBREG_MAILBOX ||
+            left.flags == OBELISK_RT_DBREG_SEMAPHORE) &&
+           left.width == 64 && right.width == 64 && left.size == 8 &&
+           right.size == 8 && left.auxiliary == 0 && right.auxiliary == 0;
   auto floatingWidth = [](const Layout &layout) -> uint32_t {
     if (layout.kind == OBELISK_RT_DBREG_REAL32)
       return 32;

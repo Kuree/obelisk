@@ -2655,8 +2655,7 @@ TEST(GeneratedDesignDatabase, ClassParameters) {
     int effectiveKind = vpi_get(vpiType, declared);
     effectiveKinds.push_back(effectiveKind);
     EXPECT_STREQ(vpi_get_str(vpiFullName, type),
-                 effectiveKind == vpiIntTypespec ? "G#(int)::T"
-                                                 : "G#(bit)::T");
+                 effectiveKind == vpiIntTypespec ? "G#(int)::T" : "G#(bit)::T");
     vpiHandle scope = vpi_handle(vpiScope, type);
     ASSERT_NE(scope, nullptr);
     EXPECT_EQ(vpi_compare_objects(scope, specialization), 1);
@@ -4066,4 +4065,95 @@ TEST(GeneratedDesignDatabase, VirtualInterfaceActual) {
       .setCaps(ObjectView(image.data() + plainStorage.offset).getCaps() |
                OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR);
   expectRejected(std::move(image));
+}
+
+TEST(GeneratedDesignDatabase, BuiltinClassInheritance) {
+  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  ASSERT_NE(inputPath, nullptr);
+  mlir::DialectRegistry registry;
+  registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
+                  obelisk::sim::ObeliskSimulationDialect>();
+  mlir::MLIRContext context(registry);
+  auto module = mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
+  ASSERT_TRUE(module);
+  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
+  obelisk::SimulationBytecodeOptions options;
+  options.vpi = "read";
+  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  ASSERT_TRUE(mlir::succeeded(encoded));
+  uint64_t checksum = 0;
+  for (unsigned byte = 0; byte != 8; ++byte)
+    checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
+  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+                                               encoded->executionFlags,
+                                               0,
+                                               encoded->bytecode.data(),
+                                               encoded->bytecode.size(),
+                                               encoded->designDatabase.data(),
+                                               encoded->designDatabase.size(),
+                                               encoded->stateBitCount,
+                                               checksum};
+  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+  obelisk_rt_context *runtime = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+
+  vpiHandle sharedBuiltinType = nullptr;
+  for (const char *name : {"S", "E"}) {
+    std::string lookupName(name);
+    vpiHandle definition = vpi_handle_by_name(lookupName.data(), nullptr);
+    ASSERT_NE(definition, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, definition), vpiClassDefn);
+    vpiHandle iterator = vpi_iterate(vpiClassTypespec, definition);
+    ASSERT_NE(iterator, nullptr);
+    vpiHandle specialization = vpi_scan(iterator);
+    ASSERT_NE(specialization, nullptr);
+    EXPECT_EQ(vpi_scan(iterator), nullptr);
+    EXPECT_EQ(vpi_get(vpiClassType, specialization), vpiUserDefinedClass);
+    vpiHandle builtinType = vpi_handle(vpiExtends, specialization);
+    ASSERT_NE(builtinType, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, builtinType), vpiClassTypespec);
+    EXPECT_EQ(vpi_get(vpiClassType, builtinType), vpiSemaphoreClass);
+    EXPECT_EQ(vpi_handle(vpiClassDefn, builtinType), nullptr);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    EXPECT_EQ(vpi_handle(vpiExtends, builtinType), nullptr);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    for (PLI_INT32 relation : {vpiVariables, vpiMethods}) {
+      EXPECT_EQ(vpi_iterate(relation, builtinType), nullptr);
+      EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    }
+
+    // The lexical extends node and specialized direct base refer to the same
+    // declared builtin type. Separate derived definitions share that identity.
+    vpiHandle extends = vpi_handle(vpiExtends, definition);
+    ASSERT_NE(extends, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, extends), vpiExtends);
+    vpiHandle owner = vpi_handle(vpiClassDefn, extends);
+    ASSERT_NE(owner, nullptr);
+    EXPECT_EQ(vpi_compare_objects(owner, definition), 1);
+    vpiHandle lexicalBase = vpi_handle(vpiClassTypespec, extends);
+    ASSERT_NE(lexicalBase, nullptr);
+    EXPECT_EQ(vpi_compare_objects(lexicalBase, builtinType), 1);
+    if (sharedBuiltinType) {
+      EXPECT_EQ(vpi_compare_objects(sharedBuiltinType, builtinType), 1);
+      EXPECT_EQ(vpi_release_handle(builtinType), 1);
+    } else {
+      sharedBuiltinType = builtinType;
+    }
+    // The private payload field is an implementation detail, not a source
+    // class variable, in either view of these otherwise fieldless classes.
+    EXPECT_EQ(vpi_iterate(vpiVariables, definition), nullptr);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    EXPECT_EQ(vpi_iterate(vpiVariables, specialization), nullptr);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    for (vpiHandle handle :
+         {lexicalBase, owner, extends, specialization, definition})
+      EXPECT_EQ(vpi_release_handle(handle), 1);
+  }
+  ASSERT_NE(sharedBuiltinType, nullptr);
+  EXPECT_EQ(vpi_release_handle(sharedBuiltinType), 1);
+  obelisk_rt_v1_context_destroy(runtime);
 }

@@ -120,6 +120,8 @@ enum {
   OBELISK_RT_MANAGED_SLOT_STRING = 2,
   OBELISK_RT_MANAGED_SLOT_CONTAINER = 3,
   OBELISK_RT_MANAGED_SLOT_REFERENCE_PATH = 4,
+  OBELISK_RT_MANAGED_SLOT_MAILBOX = 5,
+  OBELISK_RT_MANAGED_SLOT_SEMAPHORE = 6,
   // The low bits of a candidate slot kind are an
   // OBELISK_RT_MANAGED_ROOT_KIND_* mask. Candidate slots belong to an
   // overlapping source union and may contain ordinary bits; they are traced
@@ -259,6 +261,13 @@ typedef struct obelisk_rt_byte_range_v1 {
 #define OBELISK_RT_CLASS_FINAL (UINT32_C(1) << 2)
 #define OBELISK_RT_CLASS_WEAK_WRAPPER (UINT32_C(1) << 3)
 
+typedef uint32_t obelisk_rt_builtin_class_kind_v1;
+enum {
+  OBELISK_RT_BUILTIN_CLASS_NONE = 0,
+  OBELISK_RT_BUILTIN_CLASS_MAILBOX = 1,
+  OBELISK_RT_BUILTIN_CLASS_SEMAPHORE = 2
+};
+
 typedef struct obelisk_rt_class_descriptor_v1 {
   uint32_t version;
   uint32_t flags;
@@ -282,6 +291,12 @@ typedef struct obelisk_rt_class_descriptor_v1 {
   // descriptors list their own ranges.
   const obelisk_rt_byte_range_v1 *copy_resets;
   uint64_t copy_reset_count;
+  // A direct builtin superclass is implemented by an own strong payload
+  // field. User subclasses inherit this metadata through base. Upcasts keep
+  // the outer object identity; builtin operations resolve this private field.
+  obelisk_rt_builtin_class_kind_v1 builtin_base_kind;
+  uint32_t builtin_base_reserved;
+  uint64_t builtin_base_offset;
 } obelisk_rt_class_descriptor_v1;
 
 // Compiler-emitted erased element metadata. Four-state storage places an
@@ -1002,7 +1017,8 @@ enum {
   OBELISK_RT_DB_PROCESS_CONTROL = 58,
   // Reinterpret the payload of an IEEE real as an equal-width two-state
   // integer, or vice versa. Integer register padding is not part of the
-  // payload.
+  // payload. Also converts a class handle to its mailbox or semaphore base
+  // view, preserving its managed word after checking builtin ancestry.
   OBELISK_RT_DB_BITCAST = 59,
   // Integral modular exponentiation. The destination and base widths match;
   // the exponent retains its independent SystemVerilog packed width.

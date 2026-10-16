@@ -4001,33 +4001,13 @@ UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
       storageType = storage.getValue();
     Type referenceType = sim::ManagedRefType::get(
         function.getContext(), storageType, objectType.getClassName());
-    // A null derived handle converts to a null built-in base handle.
-    Block *merge = nullptr;
-    if (!lvalue && op->hasAttr(builtinBaseUpcastAttrName)) {
-      Value isNull = sim::SimManagedIsNullOp::create(
-          builder, location, builder.getI1Type(), *object);
-      Value null =
-          sim::SimManagedNullOp::create(builder, location, *resultType);
-      Block *select = addBlock();
-      merge = addBlock();
-      merge->addArgument(*resultType, location);
-      cf::CondBranchOp::create(builder, location, isNull, merge,
-                               ValueRange{null}, select, ValueRange{});
-      setCurrent(select);
-    }
     Value reference = sim::SimClassFieldRefOp::create(
         builder, location, referenceType, *object, field);
     if (lvalue)
       return reference;
     FailureOr<Value> loaded = loadReference(reference, location);
-    FailureOr<Value> value =
-        succeeded(loaded) ? convert(*loaded, *resultType, false, location)
-                          : FailureOr<Value>(failure());
-    if (failed(value) || !merge)
-      return value;
-    cf::BranchOp::create(builder, location, merge, ValueRange{*value});
-    setCurrent(merge);
-    return merge->getArgument(0);
+    return succeeded(loaded) ? convert(*loaded, *resultType, false, location)
+                             : FailureOr<Value>(failure());
   }
   FailureOr<Type> receiverType = getNormalizedSemanticType(children.front());
   if (succeeded(receiverType) &&

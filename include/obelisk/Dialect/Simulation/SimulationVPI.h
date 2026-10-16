@@ -28,6 +28,9 @@ std::optional<uint32_t> vpiKindForTypespec(VPITypeSemanticsAttr type);
 /// spelling layers retained only for VPI traversal.
 bool areEquivalentVPIRefTypes(VPITypeSemanticsAttr left,
                               VPITypeSemanticsAttr right);
+/// Remove typedef spelling layers recursively while preserving semantic type
+/// identity. Canonical class types use this key; declarations retain aliases.
+VPITypeSemanticsAttr stripVPITypedefAliases(VPITypeSemanticsAttr type);
 
 } // namespace obelisk::sim
 

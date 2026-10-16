@@ -1516,7 +1516,8 @@ def SimClassDeclOp : SimOp<"class.decl", [
     BoolAttr:$is_abstract,
     BoolAttr:$is_interface,
     BoolAttr:$is_final,
-    OptionalAttr<StrAttr>:$debug_name
+    OptionalAttr<StrAttr>:$debug_name,
+    OptionalAttr<FlatSymbolRefAttr>:$builtin_base
   );
   let assemblyFormat = [{
     $sym_name `id` $id (`extends` $base^)?
@@ -2537,11 +2538,33 @@ def SimClassCopyOp : SimOp<"class.copy", [
   let hasVerifier = 1;
 }
 
+def SimClassObjectType : AnyTypeOf<[
+  SimClassHandleType, SimMailboxType, SimSemaphoreType]>;
+
+def SimClassBuiltinUpcastOp : SimOp<"class.builtin_upcast", [
+    Pure, DeclareOpInterfaceMethods<SymbolUserOpInterface>
+  ]> {
+  let summary = "preserve object identity through a built-in base view";
+  let description = [{
+    Converts a user class handle to its inherited semaphore or mailbox type.
+    The class declaration's builtin_base field supplies the exact base type.
+    The result retains the outer object identity, including null; builtin
+    operations resolve the private payload through its class descriptor.
+    This operation never reads or extracts the embedded payload field.
+  }];
+  let arguments = (ins SimClassHandleType:$object);
+  let results = (outs AnyTypeOf<[SimMailboxType, SimSemaphoreType]>:$result);
+  let assemblyFormat = [{
+    $object attr-dict `:` qualified(type($object))
+    `to` qualified(type($result))
+  }];
+}
+
 def SimClassIsInstanceOp : SimOp<"class.is_instance", [
     Pure, DeclareOpInterfaceMethods<SymbolUserOpInterface>
   ]> {
   let summary = "test a dynamic class against a class or interface";
-  let arguments = (ins SimClassHandleType:$object,
+  let arguments = (ins SimClassObjectType:$object,
                        FlatSymbolRefAttr:$target);
   let results = (outs I1:$result);
   let assemblyFormat =
@@ -2565,7 +2588,7 @@ def SimClassCastOp : SimOp<"class.cast", [
     Pure, DeclareOpInterfaceMethods<SymbolUserOpInterface>
   ]> {
   let summary = "checked class or interface cast";
-  let arguments = (ins SimClassHandleType:$object);
+  let arguments = (ins SimClassObjectType:$object);
   let results = (outs SimClassHandleType:$result);
   let assemblyFormat = [{
     $object attr-dict `:` qualified(type($object))

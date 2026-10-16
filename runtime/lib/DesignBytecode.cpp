@@ -556,6 +556,24 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       Layout destination = layout(instruction.destination);
       if (!bitcastCompatible(destination, source))
         return OBELISK_RT_INVALID_BYTECODE;
+      if (source.kind == OBELISK_RT_DBREG_MANAGED) {
+        obelisk_rt_managed_word_v1 word = 0;
+        std::memcpy(&word, frame.data + source.offset, sizeof(word));
+        auto *object = obelisk_rt_object_from_managed_word(word);
+        BuiltinClassKind expected =
+            destination.flags == OBELISK_RT_DBREG_MAILBOX
+                ? BuiltinClassKind::Mailbox
+                : BuiltinClassKind::Semaphore;
+        if (word != obelisk_rt_managed_word_from_object(object) ||
+            (object &&
+             (!obelisk_rt_managed_object_belongs_to(context, object) ||
+              obelisk_rt_managed_object_kind(object) !=
+                  OBELISK_RT_MANAGED_CLASS ||
+              obelisk_rt_builtin_class_kind_unlocked(object) != expected)))
+          return OBELISK_RT_INVALID_BYTECODE;
+        std::memcpy(frame.data + destination.offset, &word, sizeof(word));
+        break;
+      }
       std::memset(frame.data + destination.offset, 0, destination.size);
       std::memcpy(frame.data + destination.offset, frame.data + source.offset,
                   std::min(source.size, destination.size));

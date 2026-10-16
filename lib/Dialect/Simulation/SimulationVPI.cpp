@@ -6,6 +6,7 @@
 #include "obelisk/Reflection/VPIObjectModel.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/ErrorHandling.h"
 
 namespace obelisk::sim {
@@ -63,6 +64,31 @@ bool isVPIVisibleCodeUnit(SimCodeUnitDeclOp codeUnit) {
 bool areEquivalentVPIRefTypes(VPITypeSemanticsAttr left,
                               VPITypeSemanticsAttr right) {
   return equivalentRefType(left, right);
+}
+
+VPITypeSemanticsAttr stripVPITypedefAliases(VPITypeSemanticsAttr type) {
+  if (!type)
+    return {};
+  llvm::SmallVector<mlir::Attribute> children;
+  bool changed = bool(type.getTypedefAliases());
+  for (mlir::Attribute child : type.getChildren()) {
+    auto canonical =
+        stripVPITypedefAliases(mlir::cast<VPITypeSemanticsAttr>(child));
+    changed |= canonical != child;
+    children.push_back(canonical);
+  }
+  if (!changed)
+    return type;
+  return VPITypeSemanticsAttr::get(
+      type.getContext(), type.getKind(), type.getIsSigned(),
+      type.getIsFourState(), type.getName(), type.getSymbol(),
+      type.getModport(), type.getRange(),
+      mlir::ArrayAttr::get(type.getContext(), children), type.getChildNames(),
+      type.getIsTagged(), type.getIsSoft(), type.getBitWidth(),
+      type.getSelectableWidth(), type.getBitstreamWidth(), type.getTagBits(),
+      type.getQueueBound(), type.getWildcardIndex(), type.getChildOrdinals(),
+      type.getChildPackedOffsets(), type.getChildRandTypes(),
+      mlir::ArrayAttr{});
 }
 
 uint32_t vpiKindForCodeUnit(SimCodeUnitDeclOp codeUnit) {

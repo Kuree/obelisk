@@ -392,6 +392,8 @@ LogicalResult rewriteBuiltinBaseClasses(ModuleOp module) {
          builder.getNamedAttr("semantic_type", TypeAttr::get(type))});
     BuiltinBase base{type, path, symbolPath(property)};
     bases[classType.getSymName()] = base;
+    classType->setAttr(builtinBaseTypeAttrName, TypeAttr::get(type));
+    classType->setAttr(builtinBaseFieldAttrName, base.symbol);
     classType->removeAttr("base_class");
     // super.new(...) creates the built-in base object.
     SmallVector<semantic::SVNewClassExpressionOp> superCalls;
@@ -493,26 +495,20 @@ LogicalResult rewriteBuiltinBaseClasses(ModuleOp module) {
     auto type = operation->getAttrOfType<TypeAttr>("semantic_type");
     return type ? type.getValue() : Type{};
   };
-  auto wrapInBase = [&](Operation *receiver, const BuiltinBase &base,
-                        bool upcast) {
+  auto wrapInBase = [&](Operation *receiver, const BuiltinBase &base) {
     OpBuilder before(receiver);
-    Operation *access = create(
+    Operation *conversion = create(
         before, receiver->getLoc(),
-        semantic::SVMemberAccessExpressionOp::getOperationName(),
+        semantic::SVConversionExpressionOp::getOperationName(),
         {builder.getNamedAttr("is_signed", builder.getBoolAttr(false)),
-         builder.getNamedAttr("member_name", builder.getStringAttr("$base")),
-         builder.getNamedAttr("referenced_path",
-                              builder.getStringAttr(base.path)),
-         builder.getNamedAttr("referenced_symbol", base.symbol),
+         builder.getNamedAttr("is_implicit", builder.getBoolAttr(true)),
          builder.getNamedAttr("semantic_type", TypeAttr::get(base.type))});
-    receiver->moveBefore(&access->getRegion(0).front(),
-                         access->getRegion(0).front().end());
-    if (upcast)
-      access->setAttr(builtinBaseUpcastAttrName, builder.getUnitAttr());
+    receiver->moveBefore(&conversion->getRegion(0).front(),
+                         conversion->getRegion(0).front().end());
   };
 
-  // An inherited built-in method acts on the receiver's base object, and an
-  // upcast to the built-in type selects that object.
+  // A builtin base view retains the outer object identity. Only runtime
+  // builtin operations may resolve its private payload field.
   SmallVector<Operation *> rewrites;
   module.walk([&](Operation *operation) {
     if (auto call = dyn_cast<semantic::SVCallExpressionOp>(operation)) {
@@ -520,39 +516,40 @@ LogicalResult rewriteBuiltinBaseClasses(ModuleOp module) {
       if (path && isBuiltinBaseMethodPath(path.getValue()) &&
           call.getCalleeName() != "new")
         rewrites.push_back(call);
-    } else if (isa<semantic::SVConversionExpressionOp>(operation)) {
-      auto handle =
-          dyn_cast_or_null<semantic::ClassHandleType>(semanticType(operation));
-      if (handle && isBuiltinBaseClass(handle))
-        rewrites.push_back(operation);
     }
   });
   for (Operation *operation : rewrites) {
     SmallVector<Operation *> children = getChildren(operation);
-    if (auto conversion =
-            dyn_cast<semantic::SVConversionExpressionOp>(operation)) {
-      if (children.size() != 1)
-        continue;
-      if (const BuiltinBase *base = findBase(semanticType(children.front())))
-        wrapInBase(children.front(), *base, /*upcast=*/true);
-      continue;
-    }
     auto hasThis = operation->getAttrOfType<BoolAttr>("has_this_class");
     if (hasThis && hasThis.getValue()) {
       if (!children.empty())
         if (const BuiltinBase *base = findBase(semanticType(children.front())))
-          wrapInBase(children.front(), *base, /*upcast=*/false);
+          wrapInBase(children.front(), *base);
       continue;
     }
-    // An implicit `this` (or `super`) receiver selects the enclosing class's
-    // base object.
+    // Materialize the implicit `this` receiver, then convert its view.
     auto owner = operation->getParentOfType<semantic::SVClassTypeOp>();
     const BuiltinBase *base =
         owner ? findClassBase(owner.getSymName()) : nullptr;
     if (!base)
       continue;
+    auto method = operation->getParentOfType<semantic::SVSubroutineSymbolOp>();
+    auto thisSymbol = method ? method.getThisVariableSymbolAttr()
+                             : owner.getThisVariableSymbolAttr();
+    auto thisPath = method ? method.getThisVariablePathAttr()
+                           : owner.getThisVariablePathAttr();
+    if (!thisSymbol || !thisPath)
+      return operation->emitError(
+          "builtin method has no enclosing this identity");
     OpBuilder at = OpBuilder::atBlockBegin(&operation->getRegion(0).front());
-    selectBase(at, operation->getLoc(), *base);
+    Operation *receiver = create(
+        at, operation->getLoc(),
+        semantic::SVNamedValueExpressionOp::getOperationName(),
+        {builder.getNamedAttr("is_signed", builder.getBoolAttr(false)),
+         builder.getNamedAttr("referenced_path", thisPath),
+         builder.getNamedAttr("referenced_symbol", thisSymbol),
+         builder.getNamedAttr("semantic_type", owner.getSemanticTypeAttr())});
+    wrapInBase(receiver, *base);
     operation->setAttr("has_this_class", builder.getBoolAttr(true));
   }
   return success();
@@ -1342,7 +1339,7 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
         weakReferent, ArrayAttr{}, FlatSymbolRefAttr{}, implicitConstructor,
         classType.getIsAbstract() || classType.getIsInterface(),
         classType.getIsInterface(), classType.getIsFinal(),
-        builder.getStringAttr(getDebugName(classType)));
+        builder.getStringAttr(getDebugName(classType)), FlatSymbolRefAttr{});
     result.declarations[classType] = declaration;
     // A class whose data members all have fixed bit-stream widths streams that
     // many bits from any non-null handle (IEEE 1800-2023 11.4.14.1).
@@ -1419,6 +1416,10 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
           builder, getSemanticLocation(property), fieldName, classSymbol, *type,
           ordinal++, IntegerAttr{}, isStatic,
           /*isWeak=*/false, builder.getStringAttr(getDebugName(property)));
+      if (auto builtinField =
+              classType->getAttrOfType<SymbolRefAttr>(builtinBaseFieldAttrName);
+          builtinField && builtinField == getSemanticSymbolPath(property))
+        declaration.setBuiltinBaseAttr(fieldSymbol);
       // IEEE 1800-2023 6.24.3 and 11.4.14.1 stream the data members of the
       // referenced object. Static properties have one class-wide copy (8.9),
       // so they are not object members. Keep the exact source-property marker

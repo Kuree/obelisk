@@ -13944,6 +13944,169 @@ TEST(DesignBytecode, EventWordsRoundTripCanonicalHandles) {
   }
 }
 
+// A process reads a class reference, converts its representation to a builtin
+// base reference, and writes the same identity back to its canonical frame.
+std::vector<uint8_t>
+makeBuiltinUpcastBytecode(uint8_t sourceFlags, uint8_t destinationFlags,
+                          uint16_t opcode = OBELISK_RT_DB_BITCAST) {
+  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t layoutOffset = functionOffset + 96;
+  constexpr size_t codeOffset = layoutOffset + 2 * 40;
+  constexpr size_t continuationOffset = codeOffset + 4 * 32;
+  std::vector<uint8_t> bytes(continuationOffset + 24, 0);
+  std::memcpy(bytes.data(), "OBBCDS1\0", 8);
+  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
+  put64(bytes, 24, bytes.size());
+  put64(bytes, 40, functionOffset);
+  put64(bytes, 48, 1);
+  put64(bytes, 56, layoutOffset);
+  put64(bytes, 64, 2);
+  put64(bytes, 72, codeOffset);
+  put64(bytes, 80, 4);
+  put64(bytes, 88, continuationOffset);
+  put64(bytes, 104, continuationOffset);
+  put64(bytes, 120, continuationOffset);
+  put64(bytes, 128, 1);
+  for (size_t offset = 136; offset < 200; offset += 16)
+    put64(bytes, offset, bytes.size());
+  put64(bytes, functionOffset, 1);
+  put64(bytes, functionOffset + 24, 4);
+  put64(bytes, functionOffset + 40, 2);
+  put64(bytes, functionOffset + 56, 16);
+  put64(bytes, functionOffset + 64, 8);
+  put64(bytes, functionOffset + 80, 1);
+  put64(bytes, functionOffset + 88,
+        OBELISK_RT_DESIGN_FUNCTION_PROCESS | (uint64_t{16} << 1));
+  for (unsigned index = 0; index != 2; ++index) {
+    size_t record = layoutOffset + index * 40;
+    bytes[record] = OBELISK_RT_DBREG_MANAGED;
+    bytes[record + 1] = index ? destinationFlags : sourceFlags;
+    put32(bytes, record + 4, 64);
+    put64(bytes, record + 8, index * 8);
+    put64(bytes, record + 16, 8);
+  }
+  instruction(bytes, codeOffset, 0, OBELISK_RT_DB_LOAD_FRAME);
+  instruction(bytes, codeOffset, 1, opcode, 0, 1, 0);
+  instruction(bytes, codeOffset, 2, OBELISK_RT_DB_STORE_FRAME, 0, 0, 1, 0, 0, 0,
+              8);
+  instruction(bytes, codeOffset, 3, OBELISK_RT_DB_TERMINATE);
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
+TEST(DesignBytecode, BuiltinUpcastChecksIdentityAndAncestry) {
+  for (uint8_t flags : {OBELISK_RT_DBREG_MAILBOX, OBELISK_RT_DBREG_SEMAPHORE}) {
+    SCOPED_TRACE(static_cast<unsigned>(flags));
+    Fixture fixture;
+    fixture.bytecode =
+        makeBuiltinUpcastBytecode(OBELISK_RT_DBREG_CLASS_HANDLE, flags);
+    fixture.execution.bytecode = fixture.bytecode.data();
+    fixture.execution.bytecode_size = fixture.bytecode.size();
+    fixture.execution.checksum = imageChecksum(fixture.bytecode);
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    obelisk_rt_gc_lane_v1 *lane = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+    obelisk_rt_trace_entry_v1 trace{8,
+                                    0,
+                                    1,
+                                    OBELISK_RT_TRACE_STRONG,
+                                    flags == OBELISK_RT_DBREG_MAILBOX
+                                        ? OBELISK_RT_MANAGED_SLOT_MAILBOX
+                                        : OBELISK_RT_MANAGED_SLOT_SEMAPHORE,
+                                    nullptr};
+    obelisk_rt_trace_layout_v1 layout{OBELISK_RT_VERSION, 0, 16, 8, &trace, 1};
+    obelisk_rt_class_descriptor_v1 base{};
+    base.version = OBELISK_RT_VERSION;
+    base.class_id = 1;
+    base.instance_size = 16;
+    base.instance_alignment = 8;
+    base.layout = &layout;
+    base.builtin_base_kind = flags == OBELISK_RT_DBREG_MAILBOX
+                                 ? OBELISK_RT_BUILTIN_CLASS_MAILBOX
+                                 : OBELISK_RT_BUILTIN_CLASS_SEMAPHORE;
+    base.builtin_base_offset = 8;
+    obelisk_rt_class_descriptor_v1 derived = base;
+    derived.class_id = 2;
+    derived.base = &base;
+    derived.builtin_base_kind = OBELISK_RT_BUILTIN_CLASS_NONE;
+    derived.builtin_base_offset = 0;
+    obelisk_rt_class_descriptor_v1 unrelated = derived;
+    unrelated.class_id = 3;
+    unrelated.base = nullptr;
+    unrelated.layout = nullptr;
+    for (const auto *descriptor : {&base, &derived, &unrelated})
+      ASSERT_EQ(obelisk_rt_v1_class_register(context, descriptor),
+                OBELISK_RT_OK);
+    obelisk_rt_object_v1 *object = nullptr;
+    obelisk_rt_gc_root_v1 root{};
+    ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &object), OBELISK_RT_OK);
+    auto execute = [&](obelisk_rt_object_v1 *input,
+                       obelisk_rt_status expected) {
+      std::array<uint64_t, 4> frame{obelisk_rt_managed_word_from_object(input),
+                                    UINT64_MAX, 0, 0};
+      obelisk_rt_fragment_action_v1 action{};
+      EXPECT_EQ(obelisk_rt_execute_design_bytecode(fixture.entry, context,
+                                                   frame.data(), sizeof(frame),
+                                                   16, 16, 0, 0, &action),
+                expected);
+      if (expected == OBELISK_RT_OK) {
+        EXPECT_EQ(frame[1], frame[0]);
+        EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+      } else {
+        EXPECT_EQ(frame[1], UINT64_MAX);
+      }
+    };
+    execute(nullptr, OBELISK_RT_OK);
+    for (const auto *descriptor : {&base, &derived, &unrelated}) {
+      ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, descriptor, &object),
+                OBELISK_RT_OK);
+      execute(object, descriptor == &unrelated ? OBELISK_RT_INVALID_BYTECODE
+                                               : OBELISK_RT_OK);
+    }
+    // A direct builtin cannot masquerade as the class source of an upcast.
+    ASSERT_EQ(obelisk_rt_v1_semaphore_create(lane, 0, &object), OBELISK_RT_OK);
+    execute(object, OBELISK_RT_INVALID_BYTECODE);
+    ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST(DesignBytecode, RejectsInvalidManagedBitcastsAndInexactMoves) {
+  const std::pair<uint8_t, uint8_t> invalid[] = {
+      {OBELISK_RT_DBREG_MAILBOX, OBELISK_RT_DBREG_CLASS_HANDLE},
+      {OBELISK_RT_DBREG_SEMAPHORE, OBELISK_RT_DBREG_CLASS_HANDLE},
+      {OBELISK_RT_DBREG_MAILBOX, OBELISK_RT_DBREG_SEMAPHORE},
+      {OBELISK_RT_DBREG_CLASS_HANDLE, 0},
+      {0, OBELISK_RT_DBREG_MAILBOX},
+      {OBELISK_RT_DBREG_CLASS_HANDLE, OBELISK_RT_DBREG_CLASS_HANDLE}};
+  auto validate = [](uint8_t source, uint8_t destination, uint16_t opcode) {
+    Fixture fixture;
+    fixture.bytecode = makeBuiltinUpcastBytecode(source, destination, opcode);
+    fixture.execution.bytecode = fixture.bytecode.data();
+    fixture.execution.bytecode_size = fixture.bytecode.size();
+    fixture.execution.checksum = imageChecksum(fixture.bytecode);
+    uint64_t scratchSize = 0, scratchAlignment = 0;
+    return obelisk_rt_validate_design_bytecode(fixture.entry, nullptr,
+                                               &scratchSize, &scratchAlignment);
+  };
+  for (auto [source, destination] : invalid)
+    EXPECT_EQ(validate(source, destination, OBELISK_RT_DB_BITCAST),
+              OBELISK_RT_INVALID_BYTECODE);
+  EXPECT_EQ(validate(OBELISK_RT_DBREG_CLASS_HANDLE, OBELISK_RT_DBREG_MAILBOX,
+                     OBELISK_RT_DB_MOVE),
+            OBELISK_RT_INVALID_BYTECODE);
+  EXPECT_EQ(validate(OBELISK_RT_DBREG_CLASS_HANDLE, OBELISK_RT_DBREG_SEMAPHORE,
+                     OBELISK_RT_DB_MOVE),
+            OBELISK_RT_INVALID_BYTECODE);
+}
+
 TEST(DesignBytecode, OpaqueHandleRegistersRequireCanonicalGeometry) {
   struct Case {
     uint8_t kind, flags;

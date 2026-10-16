@@ -3145,9 +3145,27 @@ struct ManagedObjectLease {
 // IEEE 1800-2023 37.33: mailboxes and semaphores are class objects even
 // though their implementation uses managed container storage. Inspect an
 // already-acquired lease so a caller never reacquires the same ticket lock.
-enum class BuiltinClassKind { None, Mailbox, Semaphore };
+enum class BuiltinClassKind : uint32_t {
+  None = OBELISK_RT_BUILTIN_CLASS_NONE,
+  Mailbox = OBELISK_RT_BUILTIN_CLASS_MAILBOX,
+  Semaphore = OBELISK_RT_BUILTIN_CLASS_SEMAPHORE
+};
 BuiltinClassKind
 obelisk_rt_builtin_class_kind(const ManagedObjectLease &lease) noexcept;
+
+// Classification reads only immutable metadata and never takes an object
+// ticket lock. The caller must keep the object live in an active GC lane.
+BuiltinClassKind
+obelisk_rt_builtin_class_kind_unlocked(obelisk_rt_object_v1 *object) noexcept;
+BuiltinClassKind obelisk_rt_builtin_container_kind(const uint8_t *object,
+                                                   uint64_t extent) noexcept;
+// Resolve a direct builtin or a user class's private direct builtin payload.
+// The returned payload borrows the caller's active GC lifetime; no root is
+// added.
+obelisk_rt_status
+obelisk_rt_builtin_class_payload(obelisk_rt_object_v1 *object,
+                                 BuiltinClassKind expected,
+                                 obelisk_rt_object_v1 **outPayload);
 
 // Copies mailbox messages in FIFO order, with each value plane followed by
 // its unknown plane when the element is four-state. The caller must keep its

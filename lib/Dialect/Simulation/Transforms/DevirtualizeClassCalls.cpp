@@ -204,6 +204,8 @@ public:
     if (auto allocation = dyn_cast<sim::SimClassAllocOp>(op)) {
       fact.dynamicClass = dispatch.lookup(
           cast<sim::ClassHandleType>(allocation.getResult().getType()));
+    } else if (isa<sim::SimClassBuiltinUpcastOp>(op)) {
+      fact = operands.front()->getValue();
     } else if (isa<sim::SimClassCopyOp>(op)) {
       // LRM 8.12: a shallow copy retains the dynamic class of its source.
       fact = operands[1]->getValue();

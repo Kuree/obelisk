@@ -2957,4 +2957,312 @@ TEST_F(ManagedValueTest, MailboxSnapshotPreservesFourStateFIFOWithoutMutation) {
   EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
 }
 
+class BuiltinInheritanceTest
+    : public ManagedValueTest,
+      public ::testing::WithParamInterface<BuiltinClassKind> {
+protected:
+  static constexpr uint64_t slotOffset = sizeof(obelisk_rt_managed_word_v1);
+  static constexpr uint64_t instanceSize =
+      slotOffset + sizeof(obelisk_rt_managed_word_v1);
+
+  void SetUp() override {
+    ManagedValueTest::SetUp();
+    if (HasFatalFailure())
+      return;
+    kind = GetParam();
+    slotKind = kind == BuiltinClassKind::Mailbox
+                   ? OBELISK_RT_MANAGED_SLOT_MAILBOX
+                   : OBELISK_RT_MANAGED_SLOT_SEMAPHORE;
+    payloadTrace = {slotOffset, 0,      1, OBELISK_RT_TRACE_STRONG,
+                    slotKind,   nullptr};
+    classLayout = {OBELISK_RT_VERSION, 0,
+                   instanceSize,       alignof(obelisk_rt_managed_word_v1),
+                   &payloadTrace,      1};
+    base.version = OBELISK_RT_VERSION;
+    base.class_id = 1;
+    base.instance_size = instanceSize;
+    base.instance_alignment = alignof(obelisk_rt_managed_word_v1);
+    base.layout = &classLayout;
+    base.builtin_base_kind = kind == BuiltinClassKind::Mailbox
+                                 ? OBELISK_RT_BUILTIN_CLASS_MAILBOX
+                                 : OBELISK_RT_BUILTIN_CLASS_SEMAPHORE;
+    base.builtin_base_offset = slotOffset;
+    derived = base;
+    derived.class_id = 2;
+    derived.base = &base;
+    derived.builtin_base_kind = OBELISK_RT_BUILTIN_CLASS_NONE;
+    derived.builtin_base_offset = 0;
+    holder = derived;
+    holder.class_id = 3;
+    holder.base = nullptr;
+    ordinary = holder;
+    ordinary.class_id = 4;
+    ordinary.instance_size = sizeof(void *);
+    ordinary.layout = nullptr;
+    for (auto *descriptor : {&base, &derived, &holder, &ordinary})
+      ASSERT_EQ(obelisk_rt_v1_class_register(context, descriptor),
+                OBELISK_RT_OK);
+    elementTrace = {0, 0, 1, OBELISK_RT_TRACE_STRONG, slotKind, nullptr};
+    elementLayout = {OBELISK_RT_VERSION,
+                     0,
+                     sizeof(obelisk_rt_managed_word_v1),
+                     alignof(obelisk_rt_managed_word_v1),
+                     &elementTrace,
+                     1};
+    builtinElement = {OBELISK_RT_VERSION,
+                      OBELISK_RT_ELEMENT_CONTAINER_HANDLE,
+                      10,
+                      0,
+                      0,
+                      sizeof(obelisk_rt_managed_word_v1),
+                      alignof(obelisk_rt_managed_word_v1),
+                      0,
+                      &elementLayout};
+  }
+
+  obelisk_rt_status createPayload(obelisk_rt_object_v1 **out) {
+    if (kind == BuiltinClassKind::Semaphore)
+      return obelisk_rt_v1_semaphore_create(lane, 2, out);
+    return obelisk_rt_v1_mailbox_create_typed(
+        lane, wordElement.type_id, wordElement.kind, wordElement.flags,
+        wordElement.value_size, wordElement.alignment, wordElement.bit_width,
+        nullptr, 0, 0, out);
+  }
+
+  void expectPayloadOperations(obelisk_rt_object_v1 *outer,
+                               obelisk_rt_object_v1 *payload) {
+    obelisk_rt_object_v1 *resolved = nullptr;
+    ASSERT_EQ(obelisk_rt_builtin_class_payload(outer, kind, &resolved),
+              OBELISK_RT_OK);
+    EXPECT_EQ(resolved, payload);
+    ASSERT_EQ(obelisk_rt_builtin_class_payload(payload, kind, &resolved),
+              OBELISK_RT_OK);
+    EXPECT_EQ(resolved, payload);
+    {
+      ManagedObjectLease lease;
+      ASSERT_EQ(obelisk_rt_managed_object_acquire(
+                    lane, outer, OBELISK_RT_MANAGED_CLASS, &lease),
+                OBELISK_RT_OK);
+      EXPECT_EQ(obelisk_rt_builtin_class_kind(lease), kind);
+    }
+    uint32_t success = 0;
+    if (kind == BuiltinClassKind::Semaphore) {
+      ASSERT_EQ(obelisk_rt_v1_semaphore_try_get(outer, 1, &success),
+                OBELISK_RT_OK);
+      EXPECT_EQ(success, 1u);
+      ASSERT_EQ(obelisk_rt_v1_semaphore_put(outer, 3), OBELISK_RT_OK);
+      ASSERT_EQ(obelisk_rt_v1_semaphore_try_get(payload, 4, &success),
+                OBELISK_RT_OK);
+      EXPECT_EQ(success, 1u);
+      ASSERT_EQ(obelisk_rt_v1_semaphore_try_get(outer, 1, &success),
+                OBELISK_RT_OK);
+      EXPECT_EQ(success, 0u);
+    } else {
+      uint64_t message = 73;
+      ASSERT_EQ(obelisk_rt_v1_mailbox_try_put(lane, outer, &message, nullptr,
+                                              &success),
+                OBELISK_RT_OK);
+      EXPECT_EQ(success, 1u);
+      uint32_t count = 0;
+      ASSERT_EQ(obelisk_rt_v1_mailbox_num(outer, &count), OBELISK_RT_OK);
+      EXPECT_EQ(count, 1u);
+      uint64_t received = 0;
+      ASSERT_EQ(
+          obelisk_rt_v1_mailbox_try_get(payload, &received, nullptr, &success),
+          OBELISK_RT_OK);
+      EXPECT_EQ(success, 1u);
+      EXPECT_EQ(received, message);
+      ASSERT_EQ(obelisk_rt_v1_mailbox_num(outer, &count), OBELISK_RT_OK);
+      EXPECT_EQ(count, 0u);
+    }
+  }
+
+  BuiltinClassKind kind = BuiltinClassKind::None;
+  obelisk_rt_managed_slot_kind_v1 slotKind = OBELISK_RT_MANAGED_SLOT_INVALID;
+  obelisk_rt_trace_entry_v1 payloadTrace{}, elementTrace{};
+  obelisk_rt_trace_layout_v1 classLayout{}, elementLayout{};
+  obelisk_rt_class_descriptor_v1 base{}, derived{}, holder{}, ordinary{};
+  obelisk_rt_element_type_v1 builtinElement{};
+};
+
+TEST_P(BuiltinInheritanceTest, TypedClassSlotRetainsDerivedObjectAndPayload) {
+  obelisk_rt_object_v1 *owner = nullptr, *payload = nullptr, *outer = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &holder, &owner),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 ownerRoot{}, payloadRoot{}, outerRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &ownerRoot, &owner),
+            OBELISK_RT_OK);
+  ASSERT_EQ(createPayload(&payload), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &payloadRoot, &payload),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &derived, &outer),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &outerRoot, &outer),
+            OBELISK_RT_OK);
+  uint64_t payloadWord = obelisk_rt_managed_word_from_object(payload);
+  uint64_t outerWord = obelisk_rt_managed_word_from_object(outer);
+  ASSERT_EQ(obelisk_rt_v1_object_write(outer, slotOffset, &payloadWord,
+                                       sizeof(payloadWord)),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_write(owner, slotOffset, &outerWord,
+                                       sizeof(outerWord)),
+            OBELISK_RT_OK);
+  const uint64_t identity = obelisk_rt_v1_object_id(outer);
+  ASSERT_NE(identity, 0u);
+  EXPECT_NE(identity, obelisk_rt_v1_object_id(payload));
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &outerRoot), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &payloadRoot), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_object_id(outer), identity);
+  expectPayloadOperations(outer, payload);
+  EXPECT_EQ(obelisk_rt_v1_object_is_instance(outer, &base), 1u);
+  EXPECT_EQ(obelisk_rt_v1_object_is_instance(outer, &derived), 1u);
+  EXPECT_EQ(obelisk_rt_v1_object_is_instance(outer, &ordinary), 0u);
+  obelisk_rt_object_v1 *cast = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_cast(outer, &base, &cast), OBELISK_RT_OK);
+  EXPECT_EQ(cast, outer);
+  ASSERT_EQ(obelisk_rt_v1_object_cast(payload, &base, &cast), OBELISK_RT_OK);
+  EXPECT_EQ(cast, nullptr);
+  ASSERT_EQ(obelisk_rt_v1_object_cast(nullptr, &base, &cast), OBELISK_RT_OK);
+  EXPECT_EQ(cast, nullptr);
+
+  // A typed builtin slot is not a candidate slot accepting arbitrary class
+  // or container addresses, even though both heap kinds may implement it.
+  obelisk_rt_object_v1 *wrong = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_queue_create(lane, &wordElement, UINT64_MAX, &wrong),
+            OBELISK_RT_OK);
+  uint64_t wrongWord = obelisk_rt_managed_word_from_object(wrong);
+  EXPECT_EQ(obelisk_rt_v1_object_write(owner, slotOffset, &wrongWord,
+                                       sizeof(wrongWord)),
+            OBELISK_RT_INVALID_ARGUMENT);
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &ordinary, &wrong),
+            OBELISK_RT_OK);
+  wrongWord = obelisk_rt_managed_word_from_object(wrong);
+  EXPECT_EQ(obelisk_rt_v1_object_write(owner, slotOffset, &wrongWord,
+                                       sizeof(wrongWord)),
+            OBELISK_RT_INVALID_ARGUMENT);
+  if (kind == BuiltinClassKind::Mailbox) {
+    ASSERT_EQ(obelisk_rt_v1_semaphore_create(lane, 0, &wrong), OBELISK_RT_OK);
+  } else {
+    ASSERT_EQ(obelisk_rt_v1_mailbox_create_typed(
+                  lane, wordElement.type_id, wordElement.kind,
+                  wordElement.flags, wordElement.value_size,
+                  wordElement.alignment, wordElement.bit_width, nullptr, 0, 0,
+                  &wrong),
+              OBELISK_RT_OK);
+  }
+  wrongWord = obelisk_rt_managed_word_from_object(wrong);
+  EXPECT_EQ(obelisk_rt_v1_object_write(owner, slotOffset, &wrongWord,
+                                       sizeof(wrongWord)),
+            OBELISK_RT_INVALID_ARGUMENT);
+  uint64_t stored = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_object_read(owner, slotOffset, &stored, sizeof(stored)),
+      OBELISK_RT_OK);
+  EXPECT_EQ(stored, outerWord);
+  stored = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_object_write(owner, slotOffset, &stored, sizeof(stored)),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  obelisk_rt_gc_statistics_v1 statistics{};
+  ASSERT_EQ(obelisk_rt_v1_gc_statistics(context, &statistics), OBELISK_RT_OK);
+  EXPECT_EQ(statistics.live_objects, 1u);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &ownerRoot), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_statistics(context, &statistics), OBELISK_RT_OK);
+  EXPECT_EQ(statistics.live_objects, 0u);
+}
+
+TEST_P(BuiltinInheritanceTest, TypedContainerElementRetainsDerivedIdentity) {
+  obelisk_rt_object_v1 *queue = nullptr, *payload = nullptr, *outer = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_element_type_validate(&builtinElement),
+            OBELISK_RT_OK);
+  const obelisk_rt_element_trace_slot_v1 traceSlot{0, slotKind, 0};
+  ASSERT_EQ(obelisk_rt_v1_container_create_typed(
+                lane, OBELISK_RT_CONTAINER_QUEUE, builtinElement.type_id,
+                builtinElement.kind, builtinElement.flags,
+                builtinElement.value_size, builtinElement.alignment,
+                builtinElement.bit_width, &traceSlot, 1, 0, UINT64_MAX, &queue),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 queueRoot{}, payloadRoot{}, outerRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &queueRoot, &queue),
+            OBELISK_RT_OK);
+  ASSERT_EQ(createPayload(&payload), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &payloadRoot, &payload),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &derived, &outer),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &outerRoot, &outer),
+            OBELISK_RT_OK);
+  uint64_t payloadWord = obelisk_rt_managed_word_from_object(payload);
+  uint64_t outerWord = obelisk_rt_managed_word_from_object(outer);
+  ASSERT_EQ(obelisk_rt_v1_object_write(outer, slotOffset, &payloadWord,
+                                       sizeof(payloadWord)),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_queue_push(lane, queue, 1, &outerWord, nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &outerRoot), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &payloadRoot), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  uint64_t stored = 0;
+  ASSERT_EQ(obelisk_rt_v1_container_read(queue, 0, &stored, nullptr),
+            OBELISK_RT_OK);
+  EXPECT_EQ(stored, outerWord);
+  expectPayloadOperations(outer, payload);
+  // An ordinary container-handle slot keeps its original, stricter meaning.
+  obelisk_rt_object_v1 *untyped = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_queue_create(lane, &containerElement, UINT64_MAX, &untyped),
+      OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 untypedRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &untypedRoot, &untyped),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_queue_push(lane, untyped, 1, &outerWord, nullptr),
+            OBELISK_RT_INVALID_HANDLE);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &untypedRoot), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_container_delete(queue), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &queueRoot), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  obelisk_rt_gc_statistics_v1 statistics{};
+  ASSERT_EQ(obelisk_rt_v1_gc_statistics(context, &statistics), OBELISK_RT_OK);
+  EXPECT_EQ(statistics.live_objects, 0u);
+}
+
+TEST_P(BuiltinInheritanceTest, RejectsMalformedBuiltinBaseDescriptors) {
+  auto invalid = base;
+  invalid.builtin_base_offset = 0;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&invalid), OBELISK_RT_INVALID_DESIGN);
+  invalid = base;
+  invalid.builtin_base_kind = UINT32_MAX;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&invalid), OBELISK_RT_INVALID_DESIGN);
+  invalid = base;
+  invalid.builtin_base_reserved = 1;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&invalid), OBELISK_RT_INVALID_DESIGN);
+  invalid = base;
+  invalid.builtin_base_offset = instanceSize;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&invalid), OBELISK_RT_INVALID_DESIGN);
+  invalid = base;
+  invalid.layout = nullptr;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&invalid), OBELISK_RT_INVALID_DESIGN);
+  auto wrongTrace = payloadTrace;
+  wrongTrace.slot_kind = OBELISK_RT_MANAGED_SLOT_CONTAINER;
+  auto wrongLayout = classLayout;
+  wrongLayout.entries = &wrongTrace;
+  invalid = base;
+  invalid.layout = &wrongLayout;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&invalid), OBELISK_RT_INVALID_DESIGN);
+  invalid = derived;
+  invalid.builtin_base_kind = base.builtin_base_kind;
+  invalid.builtin_base_offset = base.builtin_base_offset;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&invalid), OBELISK_RT_INVALID_DESIGN);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    BuiltinClasses, BuiltinInheritanceTest,
+    ::testing::Values(BuiltinClassKind::Mailbox, BuiltinClassKind::Semaphore),
+    [](const ::testing::TestParamInfo<BuiltinClassKind> &info) {
+      return info.param == BuiltinClassKind::Mailbox ? "Mailbox" : "Semaphore";
+    });
+
 } // namespace

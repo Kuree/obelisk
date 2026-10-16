@@ -1069,6 +1069,14 @@ FailureOr<Value> UnitLowering::rematerializeManagedInput(Value value) {
                                      load.getResult().getType(), *input)
         .getResult();
   }
+  if (auto upcast = value.getDefiningOp<sim::SimClassBuiltinUpcastOp>()) {
+    FailureOr<Value> object = rematerializeManagedInput(upcast.getObject());
+    if (failed(object))
+      return failure();
+    return sim::SimClassBuiltinUpcastOp::create(
+               builder, upcast.getLoc(), upcast.getResult().getType(), *object)
+        .getResult();
+  }
   if (auto cast = value.getDefiningOp<sim::SimClassCastOp>()) {
     FailureOr<Value> object = rematerializeManagedInput(cast.getObject());
     if (failed(object))
@@ -1872,6 +1880,11 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
                                              scalar)
         .getResult();
   }
+  if (isa<sim::ClassHandleType>(value.getType()) &&
+      isa<sim::SemaphoreType, sim::MailboxType>(targetType))
+    return sim::SimClassBuiltinUpcastOp::create(builder, location, targetType,
+                                                value)
+        .getResult();
   if (isa<sim::ClassHandleType>(value.getType()) &&
       isa<sim::ClassHandleType>(targetType))
     return sim::SimClassCastOp::create(builder, location, targetType, value)

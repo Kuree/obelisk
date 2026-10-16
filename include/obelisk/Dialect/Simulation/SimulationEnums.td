@@ -644,10 +644,13 @@ def SimVPITypespecAnonymousEnum
     : I32EnumAttrCase<"AnonymousEnum", 2, "anonymous_enum">;
 def SimVPITypespecClassSpecialization
     : I32EnumAttrCase<"ClassSpecialization", 3, "class_specialization">;
+def SimVPITypespecBuiltinClass
+    : I32EnumAttrCase<"BuiltinClass", 4, "builtin_class">;
 def SimVPITypespecOrigin
     : I32EnumAttr<"VPITypespecOrigin", "VPI typespec inventory origin", [
         SimVPITypespecTypedef, SimVPITypespecInterface,
-        SimVPITypespecAnonymousEnum, SimVPITypespecClassSpecialization
+        SimVPITypespecAnonymousEnum, SimVPITypespecClassSpecialization,
+        SimVPITypespecBuiltinClass
       ]> {
   let cppNamespace = "::obelisk::sim";
 }

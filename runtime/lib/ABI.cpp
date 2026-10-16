@@ -106,7 +106,7 @@ ABI_OFFSET(obelisk_rt_random_layout_v1, variable_count, 32);
 ABI_SIZE_ALIGN(obelisk_rt_byte_range_v1, 16, 8);
 ABI_OFFSET(obelisk_rt_byte_range_v1, offset, 0);
 ABI_OFFSET(obelisk_rt_byte_range_v1, size, 8);
-ABI_SIZE_ALIGN(obelisk_rt_class_descriptor_v1, ABI_PTR(120, 96), 8);
+ABI_SIZE_ALIGN(obelisk_rt_class_descriptor_v1, ABI_PTR(136, 112), 8);
 ABI_OFFSET(obelisk_rt_class_descriptor_v1, version, 0);
 ABI_OFFSET(obelisk_rt_class_descriptor_v1, flags, 4);
 ABI_OFFSET(obelisk_rt_class_descriptor_v1, class_id, 8);
@@ -123,6 +123,11 @@ ABI_OFFSET(obelisk_rt_class_descriptor_v1, debug_name_size, ABI_PTR(88, 72));
 ABI_OFFSET(obelisk_rt_class_descriptor_v1, random_layout, ABI_PTR(96, 80));
 ABI_OFFSET(obelisk_rt_class_descriptor_v1, copy_resets, ABI_PTR(104, 84));
 ABI_OFFSET(obelisk_rt_class_descriptor_v1, copy_reset_count, ABI_PTR(112, 88));
+ABI_OFFSET(obelisk_rt_class_descriptor_v1, builtin_base_kind, ABI_PTR(120, 96));
+ABI_OFFSET(obelisk_rt_class_descriptor_v1, builtin_base_reserved,
+           ABI_PTR(124, 100));
+ABI_OFFSET(obelisk_rt_class_descriptor_v1, builtin_base_offset,
+           ABI_PTR(128, 104));
 ABI_SIZE_ALIGN(obelisk_rt_element_type_v1, 64, 8);
 ABI_OFFSET(obelisk_rt_element_type_v1, version, 0);
 ABI_OFFSET(obelisk_rt_element_type_v1, kind, 4);

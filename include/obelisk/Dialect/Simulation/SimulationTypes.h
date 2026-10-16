@@ -138,9 +138,11 @@ constexpr unsigned managedHandleByteWidth = managedHandleBitWidth / 8;
 constexpr unsigned managedHandleByteAlignment = managedHandleByteWidth;
 
 /// Runtime trace-layout encoding shared by native class and container
-/// descriptors. Exact slots use the one-based managed kind enumerators;
+/// descriptors. Exact slots use the runtime typed slot enumerators;
 /// candidate slots carry this flag plus a ManagedHandleKind mask.
 constexpr uint32_t managedHandleCandidateFlag = uint32_t{1} << 31;
+
+enum class ManagedBuiltinKind : uint32_t { None, Mailbox, Semaphore };
 
 struct ManagedHandleSlot {
   uint64_t bitOffset;
@@ -149,10 +151,11 @@ struct ManagedHandleSlot {
   /// is a root only when its current word names a live object of an allowed
   /// kind; exact slots must always contain a well-typed managed word.
   bool conditional;
+  ManagedBuiltinKind builtinKind = ManagedBuiltinKind::None;
 
   bool operator==(const ManagedHandleSlot &other) const {
     return bitOffset == other.bitOffset && kindMask == other.kindMask &&
-           conditional == other.conditional;
+           conditional == other.conditional && builtinKind == other.builtinKind;
   }
 };
 

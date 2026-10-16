@@ -83,8 +83,8 @@ ManagedClassLayoutAnalysis::compute(sim::SimDesignOp design,
       static_cast<uint32_t>(managedWordABIAlignment);
 
   auto computeClass = [&](sim::SimClassDeclOp declaration) -> LogicalResult {
-    Class layout{
-        declaration, objectHeaderSize, objectAlignment, std::nullopt, {}};
+    Class layout{declaration, objectHeaderSize, objectAlignment, std::nullopt,
+                 {},          std::nullopt};
     if (auto baseName = declaration.getBase()) {
       auto base = declarations.find(*baseName);
       if (base == declarations.end())
@@ -127,8 +127,14 @@ ManagedClassLayoutAnalysis::compute(sim::SimDesignOp design,
       layout.size = offset + storage->size * planes;
       layout.alignment = std::max(layout.alignment, storage->alignment);
       layout.fields.push_back({field, offset, std::move(*storage)});
+      if (declaration.getBuiltinBaseAttr() &&
+          declaration.getBuiltinBaseAttr().getValue() == field.getSymName())
+        layout.builtinBaseOffset = offset;
     }
 
+    if (declaration.getBuiltinBaseAttr() && !layout.builtinBaseOffset)
+      return declaration.emitOpError(
+          "builtin base field has no managed layout");
     uint64_t alignedSize;
     if (!checkedAlignTo(layout.size, layout.alignment, alignedSize))
       return declaration.emitOpError("class instance size overflows");

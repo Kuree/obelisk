@@ -1073,6 +1073,13 @@ LogicalResult SimVPITypespecDeclOp::verify() {
     return emitOpError(
         "class-specialization origin requires an exact class symbol and no "
         "typedef aliases");
+  if (getOrigin() == VPITypespecOrigin::BuiltinClass &&
+      ((getTargetType().getKind() != VPITypeKind::Semaphore &&
+        getTargetType().getKind() != VPITypeKind::Mailbox) ||
+       getTargetType().getSymbol() ||
+       stripVPITypedefAliases(getTargetType()) != getTargetType()))
+    return emitOpError(
+        "builtin-class origin requires an unaliased semaphore or mailbox type");
   if (getOrigin() == VPITypespecOrigin::AnonymousEnum &&
       (getTargetType().getKind() != VPITypeKind::Enum ||
        !getSourceTypeIdentityAttr()))
@@ -1998,6 +2005,10 @@ LogicalResult SimClassDeclOp::verify() {
     return emitOpError("interface classes must be abstract");
   if (getIsInterface() && getBaseAttr())
     return emitOpError("interface classes cannot have a base class");
+  if (getBuiltinBaseAttr() &&
+      (getBaseAttr() || getWeakReferentAttr() || getIsInterface()))
+    return emitOpError(
+        "builtin base requires a root class without a weak referent");
   if (getBaseAttr() && getBase() == getSymName())
     return emitOpError("class cannot extend itself");
   if (ArrayAttr interfaces = getInterfacesAttr()) {
@@ -2017,6 +2028,14 @@ LogicalResult SimClassDeclOp::verify() {
 
 LogicalResult
 SimClassDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (FlatSymbolRefAttr reference = getBuiltinBaseAttr()) {
+    SimClassFieldDeclOp field = lookupClassField(symbolTable, *this, reference);
+    if (!field || field.getOwner() != getSymName() || field.getIsStatic() ||
+        field.getIsWeak() || !isa<MailboxType, SemaphoreType>(field.getType()))
+      return emitOpError("builtin base must name an own strong instance "
+                         "mailbox or semaphore field");
+  }
+
   if (getWeakReferentAttr() &&
       !lookupClass(symbolTable, *this, getWeakReferentAttr()))
     return emitOpError("weak wrapper references an unknown referent class");
@@ -2531,6 +2550,27 @@ SimWeakClearOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 }
 
 LogicalResult
+SimClassBuiltinUpcastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  SimClassDeclOp declaration =
+      lookupClass(symbolTable, *this, getObject().getType().getClassName());
+  llvm::SmallPtrSet<Operation *, 8> visited;
+  while (declaration && visited.insert(declaration).second) {
+    if (FlatSymbolRefAttr base = declaration.getBuiltinBaseAttr()) {
+      SimClassFieldDeclOp field = lookupClassField(symbolTable, *this, base);
+      if (!field || field.getType() != getResult().getType())
+        return emitOpError(
+            "result does not match the declared builtin base type");
+      return success();
+    }
+    declaration =
+        declaration.getBaseAttr()
+            ? lookupClass(symbolTable, *this, declaration.getBaseAttr())
+            : SimClassDeclOp{};
+  }
+  return emitOpError("operand class has no declared builtin base");
+}
+
+LogicalResult
 SimClassIsInstanceOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (!lookupClass(symbolTable, *this, getTargetAttr()))
     return emitOpError("references an unknown target class");
@@ -2539,13 +2579,32 @@ SimClassIsInstanceOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
 LogicalResult
 SimClassCastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto source = getObject().getType();
+  auto source = dyn_cast<ClassHandleType>(getObject().getType());
   auto target = getResult().getType();
-  SimClassDeclOp sourceClass =
-      lookupClass(symbolTable, *this, source.getClassName());
   SimClassDeclOp targetClass =
       lookupClass(symbolTable, *this, target.getClassName());
-  if (!sourceClass || !targetClass)
+  if (!targetClass)
+    return emitOpError("cast references an unknown class");
+  if (!source) {
+    llvm::SmallPtrSet<Operation *, 8> visited;
+    for (SimClassDeclOp ancestor = targetClass;
+         ancestor && visited.insert(ancestor).second;
+         ancestor = ancestor.getBaseAttr() ? lookupClass(symbolTable, *this,
+                                                         ancestor.getBaseAttr())
+                                           : SimClassDeclOp{}) {
+      if (FlatSymbolRefAttr base = ancestor.getBuiltinBaseAttr()) {
+        SimClassFieldDeclOp field = lookupClassField(symbolTable, *this, base);
+        if (field && field.getType() == getObject().getType())
+          return success();
+        break;
+      }
+    }
+    return emitOpError(
+        "target class does not derive from the builtin source type");
+  }
+  SimClassDeclOp sourceClass =
+      lookupClass(symbolTable, *this, source.getClassName());
+  if (!sourceClass)
     return emitOpError("cast references an unknown class");
   bool targetInterface = targetClass.getIsInterface();
   bool sourceInterface = sourceClass.getIsInterface();
@@ -3548,7 +3607,11 @@ LogicalResult SimDesignOp::verifyRegions() {
   }
 
   llvm::SmallDenseSet<Attribute, 8> classSpecializations;
+  llvm::SmallDenseSet<Attribute, 8> builtinClassTypes;
   for (SimVPITypespecDeclOp typespec : typespecs) {
+    if (typespec.getOrigin() == VPITypespecOrigin::BuiltinClass &&
+        !builtinClassTypes.insert(typespec.getTargetType()).second)
+      return typespec.emitOpError("duplicates a canonical builtin class type");
     if (typespec.getOrigin() != VPITypespecOrigin::ClassSpecialization)
       continue;
     Attribute symbol = typespec.getTargetType().getSymbol();

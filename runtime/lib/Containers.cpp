@@ -432,6 +432,19 @@ validateManagedSlots(obelisk_rt_context *context,
                      return;
                    }
                    auto *object = heapStringObject(*slot);
+                   if (kind == OBELISK_RT_MANAGED_SLOT_MAILBOX ||
+                       kind == OBELISK_RT_MANAGED_SLOT_SEMAPHORE) {
+                     BuiltinClassKind expected =
+                         kind == OBELISK_RT_MANAGED_SLOT_MAILBOX
+                             ? BuiltinClassKind::Mailbox
+                             : BuiltinClassKind::Semaphore;
+                     if (!obelisk_rt_managed_object_belongs_to(context,
+                                                               object) ||
+                         obelisk_rt_builtin_class_kind_unlocked(object) !=
+                             expected)
+                       status = OBELISK_RT_INVALID_HANDLE;
+                     return;
+                   }
                    obelisk_rt_managed_kind_v1 expected;
                    switch (kind) {
                    case OBELISK_RT_MANAGED_SLOT_CLASS:
@@ -4719,9 +4732,18 @@ static obelisk_rt_status internElementType(
     slotKind = OBELISK_RT_MANAGED_SLOT_STRING;
   else if (elementKind == OBELISK_RT_ELEMENT_CONTAINER_HANDLE)
     slotKind = OBELISK_RT_MANAGED_SLOT_CONTAINER;
+  bool builtinHandle =
+      elementKind == OBELISK_RT_ELEMENT_CONTAINER_HANDLE &&
+      traceSlotCount == 1 && traceSlots[0].offset == 0 &&
+      traceSlots[0].reserved == 0 &&
+      (traceSlots[0].kind == OBELISK_RT_MANAGED_SLOT_MAILBOX ||
+       traceSlots[0].kind == OBELISK_RT_MANAGED_SLOT_SEMAPHORE);
+  if (builtinHandle)
+    slotKind = 0;
   if (slotKind && traceSlotCount != 0)
     return OBELISK_RT_INVALID_ARGUMENT;
-  if (elementKind != OBELISK_RT_ELEMENT_AGGREGATE && traceSlotCount != 0)
+  if (elementKind != OBELISK_RT_ELEMENT_AGGREGATE && traceSlotCount != 0 &&
+      !builtinHandle)
     return OBELISK_RT_INVALID_ARGUMENT;
   OBELISK_RT_TRY {
     owned->entries.reserve(
@@ -4899,17 +4921,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_container_create_typed_pattern(
       outContainer);
 }
 
-BuiltinClassKind
-obelisk_rt_builtin_class_kind(const ManagedObjectLease &lease) noexcept {
-  if (!lease.metadata || !lease.object)
+BuiltinClassKind obelisk_rt_builtin_container_kind(const uint8_t *object,
+                                                   uint64_t extent) noexcept {
+  if (!object)
     return BuiltinClassKind::None;
-  if (lease.extent == sizeof(SemaphoreHeader) &&
-      reinterpret_cast<const SemaphoreHeader *>(lease.object)->descriptor ==
+  if (extent == sizeof(SemaphoreHeader) &&
+      reinterpret_cast<const SemaphoreHeader *>(object)->descriptor ==
           &semaphoreDescriptorToken)
     return BuiltinClassKind::Semaphore;
-  if (lease.extent == sizeof(ContainerHeader)) {
-    const auto *header =
-        reinterpret_cast<const ContainerHeader *>(lease.object);
+  if (extent == sizeof(ContainerHeader)) {
+    const auto *header = reinterpret_cast<const ContainerHeader *>(object);
     if (header->descriptor == &containerDescriptorToken &&
         header->kind == OBELISK_RT_CONTAINER_QUEUE && header->isMailbox == 1)
       return BuiltinClassKind::Mailbox;
@@ -4917,14 +4938,81 @@ obelisk_rt_builtin_class_kind(const ManagedObjectLease &lease) noexcept {
   return BuiltinClassKind::None;
 }
 
+BuiltinClassKind
+obelisk_rt_builtin_class_kind(const ManagedObjectLease &lease) noexcept {
+  return lease.metadata && lease.object
+             ? obelisk_rt_builtin_class_kind_unlocked(
+                   reinterpret_cast<obelisk_rt_object_v1 *>(lease.object))
+             : BuiltinClassKind::None;
+}
+
+obelisk_rt_status
+obelisk_rt_builtin_class_payload(obelisk_rt_object_v1 *object,
+                                 BuiltinClassKind expected,
+                                 obelisk_rt_object_v1 **outPayload) {
+  if (!outPayload)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outPayload = nullptr;
+  if (!object || expected == BuiltinClassKind::None)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (obelisk_rt_builtin_class_kind_unlocked(object) != expected)
+    return OBELISK_RT_INVALID_HANDLE;
+  if (obelisk_rt_managed_object_kind(object) == OBELISK_RT_MANAGED_CONTAINER) {
+    *outPayload = object;
+    return OBELISK_RT_OK;
+  }
+  const auto *descriptor = obelisk_rt_managed_object_class_descriptor(object);
+  while (descriptor &&
+         descriptor->builtin_base_kind == OBELISK_RT_BUILTIN_CLASS_NONE)
+    descriptor = descriptor->base;
+  if (!descriptor)
+    return OBELISK_RT_INVALID_HANDLE;
+  struct ReadPayload {
+    uint64_t offset;
+    obelisk_rt_managed_word_v1 word;
+  } read{descriptor->builtin_base_offset, 0};
+  obelisk_rt_status status = obelisk_rt_managed_object_access(
+      object, OBELISK_RT_MANAGED_CLASS,
+      [](void *opaque, uint8_t *bytes, uint64_t extent) {
+        auto &read = *static_cast<ReadPayload *>(opaque);
+        if (read.offset > extent || sizeof(read.word) > extent - read.offset)
+          return OBELISK_RT_INVALID_HANDLE;
+        std::memcpy(&read.word, bytes + read.offset, sizeof(read.word));
+        return OBELISK_RT_OK;
+      },
+      &read);
+  if (status != OBELISK_RT_OK)
+    return status;
+  auto *payload = obelisk_rt_object_from_managed_word(read.word);
+  if (read.word != obelisk_rt_managed_word_from_object(payload) || !payload ||
+      obelisk_rt_managed_object_kind(payload) != OBELISK_RT_MANAGED_CONTAINER ||
+      !obelisk_rt_managed_object_belongs_to(
+          obelisk_rt_managed_object_context(object), payload) ||
+      obelisk_rt_builtin_class_kind_unlocked(payload) != expected)
+    return OBELISK_RT_INVALID_HANDLE;
+  *outPayload = payload;
+  return OBELISK_RT_OK;
+}
+
 obelisk_rt_status
 obelisk_rt_mailbox_snapshot(obelisk_rt_object_v1 *mailbox,
                             const obelisk_rt_element_type_v1 **outElement,
                             std::vector<uint8_t> &outValues) {
+
   outValues.clear();
   if (!outElement)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outElement = nullptr;
+  obelisk_rt_object_v1 *payload = nullptr;
+  obelisk_rt_status payloadStatus = obelisk_rt_builtin_class_payload(
+      mailbox, BuiltinClassKind::Mailbox, &payload);
+  if (payloadStatus != OBELISK_RT_OK)
+    return obelisk_rt_managed_object_kind(mailbox) ==
+                   OBELISK_RT_MANAGED_CONTAINER
+               ? OBELISK_RT_INVALID_ARGUMENT
+               : payloadStatus;
+
+  mailbox = payload;
   ContainerHeader snapshot{};
   obelisk_rt_status status = snapshotHeader(mailbox, snapshot);
   if (status != OBELISK_RT_OK)
@@ -4993,6 +5081,11 @@ obelisk_rt_v1_semaphore_create(obelisk_rt_gc_lane_v1 *lane, int32_t keys,
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_semaphore_put(obelisk_rt_object_v1 *semaphore, int32_t keys) {
+  obelisk_rt_status payloadStatus = obelisk_rt_builtin_class_payload(
+      semaphore, BuiltinClassKind::Semaphore, &semaphore);
+  if (payloadStatus != OBELISK_RT_OK)
+    return payloadStatus;
+
   if (!semaphore || keys < 0)
     return OBELISK_RT_INVALID_ARGUMENT;
   struct Put {
@@ -5018,9 +5111,15 @@ obelisk_rt_v1_semaphore_put(obelisk_rt_object_v1 *semaphore, int32_t keys) {
 obelisk_rt_status
 obelisk_rt_semaphore_try_get_raw(obelisk_rt_object_v1 *semaphore, int32_t keys,
                                  uint32_t *outSuccess) {
+
   if (!semaphore || !outSuccess)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outSuccess = 0;
+  obelisk_rt_status payloadStatus = obelisk_rt_builtin_class_payload(
+      semaphore, BuiltinClassKind::Semaphore, &semaphore);
+  if (payloadStatus != OBELISK_RT_OK)
+    return payloadStatus;
+
   if (keys < 0)
     return OBELISK_RT_INVALID_ARGUMENT;
   struct Get {
@@ -5048,7 +5147,13 @@ obelisk_rt_semaphore_try_get_raw(obelisk_rt_object_v1 *semaphore, int32_t keys,
 obelisk_rt_status
 obelisk_rt_semaphore_keys_ready(obelisk_rt_object_v1 *semaphore, int32_t keys,
                                 bool &ready) {
+
   ready = false;
+  obelisk_rt_status payloadStatus = obelisk_rt_builtin_class_payload(
+      semaphore, BuiltinClassKind::Semaphore, &semaphore);
+  if (payloadStatus != OBELISK_RT_OK)
+    return payloadStatus;
+
   if (!semaphore || keys < 0)
     return OBELISK_RT_INVALID_ARGUMENT;
   struct Ready {
@@ -5726,15 +5831,31 @@ obelisk_rt_v1_mailbox_try_put(obelisk_rt_gc_lane_v1 *lane,
                               const void *unknown, uint32_t *outSuccess) {
   if (!outSuccess)
     return OBELISK_RT_INVALID_ARGUMENT;
-  return queuePushImpl(lane, mailbox, 0, value, unknown, outSuccess);
+  *outSuccess = 0;
+
+  ScopedManagedRoot receiverRoot(lane, &mailbox);
+  if (receiverRoot.getStatus() != OBELISK_RT_OK)
+    return receiverRoot.getStatus();
+  obelisk_rt_object_v1 *payload = nullptr;
+  obelisk_rt_status payloadStatus = obelisk_rt_builtin_class_payload(
+      mailbox, BuiltinClassKind::Mailbox, &payload);
+  if (payloadStatus != OBELISK_RT_OK)
+    return payloadStatus;
+
+  return queuePushImpl(lane, payload, 0, value, unknown, outSuccess);
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_try_put_checked(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *mailbox,
     const void *value, uint64_t valueSize, const void *unknown,
     uint64_t unknownSize, uint32_t *outSuccess) {
+  obelisk_rt_object_v1 *payload = nullptr;
+  obelisk_rt_status payloadStatus = obelisk_rt_builtin_class_payload(
+      mailbox, BuiltinClassKind::Mailbox, &payload);
+  if (payloadStatus != OBELISK_RT_OK)
+    return payloadStatus;
   ContainerHeader snapshot;
-  obelisk_rt_status status = snapshotHeader(mailbox, snapshot);
+  obelisk_rt_status status = snapshotHeader(payload, snapshot);
   if (status != OBELISK_RT_OK)
     return status;
   bool fourState =
@@ -5749,9 +5870,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_try_put_checked(
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_mailbox_num(obelisk_rt_object_v1 *mailbox, uint32_t *outCount) {
+
   if (!outCount)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outCount = 0;
+  obelisk_rt_status payloadStatus = obelisk_rt_builtin_class_payload(
+      mailbox, BuiltinClassKind::Mailbox, &mailbox);
+  if (payloadStatus != OBELISK_RT_OK)
+    return payloadStatus;
+
   ContainerHeader snapshot;
   obelisk_rt_status status = snapshotHeader(mailbox, snapshot);
   if (status != OBELISK_RT_OK || snapshot.kind != OBELISK_RT_CONTAINER_QUEUE)
@@ -5765,7 +5892,13 @@ obelisk_rt_v1_mailbox_num(obelisk_rt_object_v1 *mailbox, uint32_t *outCount) {
 obelisk_rt_status obelisk_rt_mailbox_wait_ready(obelisk_rt_object_v1 *mailbox,
                                                 uint32_t predicate,
                                                 bool &ready) {
+
   ready = false;
+  obelisk_rt_status payloadStatus = obelisk_rt_builtin_class_payload(
+      mailbox, BuiltinClassKind::Mailbox, &mailbox);
+  if (payloadStatus != OBELISK_RT_OK)
+    return payloadStatus;
+
   ContainerHeader snapshot;
   obelisk_rt_status status = snapshotHeader(mailbox, snapshot);
   if (status != OBELISK_RT_OK || snapshot.kind != OBELISK_RT_CONTAINER_QUEUE)
@@ -5851,9 +5984,15 @@ obelisk_rt_v1_queue_pop(obelisk_rt_object_v1 *queue, uint32_t front,
 extern "C" obelisk_rt_status
 obelisk_rt_v1_mailbox_try_peek(obelisk_rt_object_v1 *mailbox, void *outValue,
                                void *outUnknown, uint32_t *outPresent) {
+
   if (!outValue || !outPresent)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outPresent = 0;
+  obelisk_rt_status payloadStatus = obelisk_rt_builtin_class_payload(
+      mailbox, BuiltinClassKind::Mailbox, &mailbox);
+  if (payloadStatus != OBELISK_RT_OK)
+    return payloadStatus;
+
   ContainerHeader snapshot;
   obelisk_rt_status status = snapshotHeader(mailbox, snapshot);
   if (status != OBELISK_RT_OK || snapshot.kind != OBELISK_RT_CONTAINER_QUEUE)
@@ -5902,6 +6041,11 @@ static obelisk_rt_status
 verifyMailboxOutputBuffers(obelisk_rt_object_v1 *mailbox, void *outValue,
                            uint64_t valueSize, void *outUnknown,
                            uint64_t unknownSize) {
+  obelisk_rt_status payloadStatus = obelisk_rt_builtin_class_payload(
+      mailbox, BuiltinClassKind::Mailbox, &mailbox);
+  if (payloadStatus != OBELISK_RT_OK)
+    return payloadStatus;
+
   ContainerHeader snapshot;
   obelisk_rt_status status = snapshotHeader(mailbox, snapshot);
   if (status != OBELISK_RT_OK)
@@ -5930,6 +6074,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_try_peek_checked(
 extern "C" obelisk_rt_status
 obelisk_rt_v1_mailbox_try_get(obelisk_rt_object_v1 *mailbox, void *outValue,
                               void *outUnknown, uint32_t *outPresent) {
+  obelisk_rt_status payloadStatus = obelisk_rt_builtin_class_payload(
+      mailbox, BuiltinClassKind::Mailbox, &mailbox);
+  if (payloadStatus != OBELISK_RT_OK)
+    return payloadStatus;
+
   return obelisk_rt_v1_queue_pop(mailbox, 1, outValue, outUnknown, outPresent);
 }
 

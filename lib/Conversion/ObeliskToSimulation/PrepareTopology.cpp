@@ -14,6 +14,7 @@
 #include "obelisk/Dialect/Simulation/SimulationVPI.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
 
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Threading.h"
 
 #include "llvm/ADT/APInt.h"
@@ -1277,6 +1278,18 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         return std::nullopt;
       return VPIKind::Parameter;
     }
+    // Builtin classes have typespecs but no lexical class definitions
+    // (37.32 detail 13). Match the standard package and its declarations,
+    // using the same source identity as builtin type normalization.
+    if (isa<semantic::SVGenericClassDefSymbolOp, semantic::SVClassTypeOp>(
+            operation))
+      if (auto package =
+              dyn_cast<semantic::SVPackageSymbolOp>(operation->getParentOp());
+          package && getDebugName(package) == "std") {
+        StringRef name = getDebugName(operation);
+        if (name == "semaphore" || name == "mailbox" || name == "process")
+          return std::nullopt;
+      }
     if (isa<semantic::SVGenericClassDefSymbolOp>(operation))
       return VPIKind::ClassDefn;
     if (auto classType = dyn_cast<semantic::SVClassTypeOp>(operation)) {
@@ -2554,6 +2567,42 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   // Class declarations and their fully resolved types have independent VPI
   // identities. The latter are shared by every variable of that class type,
   // including variables whose current value is null.
+  llvm::DenseMap<Attribute, FlatSymbolRefAttr> builtinClassTypespecs;
+  llvm::DenseMap<Operation *, FlatSymbolRefAttr> builtinBaseTypespecs;
+  SymbolTableCollection builtinSymbols;
+  for (semantic::SVClassTypeOp classType : classes.sources) {
+    auto builtin = classType->getAttrOfType<TypeAttr>(builtinBaseTypeAttrName);
+    if (!builtin)
+      continue;
+    auto sourceType = dyn_cast<semantic::ClassHandleType>(builtin.getValue());
+    Operation *source =
+        sourceType
+            ? builtinSymbols.lookupSymbolIn(module, sourceType.getClassName())
+            : nullptr;
+    FlatSymbolRefAttr owner =
+        source ? ownerAnchorFor(source->getParentOp()) : FlatSymbolRefAttr{};
+    FailureOr<sim::VPITypeSemanticsAttr> target = makeVPITypeSemantics(
+        builtin.getValue(), getSemanticLocation(classType), {}, classType);
+    if (!source || !owner || failed(target)) {
+      emitError(getSemanticLocation(classType))
+          << "VPI builtin base has no preserved source type or package";
+      invalid = true;
+      continue;
+    }
+    sim::VPITypeSemanticsAttr canonical = sim::stripVPITypedefAliases(*target);
+    auto [entry, inserted] = builtinClassTypespecs.try_emplace(canonical);
+    if (inserted) {
+      std::string symbolName =
+          "__obelisk_vpi_builtin_class_" + std::to_string(nextTypespecId);
+      auto declaration = sim::SimVPITypespecDeclOp::create(
+          builder, getSemanticLocation(source), symbolName, nextTypespecId++,
+          scopes.lookup(source), owner.getValue(), getHierarchyName(source),
+          getDebugName(source), canonical, sim::VPITypespecOrigin::BuiltinClass,
+          IntegerAttr{});
+      entry->second = FlatSymbolRefAttr::get(declaration.getSymNameAttr());
+    }
+    builtinBaseTypespecs[classType] = entry->second;
+  }
   for (semantic::SVClassTypeOp classType : classes.sources) {
     FlatSymbolRefAttr owner = classDefinitionSymbols.lookup(classType);
     if (!owner) {
@@ -2619,16 +2668,22 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   llvm::DenseSet<std::pair<Attribute, Attribute>> derivedDefinitions;
   llvm::DenseMap<Attribute, uint64_t> nextDerivedOrdinal;
   for (semantic::SVClassTypeOp classType : classes.sources) {
+    auto builtin = classType->getAttrOfType<TypeAttr>(builtinBaseTypeAttrName);
     auto baseType = dyn_cast_or_null<semantic::ClassHandleType>(
-        classType.getBaseClass().value_or(Type{}));
+        builtin ? builtin.getValue()
+                : classType.getBaseClass().value_or(Type{}));
     if (!baseType)
       continue;
-    semantic::SVClassTypeOp baseClass = classes.semanticClasses.lookup(
-        baseType.getClassName().getLeafReference());
-    FlatSymbolRefAttr baseTypespec = classTypespecSymbols.lookup(baseClass);
+    semantic::SVClassTypeOp baseClass =
+        builtin ? semantic::SVClassTypeOp{}
+                : classes.semanticClasses.lookup(
+                      baseType.getClassName().getLeafReference());
+    FlatSymbolRefAttr baseTypespec =
+        builtin ? builtinBaseTypespecs.lookup(classType)
+                : classTypespecSymbols.lookup(baseClass);
     FlatSymbolRefAttr definition = classDefinitionSymbols.lookup(classType);
     FlatSymbolRefAttr baseDefinition = classDefinitionSymbols.lookup(baseClass);
-    if (!baseTypespec || !definition || !baseDefinition) {
+    if (!baseTypespec || !definition || (!builtin && !baseDefinition)) {
       emitError(getSemanticLocation(classType))
           << "VPI class inheritance cannot resolve its base class identity";
       invalid = true;
@@ -2673,7 +2728,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     // construct. Parameterized lexical extends expressions need their own
     // unresolved source typespec, rather than one chosen specialization.
     if (isa<semantic::SVGenericClassDefSymbolOp>(classType->getParentOp()) ||
-        isa<semantic::SVGenericClassDefSymbolOp>(baseClass->getParentOp()))
+        (baseClass &&
+         isa<semantic::SVGenericClassDefSymbolOp>(baseClass->getParentOp())))
       continue;
     std::string symbolName =
         "__obelisk_vpi_anchor_" + std::to_string(nextSyntheticInventoryId);
