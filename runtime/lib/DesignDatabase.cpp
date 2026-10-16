@@ -5,6 +5,7 @@
 #include "RuntimeInternal.h"
 #include "obelisk/Reflection/DesignReflection.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
+#include "obelisk/Runtime/DescriptorMap.h"
 #include "obelisk/Runtime/StableHash.h"
 
 #include <algorithm>
@@ -56,6 +57,12 @@ constexpr uint64_t kCallSiteBindingSize =
     obelisk::reflection::CallSiteBindingLayout.size;
 constexpr uint64_t kFrameLocalBindingSize =
     obelisk::reflection::FrameLocalBindingLayout.size;
+constexpr uint64_t kCallDispatchBindingSize =
+    obelisk::reflection::CallDispatchBindingLayout.size;
+constexpr uint64_t kClassDispatchMethodBindingSize =
+    obelisk::reflection::ClassDispatchMethodBindingLayout.size;
+constexpr uint64_t kClassDispatchParentBindingSize =
+    obelisk::reflection::ClassDispatchParentBindingLayout.size;
 constexpr uint64_t kEventBindingSize =
     obelisk::reflection::EventBindingLayout.size;
 constexpr uint64_t kEventArrayStorageBindingSize =
@@ -276,6 +283,11 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
   uint64_t threadOriginBindingOffset = 0, threadOriginBindingCount = 0;
   uint64_t callSiteBindingOffset = 0, callSiteBindingCount = 0;
   uint64_t frameLocalBindingOffset = 0, frameLocalBindingCount = 0;
+  uint64_t callDispatchBindingOffset = 0, callDispatchBindingCount = 0;
+  uint64_t classDispatchMethodBindingOffset = 0,
+           classDispatchMethodBindingCount = 0;
+  uint64_t classDispatchParentBindingOffset = 0,
+           classDispatchParentBindingCount = 0;
   uint64_t relationIndexOffset = 0, relationIndexCount = 0;
   uint64_t relationIndexDimensionOffset = 0, relationIndexDimensionCount = 0;
   uint64_t relationIndexKeyOffset = 0, relationIndexKeyCount = 0;
@@ -387,6 +399,16 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     callSiteBindingCount = reader.getCallSiteBindingCount();
     frameLocalBindingOffset = reader.getFrameLocalBindingOffset();
     frameLocalBindingCount = reader.getFrameLocalBindingCount();
+    callDispatchBindingOffset = reader.getCallDispatchBindingOffset();
+    callDispatchBindingCount = reader.getCallDispatchBindingCount();
+    classDispatchMethodBindingOffset =
+        reader.getClassDispatchMethodBindingOffset();
+    classDispatchMethodBindingCount =
+        reader.getClassDispatchMethodBindingCount();
+    classDispatchParentBindingOffset =
+        reader.getClassDispatchParentBindingOffset();
+    classDispatchParentBindingCount =
+        reader.getClassDispatchParentBindingCount();
   }
   database = {data,
               execution->design_database_size,
@@ -438,6 +460,12 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               callSiteBindingCount,
               frameLocalBindingOffset,
               frameLocalBindingCount,
+              callDispatchBindingOffset,
+              callDispatchBindingCount,
+              classDispatchMethodBindingOffset,
+              classDispatchMethodBindingCount,
+              classDispatchParentBindingOffset,
+              classDispatchParentBindingCount,
               relationIndexOffset,
               relationIndexCount,
               relationIndexDimensionOffset,
@@ -527,6 +555,14 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
          kCallSiteBindingSize},
         {database.frameLocalBindings, database.frameLocalBindingCount,
          kFrameLocalBindingSize},
+        {database.callDispatchBindings, database.callDispatchBindingCount,
+         kCallDispatchBindingSize},
+        {database.classDispatchMethodBindings,
+         database.classDispatchMethodBindingCount,
+         kClassDispatchMethodBindingSize},
+        {database.classDispatchParentBindings,
+         database.classDispatchParentBindingCount,
+         kClassDispatchParentBindingSize},
         {database.relationIndices, database.relationIndexCount,
          kRelationIndexSize},
         {database.relationIndexDimensions, database.relationIndexDimensionCount,
@@ -608,6 +644,9 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         database.threadOriginBindingCount != 0 ||
         database.callSiteBindingCount != 0 ||
         database.frameLocalBindingCount != 0 ||
+        database.callDispatchBindingCount != 0 ||
+        database.classDispatchMethodBindingCount != 0 ||
+        database.classDispatchParentBindingCount != 0 ||
         database.relationIndexCount != 0 ||
         database.relationIndexDimensionCount != 0 ||
         database.relationIndexKeyCount != 0 ||
@@ -679,6 +718,15 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
                   kCallSiteBindingSize, database.size) ||
       !validRange(database.frameLocalBindings, database.frameLocalBindingCount,
                   kFrameLocalBindingSize, database.size) ||
+      !validRange(database.callDispatchBindings,
+                  database.callDispatchBindingCount, kCallDispatchBindingSize,
+                  database.size) ||
+      !validRange(database.classDispatchMethodBindings,
+                  database.classDispatchMethodBindingCount,
+                  kClassDispatchMethodBindingSize, database.size) ||
+      !validRange(database.classDispatchParentBindings,
+                  database.classDispatchParentBindingCount,
+                  kClassDispatchParentBindingSize, database.size) ||
       !validRange(database.relationIndices, database.relationIndexCount,
                   kRelationIndexSize, database.size) ||
       !validRange(database.relationIndexDimensions,
@@ -768,6 +816,12 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        database.callSiteBindings < kHeaderSize) ||
       (database.frameLocalBindingCount != 0 &&
        database.frameLocalBindings < kHeaderSize) ||
+      (database.callDispatchBindingCount != 0 &&
+       database.callDispatchBindings < kHeaderSize) ||
+      (database.classDispatchMethodBindingCount != 0 &&
+       database.classDispatchMethodBindings < kHeaderSize) ||
+      (database.classDispatchParentBindingCount != 0 &&
+       database.classDispatchParentBindings < kHeaderSize) ||
       (database.semanticRootBindingCount != 0 &&
        database.semanticRootBindings < kHeaderSize) ||
       (database.relationIndexCount != 0 &&
@@ -848,6 +902,9 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       database.threadOriginBindingCount > UINT32_MAX ||
       database.callSiteBindingCount > UINT32_MAX ||
       database.frameLocalBindingCount > UINT32_MAX ||
+      database.callDispatchBindingCount > UINT32_MAX ||
+      database.classDispatchMethodBindingCount > UINT32_MAX ||
+      database.classDispatchParentBindingCount > UINT32_MAX ||
       database.relationIndexCount > UINT32_MAX ||
       database.relationIndexDimensionCount > UINT32_MAX ||
       database.relationIndexKeyCount > UINT32_MAX ||
@@ -1081,6 +1138,14 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        kCallSiteBindingSize},
       {database.frameLocalBindings, database.frameLocalBindingCount,
        kFrameLocalBindingSize},
+      {database.callDispatchBindings, database.callDispatchBindingCount,
+       kCallDispatchBindingSize},
+      {database.classDispatchMethodBindings,
+       database.classDispatchMethodBindingCount,
+       kClassDispatchMethodBindingSize},
+      {database.classDispatchParentBindings,
+       database.classDispatchParentBindingCount,
+       kClassDispatchParentBindingSize},
       {database.relationIndices, database.relationIndexCount,
        kRelationIndexSize},
       {database.relationIndexDimensions, database.relationIndexDimensionCount,
@@ -1767,6 +1832,267 @@ bool isWholePortConnection(const uint8_t *port, const uint8_t *canonical) {
   return read64(port + 40) != read64(canonical + 40) ||
          (read32(port + 4) & kPortIdentityCaps) ==
              (read32(canonical + 4) & kPortIdentityCaps);
+}
+
+// Recompute class-call compatibility from direct method and inheritance facts.
+// Persistent maps share inherited tables, matching ClassDispatchAnalysis and
+// the managed runtime without expanding a transitive-closure matrix.
+bool validateClassCallDispatch(const Database &database) {
+  using namespace obelisk::reflection;
+  using MethodMap = obelisk::runtime::DescriptorMap<uint32_t>;
+  struct Class {
+    uint64_t id;
+    uint32_t flags, base = UINT32_MAX;
+    size_t pureMethods = 0;
+    std::vector<uint32_t> parents, children, methods;
+    MethodMap effective, signatures;
+  };
+  std::vector<Class> classes;
+  std::unordered_map<uint64_t, uint32_t> classIndices;
+  std::tuple<uint64_t, uint32_t, uint64_t> previousParent{};
+  for (uint64_t i = 0; i != database.classDispatchParentBindingCount; ++i) {
+    ClassDispatchParentBindingView row(database.data +
+                                       database.classDispatchParentBindings +
+                                       i * kClassDispatchParentBindingSize);
+    auto key =
+        std::tuple(row.getClassID(), row.getKind(), row.getParentClassID());
+    if (!row.getClassID() || row.getClassID() > INT64_MAX ||
+        (i && key <= previousParent) || row.getKind() > 2)
+      return false;
+    previousParent = key;
+    if (row.getKind() == 0) {
+      if (row.getParentClassID() || row.getFlags() > 3 ||
+          ((row.getFlags() & 1) && !(row.getFlags() & 2)) ||
+          !classIndices.emplace(row.getClassID(), classes.size()).second)
+        return false;
+      classes.push_back({row.getClassID(), row.getFlags()});
+    } else if (row.getFlags() || !classIndices.count(row.getClassID())) {
+      return false;
+    }
+  }
+  for (uint64_t i = 0; i != database.classDispatchParentBindingCount; ++i) {
+    ClassDispatchParentBindingView row(database.data +
+                                       database.classDispatchParentBindings +
+                                       i * kClassDispatchParentBindingSize);
+    if (!row.getKind())
+      continue;
+    auto parent = classIndices.find(row.getParentClassID());
+    uint32_t child = classIndices.at(row.getClassID());
+    if (parent == classIndices.end() || child == parent->second)
+      return false;
+    auto &entry = classes[child];
+    bool parentInterface = (classes[parent->second].flags & 1) != 0;
+    if (row.getKind() == 1) {
+      if (entry.base != UINT32_MAX || (entry.flags & 1) || parentInterface)
+        return false;
+      entry.base = parent->second;
+    } else if (!parentInterface) {
+      return false;
+    }
+    entry.parents.push_back(parent->second);
+    classes[parent->second].children.push_back(child);
+  }
+
+  auto methodAt = [&](uint32_t index) {
+    return ClassDispatchMethodBindingView(
+        database.data + database.classDispatchMethodBindings +
+        uint64_t{index} * kClassDispatchMethodBindingSize);
+  };
+  std::unordered_map<uint32_t, uint64_t> reflectedMethodOwners;
+  for (uint64_t i = 0; i != database.classMemberBindingCount; ++i) {
+    ClassMemberBindingView member(database.data + database.classMemberBindings +
+                                  i * kClassMemberBindingSize);
+    if (!(member.getFlags() & 2) ||
+        unpackTableIndexKind(member.getMemberIndexAndTable()) !=
+            TableKind::Object)
+      continue;
+    uint32_t index = unpackTableIndex(member.getMemberIndexAndTable());
+    auto [found, inserted] =
+        reflectedMethodOwners.emplace(index, member.getClassID());
+    if (!inserted && found->second != member.getClassID())
+      return false;
+  }
+  std::tuple<uint64_t, uint64_t, uint64_t> previousMethod{};
+  for (uint32_t i = 0; i != database.classDispatchMethodBindingCount; ++i) {
+    auto row = methodAt(i);
+    auto key =
+        std::tuple(row.getClassID(), row.getSlot(), row.getSignatureID());
+    auto owner = classIndices.find(row.getClassID());
+    if (owner == classIndices.end() || (i && key <= previousMethod) ||
+        row.getSlot() > UINT32_MAX || !row.getSignatureID() ||
+        row.getFlags() > 7 || ((row.getFlags() & 2) && !(row.getFlags() & 4)))
+      return false;
+    bool isInterface = (classes[owner->second].flags & 1) != 0;
+    if (isInterface != (row.getSlot() == UINT32_MAX))
+      return false;
+    if (row.getFlags() & 4) {
+      if (row.getCodeUnitIndex() != UINT32_MAX)
+        return false;
+    } else {
+      if (row.getCodeUnitIndex() >= database.objectCount)
+        return false;
+      const uint8_t *unit = database.data + database.objects +
+                            uint64_t{row.getCodeUnitIndex()} * kObjectSize;
+      bool task = (row.getFlags() & 1) != 0;
+      if (recordKind(unit) != (task ? OBELISK_RT_DESIGN_RECORD_PROCESS
+                                    : OBELISK_RT_DESIGN_RECORD_FUNCTION) ||
+          recordVPIKind(unit) !=
+              static_cast<uint32_t>(task ? VPIObjectKind::Task
+                                         : VPIObjectKind::Function))
+        return false;
+      auto reflected = reflectedMethodOwners.find(row.getCodeUnitIndex());
+      if (reflected == reflectedMethodOwners.end() ||
+          reflected->second != row.getClassID())
+        return false;
+    }
+    auto &methods = classes[owner->second].methods;
+    if (!isInterface && !methods.empty() &&
+        methodAt(methods.back()).getSlot() == row.getSlot())
+      return false;
+    methods.push_back(i);
+    previousMethod = key;
+  }
+
+  // All inheritance edges participate in cycle detection. Only the ordinary
+  // base supplies a vtable; interfaces constrain membership and signatures.
+  std::vector<uint32_t> remaining(classes.size()), ready;
+  for (uint32_t i = 0; i != classes.size(); ++i) {
+    remaining[i] = classes[i].parents.size();
+    if (!remaining[i])
+      ready.push_back(i);
+  }
+  for (size_t next = 0; next != ready.size(); ++next) {
+    auto &entry = classes[ready[next]];
+    if (entry.base != UINT32_MAX) {
+      entry.effective = classes[entry.base].effective;
+      entry.signatures = classes[entry.base].signatures;
+      entry.pureMethods = classes[entry.base].pureMethods;
+    }
+    if (!(entry.flags & 1)) {
+      for (uint32_t index : entry.methods) {
+        auto method = methodAt(index);
+        if (auto previous = entry.effective.find(method.getSlot())) {
+          auto inherited = methodAt(*previous);
+          if (inherited.getSignatureID() != method.getSignatureID() ||
+              ((inherited.getFlags() ^ method.getFlags()) & 1))
+            return false;
+          entry.pureMethods -= bool(inherited.getFlags() & 2);
+        }
+        entry.pureMethods += bool(method.getFlags() & 2);
+        entry.effective = entry.effective.set(method.getSlot(), index);
+        auto previous = entry.signatures.find(method.getSignatureID());
+        if (!previous || methodAt(*previous).getSlot() >= method.getSlot())
+          entry.signatures =
+              entry.signatures.set(method.getSignatureID(), index);
+      }
+      if (!(entry.flags & 2) && entry.pureMethods)
+        return false;
+    }
+    for (uint32_t child : entry.children)
+      if (--remaining[child] == 0)
+        ready.push_back(child);
+  }
+  if (ready.size() != classes.size())
+    return false;
+
+  std::unordered_map<uint64_t, bool> contracts;
+  for (uint64_t i = 0; i != database.callSiteBindingCount; ++i) {
+    CallSiteBindingView call(database.data + database.callSiteBindings +
+                             i * kCallSiteBindingSize);
+    if (!(call.getFlags() & 2))
+      continue;
+    uint32_t kind = 0;
+    uint32_t packed = call.getObjectIndexAndTable();
+    if (unpackTableIndexKind(packed) == TableKind::Statement) {
+      uint32_t index = unpackTableIndex(packed);
+      if (index >= database.statementCount)
+        return false;
+      kind = read16(database.data + database.statements +
+                    uint64_t{index} * kStatementSize + 36);
+    } else {
+      uint64_t offset = 0;
+      if (!packedObjectReferenceOffset(database, packed, offset))
+        return false;
+      kind = objectReferenceVPIKind(database, offset);
+    }
+    contracts.emplace(
+        call.getID(),
+        kind == static_cast<uint32_t>(VPIObjectKind::TaskCall) ||
+            kind == static_cast<uint32_t>(VPIObjectKind::MethodTaskCall));
+  }
+  if (contracts.empty())
+    return classes.empty() && !database.classDispatchMethodBindingCount &&
+           !database.callDispatchBindingCount;
+  uint64_t previousCall = 0;
+  for (uint64_t i = 0; i != database.callDispatchBindingCount;) {
+    CallDispatchBindingView header(database.data +
+                                   database.callDispatchBindings +
+                                   i * kCallDispatchBindingSize);
+    auto contract = contracts.find(header.getCallID());
+    auto receiver = classIndices.find(header.getReceiverClassID());
+    if (header.getCallID() <= previousCall || header.getCodeUnitID() != 0 ||
+        contract == contracts.end() || receiver == classIndices.end() ||
+        header.getSlot() > UINT32_MAX || !header.getSignatureID())
+      return false;
+    bool hasDeclaration = false;
+    for (uint32_t methodIndex : classes[receiver->second].methods) {
+      auto method = methodAt(methodIndex);
+      if (method.getSlot() == header.getSlot() &&
+          method.getSignatureID() == header.getSignatureID() &&
+          bool(method.getFlags() & 1) == contract->second)
+        hasDeclaration = true;
+    }
+    if (!hasDeclaration)
+      return false;
+    std::vector<uint64_t> expected;
+    std::vector<uint32_t> pending{receiver->second};
+    std::unordered_set<uint32_t> visited;
+    while (!pending.empty()) {
+      uint32_t index = pending.back();
+      pending.pop_back();
+      if (!visited.insert(index).second)
+        continue;
+      const auto &candidate = classes[index];
+      pending.insert(pending.end(), candidate.children.begin(),
+                     candidate.children.end());
+      if (candidate.flags & 3)
+        continue;
+      const uint32_t *selected =
+          header.getSlot() == UINT32_MAX
+              ? candidate.signatures.find(header.getSignatureID())
+              : candidate.effective.find(header.getSlot());
+      if (!selected)
+        continue;
+      auto method = methodAt(*selected);
+      if ((method.getFlags() & 6) ||
+          bool(method.getFlags() & 1) != contract->second ||
+          method.getSignatureID() != header.getSignatureID())
+        continue;
+      const uint8_t *unit = database.data + database.objects +
+                            uint64_t{method.getCodeUnitIndex()} * kObjectSize;
+      expected.push_back(read64(unit + 8));
+    }
+    std::sort(expected.begin(), expected.end());
+    expected.erase(std::unique(expected.begin(), expected.end()),
+                   expected.end());
+    ++i;
+    for (uint64_t target : expected) {
+      if (i == database.callDispatchBindingCount)
+        return false;
+      CallDispatchBindingView row(database.data +
+                                  database.callDispatchBindings +
+                                  i++ * kCallDispatchBindingSize);
+      if (row.getCallID() != header.getCallID() ||
+          row.getCodeUnitID() != target ||
+          row.getReceiverClassID() != header.getReceiverClassID() ||
+          row.getSlot() != header.getSlot() ||
+          row.getSignatureID() != header.getSignatureID())
+        return false;
+    }
+    previousCall = header.getCallID();
+    contracts.erase(contract);
+  }
+  return contracts.empty();
 }
 
 bool validateDatabaseImpl(const Database &database) {
@@ -4327,7 +4653,9 @@ bool validateDatabaseImpl(const Database &database) {
       uint32_t owner = binding.getOwnerCodeUnitIndex();
       if (!id || id > INT64_MAX || (index && id <= previous) ||
           owner >= database.objectCount || !callObjects.insert(packed).second ||
-          (binding.getFlags() & ~UINT32_C(1)) || binding.getReserved())
+          (binding.getFlags() & ~UINT32_C(3)) ||
+          ((binding.getFlags() & 2) && !(binding.getFlags() & 1)) ||
+          binding.getReserved())
         return false;
       const uint64_t ownerOffset =
           database.objects + uint64_t{owner} * kObjectSize;
@@ -6313,7 +6641,7 @@ bool validateDatabaseImpl(const Database &database) {
                                    kObjectSize)))
       return false;
   }
-  return true;
+  return validateClassCallDispatch(database);
 }
 
 // Reflection entry points have a C ABI. Keep allocator failures and malformed
@@ -6447,6 +6775,16 @@ bool sameDatabase(const Database &left, const Database &right) noexcept {
          left.callSiteBindingCount == right.callSiteBindingCount &&
          left.frameLocalBindings == right.frameLocalBindings &&
          left.frameLocalBindingCount == right.frameLocalBindingCount &&
+         left.callDispatchBindings == right.callDispatchBindings &&
+         left.callDispatchBindingCount == right.callDispatchBindingCount &&
+         left.classDispatchMethodBindings ==
+             right.classDispatchMethodBindings &&
+         left.classDispatchMethodBindingCount ==
+             right.classDispatchMethodBindingCount &&
+         left.classDispatchParentBindings ==
+             right.classDispatchParentBindings &&
+         left.classDispatchParentBindingCount ==
+             right.classDispatchParentBindingCount &&
          left.relationIndices == right.relationIndices &&
          left.relationIndexCount == right.relationIndexCount &&
          left.relationIndexDimensions == right.relationIndexDimensions &&
@@ -8471,9 +8809,35 @@ obelisk_rt_cached_vpi_call_target(const obelisk_rt_context *context,
     return OBELISK_RT_EOF;
   obelisk::reflection::CallSiteBindingView binding(
       database->data + database->callSiteBindings + low * kCallSiteBindingSize);
-  // A virtual declaration is not proof that its base implementation is the
-  // runtime target. Exact dispatch compatibility is a separate metadata slice.
-  if (binding.getID() != callID || binding.getFlags() & 1)
+  if (binding.getID() != callID)
+    return OBELISK_RT_EOF;
+  if (binding.getFlags() & 2) {
+    // A positive target row has already passed complete dispatch recomputation.
+    // The zero row describes the source contract and is never an activation.
+    if (!calleeCodeUnitID)
+      return OBELISK_RT_EOF;
+    uint64_t first = 0, last = database->callDispatchBindingCount;
+    const auto key = std::pair(callID, calleeCodeUnitID);
+    while (first < last) {
+      uint64_t middle = first + (last - first) / 2;
+      obelisk::reflection::CallDispatchBindingView row(
+          database->data + database->callDispatchBindings +
+          middle * kCallDispatchBindingSize);
+      if (std::pair(row.getCallID(), row.getCodeUnitID()) < key)
+        first = middle + 1;
+      else
+        last = middle;
+    }
+    if (first == database->callDispatchBindingCount)
+      return OBELISK_RT_EOF;
+    obelisk::reflection::CallDispatchBindingView row(
+        database->data + database->callDispatchBindings +
+        first * kCallDispatchBindingSize);
+    return std::pair(row.getCallID(), row.getCodeUnitID()) == key
+               ? OBELISK_RT_OK
+               : OBELISK_RT_EOF;
+  }
+  if (binding.getFlags() & 1)
     return OBELISK_RT_EOF;
   obelisk_rt_design_cursor_v1 call{};
   uint64_t owner = 0;

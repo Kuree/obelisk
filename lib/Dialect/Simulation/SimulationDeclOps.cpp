@@ -3361,6 +3361,37 @@ SimClassVirtualCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
+LogicalResult
+SimVPIClassCallDispatchOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("must be directly contained in a simulation design");
+  auto call =
+      symbols.lookupNearestSymbolFrom<SimVPICallDeclOp>(*this, getCallAttr());
+  if (!call || !call.getIsIndirect())
+    return emitOpError("must name an indirect VPI call declaration");
+  auto method = symbols.lookupNearestSymbolFrom<SimClassMethodDeclOp>(
+      *this, getMethodAttr());
+  if (!method || !method.getIsVirtual() || method.getIsStatic() ||
+      !method.getSlot() || !method.getSignatureId() ||
+      !*method.getSignatureId())
+    return emitOpError("must name an exact virtual method slot and signature");
+  auto receiver = cast<ClassHandleType>(getReceiverType());
+  auto declaration = symbols.lookupNearestSymbolFrom<SimClassDeclOp>(
+      *this, receiver.getClassName());
+  if (!declaration)
+    return emitOpError("receiver type must name a declared class");
+  auto signature = cast<FunctionType>(method.getFunctionType());
+  if (signature.getNumInputs() < 2 || signature.getInput(1) != receiver)
+    return emitOpError("receiver type disagrees with the virtual method ABI");
+  using Kind = reflection::VPIObjectKind;
+  auto kind = static_cast<Kind>(call.getVpiKind());
+  bool task = kind == Kind::TaskCall || kind == Kind::MethodTaskCall;
+  if (method.getIsTask() != task ||
+      (kind != Kind::FuncCall && kind != Kind::MethodFuncCall && !task))
+    return emitOpError("method task/function kind disagrees with the call");
+  return success();
+}
+
 LogicalResult SimDesignOp::verifyRegions() {
   // One cached table for the whole design walk below. The uncached lookups
   // rescan this design's block per call, which is quadratic across classes.
@@ -3384,6 +3415,7 @@ LogicalResult SimDesignOp::verifyRegions() {
   SmallVector<SimVPICallDeclOp> vpiCalls;
   SmallVector<SimVPILocalDeclOp> vpiLocals;
   llvm::DenseSet<uint64_t> vpiLocalIds;
+  llvm::DenseMap<Attribute, SimVPIClassCallDispatchOp> vpiClassDispatchCalls;
   SmallVector<SimVPIStatementRelationDeclOp> statementRelations;
   SmallVector<SimVPIRelationDeclOp> vpiRelations;
   SmallVector<SimVPIDefinitionMemberDeclOp> definitionMembers;
@@ -3452,6 +3484,11 @@ LogicalResult SimDesignOp::verifyRegions() {
       if (failed(addId(call.getIdAttr(), vpiCallIds, "VPI call-site")))
         return failure();
       vpiCalls.push_back(call);
+    } else if (auto dispatch = dyn_cast<SimVPIClassCallDispatchOp>(op)) {
+      if (!vpiClassDispatchCalls.try_emplace(dispatch.getCallAttr(), dispatch)
+               .second)
+        return dispatch.emitOpError(
+            "duplicates a class call dispatch contract");
     } else if (auto binding = dyn_cast<SimVPIThreadOriginBindingOp>(op)) {
       threadOrigins.push_back(binding);
     } else if (auto site = dyn_cast<SimStatementSiteDeclOp>(op)) {
@@ -4318,6 +4355,38 @@ LogicalResult SimDesignOp::verifyRegions() {
                            "unique within each scope");
   }
 
+  if (getOperation()
+          ->walk([&](Operation *operation) -> WalkResult {
+            auto source = get<metadata::VpiCallSite>(operation);
+            if (!source)
+              return WalkResult::advance();
+            auto contract = vpiClassDispatchCalls.find(source);
+            if (contract == vpiClassDispatchCalls.end())
+              return WalkResult::advance();
+            Value receiver;
+            FlatSymbolRefAttr method;
+            if (auto call = dyn_cast<SimClassVirtualCallOp>(operation)) {
+              receiver = call.getReceiver();
+              method = call.getMethodAttr();
+            } else if (auto call =
+                           dyn_cast<SimClassVirtualTaskCallOp>(operation)) {
+              receiver = call.getReceiver();
+              method = call.getMethodAttr();
+            } else {
+              // Devirtualized executable calls retain the original indirect
+              // source contract; their direct callee is checked independently.
+              return WalkResult::advance();
+            }
+            if (receiver.getType() != contract->second.getReceiverType() ||
+                method != contract->second.getMethodAttr()) {
+              operation->emitOpError("executable dispatch disagrees with its "
+                                     "VPI class call contract");
+              return WalkResult::interrupt();
+            }
+            return WalkResult::advance();
+          })
+          .wasInterrupted())
+    return failure();
   llvm::DenseSet<uint64_t> callStatementAliases;
   for (SimVPICallDeclOp call : vpiCalls) {
     auto owner = codeUnits.lookup(call.getCodeUnitId());

@@ -708,8 +708,19 @@ def SemanticDirectoryFrameLocalBindingOffset
     : ReflectionField<"FrameLocalBindingOffset", 576, U64LE>;
 def SemanticDirectoryFrameLocalBindingCount
     : ReflectionField<"FrameLocalBindingCount", 584, U64LE>;
-
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 592,
+def SemanticDirectoryCallDispatchBindingOffset
+    : ReflectionField<"CallDispatchBindingOffset", 592, U64LE>;
+def SemanticDirectoryCallDispatchBindingCount
+    : ReflectionField<"CallDispatchBindingCount", 600, U64LE>;
+def SemanticDirectoryClassDispatchMethodBindingOffset
+    : ReflectionField<"ClassDispatchMethodBindingOffset", 608, U64LE>;
+def SemanticDirectoryClassDispatchMethodBindingCount
+    : ReflectionField<"ClassDispatchMethodBindingCount", 616, U64LE>;
+def SemanticDirectoryClassDispatchParentBindingOffset
+    : ReflectionField<"ClassDispatchParentBindingOffset", 624, U64LE>;
+def SemanticDirectoryClassDispatchParentBindingCount
+    : ReflectionField<"ClassDispatchParentBindingCount", 632, U64LE>;
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 640,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -780,7 +791,59 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 592,
    SemanticDirectoryCallSiteBindingOffset,
    SemanticDirectoryCallSiteBindingCount,
    SemanticDirectoryFrameLocalBindingOffset,
-   SemanticDirectoryFrameLocalBindingCount]>;
+   SemanticDirectoryFrameLocalBindingCount,
+   SemanticDirectoryCallDispatchBindingOffset,
+   SemanticDirectoryCallDispatchBindingCount,
+   SemanticDirectoryClassDispatchMethodBindingOffset,
+   SemanticDirectoryClassDispatchMethodBindingCount,
+   SemanticDirectoryClassDispatchParentBindingOffset,
+   SemanticDirectoryClassDispatchParentBindingCount]>;
+
+// Exact compatible implementations derived from typed class dispatch. Rows
+// are sorted by (CallID, CodeUnitID); every row in one call group carries the
+// same receiver, slot and signature. Retained method and ancestry facts below
+// prove the complete target set, including pure shadows and interface order.
+def CallDispatchBindingCallID : ReflectionField<"CallID", 0, U64LE>;
+def CallDispatchBindingCodeUnitID : ReflectionField<"CodeUnitID", 8, U64LE>;
+def CallDispatchBindingReceiverClassID
+    : ReflectionField<"ReceiverClassID", 16, U64LE>;
+def CallDispatchBindingSlot : ReflectionField<"Slot", 24, U64LE>;
+def CallDispatchBindingSignatureID
+    : ReflectionField<"SignatureID", 32, U64LE>;
+def CallDispatchBinding : ReflectionLayout<"CallDispatchBinding", 40,
+  [CallDispatchBindingCallID, CallDispatchBindingCodeUnitID,
+   CallDispatchBindingReceiverClassID, CallDispatchBindingSlot,
+   CallDispatchBindingSignatureID]>;
+
+// Direct declarations only; inherited entries remain in the base class.
+// Flags: bit0 task, bit1 pure, bit2 no reflected implementation code unit.
+// Interface method declarations use the interface-dispatch slot UINT32_MAX.
+def ClassDispatchMethodBindingClassID
+    : ReflectionField<"ClassID", 0, U64LE>;
+def ClassDispatchMethodBindingSlot : ReflectionField<"Slot", 8, U64LE>;
+def ClassDispatchMethodBindingSignatureID
+    : ReflectionField<"SignatureID", 16, U64LE>;
+def ClassDispatchMethodBindingCodeUnitIndex
+    : ReflectionField<"CodeUnitIndex", 24, U32LE>;
+def ClassDispatchMethodBindingFlags : ReflectionField<"Flags", 28, U32LE>;
+def ClassDispatchMethodBinding : ReflectionLayout<"ClassDispatchMethodBinding",
+  32, [ClassDispatchMethodBindingClassID, ClassDispatchMethodBindingSlot,
+       ClassDispatchMethodBindingSignatureID,
+       ClassDispatchMethodBindingCodeUnitIndex,
+       ClassDispatchMethodBindingFlags]>;
+
+// Kind0 declares a class (ParentClassID0; flags bit0 interface, bit1 abstract).
+// Kind1 is its ordinary base and Kind2 one direct implemented/base interface;
+// edge rows have zero flags. Sorted (ClassID, Kind, ParentClassID).
+def ClassDispatchParentBindingClassID
+    : ReflectionField<"ClassID", 0, U64LE>;
+def ClassDispatchParentBindingParentClassID
+    : ReflectionField<"ParentClassID", 8, U64LE>;
+def ClassDispatchParentBindingKind : ReflectionField<"Kind", 16, U32LE>;
+def ClassDispatchParentBindingFlags : ReflectionField<"Flags", 20, U32LE>;
+def ClassDispatchParentBinding : ReflectionLayout<"ClassDispatchParentBinding",
+  24, [ClassDispatchParentBindingClassID, ClassDispatchParentBindingParentClassID,
+       ClassDispatchParentBindingKind, ClassDispatchParentBindingFlags]>;
 
 // A declaration identity and exact lexical scope; no executable address.
 def FrameLocalBindingID : ReflectionField<"ID", 0, U64LE>;
@@ -793,6 +856,8 @@ def FrameLocalBinding : ReflectionLayout<"FrameLocalBinding", 24,
    FrameLocalBindingScope, FrameLocalBindingOrdinal]>;
 
 // Exact immutable call occurrences, including expression-nested calls.
+// Flags bit0 marks indirect dispatch; bit1 requires the exact class contract
+// and complete target group in CallDispatchBinding (and implies bit0).
 def CallSiteBindingID : ReflectionField<"ID", 0, U64LE>;
 def CallSiteBindingObject : ReflectionField<"ObjectIndexAndTable", 8, U32LE>;
 def CallSiteBindingOwner : ReflectionField<"OwnerCodeUnitIndex", 12, U32LE>;

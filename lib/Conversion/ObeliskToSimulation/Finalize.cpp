@@ -36,6 +36,67 @@ namespace {
 
 using namespace obelisk::simlowering;
 
+// Capture the actual typed dispatch contract before executable devirtualization
+// or inlining replaces executable call operations. Source calls keep symbolic
+// class/method identity; the encoder derives concrete targets independently.
+struct MaterializeVPIClassDispatchPass
+    : PassWrapper<MaterializeVPIClassDispatchPass,
+                  OperationPass<sim::SimDesignOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(MaterializeVPIClassDispatchPass)
+
+  void runOnOperation() override {
+    auto design = getOperation();
+    llvm::DenseMap<Attribute, sim::SimVPIClassCallDispatchOp> inventory;
+    for (auto declaration :
+         design.getBody().front().getOps<sim::SimVPIClassCallDispatchOp>())
+      if (!inventory.try_emplace(declaration.getCallAttr(), declaration)
+               .second) {
+        declaration.emitOpError("duplicates a class call dispatch contract");
+        return signalPassFailure();
+      }
+    OpBuilder builder(design.getContext());
+    builder.setInsertionPointToEnd(&design.getBody().front());
+    bool invalid = false;
+    SmallVector<Operation *> calls;
+    design.walk([&](Operation *operation) {
+      if (isa<sim::SimClassVirtualCallOp, sim::SimClassVirtualTaskCallOp>(
+              operation) &&
+          sim::has<sim::metadata::VpiCallSite>(operation))
+        calls.push_back(operation);
+    });
+    for (Operation *operation : calls) {
+      auto source = sim::get<sim::metadata::VpiCallSite>(operation);
+      Value receiver;
+      FlatSymbolRefAttr method;
+      if (auto call = dyn_cast<sim::SimClassVirtualCallOp>(operation)) {
+        receiver = call.getReceiver();
+        method = call.getMethodAttr();
+      } else if (auto call =
+                     dyn_cast<sim::SimClassVirtualTaskCallOp>(operation)) {
+        receiver = call.getReceiver();
+        method = call.getMethodAttr();
+      } else {
+        continue;
+      }
+      Type type = receiver.getType();
+      if (auto found = inventory.find(source); found != inventory.end()) {
+        if (found->second.getReceiverType() != type ||
+            found->second.getMethodAttr() != method) {
+          operation->emitOpError(
+              "cloned source call has conflicting class dispatch contracts");
+          invalid = true;
+        }
+        continue;
+      }
+      auto declaration = sim::SimVPIClassCallDispatchOp::create(
+          builder, operation->getLoc(), source, TypeAttr::get(type), method);
+      inventory.try_emplace(source, declaration);
+    }
+    if (invalid)
+      signalPassFailure();
+  }
+};
+
 // Initialization bindings have no observable effect in a closed design that
 // neither uses its random streams nor observes logical process identity.
 // Inspect lowered effects after pruning: direct calls/spawns are represented
@@ -329,9 +390,10 @@ void ObeliskSimFinalizePass::runOnOperation() {
              sim::SimVPIUnresolvedTypeAliasDeclOp, sim::SimVPIBoxTypeDeclOp,
              sim::SimVPIClassMemberDeclOp, sim::SimVPIEventBindingOp,
              sim::SimVPIThreadOriginBindingOp, sim::SimVPICallDeclOp,
-             sim::SimVPILocalDeclOp, sim::SimClassDeclOp,
-             sim::SimClassFieldDeclOp, sim::SimClassMethodDeclOp,
-             sim::SimRandomConstraintTemplateOp, sim::SimFuncOp>(op))
+             sim::SimVPIClassCallDispatchOp, sim::SimVPILocalDeclOp,
+             sim::SimClassDeclOp, sim::SimClassFieldDeclOp,
+             sim::SimClassMethodDeclOp, sim::SimRandomConstraintTemplateOp,
+             sim::SimFuncOp>(op))
       return;
     if (auto name =
             op->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()))
@@ -414,6 +476,8 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     functionManager.addPass(createCanonicalizerPass());
     functionManager.addPass(createCSEPass());
   }
+  if (vpiMode != "off")
+    designManager.addPass(std::make_unique<MaterializeVPIClassDispatchPass>());
   designManager.addPass(createObeliskSimMaterializeClockedSamplesPass());
   if (optLevel > 0)
     designManager.addPass(createObeliskSimDevirtualizeClassCallsPass());

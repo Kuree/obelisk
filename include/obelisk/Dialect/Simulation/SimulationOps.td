@@ -309,6 +309,20 @@ def SimVPICallDeclOp : SimOp<"vpi_call.decl", [
   let hasVerifier = 1;
 }
 
+// A class dispatch domain is symbolic inventory, not an unchecked list of
+// target function IDs. The image encoder derives compatible implementations
+// from the same class-dispatch analysis used by executable lowering.
+def SimVPIClassCallDispatchOp : SimOp<"vpi_class_call_dispatch", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "exact receiver type and method of a reflected virtual call";
+  let arguments = (ins FlatSymbolRefAttr:$call,
+                       TypeAttrOf<SimClassHandleType>:$receiver_type,
+                       FlatSymbolRefAttr:$method);
+  let assemblyFormat = "$call `on` $receiver_type `via` $method attr-dict";
+}
+
 def SimVPIThreadOriginBindingOp : SimOp<"vpi_thread_origin_binding", [
     MemoryEffects<[MemWrite<SimInventoryResource>]>
   ]> {

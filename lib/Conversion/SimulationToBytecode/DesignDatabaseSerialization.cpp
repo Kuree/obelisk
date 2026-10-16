@@ -7,6 +7,7 @@
 
 #include "BytecodeSerialization.h"
 
+#include "obelisk/Analysis/ClassDispatchAnalysis.h"
 #include "obelisk/Analysis/NetConnectivityAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationVPI.h"
@@ -270,6 +271,21 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint32_t object, owner, flags;
   };
   SmallVector<CallSiteBindingRecord> callSiteBindings;
+  SmallVector<sim::SimVPIClassCallDispatchOp> classCallDispatchDeclarations;
+  struct CallDispatchBindingRecord {
+    uint64_t callID, codeUnitID, receiverClassID, slot, signatureID;
+  };
+  struct ClassDispatchMethodBindingRecord {
+    uint64_t classID, slot, signatureID;
+    uint32_t codeUnitIndex, flags;
+  };
+  struct ClassDispatchParentBindingRecord {
+    uint64_t classID, parentClassID;
+    uint32_t kind, flags;
+  };
+  SmallVector<CallDispatchBindingRecord> callDispatchBindings;
+  SmallVector<ClassDispatchMethodBindingRecord> classDispatchMethodBindings;
+  SmallVector<ClassDispatchParentBindingRecord> classDispatchParentBindings;
   struct FrozenValueRecord {
     uint32_t kindAndFlags = 0;
     uint64_t bitWidth = 0;
@@ -646,6 +662,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
     } else if (auto call = dyn_cast<sim::SimVPICallDeclOp>(operation)) {
       if (includeStatements)
         callDeclarations.push_back(call);
+    } else if (auto dispatch =
+                   dyn_cast<sim::SimVPIClassCallDispatchOp>(operation)) {
+      if (includeStatements)
+        classCallDispatchDeclarations.push_back(dispatch);
     } else if (auto site = dyn_cast<sim::SimStatementSiteDeclOp>(operation)) {
       if (includeStatements)
         statementSites.push_back({site});
@@ -979,6 +999,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
                        local.getValueType(), 0, sourceFor(local), false,
                        local});
   }
+  DenseSet<StringRef> classDispatchCalls;
+  for (auto dispatch : classCallDispatchDeclarations)
+    classDispatchCalls.insert(dispatch.getCall());
   for (sim::SimVPICallDeclOp call : callDeclarations) {
     if (call.getStatementId())
       continue;
@@ -1401,7 +1424,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     callSiteBindings.push_back(
         {call.getId(), packed,
          codeUnitObjectIndices.lookup(call.getCodeUnitId()),
-         static_cast<uint32_t>(call.getIsIndirect())});
+         static_cast<uint32_t>(call.getIsIndirect()) |
+             (classDispatchCalls.contains(call.getSymName()) ? 2u : 0u)});
   }
 
   for (sim::SimVPILocalDeclOp local : localDeclarations) {
@@ -2785,6 +2809,105 @@ SmallVector<uint8_t> serializeDesignDatabase(
   llvm::sort(classMemberBindings, [](const auto &left, const auto &right) {
     return left.member < right.member;
   });
+
+  if (!classCallDispatchDeclarations.empty()) {
+    // Preserve authoritative direct declarations as well as the resolved pairs.
+    // The reader recomputes effective dispatch, including pure overrides and
+    // interface lowest-slot selection, instead of trusting a target whitelist.
+    analysis::ClassDispatchAnalysis dispatchAnalysis(design);
+    SymbolTableCollection symbols;
+    DenseMap<uint32_t, uint64_t> reflectedMethodOwners;
+    for (const auto &member : classMemberBindings)
+      if ((member.flags & 2) &&
+          unpackTableIndexKind(member.member) == TableKind::Object)
+        reflectedMethodOwners.try_emplace(unpackTableIndex(member.member),
+                                          member.classID);
+    auto reflectedCodeUnit =
+        [&](sim::SimClassMethodDeclOp method) -> std::optional<uint32_t> {
+      auto implementation = method.getImplementationAttr();
+      if (!implementation)
+        return std::nullopt;
+      auto function = symbols.lookupNearestSymbolFrom<sim::SimFuncOp>(
+          method, implementation);
+      if (!function || !function.getCodeUnitId())
+        return std::nullopt;
+      auto unit = codeUnitObjectIndices.find(*function.getCodeUnitId());
+      if (unit == codeUnitObjectIndices.end())
+        return std::nullopt;
+      auto owner = reflectedMethodOwners.find(unit->second);
+      if (owner == reflectedMethodOwners.end() ||
+          owner->second != dispatchAnalysis.lookup(method.getOwner()).getId())
+        return std::nullopt;
+      return unit->second;
+    };
+    for (sim::SimClassDeclOp declaration : dispatchAnalysis.getClasses()) {
+      const uint64_t classID = declaration.getId();
+      uint32_t flags = (declaration.getIsInterface() ? 1u : 0u) |
+                       (declaration.getIsAbstract() ? 2u : 0u);
+      classDispatchParentBindings.push_back({classID, 0, 0, flags});
+      if (auto base = declaration.getBase())
+        classDispatchParentBindings.push_back(
+            {classID, dispatchAnalysis.lookup(*base).getId(), 1, 0});
+      if (ArrayAttr interfaces = declaration.getInterfacesAttr())
+        for (Attribute attribute : interfaces) {
+          auto reference = cast<FlatSymbolRefAttr>(attribute);
+          classDispatchParentBindings.push_back(
+              {classID, dispatchAnalysis.lookup(reference.getValue()).getId(),
+               2, 0});
+        }
+    }
+    for (auto method :
+         design.getBody().front().getOps<sim::SimClassMethodDeclOp>()) {
+      if (!method.getIsVirtual())
+        continue;
+      uint32_t codeUnitIndex = UINT32_MAX;
+      uint32_t flags =
+          (method.getIsTask() ? 1u : 0u) | (method.getIsPure() ? 2u : 0u);
+      if (auto index = reflectedCodeUnit(method))
+        codeUnitIndex = *index;
+      if (codeUnitIndex == UINT32_MAX)
+        flags |= 4;
+      classDispatchMethodBindings.push_back(
+          {dispatchAnalysis.lookup(method.getOwner()).getId(),
+           *method.getSlot(), *method.getSignatureId(), codeUnitIndex, flags});
+    }
+    for (auto dispatch : classCallDispatchDeclarations) {
+      auto call = symbols.lookupNearestSymbolFrom<sim::SimVPICallDeclOp>(
+          dispatch, dispatch.getCallAttr());
+      auto method = symbols.lookupNearestSymbolFrom<sim::SimClassMethodDeclOp>(
+          dispatch, dispatch.getMethodAttr());
+      auto receiver = dispatchAnalysis.lookup(
+          cast<sim::ClassHandleType>(dispatch.getReceiverType()));
+      // A zero target is the contract header, including an empty pure domain.
+      callDispatchBindings.push_back({call.getId(), 0, receiver.getId(),
+                                      *method.getSlot(),
+                                      *method.getSignatureId()});
+      for (auto implementation : dispatchAnalysis.compatibleImplementations(
+               receiver, *method.getSlot(), *method.getSignatureId(),
+               method.getIsTask())) {
+        auto index = reflectedCodeUnit(implementation);
+        if (!index)
+          continue;
+        callDispatchBindings.push_back({call.getId(), objects[*index].id,
+                                        receiver.getId(), *method.getSlot(),
+                                        *method.getSignatureId()});
+      }
+    }
+    llvm::sort(callDispatchBindings, [](const auto &left, const auto &right) {
+      return std::tie(left.callID, left.codeUnitID) <
+             std::tie(right.callID, right.codeUnitID);
+    });
+    llvm::sort(classDispatchMethodBindings,
+               [](const auto &left, const auto &right) {
+                 return std::tie(left.classID, left.slot, left.signatureID) <
+                        std::tie(right.classID, right.slot, right.signatureID);
+               });
+    llvm::sort(
+        classDispatchParentBindings, [](const auto &left, const auto &right) {
+          return std::tie(left.classID, left.kind, left.parentClassID) <
+                 std::tie(right.classID, right.kind, right.parentClassID);
+        });
+  }
 
   for (sim::SimVPIStatementRelationDeclOp relation : relationDeclarations) {
     TableKind sourceTable = TableKind::Scope;
@@ -4607,9 +4730,19 @@ SmallVector<uint8_t> serializeDesignDatabase(
   uint64_t frameLocalBindingOffset =
       callSiteBindingOffset +
       callSiteBindings.size() * CallSiteBindingLayout.size;
-  uint64_t relationIndexOffset =
+  uint64_t callDispatchBindingOffset =
       frameLocalBindingOffset +
       frameLocalBindings.size() * FrameLocalBindingLayout.size;
+  uint64_t classDispatchMethodBindingOffset =
+      callDispatchBindingOffset +
+      callDispatchBindings.size() * CallDispatchBindingLayout.size;
+  uint64_t classDispatchParentBindingOffset =
+      classDispatchMethodBindingOffset +
+      classDispatchMethodBindings.size() *
+          ClassDispatchMethodBindingLayout.size;
+  uint64_t relationIndexOffset = classDispatchParentBindingOffset +
+                                 classDispatchParentBindings.size() *
+                                     ClassDispatchParentBindingLayout.size;
   uint64_t relationIndexDimensionOffset =
       relationIndexOffset + relationIndices.size() * RelationIndexLayout.size;
   uint64_t relationIndexKeyOffset =
@@ -4940,6 +5073,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setCallSiteBindingCount(callSiteBindings.size());
     writer.setFrameLocalBindingOffset(frameLocalBindingOffset);
     writer.setFrameLocalBindingCount(frameLocalBindings.size());
+    writer.setCallDispatchBindingOffset(callDispatchBindingOffset);
+    writer.setCallDispatchBindingCount(callDispatchBindings.size());
+    writer.setClassDispatchMethodBindingOffset(
+        classDispatchMethodBindingOffset);
+    writer.setClassDispatchMethodBindingCount(
+        classDispatchMethodBindings.size());
+    writer.setClassDispatchParentBindingOffset(
+        classDispatchParentBindingOffset);
+    writer.setClassDispatchParentBindingCount(
+        classDispatchParentBindings.size());
     writer.setRelationIndexOffset(relationIndexOffset);
     writer.setRelationIndexCount(relationIndices.size());
     writer.setRelationIndexDimensionOffset(relationIndexDimensionOffset);
@@ -5109,6 +5252,34 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setOwnerCodeUnitIndex(binding.owner);
     writer.setFlags(binding.flags);
     writer.setReserved(0);
+  }
+  for (auto [index, binding] : llvm::enumerate(callDispatchBindings)) {
+    CallDispatchBindingWriter writer(output.data() + callDispatchBindingOffset +
+                                     index * CallDispatchBindingLayout.size);
+    writer.setCallID(binding.callID);
+    writer.setCodeUnitID(binding.codeUnitID);
+    writer.setReceiverClassID(binding.receiverClassID);
+    writer.setSlot(binding.slot);
+    writer.setSignatureID(binding.signatureID);
+  }
+  for (auto [index, binding] : llvm::enumerate(classDispatchMethodBindings)) {
+    ClassDispatchMethodBindingWriter writer(
+        output.data() + classDispatchMethodBindingOffset +
+        index * ClassDispatchMethodBindingLayout.size);
+    writer.setClassID(binding.classID);
+    writer.setSlot(binding.slot);
+    writer.setSignatureID(binding.signatureID);
+    writer.setCodeUnitIndex(binding.codeUnitIndex);
+    writer.setFlags(binding.flags);
+  }
+  for (auto [index, binding] : llvm::enumerate(classDispatchParentBindings)) {
+    ClassDispatchParentBindingWriter writer(
+        output.data() + classDispatchParentBindingOffset +
+        index * ClassDispatchParentBindingLayout.size);
+    writer.setClassID(binding.classID);
+    writer.setParentClassID(binding.parentClassID);
+    writer.setKind(binding.kind);
+    writer.setFlags(binding.flags);
   }
   llvm::sort(threadOriginBindings, [](const auto &left, const auto &right) {
     return left.codeUnit < right.codeUnit;
