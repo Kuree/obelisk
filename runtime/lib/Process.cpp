@@ -2497,6 +2497,37 @@ obelisk_rt_v1_process_status(obelisk_rt_context *context,
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
+obelisk_rt_status obelisk_rt_process_object_identity(
+    obelisk_rt_context *context, uint64_t logicalProcess,
+    uint64_t *outIdentity) noexcept {
+  if (!outIdentity)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outIdentity = 0;
+  if (!context || logicalProcess == 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  OBELISK_RT_TRY {
+    ContextMutexLock lock(context);
+    obelisk_rt_process_state state{};
+    obelisk_rt_status status =
+        obelisk_rt_v1_process_status(context, logicalProcess, &state);
+    if (status != OBELISK_RT_OK)
+      return status;
+    auto [entry, inserted] =
+        context->processObjectIdentities.try_emplace(logicalProcess, 0);
+    if (inserted) {
+      status = obelisk_rt_managed_identity_reserve(context, &entry->second);
+      if (status != OBELISK_RT_OK) {
+        context->processObjectIdentities.erase(entry);
+        return status;
+      }
+    }
+    *outIdentity = entry->second;
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+}
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_monitor_register(obelisk_rt_context *context,
                                uint64_t processToken, uint32_t designProcess) {

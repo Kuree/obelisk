@@ -2448,6 +2448,10 @@ struct obelisk_rt_context {
   uint64_t nextNativeProcessToken = 1;
   uint32_t nextNativeAutomaticID = 1;
   uint64_t nextDesignTaskID = 1;
+  // process class objects outlive the execution represented by their tokens.
+  // Keep their shared dynamic-object identities with the scheduler tombstones,
+  // independently of VPI sessions and without retaining managed objects.
+  std::unordered_map<uint64_t, uint64_t> processObjectIdentities;
   uint64_t nextProcessInsertionSequence = 1;
   uint64_t nextWaitSequence = 1;
   uint64_t activeDesignTaskID = 0;
@@ -3027,6 +3031,16 @@ obelisk_rt_design_signal_wait_blocked(const ScheduledDesignTask &task) {
 
 ManagedHeap *obelisk_rt_managed_heap_create(obelisk_rt_context *context);
 void obelisk_rt_managed_heap_destroy(ManagedHeap *heap) noexcept;
+// Reserve a nonzero identity in the same context-local namespace as managed
+// objects. This does not allocate or root an object and needs no active lane.
+obelisk_rt_status obelisk_rt_managed_identity_reserve(
+    obelisk_rt_context *context, uint64_t *outIdentity) noexcept;
+// IEEE 1800-2023 9.7 and 37.33: map an existing process class object to a
+// stable identity shared with the managed-object namespace. Finished/killed
+// process objects remain valid through the scheduler's existing tombstones.
+obelisk_rt_status obelisk_rt_process_object_identity(
+    obelisk_rt_context *context, uint64_t logicalProcess,
+    uint64_t *outIdentity) noexcept;
 /// Collections the heap made at designated collection points.
 uint64_t obelisk_rt_managed_heap_designated_collections(ManagedHeap *heap);
 /// Whether a schedule has designated the heap's collection points.

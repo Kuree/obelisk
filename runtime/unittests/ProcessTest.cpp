@@ -7638,6 +7638,168 @@ TEST(Scheduler, ProcessAssociativeKeysUseStableTombstoneIdentity) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, ProcessObjectIdentitySharesManagedNamespaceAndSurvivesExit) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  SchedulerFixture fixture(100);
+  auto *first = makeSchedulerInstance(fixture);
+  auto *second = makeSchedulerInstance(fixture);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, first, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, second, 0), OBELISK_RT_OK);
+  const uint64_t firstToken =
+      obelisk_rt_v1_scheduler_process_token(context, first);
+  const uint64_t secondToken =
+      obelisk_rt_v1_scheduler_process_token(context, second);
+  uint64_t firstIdentity = 0;
+  ASSERT_EQ(
+      obelisk_rt_process_object_identity(context, firstToken, &firstIdentity),
+      OBELISK_RT_OK);
+  ASSERT_NE(firstIdentity, 0u);
+
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+  obelisk_rt_object_v1 *semaphore = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_semaphore_create(lane, 1, &semaphore), OBELISK_RT_OK);
+  const uint64_t managedIdentity = obelisk_rt_v1_object_id(semaphore);
+  ASSERT_NE(managedIdentity, 0u);
+  EXPECT_NE(managedIdentity, firstIdentity);
+  uint64_t secondIdentity = 0;
+  ASSERT_EQ(
+      obelisk_rt_process_object_identity(context, secondToken, &secondIdentity),
+      OBELISK_RT_OK);
+  ASSERT_NE(secondIdentity, 0u);
+  EXPECT_NE(secondIdentity, firstIdentity);
+  EXPECT_NE(secondIdentity, managedIdentity);
+
+  obelisk_rt_process_control_disposition disposition{};
+  ASSERT_EQ(obelisk_rt_v1_process_control(context, secondToken,
+                                          OBELISK_RT_PROCESS_CONTROL_KILL,
+                                          &disposition),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  obelisk_rt_process_state state{};
+  ASSERT_EQ(obelisk_rt_v1_process_status(context, firstToken, &state),
+            OBELISK_RT_OK);
+  EXPECT_EQ(state, OBELISK_RT_PROCESS_FINISHED);
+  ASSERT_EQ(obelisk_rt_v1_process_status(context, secondToken, &state),
+            OBELISK_RT_OK);
+  EXPECT_EQ(state, OBELISK_RT_PROCESS_KILLED);
+
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+  semaphore = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  obelisk_rt_gc_statistics_v1 statistics{};
+  ASSERT_EQ(obelisk_rt_v1_gc_statistics(context, &statistics), OBELISK_RT_OK);
+  EXPECT_EQ(statistics.live_objects, 0u);
+  EXPECT_GE(statistics.reclaimed_objects, 1u);
+  for (auto [token, identity] : {std::pair{firstToken, firstIdentity},
+                                 std::pair{secondToken, secondIdentity}}) {
+    uint64_t afterExit = 0;
+    ASSERT_EQ(obelisk_rt_process_object_identity(context, token, &afterExit),
+              OBELISK_RT_OK);
+    EXPECT_EQ(afterExit, identity);
+  }
+  ASSERT_EQ(obelisk_rt_v1_semaphore_create(lane, 1, &semaphore), OBELISK_RT_OK);
+  const uint64_t replacementIdentity = obelisk_rt_v1_object_id(semaphore);
+  EXPECT_NE(replacementIdentity, firstIdentity);
+  EXPECT_NE(replacementIdentity, secondIdentity);
+  EXPECT_NE(replacementIdentity, managedIdentity);
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeInternals,
+     ProcessObjectIdentityPreservesTokenKindAndRejectsInvalid) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  SchedulerFixture fixture(100);
+  auto *instance = makeSchedulerInstance(fixture);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
+  const uint64_t nativeToken =
+      obelisk_rt_v1_scheduler_process_token(context, instance);
+  const uint64_t designToken =
+      nativeToken & ~OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG;
+  // Model an independently scheduled bytecode activation with the same low
+  // token. The shared process API must retain the native/design distinction.
+  ScheduledDesignTask task;
+  task.id = designToken;
+  task.started = true;
+  context->scheduledDesignTaskIndices.emplace(task.id, 0);
+  context->scheduledDesignTasks.push_back(std::move(task));
+
+  uint64_t nativeIdentity = 0, designIdentity = 0;
+  ASSERT_EQ(
+      obelisk_rt_process_object_identity(context, nativeToken, &nativeIdentity),
+      OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_process_object_identity(context, designToken, &designIdentity),
+      OBELISK_RT_OK);
+  EXPECT_NE(nativeIdentity, 0u);
+  EXPECT_NE(designIdentity, 0u);
+  EXPECT_NE(nativeIdentity, designIdentity);
+  uint64_t output = 1;
+  EXPECT_EQ(obelisk_rt_process_object_identity(nullptr, nativeToken, &output),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(output, 0u);
+  output = 1;
+  EXPECT_EQ(obelisk_rt_process_object_identity(context, 0, &output),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(output, 0u);
+  EXPECT_EQ(obelisk_rt_process_object_identity(context, nativeToken, nullptr),
+            OBELISK_RT_INVALID_ARGUMENT);
+  for (uint64_t unknown : {designToken + 1, nativeToken + 1}) {
+    output = 1;
+    EXPECT_EQ(obelisk_rt_process_object_identity(context, unknown, &output),
+              OBELISK_RT_INVALID_HANDLE);
+    EXPECT_EQ(output, 0u);
+  }
+  obelisk_rt_process_control_disposition disposition{};
+  // Terminate the real native activation. The independent bytecode identity
+  // with the same low token must stay live; this metadata fixture does not
+  // execute or terminate a bytecode frame.
+  ASSERT_EQ(obelisk_rt_v1_process_control(context, nativeToken,
+                                          OBELISK_RT_PROCESS_CONTROL_KILL,
+                                          &disposition),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_process_object_identity(context, designToken, &output),
+            OBELISK_RT_OK);
+  EXPECT_EQ(output, designIdentity);
+  obelisk_rt_process_state state{};
+  ASSERT_EQ(obelisk_rt_v1_process_status(context, designToken, &state),
+            OBELISK_RT_OK);
+  EXPECT_EQ(state, OBELISK_RT_PROCESS_RUNNING);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, ConcurrentProcessObjectQueriesShareOneIdentity) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  SchedulerFixture fixture(100);
+  auto *instance = makeSchedulerInstance(fixture);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
+  const uint64_t token =
+      obelisk_rt_v1_scheduler_process_token(context, instance);
+  std::array<uint64_t, 8> identities{};
+  std::array<obelisk_rt_status, 8> statuses{};
+  std::array<std::thread, 8> threads;
+  for (size_t index = 0; index != threads.size(); ++index)
+    threads[index] = std::thread([&, index] {
+      statuses[index] = obelisk_rt_process_object_identity(context, token,
+                                                           &identities[index]);
+    });
+  for (std::thread &thread : threads)
+    thread.join();
+  EXPECT_NE(identities.front(), 0u);
+  for (size_t index = 0; index != identities.size(); ++index) {
+    EXPECT_EQ(statuses[index], OBELISK_RT_OK);
+    EXPECT_EQ(identities[index], identities.front());
+  }
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, CompletedProcessStorageStaysCompactAcrossChurn) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);

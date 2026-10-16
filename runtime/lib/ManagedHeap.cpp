@@ -1858,11 +1858,13 @@ public:
   uint64_t identity() const { return id; }
   obelisk_rt_context *ownerContext() const { return context; }
 
-private:
+  // Process class objects use scheduler tokens rather than heap allocations,
+  // but their public object identities share this namespace.
   std::optional<uint64_t> acquireObjectIdentity() {
     return acquireMonotonicIdentity(nextObjectID);
   }
 
+private:
   Span *acquireSpan(unsigned classIndex, uint32_t classSize) {
     std::lock_guard<std::mutex> lock(allocatorMutex);
     auto &available = availableSpans[classIndex];
@@ -2420,6 +2422,21 @@ descriptorFor(const obelisk_rt_object_v1 *object) {
 }
 
 } // namespace
+
+obelisk_rt_status obelisk_rt_managed_identity_reserve(
+    obelisk_rt_context *context, uint64_t *outIdentity) noexcept {
+  if (!outIdentity)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outIdentity = 0;
+  ManagedHeap *heap = heapFor(context);
+  if (!heap)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  std::optional<uint64_t> identity = heap->acquireObjectIdentity();
+  if (!identity)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  *outIdentity = *identity;
+  return OBELISK_RT_OK;
+}
 
 obelisk_rt_status
 obelisk_rt_managed_execution_enter(obelisk_rt_context *context,
