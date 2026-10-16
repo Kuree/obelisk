@@ -75,7 +75,8 @@ enum class VPIObjectForm : uint8_t {
   TypespecMember,
   Range,
   IntegralConstant,
-  ClassObject
+  ClassObject,
+  Thread
 };
 
 enum class VPISemanticIteratorKind : uint8_t {
@@ -158,6 +159,7 @@ struct __vpiHandle {
   std::vector<obelisk_rt_design_cursor_v1> items;
   std::vector<VPIInterModPathEndpoint> interModPathEndpoints;
   std::vector<uint64_t> timeQueueItems;
+  std::vector<uint64_t> threadItems;
   std::vector<VPISelectionStep> indexItems;
   // Preserve the selector passed to vpi_iterate(). Iterator storage may use
   // a normalized relation selector, but vpiIteratorType is the requested one.
@@ -169,6 +171,7 @@ struct __vpiHandle {
   bool systemTfIterator = false;
   bool interModPathIterator = false;
   bool timeQueueIterator = false;
+  bool threadIterator = false;
   bool designIterator = false;
   bool relationIterator = false;
   VPISemanticIteratorKind semanticIterator = VPISemanticIteratorKind::None;
@@ -177,6 +180,7 @@ struct __vpiHandle {
   bool useSuppressSemanticAlias = false;
   bool useSuppressSemanticDimension = false;
   bool useClassDefinitionOrigin = false;
+  bool useProtectedObject = false;
   uint32_t useType = 0;
   obelisk_rt_design_cursor_v1 useCursor{};
   VPIObjectForm useForm = VPIObjectForm::Design;
@@ -254,6 +258,7 @@ struct VPIState {
   uint32_t callDepth = 0;
   uint64_t lastClassCollection = 0;
   bool hasDynamicHandles = false;
+  bool hasThreadHandles = false;
 
   uint64_t runtimeObserverCallbacks = 0;
   std::unordered_map<uint64_t, VPICallback> callbacks;
@@ -378,12 +383,46 @@ void pruneDynamicHandles(VPIState *state) {
   state->lastClassCollection = statistics.collection_count;
 }
 
+// IEEE 37.3.7-37.3.8: a thread ends with its execution, unlike the process
+// class object whose scheduler tombstone remains a valid process reference.
+bool threadIsLive(VPIState *state, uint64_t logicalProcess) {
+  obelisk_rt_process_state status{};
+  return obelisk_rt_v1_process_status(state->context, logicalProcess,
+                                      &status) == OBELISK_RT_OK &&
+         status != OBELISK_RT_PROCESS_FINISHED &&
+         status != OBELISK_RT_PROCESS_KILLED;
+}
+
+bool hasThreadLifetime(const __vpiHandle &handle) {
+  return handle.form == VPIObjectForm::Thread ||
+         (handle.kind == VPIHandleKind::Iterator && handle.hasUse &&
+          handle.useForm == VPIObjectForm::Thread);
+}
+
+void pruneThreadHandles(VPIState *state) {
+  if (!state->hasThreadHandles || state->callDepth || state->callbackDepth)
+    return;
+  state->hasThreadHandles = false;
+  for (auto entry = state->handles.begin(); entry != state->handles.end();) {
+    const auto &handle = *entry->second;
+    if (hasThreadLifetime(handle)) {
+      if (!threadIsLive(state, handle.logicalProcess)) {
+        entry = state->handles.erase(entry);
+        continue;
+      }
+      state->hasThreadHandles = true;
+    }
+    ++entry;
+  }
+}
+
 class VPICallScope {
 public:
   VPICallScope() : state(currentState()) {
     if (state) {
       state->errorLevel = 0;
       pruneDynamicHandles(state);
+      pruneThreadHandles(state);
       ++state->callDepth;
     }
   }
@@ -425,6 +464,11 @@ __vpiHandle *findHandle(vpiHandle opaque) {
     return nullptr;
   }
   __vpiHandle *handle = found->second.get();
+  if (hasThreadLifetime(*handle) &&
+      !threadIsLive(state, handle->logicalProcess)) {
+    setError(state, "invalid or finished VPI thread handle");
+    return nullptr;
+  }
   if (handle->dynamicObject) {
     ManagedExecutionScope managed(state->context);
     if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane() ||
@@ -459,6 +503,57 @@ vpiHandle keepHandle(VPIState *state, std::unique_ptr<__vpiHandle> handle) {
     return nullptr;
   }
   return reinterpret_cast<vpiHandle>(token);
+}
+
+vpiHandle makeThreadHandle(VPIState *state, uint64_t logicalProcess) {
+  if (!threadIsLive(state, logicalProcess))
+    return nullptr;
+  OBELISK_RT_TRY {
+    auto handle = std::make_unique<__vpiHandle>();
+    handle->owner = state;
+    handle->form = VPIObjectForm::Thread;
+    handle->exactVpiType = vpiThread;
+    handle->logicalProcess = logicalProcess;
+    handle->allocationScheme = vpiAutomaticScheme;
+    state->hasThreadHandles = true;
+    return keepHandle(state, std::move(handle));
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(state, "could not allocate VPI thread handle", vpiSystem);
+    return nullptr;
+  }
+}
+
+// These are scheduler parent identities, not source scopes or activation
+// frames. Keep completed ancestors out of the transient thread object graph.
+vpiHandle threadParent(__vpiHandle *source) {
+  uint64_t parent = 0;
+  auto *context = source->owner->context;
+  {
+    ContextMutexLock lock(context);
+    const uint64_t token = source->logicalProcess;
+    if (context->activeLogicalProcessToken == token) {
+      parent = context->activeLogicalProcessParent;
+    } else if (token & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) {
+      const uint64_t native = token & ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+      auto found = context->scheduledProcessIndices.find(native);
+      if (found != context->scheduledProcessIndices.end() &&
+          found->second < context->scheduledProcesses.size()) {
+        const auto &process = context->scheduledProcesses[found->second];
+        if (process.token == native && process.instance)
+          parent = process.parent;
+      }
+    } else {
+      auto found = context->scheduledDesignTaskIndices.find(token);
+      if (found != context->scheduledDesignTaskIndices.end() &&
+          found->second < context->scheduledDesignTasks.size()) {
+        const auto &task = context->scheduledDesignTasks[found->second];
+        if (task.id == token && !task.terminated)
+          parent = task.parent;
+      }
+    }
+  }
+  return parent ? makeThreadHandle(source->owner, parent) : nullptr;
 }
 
 bool lookup(VPIState *state, const std::string &name,
@@ -3080,6 +3175,7 @@ void copyUseRecipe(__vpiHandle &iterator, const __vpiHandle &source) {
   iterator.useSuppressSemanticAlias = source.suppressSemanticAlias;
   iterator.useSuppressSemanticDimension = source.suppressSemanticDimension;
   iterator.useClassDefinitionOrigin = source.classDefinitionOrigin;
+  iterator.useProtectedObject = source.protectedObject;
   iterator.dynamicObject = source.dynamicObject;
   iterator.dynamicIdentity = source.dynamicIdentity;
   iterator.logicalProcess = source.logicalProcess;
@@ -3094,12 +3190,104 @@ void copyUseRecipe(__vpiHandle &iterator, const __vpiHandle &source) {
   iterator.useSelectionSteps = source.selectionSteps;
 }
 
+vpiHandle makeThreadIterator(__vpiHandle *source, PLI_INT32 selector,
+                             std::vector<uint64_t> processes) {
+  if (processes.empty())
+    return nullptr;
+  OBELISK_RT_TRY {
+    auto iterator = std::make_unique<__vpiHandle>();
+    iterator->owner = source->owner;
+    iterator->kind = VPIHandleKind::Iterator;
+    iterator->iteratorType = selector;
+    iterator->threadIterator = true;
+    iterator->threadItems = std::move(processes);
+    copyUseRecipe(*iterator, *source);
+    return keepHandle(source->owner, std::move(iterator));
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(source->owner, "could not allocate VPI thread iterator",
+             vpiSystem);
+    return nullptr;
+  }
+}
+
+vpiHandle threadChildren(__vpiHandle *source) {
+  OBELISK_RT_TRY {
+    std::vector<uint64_t> children;
+    auto *context = source->owner->context;
+    {
+      ContextMutexLock lock(context);
+      const uint64_t parent = source->logicalProcess;
+      for (const auto &process : context->scheduledProcesses)
+        if (process.instance && process.parent == parent) {
+          const uint64_t token =
+              OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | process.token;
+          if (threadIsLive(source->owner, token))
+            children.push_back(token);
+        }
+      for (const auto &task : context->scheduledDesignTasks)
+        if (!task.terminated && task.parent == parent &&
+            threadIsLive(source->owner, task.id))
+          children.push_back(task.id);
+      if (context->activeLogicalProcessToken &&
+          context->activeLogicalProcessParent == parent &&
+          threadIsLive(source->owner, context->activeLogicalProcessToken))
+        children.push_back(context->activeLogicalProcessToken);
+    }
+    std::sort(children.begin(), children.end());
+    children.erase(std::unique(children.begin(), children.end()),
+                   children.end());
+    return makeThreadIterator(source, vpiThread, std::move(children));
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(source->owner, "could not snapshot VPI child threads", vpiSystem);
+    return nullptr;
+  }
+}
+
+vpiHandle classWaitingProcesses(__vpiHandle *source) {
+  if (!source->dynamicObject)
+    return nullptr;
+  ManagedExecutionScope managed(source->owner->context);
+  if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane()) {
+    setError(source->owner, "VPI waiting-process query cannot enter GC scope",
+             vpiInternal);
+    return nullptr;
+  }
+  {
+    ManagedObjectLease lease;
+    if (obelisk_rt_managed_object_acquire(
+            managed.getLane(), source->dynamicObject,
+            OBELISK_RT_MANAGED_INVALID, &lease) != OBELISK_RT_OK ||
+        obelisk_rt_v1_object_id(source->dynamicObject) !=
+            source->dynamicIdentity) {
+      setError(source->owner, "invalid or reclaimed VPI class object handle");
+      return nullptr;
+    }
+    if (obelisk_rt_builtin_class_kind(lease) == BuiltinClassKind::None)
+      return nullptr;
+  }
+  // The helper acquires its own lease before taking the scheduler lock.
+  // Do not carry a managed heap lease into that lock ordering.
+  std::vector<uint64_t> processes;
+  const auto status = obelisk_rt_builtin_class_waiters(
+      managed.getLane(), source->dynamicObject, processes);
+  if (status != OBELISK_RT_OK) {
+    setError(source->owner, "could not snapshot VPI waiting processes",
+             status == OBELISK_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
+    return nullptr;
+  }
+  return makeThreadIterator(source, vpiWaitingProcesses, std::move(processes));
+}
+
 vpiHandle makeUseHandle(__vpiHandle *iterator) {
   if (iterator->interModPathIterator)
     return makeInterModPathHandle(iterator->owner,
                                   iterator->interModPathEndpoints);
   if (!iterator->hasUse)
     return nullptr;
+  if (iterator->useForm == VPIObjectForm::Thread)
+    return makeThreadHandle(iterator->owner, iterator->logicalProcess);
   auto finish = [&](vpiHandle result) {
     if (result) {
       if (auto *handle = findHandle(result)) {
@@ -3112,13 +3300,28 @@ vpiHandle makeUseHandle(__vpiHandle *iterator) {
     return result;
   };
   if (iterator->useForm == VPIObjectForm::ClassObject) {
-    vpiHandle result =
-        makeHandle(iterator->owner, iterator->useCursor, vpiClassObj);
-    if (auto *handle = result ? findHandle(result) : nullptr) {
+    // A live class object can exist without a serialized specialization.
+    // Recreate its saved receiver recipe; its cursor need not name an image
+    // record, and querying image protection would lose that valid identity.
+    OBELISK_RT_TRY {
+      auto handle = std::make_unique<__vpiHandle>();
+      handle->owner = iterator->owner;
       handle->form = VPIObjectForm::ClassObject;
+      handle->exactVpiType = vpiClassObj;
+      handle->cursor = iterator->useCursor;
       handle->semanticCursor = iterator->useSemanticCursor;
+      handle->protectedObject = iterator->useProtectedObject;
+      handle->dynamicObject = iterator->dynamicObject;
+      handle->dynamicIdentity = iterator->dynamicIdentity;
+      handle->logicalProcess = iterator->logicalProcess;
+      handle->allocationScheme = iterator->useAllocationScheme;
+      return keepHandle(iterator->owner, std::move(handle));
     }
-    return finish(result);
+    OBELISK_RT_CATCH_ALL {
+      setError(iterator->owner, "could not copy VPI class object iterator use",
+               vpiSystem);
+      return nullptr;
+    }
   }
   if (iterator->useForm == VPIObjectForm::Design) {
     vpiHandle result =
@@ -4830,6 +5033,15 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       obelisk_rt_cached_vpi_type(handle->owner->context, handle->cursor,
                                  &sourceType) != OBELISK_RT_OK)
     return nullptr;
+  if (handle->form == VPIObjectForm::Thread) {
+    if (type == vpiParent)
+      return threadParent(handle);
+    if (type == vpiOrigin || type == vpiFrame)
+      setError(handle->owner,
+               "VPI thread source statement and frame metadata are unavailable",
+               vpiNotice);
+    return nullptr;
+  }
   if (sourceType == vpiClassVar && type == vpiClassObj)
     return makeClassObjectHandle(handle);
   if (sourceType == vpiVirtualInterfaceVar && type == vpiActual)
@@ -5304,6 +5516,11 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       return nullptr;
     if (!allowProtectedSource(handle, "vpi_iterate"))
       return nullptr;
+    if (handle->form == VPIObjectForm::Thread)
+      return type == vpiThread ? threadChildren(handle) : nullptr;
+    if (handle->form == VPIObjectForm::ClassObject &&
+        type == vpiWaitingProcesses)
+      return classWaitingProcesses(handle);
     referenceHandle = handle;
     parent = handle->cursor;
     sourceStatement = handle->statement;
@@ -5589,6 +5806,21 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
   __vpiHandle *iterator = validate(opaque, VPIHandleKind::Iterator);
   if (!iterator)
     return nullptr;
+  if (iterator->threadIterator) {
+    while (iterator->next != iterator->threadItems.size()) {
+      const uint64_t token = iterator->threadItems[iterator->next++];
+      if (!threadIsLive(iterator->owner, token))
+        continue;
+      VPIState *state = iterator->owner;
+      const uintptr_t iteratorToken = iterator->token;
+      vpiHandle result = makeThreadHandle(state, token);
+      if (!result)
+        state->handles.erase(iteratorToken);
+      return result;
+    }
+    iterator->owner->handles.erase(iterator->token);
+    return nullptr;
+  }
   if (iterator->callbackIterator) {
     while (iterator->next != iterator->items.size()) {
       uint64_t id = iterator->items[iterator->next++].offset;
@@ -5989,6 +6221,8 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     // inherit protection from their allocated type; declarations use the image.
     if (handle->kind != VPIHandleKind::Object && property == vpiIsProtected)
       return 0;
+    if (handle->form == VPIObjectForm::Thread && property == vpiIsProtected)
+      return 0;
     if (handle->form == VPIObjectForm::ClassObject && property == vpiIsProtected)
       return handle->protectedObject;
     VPIFixedPropertyValue value{};
@@ -6012,6 +6246,9 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   // an indexed variable has the lifetime of the object it selects.
   if (property == vpiAllocScheme)
     return handle->allocationScheme;
+  if (property == vpiActive && handle->form == VPIObjectForm::Thread)
+    return obelisk_rt_v1_process_current(handle->owner->context) ==
+           handle->logicalProcess;
   if (property == vpiIteratorType && handle->kind == VPIHandleKind::Iterator)
     return handle->iteratorType;
   // Released and reclaimed handles fail findHandle() above. A live variable
@@ -7403,6 +7640,10 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_compare_objects(vpiHandle first,
     setError(left->owner, "VPI handle kind does not denote an object");
     return 0;
   }
+  if (left->form == VPIObjectForm::Thread ||
+      right->form == VPIObjectForm::Thread)
+    return left->form == right->form &&
+           left->logicalProcess == right->logicalProcess;
   if (left->form == VPIObjectForm::ClassObject ||
       right->form == VPIObjectForm::ClassObject)
     return left->form == right->form &&
@@ -7467,7 +7708,8 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_release_handle(vpiHandle opaque) {
     setError(state, "VPI handle was already released or is invalid");
     return 0;
   }
-  if (found->second->dynamicObject && !findHandle(opaque))
+  if ((found->second->dynamicObject || hasThreadLifetime(*found->second)) &&
+      !findHandle(opaque))
     return 0;
   state->handles.erase(found);
   return 1;

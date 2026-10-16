@@ -16466,4 +16466,380 @@ TEST(VPI, VirtualInterfaceIterationDoesNotRequireOptionalVariableIndex) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+// Append within the anonymous namespace in DesignBytecodeTest.cpp. This uses
+// its existing valid builtin semantic image and frame-checksum helpers.
+struct VPIThreadQueryProbe {
+  obelisk_rt_object_v1 *object = nullptr;
+  uint32_t waitKind = 0;
+  std::array<const obelisk_rt_process_descriptor_v1 *, 2> childDescriptors{};
+  std::array<uint64_t, 3> processTokens{};
+  std::vector<vpiHandle> threads;
+  unsigned activeQueries = 0;
+};
+
+VPIThreadQueryProbe *activeThreadQueryProbe = nullptr;
+
+obelisk_rt_status threadQueryRequirements(uint64_t *size, uint64_t *alignment) {
+  if (!size || !alignment)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *size = 0;
+  *alignment = 1;
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status threadQueryExecute(obelisk_rt_process_instance_v1 *instance) {
+  if (!instance || !instance->context || !instance->action ||
+      !activeThreadQueryProbe)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  auto &probe = *activeThreadQueryProbe;
+  instance->native_handle = instance;
+  const uint64_t self = obelisk_rt_v1_process_current(instance->context);
+  const uint64_t id = instance->descriptor->handle.id;
+  if (instance->continuation == 0) {
+    probe.processTokens[id - 1] = self;
+    if (id == 1) {
+      for (const auto *descriptor : probe.childDescriptors) {
+        obelisk_rt_process_instance_v1 *child = nullptr;
+        auto status = obelisk_rt_v1_process_instance_create_for_context(
+            instance->context, descriptor, &child);
+        if (status != OBELISK_RT_OK)
+          return status;
+        status = obelisk_rt_v1_scheduler_add(instance->context, child, 0);
+        if (status != OBELISK_RT_OK) {
+          obelisk_rt_v1_process_instance_destroy(child);
+          return status;
+        }
+      }
+    }
+    auto *wait = static_cast<obelisk_rt_wait_record_v1 *>(instance->frame);
+    auto *entry = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
+    *wait = {OBELISK_RT_VERSION,
+             probe.waitKind,
+             probe.waitKind == OBELISK_RT_SUSPEND_MAILBOX
+                 ? uint32_t{OBELISK_RT_WAIT_MAILBOX_NOT_EMPTY}
+                 : 0u,
+             1,
+             probe.waitKind == OBELISK_RT_SUSPEND_SEMAPHORE ? UINT64_C(1) : 0,
+             0};
+    *entry = {obelisk_rt_managed_word_from_object(probe.object),
+              OBELISK_RT_WAIT_EDGE_NONE, 0};
+    *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
+                         probe.waitKind,
+                         1,
+                         OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
+                         0,
+                         sizeof(*wait) + sizeof(*entry)};
+    return OBELISK_RT_OK;
+  }
+
+  // The scheduler invokes this native execution callback while its actual
+  // process token is active. Exercise reentrant VPI without fabricating state.
+  unsigned active = 0;
+  for (vpiHandle thread : probe.threads) {
+    if (vpi_get(vpiType, thread) != vpiThread)
+      continue;
+    if (vpi_get(vpiActive, thread)) {
+      ++active;
+      EXPECT_EQ(vpi_get(vpiAllocScheme, thread), vpiAutomaticScheme);
+      EXPECT_EQ(obelisk_rt_v1_process_current(instance->context), self);
+    }
+  }
+  EXPECT_EQ(active, 1u);
+  ++probe.activeQueries;
+  *instance->action = {
+      OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+  return OBELISK_RT_OK;
+}
+
+void threadQueryDestroy(obelisk_rt_process_instance_v1 *instance) {
+  instance->native_handle = nullptr;
+}
+
+struct VPIThreadNativeFixture {
+  const obelisk_rt_frame_field_v1 field{OBELISK_RT_FRAME_WAIT,
+                                        OBELISK_RT_FRAME_FIELD_FLAGS_NONE,
+                                        0,
+                                        sizeof(obelisk_rt_wait_record_v1) +
+                                            sizeof(obelisk_rt_wait_entry_v1),
+                                        8,
+                                        0};
+  std::array<uint32_t, 2> continuations{0, 1};
+  obelisk_rt_frame_layout_v1 layout{};
+  obelisk_rt_process_descriptor_v1 descriptor{};
+
+  explicit VPIThreadNativeFixture(uint64_t id) {
+    layout = {OBELISK_RT_VERSION,
+              0,
+              field.size,
+              8,
+              &field,
+              1,
+              static_cast<uint32_t>(continuations.size()),
+              continuations.data(),
+              0};
+    layout.checksum = frameChecksum(layout);
+    descriptor = {{OBELISK_RT_DESCRIPTOR_PROCESS, 0, id},
+                  OBELISK_RT_VERSION,
+                  0,
+                  OBELISK_RT_TIER_MASK_NATIVE,
+                  0,
+                  &layout,
+                  threadQueryRequirements,
+                  threadQueryExecute,
+                  threadQueryDestroy,
+                  nullptr};
+  }
+};
+
+TEST(VPI, WaitingThreadsUseRealSchedulerIdentityAndExpireWithExecution) {
+  for (uint32_t semanticKind : {OBELISK_RT_DESIGN_SEMANTIC_MAILBOX,
+                                OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE}) {
+    for (bool derived : {false, true}) {
+      SCOPED_TRACE(semanticKind);
+      SCOPED_TRACE(derived);
+      Fixture fixture;
+      fixture.database = makeBuiltinClassVariableDatabase(semanticKind);
+      fixture.execution.design_database = fixture.database.data();
+      fixture.execution.design_database_size = fixture.database.size();
+      obelisk_rt_context *context = nullptr;
+      ASSERT_EQ(
+          obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+          OBELISK_RT_OK);
+      obelisk_rt_gc_lane_v1 *lane = nullptr;
+      ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+      ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+      VPIThreadQueryProbe probe;
+      activeThreadQueryProbe = &probe;
+      const bool mailbox = semanticKind == OBELISK_RT_DESIGN_SEMANTIC_MAILBOX;
+      probe.waitKind =
+          mailbox ? OBELISK_RT_SUSPEND_MAILBOX : OBELISK_RT_SUSPEND_SEMAPHORE;
+      if (mailbox) {
+        ASSERT_EQ(obelisk_rt_v1_mailbox_create_typed(
+                      lane, 41, OBELISK_RT_ELEMENT_BITS, 0, 4, 4, 32, nullptr,
+                      0, 0, &probe.object),
+                  OBELISK_RT_OK);
+      } else {
+        ASSERT_EQ(obelisk_rt_v1_semaphore_create(lane, 0, &probe.object),
+                  OBELISK_RT_OK);
+      }
+      obelisk_rt_gc_root_v1 objectRoot{};
+      ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &objectRoot, &probe.object),
+                OBELISK_RT_OK);
+      const uint64_t payloadOffset = sizeof(obelisk_rt_managed_word_v1);
+      obelisk_rt_trace_entry_v1 payloadTrace{};
+      payloadTrace.offset = payloadOffset;
+      payloadTrace.count = 1;
+      payloadTrace.kind = OBELISK_RT_TRACE_STRONG;
+      payloadTrace.slot_kind = mailbox ? OBELISK_RT_MANAGED_SLOT_MAILBOX
+                                       : OBELISK_RT_MANAGED_SLOT_SEMAPHORE;
+      obelisk_rt_trace_layout_v1 baseLayout{
+          OBELISK_RT_VERSION,
+          0,
+          payloadOffset + sizeof(obelisk_rt_managed_word_v1),
+          alignof(obelisk_rt_managed_word_v1),
+          &payloadTrace,
+          1};
+      obelisk_rt_trace_entry_v1 embedded{};
+      embedded.kind = OBELISK_RT_TRACE_EMBEDDED;
+      embedded.count = 1;
+      embedded.child_layout = &baseLayout;
+      obelisk_rt_trace_layout_v1 derivedLayout{
+          OBELISK_RT_VERSION,   0,         baseLayout.size,
+          baseLayout.alignment, &embedded, 1};
+      obelisk_rt_class_descriptor_v1 base{}, descendant{};
+      base.version = descendant.version = OBELISK_RT_VERSION;
+      base.class_id = 1;
+      descendant.class_id = 2;
+      base.instance_size = descendant.instance_size = baseLayout.size;
+      base.instance_alignment = descendant.instance_alignment =
+          baseLayout.alignment;
+      base.layout = &baseLayout;
+      descendant.layout = &derivedLayout;
+      descendant.base = &base;
+      base.builtin_base_kind = mailbox ? OBELISK_RT_BUILTIN_CLASS_MAILBOX
+                                       : OBELISK_RT_BUILTIN_CLASS_SEMAPHORE;
+      base.builtin_base_offset = payloadOffset;
+      const uint64_t payloadIdentity = obelisk_rt_v1_object_id(probe.object);
+      if (derived) {
+        ASSERT_EQ(obelisk_rt_v1_class_register(context, &base), OBELISK_RT_OK);
+        ASSERT_EQ(obelisk_rt_v1_class_register(context, &descendant),
+                  OBELISK_RT_OK);
+        obelisk_rt_object_v1 *outer = nullptr;
+        ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &descendant, &outer),
+                  OBELISK_RT_OK);
+        const uint64_t payload =
+            obelisk_rt_managed_word_from_object(probe.object);
+        ASSERT_EQ(obelisk_rt_v1_object_write(outer, payloadOffset, &payload,
+                                             sizeof(payload)),
+                  OBELISK_RT_OK);
+        probe.object = outer;
+      }
+      obelisk_rt_design_cursor_v1 storage{};
+      char name[] = "top.value";
+      ASSERT_EQ(obelisk_rt_v1_design_lookup(
+                    &fixture.execution, reinterpret_cast<const uint8_t *>(name),
+                    std::strlen(name), &storage),
+                OBELISK_RT_OK);
+      const uint64_t word = obelisk_rt_managed_word_from_object(probe.object);
+      ASSERT_EQ(
+          obelisk_rt_v1_design_write(context, storage, &word, nullptr, 64),
+          OBELISK_RT_OK);
+      ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+      ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+      ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      vpiHandle variable = vpi_handle_by_name(name, nullptr);
+      ASSERT_NE(variable, nullptr);
+      vpiHandle object = vpi_handle(vpiClassObj, variable);
+      ASSERT_NE(object, nullptr);
+      EXPECT_EQ(vpi_get64(vpiObjId, object),
+                static_cast<PLI_INT64>(obelisk_rt_v1_object_id(probe.object)));
+      if (derived) {
+        EXPECT_NE(vpi_get64(vpiObjId, object),
+                  static_cast<PLI_INT64>(payloadIdentity));
+      }
+      EXPECT_EQ(vpi_iterate(vpiWaitingProcesses, object), nullptr);
+      EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+      VPIThreadNativeFixture parentFixture(1), firstFixture(2),
+          secondFixture(3);
+      probe.childDescriptors = {&firstFixture.descriptor,
+                                &secondFixture.descriptor};
+      obelisk_rt_process_instance_v1 *parentInstance = nullptr;
+      ASSERT_EQ(obelisk_rt_v1_process_instance_create_for_context(
+                    context, &parentFixture.descriptor, &parentInstance),
+                OBELISK_RT_OK);
+      ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, parentInstance, 0),
+                OBELISK_RT_OK);
+      ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+      for (uint64_t token : probe.processTokens) {
+        ASSERT_NE(token, 0u);
+        obelisk_rt_process_state status{};
+        ASSERT_EQ(obelisk_rt_v1_process_status(context, token, &status),
+                  OBELISK_RT_OK);
+        EXPECT_EQ(status, OBELISK_RT_PROCESS_WAITING);
+      }
+      vpiHandle waiting = vpi_iterate(vpiWaitingProcesses, object);
+      ASSERT_NE(waiting, nullptr);
+      EXPECT_EQ(vpi_get(vpiIteratorType, waiting), vpiWaitingProcesses);
+      vpiHandle use = vpi_handle(vpiUse, waiting);
+      ASSERT_NE(use, nullptr);
+      EXPECT_EQ(vpi_compare_objects(use, object), 1);
+      EXPECT_EQ(vpi_release_handle(use), 1);
+      while (vpiHandle thread = vpi_scan(waiting)) {
+        probe.threads.push_back(thread);
+        EXPECT_EQ(vpi_get(vpiType, thread), vpiThread);
+        EXPECT_EQ(vpi_get(vpiAllocScheme, thread), vpiAutomaticScheme);
+        EXPECT_EQ(vpi_get(vpiActive, thread), 0);
+        EXPECT_EQ(vpi_get(vpiIsProtected, thread), 0);
+      }
+      ASSERT_EQ(probe.threads.size(), 3u);
+      vpiHandle parent = nullptr;
+      std::vector<vpiHandle> parentAliases;
+      for (vpiHandle thread : probe.threads) {
+        vpiHandle owner = vpi_handle(vpiParent, thread);
+        if (owner)
+          parentAliases.push_back(owner);
+        else {
+          EXPECT_EQ(vpi_chk_error(nullptr), 0);
+          EXPECT_EQ(parent, nullptr);
+          parent = thread;
+        }
+      }
+      ASSERT_NE(parent, nullptr);
+      ASSERT_EQ(parentAliases.size(), 2u);
+      for (vpiHandle alias : parentAliases) {
+        EXPECT_EQ(vpi_compare_objects(parent, alias), 1);
+        EXPECT_EQ(vpi_release_handle(alias), 1);
+      }
+      for (PLI_INT32 selector : {vpiOrigin, vpiFrame}) {
+        EXPECT_EQ(vpi_handle(selector, parent), nullptr);
+        EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+      }
+      vpiHandle children = vpi_iterate(vpiThread, parent);
+      ASSERT_NE(children, nullptr);
+      use = vpi_handle(vpiUse, children);
+      ASSERT_NE(use, nullptr);
+      EXPECT_EQ(vpi_compare_objects(parent, use), 1);
+      EXPECT_EQ(vpi_release_handle(use), 1);
+      unsigned childCount = 0;
+      while (vpiHandle child = vpi_scan(children)) {
+        ++childCount;
+        EXPECT_EQ(vpi_compare_objects(child, parent), 0);
+        unsigned matches = 0;
+        for (vpiHandle original : probe.threads)
+          matches += vpi_compare_objects(child, original);
+        EXPECT_EQ(matches, 1u);
+        EXPECT_EQ(vpi_iterate(vpiThread, child), nullptr);
+        EXPECT_EQ(vpi_release_handle(child), 1);
+      }
+      EXPECT_EQ(childCount, 2u);
+
+      vpiHandle killedSnapshot = vpi_iterate(vpiWaitingProcesses, object);
+      vpiHandle finishedSnapshot = vpi_iterate(vpiWaitingProcesses, object);
+      vpiHandle expiredUse = vpi_iterate(vpiThread, parent);
+      vpiHandle weakSnapshot = vpi_iterate(vpiWaitingProcesses, object);
+      ASSERT_NE(killedSnapshot, nullptr);
+      ASSERT_NE(finishedSnapshot, nullptr);
+      ASSERT_NE(expiredUse, nullptr);
+      ASSERT_NE(weakSnapshot, nullptr);
+      obelisk_rt_process_control_disposition disposition{};
+      ASSERT_EQ(obelisk_rt_v1_process_control(context, probe.processTokens[1],
+                                              OBELISK_RT_PROCESS_CONTROL_KILL,
+                                              &disposition),
+                OBELISK_RT_OK);
+      unsigned remaining = 0, expired = 0;
+      for (vpiHandle thread : probe.threads)
+        expired += vpi_get(vpiType, thread) == vpiUndefined;
+      EXPECT_EQ(expired, 1u);
+      while (vpiHandle thread = vpi_scan(killedSnapshot)) {
+        ++remaining;
+        EXPECT_EQ(vpi_get(vpiType, thread), vpiThread);
+        EXPECT_EQ(vpi_release_handle(thread), 1);
+      }
+      EXPECT_EQ(remaining, 2u);
+
+      if (mailbox) {
+        uint32_t message = 9, success = 0;
+        ASSERT_EQ(obelisk_rt_v1_mailbox_try_put(lane, probe.object, &message,
+                                                nullptr, &success),
+                  OBELISK_RT_OK);
+        ASSERT_EQ(success, 1u);
+      } else {
+        ASSERT_EQ(obelisk_rt_v1_semaphore_put(probe.object, 2), OBELISK_RT_OK);
+      }
+      obelisk_rt_v1_scheduler_notify(context);
+      ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+      EXPECT_EQ(probe.activeQueries, 2u);
+      EXPECT_EQ(vpi_scan(finishedSnapshot), nullptr);
+      EXPECT_EQ(vpi_chk_error(nullptr), 0);
+      EXPECT_EQ(vpi_handle(vpiUse, expiredUse), nullptr);
+      EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+      for (vpiHandle thread : probe.threads) {
+        EXPECT_EQ(vpi_get(vpiType, thread), vpiUndefined);
+        EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+        EXPECT_EQ(vpi_release_handle(thread), 0);
+      }
+      const uint64_t zero = 0;
+      ASSERT_EQ(
+          obelisk_rt_v1_design_write(context, storage, &zero, nullptr, 64),
+          OBELISK_RT_OK);
+      ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &objectRoot), OBELISK_RT_OK);
+      ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+      EXPECT_EQ(vpi_scan(weakSnapshot), nullptr);
+      EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+      EXPECT_EQ(vpi_get(vpiType, object), vpiUndefined);
+      EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+      obelisk_rt_gc_statistics_v1 statistics{};
+      ASSERT_EQ(obelisk_rt_v1_gc_statistics(context, &statistics),
+                OBELISK_RT_OK);
+      EXPECT_EQ(statistics.live_objects, 0u);
+      EXPECT_EQ(vpi_release_handle(variable), 1);
+      ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+      ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+      obelisk_rt_v1_context_destroy(context);
+      activeThreadQueryProbe = nullptr;
+    }
+  }
+}
+
 } // namespace
