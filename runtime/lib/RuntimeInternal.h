@@ -2454,10 +2454,10 @@ struct obelisk_rt_context {
   // skip a full native/design task scan. Natural termination erases the mark;
   // any conservative stale-live mark only causes the old exact scan.
   std::unordered_set<uint64_t> logicalProcessParentsWithChildren;
-  // Finished logical processes that forked, mapped to their own parents.
-  // Their surviving subprocesses keep them as parents, so the chain still
-  // leads from every ancestor to them. Pruned once no live process descends
-  // from an entry.
+  // Terminated (finished or killed) logical processes that forked, mapped to
+  // their own parents. Their surviving subprocesses keep them as parents, so
+  // the chain still leads from every ancestor to them. Pruned once no live
+  // process descends from an entry.
   std::unordered_map<uint64_t, uint64_t> finishedProcessParents;
   // Size at which recording another finished parent prunes the links first.
   // This bounds them between scheduler compactions and on executors without
@@ -3296,16 +3296,15 @@ void obelisk_rt_resensitize_design_task_unlocked(obelisk_rt_context *context,
 void obelisk_rt_prune_finished_process_parents_unlocked(
     obelisk_rt_context *context);
 
-// A join_none branch may finish while processes spawned beneath it remain
-// live. They stay its children: wait fork in an ancestor waits only for its
-// own immediate children (IEEE 1800-2023 9.6.1). Remember the finished
-// branch's parent so disable fork and kill() in an ancestor, and kill() of
-// the finished branch itself, still reach them as descendants (9.6.3, 9.7).
-inline void
-obelisk_rt_retire_process_parent_unlocked(obelisk_rt_context *context,
-                                          uint64_t finished, uint64_t parent) {
-  if (!context->logicalProcessParentsWithChildren.erase(finished))
-    return;
+// A join_none branch may finish, or be killed by a disable that does not reach
+// its children, while processes spawned beneath it remain live. They stay its
+// children: wait fork in an ancestor waits only for its own immediate children
+// (IEEE 1800-2023 9.6.1). Remember the terminated branch's parent so disable
+// fork and kill() in an ancestor, and kill() of the FINISHED or KILLED branch
+// itself, still reach them as descendants (9.6.3, 9.7). The caller has
+// already cleared the branch's parent mark.
+inline void obelisk_rt_record_terminated_parent_unlocked(
+    obelisk_rt_context *context, uint64_t terminated, uint64_t parent) {
   auto &links = context->finishedProcessParents;
   if (links.size() >= context->finishedProcessParentsPruneSize) {
     obelisk_rt_prune_finished_process_parents_unlocked(context);
@@ -3317,7 +3316,15 @@ obelisk_rt_retire_process_parent_unlocked(obelisk_rt_context *context,
     context->finishedProcessParentsPruneSize =
         links.size() + std::max({size_t{64}, links.size(), scanned});
   }
-  links[finished] = parent;
+  links[terminated] = parent;
+}
+
+/// Records the parent of a naturally finishing process that spawned children.
+inline void
+obelisk_rt_retire_process_parent_unlocked(obelisk_rt_context *context,
+                                          uint64_t finished, uint64_t parent) {
+  if (context->logicalProcessParentsWithChildren.erase(finished))
+    obelisk_rt_record_terminated_parent_unlocked(context, finished, parent);
 }
 
 /// Returns `root` and every logical process descending from it: live

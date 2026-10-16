@@ -3647,6 +3647,7 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
     std::unordered_set<uint64_t> targets;
     std::vector<obelisk_rt_process_instance_v1 *> nativeInstances;
     std::vector<CancelledLogicalDesignActivation> designActivations;
+    std::vector<std::pair<uint64_t, uint64_t>> killedParents;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       invalidateDesignReadyCohort(context);
@@ -3678,6 +3679,7 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
       }
       nativeInstances.reserve(nativeCount);
       designActivations.reserve(designCount);
+      killedParents.reserve(checkedSizeSum(nativeTasks, designTasks));
       context->terminatedNativeProcesses.reserveRanges(checkedSizeSum(
           context->terminatedNativeProcesses.rangeCount(), nativeTasks));
       context->terminatedDesignTasks.reserveRanges(checkedSizeSum(
@@ -3717,7 +3719,8 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
         context->killedNativeProcesses.insert(process.token);
         obelisk_rt_program_complete_unlocked(context, token,
                                              process.programOwner);
-        context->logicalProcessParentsWithChildren.erase(token);
+        if (context->logicalProcessParentsWithChildren.erase(token))
+          killedParents.emplace_back(token, process.parent);
         if (!process.started)
           obelisk_rt_unregister_unstarted_actor(context, process.phase, token);
         obelisk_rt_flush_deferred_immediate_reports_unlocked(context, token);
@@ -3743,7 +3746,8 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
         context->killedDesignTasks.insert(task.id);
         obelisk_rt_program_complete_unlocked(context, task.id,
                                              task.programOwner);
-        context->logicalProcessParentsWithChildren.erase(task.id);
+        if (context->logicalProcessParentsWithChildren.erase(task.id))
+          killedParents.emplace_back(task.id, task.parent);
         if (!task.started)
           obelisk_rt_unregister_unstarted_actor(context, task.phase, task.id);
         obelisk_rt_flush_deferred_immediate_reports_unlocked(context, task.id);
@@ -3768,6 +3772,8 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
         task.explicitlySuspended = false;
         context->designPollCandidates.erase(task.id);
       }
+      for (auto [killed, parent] : killedParents)
+        obelisk_rt_record_terminated_parent_unlocked(context, killed, parent);
       if (++context->schedulerEpoch == 0)
         context->schedulerEpoch = 1;
     }
@@ -3921,6 +3927,7 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
     std::vector<uint64_t> insertedDesignTerminations;
     std::vector<uint64_t> insertedNativeKills;
     std::vector<uint64_t> insertedDesignKills;
+    std::vector<std::pair<uint64_t, uint64_t>> killedParents;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       invalidateDesignReadyCohort(context);
@@ -3967,6 +3974,7 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
       insertedDesignTerminations.reserve(designTaskCount);
       insertedNativeKills.reserve(nativeTaskCount);
       insertedDesignKills.reserve(designTaskCount);
+      killedParents.reserve(checkedSizeSum(nativeTaskCount, designTaskCount));
       context->terminatedNativeProcesses.reserveRanges(checkedSizeSum(
           context->terminatedNativeProcesses.rangeCount(), nativeTaskCount));
       context->terminatedDesignTasks.reserveRanges(checkedSizeSum(
@@ -4024,7 +4032,8 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
         process.callerControlDepths.clear();
         obelisk_rt_unregister_signal_wait_unlocked(
             context, process.signalSubscriptions, process.token, false);
-        context->logicalProcessParentsWithChildren.erase(token);
+        if (context->logicalProcessParentsWithChildren.erase(token))
+          killedParents.emplace_back(token, process.parent);
         process.instance = nullptr;
         ++context->schedulerDeadProcessCount;
         context->schedulerCompactionPending = true;
@@ -4044,7 +4053,8 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
         task.callers.clear();
         obelisk_rt_unregister_signal_wait_unlocked(
             context, task.signalSubscriptions, task.id, true);
-        context->logicalProcessParentsWithChildren.erase(task.id);
+        if (context->logicalProcessParentsWithChildren.erase(task.id))
+          killedParents.emplace_back(task.id, task.parent);
         obelisk_rt_release_controls_unlocked(context, task.controls);
         task.controls.clear();
         task.terminated = true;
@@ -4055,6 +4065,8 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
         task.waitGenerations.clear();
         task.signalTriggered = false;
       }
+      for (auto [killed, parent] : killedParents)
+        obelisk_rt_record_terminated_parent_unlocked(context, killed, parent);
       if (!nativeInstances.empty() || !designTasks.empty())
         if (++context->schedulerEpoch == 0)
           context->schedulerEpoch = 1;
@@ -4121,6 +4133,7 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
     std::vector<uint64_t> insertedDesignTerminations;
     std::vector<uint64_t> insertedNativeKills;
     std::vector<uint64_t> insertedDesignKills;
+    std::vector<std::pair<uint64_t, uint64_t>> killedParents;
     bool resumedControl = false;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -4415,6 +4428,7 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
       insertedDesignTerminations.reserve(designTaskCount);
       insertedNativeKills.reserve(nativeTaskCount);
       insertedDesignKills.reserve(designTaskCount);
+      killedParents.reserve(checkedSizeSum(nativeTaskCount, designTaskCount));
       context->terminatedNativeProcesses.reserveRanges(checkedSizeSum(
           context->terminatedNativeProcesses.rangeCount(), nativeTaskCount));
       context->terminatedDesignTasks.reserveRanges(checkedSizeSum(
@@ -4628,7 +4642,8 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
         process.callerControlDepths.clear();
         obelisk_rt_unregister_signal_wait_unlocked(
             context, process.signalSubscriptions, process.token, false);
-        context->logicalProcessParentsWithChildren.erase(token);
+        if (context->logicalProcessParentsWithChildren.erase(token))
+          killedParents.emplace_back(token, process.parent);
         process.instance = nullptr;
         ++context->schedulerDeadProcessCount;
         context->schedulerCompactionPending = true;
@@ -4732,7 +4747,8 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
         task.callers.clear();
         obelisk_rt_unregister_signal_wait_unlocked(
             context, task.signalSubscriptions, task.id, true);
-        context->logicalProcessParentsWithChildren.erase(task.id);
+        if (context->logicalProcessParentsWithChildren.erase(task.id))
+          killedParents.emplace_back(task.id, task.parent);
         if (task.id == current) {
           obelisk_rt_release_controls_unlocked(context,
                                                context->activeControls);
@@ -4749,6 +4765,8 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
         task.waitGenerations.clear();
         task.signalTriggered = false;
       }
+      for (auto [killed, parent] : killedParents)
+        obelisk_rt_record_terminated_parent_unlocked(context, killed, parent);
       if (resumedControl || !nativeInstances.empty() || !designTasks.empty())
         if (++context->schedulerEpoch == 0)
           context->schedulerEpoch = 1;

@@ -7900,6 +7900,87 @@ TEST(Scheduler, NativeChildAttachIndexesActualProcess) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, DisabledBlockOwnerKeepsItsEarlierChildrenAsDescendants) {
+  // IEEE 1800-2023 9.6.2: disabling a block terminates only the activities
+  // enabled within it. A child its owner forked before entering the block
+  // survives, even when the owner has no exit continuation and is terminated
+  // instead of resumed. disable fork in an ancestor still reaches the child
+  // through the KILLED owner (9.6.3), and so does kill() of the owner (9.7).
+  constexpr uint64_t tag = OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+  SchedulerFixture ancestorFixture(172);
+  SchedulerFixture ownerFixture(173);
+  SchedulerFixture childFixture(174);
+  struct Scenario {
+    obelisk_rt_context *context = nullptr;
+    uint64_t ancestor = 0;
+    uint64_t owner = 0;
+    uint64_t child = 0;
+  };
+  auto disableOwnerBlock = [&](Scenario &scenario) {
+    obelisk_rt_context *&context = scenario.context;
+    ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+    auto spawn = [&](SchedulerFixture &fixture, uint64_t parent) {
+      context->activeLogicalProcessToken = parent;
+      obelisk_rt_process_instance_v1 *instance =
+          makeSchedulerInstance(fixture);
+      EXPECT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0),
+                OBELISK_RT_OK);
+      return obelisk_rt_v1_scheduler_process_token(context, instance);
+    };
+    scenario.ancestor = spawn(ancestorFixture, 0);
+    scenario.owner = spawn(ownerFixture, scenario.ancestor);
+    scenario.child = spawn(childFixture, scenario.owner);
+    // The owner enters the block after forking and suspends inside it.
+    context->activeLogicalProcessToken = scenario.owner;
+    uint64_t activation = 0;
+    ASSERT_EQ(obelisk_rt_v1_control_enter(context, 901, &activation),
+              OBELISK_RT_OK);
+    ScheduledProcess *owner =
+        findScheduledProcess(context, scenario.owner & ~tag);
+    ASSERT_NE(owner, nullptr);
+    owner->controls.swap(context->activeControls);
+
+    context->activeLogicalProcessToken = tag | 900;
+    ASSERT_EQ(obelisk_rt_v1_control_disable(context, 901, 0, 1),
+              OBELISK_RT_OK);
+    context->activeLogicalProcessToken = 0;
+    obelisk_rt_process_state state{};
+    ASSERT_EQ(obelisk_rt_v1_process_status(context, scenario.owner, &state),
+              OBELISK_RT_OK);
+    EXPECT_EQ(state, OBELISK_RT_PROCESS_KILLED);
+    // The unstarted child remains schedulable.
+    ASSERT_EQ(obelisk_rt_v1_process_status(context, scenario.child, &state),
+              OBELISK_RT_OK);
+    EXPECT_EQ(state, OBELISK_RT_PROCESS_RUNNING);
+  };
+  auto childState = [](const Scenario &scenario) {
+    obelisk_rt_process_state state{};
+    EXPECT_EQ(obelisk_rt_v1_process_status(scenario.context, scenario.child,
+                                           &state),
+              OBELISK_RT_OK);
+    return state;
+  };
+
+  Scenario disableFork;
+  disableOwnerBlock(disableFork);
+  disableFork.context->activeLogicalProcessToken = disableFork.ancestor;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_disable_children(disableFork.context),
+            OBELISK_RT_OK);
+  disableFork.context->activeLogicalProcessToken = 0;
+  EXPECT_EQ(childState(disableFork), OBELISK_RT_PROCESS_KILLED);
+  obelisk_rt_v1_context_destroy(disableFork.context);
+
+  Scenario kill;
+  disableOwnerBlock(kill);
+  obelisk_rt_process_control_disposition disposition{};
+  ASSERT_EQ(obelisk_rt_v1_process_control(kill.context, kill.owner,
+                                          OBELISK_RT_PROCESS_CONTROL_KILL,
+                                          &disposition),
+            OBELISK_RT_OK);
+  EXPECT_EQ(childState(kill), OBELISK_RT_PROCESS_KILLED);
+  obelisk_rt_v1_context_destroy(kill.context);
+}
+
 TEST(Scheduler, KillOfFinishedProcessTerminatesLiveDescendants) {
   // IEEE 1800-2023 9.7: kill() of a FINISHED process still terminates its
   // descendants that are alive.
