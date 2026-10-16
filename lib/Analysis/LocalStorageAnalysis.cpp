@@ -16,17 +16,54 @@ using namespace mlir;
 namespace obelisk::analysis {
 
 namespace {
-/// A local frame invocation cannot outlive a suspension.
-bool hasInvocationScope(sim::SimFuncOp function,
-                        LocalStorageAnalysis::Lifetime lifetime) {
-  return !function.isExternal() &&
-         !(lifetime == LocalStorageAnalysis::Lifetime::Invocation &&
-           function
-               .walk([](Operation *op) {
-                 return sim::isSuspensionOp(op) ? WalkResult::interrupt()
-                                                : WalkResult::advance();
-               })
-               .wasInterrupted());
+/// The suspensions an invocation-scoped family must not be live across, each
+/// anchored at its ancestor in the function body, or nullopt when the
+/// function has no body. Coroutine lifetime constrains none.
+std::optional<SmallVector<Operation *>>
+invocationSuspensions(sim::SimFuncOp function,
+                      LocalStorageAnalysis::Lifetime lifetime) {
+  if (function.isExternal())
+    return std::nullopt;
+  llvm::SetVector<Operation *> anchors;
+  if (lifetime == LocalStorageAnalysis::Lifetime::Invocation)
+    function.walk([&](Operation *op) {
+      if (sim::isSuspensionOp(op))
+        anchors.insert(function.getBody().findAncestorOpInRegion(*op));
+    });
+  return SmallVector<Operation *>(anchors.begin(), anchors.end());
+}
+
+/// Whether a reference of `family` is live across one of `anchors`. A native
+/// invocation's frame ends at a suspension, and the process may continue in
+/// another execution tier from its canonical frame (LRM 6.21), so storage
+/// that must survive one keeps the runtime lifetime. A family defined inside
+/// an anchoring region operation is treated as crossing it.
+bool crossesSuspension(const llvm::SetVector<Value> &family,
+                       ArrayRef<Operation *> anchors,
+                       ValueLiveness &liveness) {
+  for (Operation *anchor : anchors) {
+    Block *block = anchor->getBlock();
+    for (Value value : family) {
+      Operation *definition = value.getDefiningOp();
+      if (definition && anchor->isAncestor(definition))
+        return true;
+      bool liveBefore =
+          definition && definition->getBlock() == block
+              ? definition->isBeforeInBlock(anchor)
+              : value.getParentBlock() == block ||
+                    liveness.isLiveIn(value, block);
+      if (!liveBefore)
+        continue;
+      if (liveness.isLiveOut(value, block) ||
+          llvm::any_of(value.getUsers(), [&](Operation *user) {
+            Operation *ancestor = block->findAncestorOpInBlock(*user);
+            return ancestor &&
+                   (ancestor == anchor || anchor->isBeforeInBlock(ancestor));
+          }))
+        return true;
+    }
+  }
+  return false;
 }
 /// The reference family of `allocation` if native local storage can hold it.
 /// Forwarding facts are requested only when the family crosses a branch.
@@ -109,7 +146,8 @@ std::optional<llvm::SetVector<Value>> localFamily(
 LocalStorageAnalysis::LocalStorageAnalysis(sim::SimFuncOp function,
                                            Lifetime lifetime)
     : function(function) {
-  if (!hasInvocationScope(function, lifetime))
+  auto suspensions = invocationSuspensions(function, lifetime);
+  if (!suspensions)
     return;
   SmallVector<sim::SimRefAllocOp> allocations;
   function.walk([&](sim::SimRefAllocOp allocation) {
@@ -121,8 +159,10 @@ LocalStorageAnalysis::LocalStorageAnalysis(sim::SimFuncOp function,
   auto roots = [&]() -> const SemanticValueRootAnalysis & {
     return forwarding;
   };
+  ValueLiveness liveness;
   for (sim::SimRefAllocOp allocation : allocations)
-    if (auto family = localFamily(allocation, function, roots))
+    if (auto family = localFamily(allocation, function, roots);
+        family && !crossesSuspension(*family, *suspensions, liveness))
       for (Value reference : *family)
         references.try_emplace(reference, allocation);
 }
@@ -130,16 +170,20 @@ LocalStorageAnalysis::LocalStorageAnalysis(sim::SimFuncOp function,
 bool LocalStorageAnalysis::isLocal(sim::SimRefAllocOp allocation,
                                    Lifetime lifetime) {
   auto function = allocation->getParentOfType<sim::SimFuncOp>();
-  if (!function || !hasInvocationScope(function, lifetime))
+  if (!function)
+    return false;
+  auto suspensions = invocationSuspensions(function, lifetime);
+  if (!suspensions)
     return false;
   std::optional<SemanticValueRootAnalysis> forwarding;
-  return localFamily(allocation, function,
-                     [&]() -> const SemanticValueRootAnalysis & {
-                       if (!forwarding)
-                         forwarding.emplace(function);
-                       return *forwarding;
-                     })
-      .has_value();
+  auto family = localFamily(allocation, function,
+                            [&]() -> const SemanticValueRootAnalysis & {
+                              if (!forwarding)
+                                forwarding.emplace(function);
+                              return *forwarding;
+                            });
+  ValueLiveness liveness;
+  return family && !crossesSuspension(*family, *suspensions, liveness);
 }
 namespace {
 using Definitions = llvm::DenseSet<Value>;

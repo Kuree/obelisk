@@ -10,9 +10,10 @@
 namespace obelisk::analysis {
 
 /// Closed reference families. References cannot
-/// escape, carry managed roots, or be observed by event controls. Their storage
-/// can use the native invocation's stack when their lifetime does not cross a
-/// suspension (LRM 6.21). Coroutine mode proves privacy, not stack lifetime.
+/// escape, carry managed roots, or be observed by event controls. Invocation
+/// mode admits a family only when none of its references is live across a
+/// suspension, so its storage can use the native invocation's stack
+/// (LRM 6.21). Coroutine mode proves privacy, not stack lifetime.
 class LocalStorageAnalysis {
 public:
   enum class Lifetime { Invocation, Coroutine };

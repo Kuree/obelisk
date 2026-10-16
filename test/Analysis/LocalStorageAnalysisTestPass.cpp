@@ -32,7 +32,8 @@ public:
       using Analysis = obelisk::analysis::LocalStorageAnalysis;
       Analysis locals(function, coroutine ? Analysis::Lifetime::Coroutine
                                           : Analysis::Lifetime::Invocation);
-      if (allocations)
+      if (allocations) {
+        llvm::errs() << "function " << function.getSymName() << '\n';
         function.walk([&](obelisk::sim::SimRefAllocOp allocation) {
           if (locals.lookup(allocation.getResult())) {
             llvm::errs() << "local allocation\n";
@@ -47,6 +48,7 @@ public:
             llvm::errs() << '\n';
           }
         });
+      }
       SmallVector<obelisk::sim::SimRefLoadOp> loads;
       function.walk([&](obelisk::sim::SimRefLoadOp load) {
         if (load->hasAttr("test.snapshot"))
