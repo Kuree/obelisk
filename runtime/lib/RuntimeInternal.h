@@ -1015,6 +1015,7 @@ struct DesignActivation {
   uint32_t scheduleRank = UINT32_MAX;
   size_t controlDepth = 0;
   uint64_t vpiFrameDepth = 0;
+  uint64_t vpiSourceCallID = 0;
 };
 
 struct ScheduledDesignTask {
@@ -1057,6 +1058,7 @@ struct ScheduledDesignTask {
   bool prioritySignal = false;
   bool explicitlySuspended = false;
   bool computedObserverWaitRegistered = false;
+  uint64_t vpiSourceCallID = 0;
 };
 
 /// The scheduler rank that orders a queued process or design task within its
@@ -3943,6 +3945,15 @@ obelisk_rt_status obelisk_rt_cached_vpi_frame_origin(
 obelisk_rt_status
 obelisk_rt_vpi_frame_unwind_process(obelisk_rt_context *context,
                                     uint64_t logicalProcess, uint64_t depth);
+obelisk_rt_status obelisk_rt_vpi_pending_call(obelisk_rt_context *context,
+                                              uint64_t *outCallID);
+obelisk_rt_status
+obelisk_rt_vpi_bind_native_callsite(obelisk_rt_context *context,
+                                    obelisk_rt_process_instance_v1 *callee,
+                                    uint64_t callID, uint64_t preparedCallID);
+obelisk_rt_status
+obelisk_rt_vpi_activation_callsite(obelisk_rt_context *context,
+                                   uint64_t *outCallID);
 obelisk_rt_status
 obelisk_rt_vpi_frame_depth_process(obelisk_rt_context *context,
                                    uint64_t logicalProcess, uint64_t *outDepth);

@@ -115,6 +115,7 @@ struct ProcessAllocationMetadata {
   size_t size;
   size_t alignment;
   obelisk_rt_context *managedRootContext = nullptr;
+  uint64_t vpiSourceCallID = 0;
 };
 
 constexpr size_t kProcessAllocationMetadataOffset =
@@ -259,6 +260,53 @@ obelisk_rt_builtin_class_waiters(obelisk_rt_gc_lane_v1 *lane,
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+}
+
+obelisk_rt_status
+obelisk_rt_vpi_bind_native_callsite(obelisk_rt_context *context,
+                                    obelisk_rt_process_instance_v1 *callee,
+                                    uint64_t callID, uint64_t preparedCallID) {
+  if (!context || !callee || !callee->descriptor || callID > INT64_MAX)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextMutexLock lock(context);
+  auto *metadata = processMetadata(callee);
+  if (metadata->magic != kProcessAllocationMagic ||
+      callee->lifecycle != OBELISK_RT_PROCESS_READY)
+    return OBELISK_RT_INVALID_FRAME;
+  if (context->vpiState) {
+    if (callID != preparedCallID)
+      return OBELISK_RT_INVALID_FRAME;
+    if (callID) {
+      auto status = obelisk_rt_cached_vpi_call_target(
+          context, callID, callee->descriptor->handle.id);
+      if (status != OBELISK_RT_OK)
+        return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
+    }
+  }
+  metadata->vpiSourceCallID = callID;
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status
+obelisk_rt_vpi_activation_callsite(obelisk_rt_context *context,
+                                   uint64_t *outCallID) {
+  if (outCallID)
+    *outCallID = 0;
+  if (!context || !outCallID)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextMutexLock lock(context);
+  if (context->activeNativeProcess) {
+    auto *metadata = processMetadata(context->activeNativeProcess);
+    if (metadata->magic != kProcessAllocationMagic)
+      return OBELISK_RT_INVALID_FRAME;
+    *outCallID = metadata->vpiSourceCallID;
+    return OBELISK_RT_OK;
+  }
+  if (context->activeDesignTask) {
+    *outCallID = context->activeDesignTask->vpiSourceCallID;
+    return OBELISK_RT_OK;
+  }
+  return OBELISK_RT_INVALID_LIFECYCLE;
 }
 
 obelisk_rt_status
@@ -5908,6 +5956,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               : OBELISK_RT_TIER_BYTECODE;
     obelisk_rt_status status = obelisk_rt_v1_process_instance_execute(
         selected, context, tier, &action);
+    uint64_t preparedCallID = 0;
+    obelisk_rt_status preparedCallStatus = OBELISK_RT_OK;
+    if (status == OBELISK_RT_OK && context->vpiState &&
+        action.kind == OBELISK_RT_FRAGMENT_TASK_CALL)
+      preparedCallStatus =
+          obelisk_rt_vpi_pending_call(context, &preparedCallID);
     bool terminationRequested = false;
     bool killRequested = false;
     auto clearActiveProcess = [&](bool dpiDisabled) {
@@ -5969,6 +6023,15 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           callee->descriptor->execution != selected->descriptor->execution ||
           (callee->ownership_context && callee->ownership_context != context))
         return OBELISK_RT_INVALID_LIFECYCLE;
+      const uint64_t callID = (action.flags & OBELISK_RT_ACTION_VPI_CALL_SITE)
+                                  ? action.auxiliary
+                                  : 0;
+      if (preparedCallStatus != OBELISK_RT_OK)
+        return preparedCallStatus;
+      auto callStatus = obelisk_rt_vpi_bind_native_callsite(
+          context, callee, callID, preparedCallID);
+      if (callStatus != OBELISK_RT_OK)
+        return callStatus;
     }
     if (terminationRequested)
       action = {

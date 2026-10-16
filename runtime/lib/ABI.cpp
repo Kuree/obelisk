@@ -1346,6 +1346,13 @@ ABI_FUNCTION(obelisk_rt_v1_vpi_shutdown, void (*)(obelisk_rt_context *));
 ABI_FUNCTION(obelisk_rt_v1_vpi_frame_enter,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint32_t,
                                    uint64_t, uint64_t *));
+ABI_FUNCTION(obelisk_rt_v1_vpi_call_prepare,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint64_t *));
+ABI_FUNCTION(obelisk_rt_v1_vpi_frame_enter_prepared,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint32_t,
+                                   uint64_t *));
+ABI_FUNCTION(obelisk_rt_v1_vpi_call_finish,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_vpi_frame_bind,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_vpi_frame_checkpoint,

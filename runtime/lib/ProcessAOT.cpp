@@ -1037,6 +1037,11 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
         status == OBELISK_RT_OK)
       status = OBELISK_RT_LAYOUT_MISMATCH;
   }
+  uint64_t preparedCallID = 0;
+  obelisk_rt_status preparedCallStatus = OBELISK_RT_OK;
+  if (status == OBELISK_RT_OK && context->vpiState &&
+      action.kind == OBELISK_RT_FRAGMENT_TASK_CALL)
+    preparedCallStatus = obelisk_rt_vpi_pending_call(context, &preparedCallID);
   bool terminationRequested = false;
   bool killRequested = false;
   bool handledGeneratedSuspend = false;
@@ -1143,6 +1148,14 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
         callee->descriptor->execution != selected->descriptor->execution ||
         (callee->ownership_context && callee->ownership_context != context))
       return OBELISK_RT_INVALID_LIFECYCLE;
+    if (preparedCallStatus != OBELISK_RT_OK)
+      return preparedCallStatus;
+    const uint64_t callID =
+        (action.flags & OBELISK_RT_ACTION_VPI_CALL_SITE) ? action.auxiliary : 0;
+    auto callStatus = obelisk_rt_vpi_bind_native_callsite(
+        context, callee, callID, preparedCallID);
+    if (callStatus != OBELISK_RT_OK)
+      return callStatus;
   }
 
   bool destroy = false;

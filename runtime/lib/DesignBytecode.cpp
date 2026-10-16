@@ -402,6 +402,18 @@ obelisk_rt_status prepareTaskActivation(
   pending->context = context;
   DesignActivation &activation = pending->activation;
   activation.function = calleeIndex;
+  if (context->vpiState) {
+    auto status =
+        obelisk_rt_vpi_pending_call(context, &activation.vpiSourceCallID);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (activation.vpiSourceCallID) {
+      status = obelisk_rt_cached_vpi_call_target(
+          context, activation.vpiSourceCallID, callee.id);
+      if (status != OBELISK_RT_OK)
+        return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
+    }
+  }
   activation.scheduleRank = static_cast<uint32_t>(callee.initialScheduleRank);
   activation.scratchOffset = scratchOffset;
   activation.scratchSize = callee.scratchSize;
@@ -4845,6 +4857,7 @@ obelisk_rt_v1_control_disable(obelisk_rt_context *context, uint64_t targetID,
           task.frame = std::move(caller.frame);
           task.scratchOffset = caller.scratchOffset;
           task.scratchSize = caller.scratchSize;
+          task.vpiSourceCallID = caller.vpiSourceCallID;
           task.scheduleRank = caller.scheduleRank;
           obelisk_rt_unregister_signal_wait_unlocked(
               context, task.signalSubscriptions, task.id, true);
@@ -5920,16 +5933,17 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
             task.computedObserverWaitRegistered)
           obelisk_rt_unregister_signal_wait_unlocked(
               context, task.signalSubscriptions, task.id, true);
-        task.callers.push_back({task.function, task.continuation,
-                                std::move(task.frame), task.scratchOffset,
-                                task.scratchSize, task.scheduleRank,
-                                task.controls.size(), frameDepth});
+        task.callers.push_back(
+            {task.function, task.continuation, std::move(task.frame),
+             task.scratchOffset, task.scratchSize, task.scheduleRank,
+             task.controls.size(), frameDepth, task.vpiSourceCallID});
         DesignActivation activation = std::move(pendingActivation->activation);
         task.function = activation.function;
         task.continuation = activation.continuation;
         task.frame = std::move(activation.frame);
         task.scratchOffset = activation.scratchOffset;
         task.scratchSize = activation.scratchSize;
+        task.vpiSourceCallID = activation.vpiSourceCallID;
         task.suspendKind = OBELISK_RT_SUSPEND_NONE;
         task.waitOffset = 0;
         task.waitSize = 0;
@@ -5961,6 +5975,7 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
           task.frame = std::move(caller.frame);
           task.scratchOffset = caller.scratchOffset;
           task.scratchSize = caller.scratchSize;
+          task.vpiSourceCallID = caller.vpiSourceCallID;
           task.scheduleRank = caller.scheduleRank;
           task.suspendKind = OBELISK_RT_SUSPEND_NONE;
           task.waitOffset = 0;

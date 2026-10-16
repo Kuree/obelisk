@@ -1902,6 +1902,8 @@ typedef struct obelisk_rt_fragment_action_v1 {
 // to identify payload/auxiliary as a checked frame-relative offset and size.
 #define OBELISK_RT_FRAGMENT_FLAGS_NONE UINT32_C(0)
 #define OBELISK_RT_ACTION_FRAME_WAIT_RECORD (UINT32_C(1) << 0)
+// TASK_CALL only: auxiliary carries its exact prepared source CallID.
+#define OBELISK_RT_ACTION_VPI_CALL_SITE (UINT32_C(1) << 6)
 #define OBELISK_RT_ACTION_RESUME_REGION_VALID (UINT32_C(1) << 1)
 #define OBELISK_RT_ACTION_RESUME_REGION_SHIFT 2u
 #define OBELISK_RT_ACTION_RESUME_REGION_MASK                                   \
@@ -3401,6 +3403,17 @@ obelisk_rt_status obelisk_rt_v1_vpi_frame_enter(obelisk_rt_context *context,
                                                 uint32_t origin_kind,
                                                 uint64_t origin_id,
                                                 uint64_t *out_activation);
+// Bracket one exact source call. Preparation does not create an activation;
+// the callee consumes it only after its root control boundary has been entered.
+obelisk_rt_status obelisk_rt_v1_vpi_call_prepare(obelisk_rt_context *context,
+                                                 uint64_t call_id,
+                                                 uint64_t *out_ticket);
+obelisk_rt_status
+obelisk_rt_v1_vpi_frame_enter_prepared(obelisk_rt_context *context,
+                                       uint64_t code_unit_id, uint32_t is_task,
+                                       uint64_t *out_activation);
+obelisk_rt_status obelisk_rt_v1_vpi_call_finish(obelisk_rt_context *context,
+                                                uint64_t ticket);
 // Bind an existing automatic state reference to one immutable local declaration
 // in the current exact activation. This neither allocates nor initializes it.
 obelisk_rt_status obelisk_rt_v1_vpi_frame_bind(obelisk_rt_context *context,

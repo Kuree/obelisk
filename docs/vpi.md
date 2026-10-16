@@ -121,7 +121,10 @@ The runtime frame API tracks distinct activations and exposes their parent,
 origin, thread, current statement, active state, and automatic lifetime.
 Suspension preserves a frame; return, disable, and kill invalidate the exited
 activations without invalidating their immutable source objects. Bytecode,
-native, and AOT scheduler paths restore the saved caller frame depth. Frame-local declaration inventories can be enumerated before storage is bound.
+native, and AOT scheduler paths restore the saved caller frame depth. A checked
+prepare/consume/finish protocol carries the exact source call through nested
+synchronous and suspending calls, including native and AOT task handoffs.
+ Frame-local declaration inventories can be enumerated before storage is bound.
 Bound local values and selections use weak automatic references and expire with
 their activation; structural typespec and lexical-scope handles remain valid.
 Compiler frame instrumentation and source-level local bindings are still being
