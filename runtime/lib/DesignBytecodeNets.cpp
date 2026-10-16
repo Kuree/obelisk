@@ -754,49 +754,36 @@ bool scheduleNetBit(obelisk_rt_context *context, uint64_t root,
   return true;
 }
 
-static bool computeResolvedStrengths(const NetAliasCache &cache,
-                                     obelisk_rt_context *context, uint64_t root,
-                                     bool useNativeState, bool useSchedulePlan,
-                                     uint16_t &resolvedStrengths) {
-  auto members = cache.members.find(root);
-  if (members == cache.members.end())
-    return false;
-  auto driverStrengths = [&](bool value, bool unknown, uint8_t strength0,
-                             uint8_t strength1) {
-    if (!unknown)
-      return strengthBit(value ? strength1 : -static_cast<int>(strength0));
-    if (value)
-      return strengthBit(0);
-    uint16_t result = 0;
-    for (int strength = -static_cast<int>(strength0);
-         strength <= static_cast<int>(strength1); ++strength)
-      result |= strengthBit(strength);
-    return result;
-  };
-  const uint8_t *nativeValue = nullptr;
-  const uint8_t *nativeUnknown = nullptr;
-  uint64_t nativeBits = 0;
-  bool schedulePlanState = false;
-  if (useSchedulePlan && context->nativeSchedulePlan && context->execution &&
-      (context->nativeSchedulePlan->flags &
-       OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE) != 0 &&
-      !context->nativeScheduleDeoptimized &&
-      context->nativeSchedulePlan->state_bit_count ==
-          context->execution->state_bit_count &&
-      context->nativeSchedulePlan->state_value &&
-      context->nativeSchedulePlan->state_unknown) {
-    nativeValue = context->nativeSchedulePlan->state_value;
-    nativeUnknown = context->nativeSchedulePlan->state_unknown;
-    nativeBits = context->nativeSchedulePlan->state_bit_count;
-    schedulePlanState = true;
-  } else if (useNativeState && context->execution &&
-             context->nativeStateBitCount ==
-                 context->execution->state_bit_count) {
-    nativeValue = context->nativeStateValue;
-    nativeUnknown = context->nativeStateUnknown;
-    nativeBits = context->nativeStateBitCount;
+// Queries and resolution must observe the same current state planes. A direct
+// native schedule can own the published planes; dirty roots still use the
+// canonical context state until their pending update is synchronized.
+class DriverStateReader {
+public:
+  DriverStateReader(obelisk_rt_context *context, bool useNativeState,
+                    bool useSchedulePlan)
+      : context(context) {
+    if (useSchedulePlan && context->nativeSchedulePlan && context->execution &&
+        (context->nativeSchedulePlan->flags &
+         OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE) != 0 &&
+        !context->nativeScheduleDeoptimized &&
+        context->nativeSchedulePlan->state_bit_count ==
+            context->execution->state_bit_count &&
+        context->nativeSchedulePlan->state_value &&
+        context->nativeSchedulePlan->state_unknown) {
+      nativeValue = context->nativeSchedulePlan->state_value;
+      nativeUnknown = context->nativeSchedulePlan->state_unknown;
+      nativeBits = context->nativeSchedulePlan->state_bit_count;
+      schedulePlanState = true;
+    } else if (useNativeState && context->execution &&
+               context->nativeStateBitCount ==
+                   context->execution->state_bit_count) {
+      nativeValue = context->nativeStateValue;
+      nativeUnknown = context->nativeStateUnknown;
+      nativeBits = context->nativeStateBitCount;
+    }
   }
-  auto stateBit = [&](bool unknownPlane, uint64_t offset) {
+
+  bool operator()(bool unknownPlane, uint64_t offset) const {
     const uint8_t *native = unknownPlane ? nativeUnknown : nativeValue;
     bool dirty = false;
     if (schedulePlanState && context->nativeScheduleDirtyRootsPresent) {
@@ -817,7 +804,37 @@ static bool computeResolvedStrengths(const NetAliasCache &cache,
              0;
     return bit(unknownPlane ? context->stateUnknown : context->stateValue,
                offset);
-  };
+  }
+
+private:
+  obelisk_rt_context *context;
+  const uint8_t *nativeValue = nullptr;
+  const uint8_t *nativeUnknown = nullptr;
+  uint64_t nativeBits = 0;
+  bool schedulePlanState = false;
+};
+
+static uint16_t driverStrengths(bool value, bool unknown, uint8_t strength0,
+                                uint8_t strength1) {
+  if (!unknown)
+    return strengthBit(value ? strength1 : -static_cast<int>(strength0));
+  if (value)
+    return strengthBit(0);
+  uint16_t result = 0;
+  for (int strength = -static_cast<int>(strength0);
+       strength <= static_cast<int>(strength1); ++strength)
+    result |= strengthBit(strength);
+  return result;
+}
+
+static bool computeResolvedStrengths(const NetAliasCache &cache,
+                                     obelisk_rt_context *context, uint64_t root,
+                                     bool useNativeState, bool useSchedulePlan,
+                                     uint16_t &resolvedStrengths) {
+  auto members = cache.members.find(root);
+  if (members == cache.members.end())
+    return false;
+  DriverStateReader stateBit(context, useNativeState, useSchedulePlan);
   uint8_t resolution = cache.resolutionByRoot.at(root);
   auto component = cache.passComponentByRoot.find(root);
   resolvedStrengths = strengthBit(0);
@@ -1377,6 +1394,73 @@ obelisk_rt_status obelisk_rt_design_net_strength(obelisk_rt_context *context,
                                   /*useSchedulePlan=*/useNativeState,
                                   *outStrengths))
       return OBELISK_RT_INVALID_HANDLE;
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
+}
+
+obelisk_rt_status obelisk_rt_design_driver_strength(
+    obelisk_rt_context *context, uint64_t lowOffset, uint64_t highOffset,
+    uint16_t *outStrengths, bool useNativeState) noexcept {
+  if (!context || !context->execution || !outStrengths)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outStrengths = 0;
+  if ((context->execution->flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) == 0)
+    return OBELISK_RT_EOF;
+  OBELISK_RT_TRY {
+    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+    Image image;
+    if (!loadValidatedImage(entry, context, image, /*inventoryOnly=*/true))
+      return OBELISK_RT_INVALID_BYTECODE;
+    ContextTransaction transaction(context);
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+
+    // Validated state descriptors contain net records followed by drivers in
+    // nonoverlapping state order. Find the driver containing the selected bit.
+    uint64_t first = 0, last = image.stateDescriptorCount;
+    while (first < last) {
+      uint64_t middle = first + (last - first) / 2;
+      CaptureRecord candidate = captureAt(image, middle);
+      if (candidate.function < kDriverStateDescriptor ||
+          candidate.valueOffset <= lowOffset)
+        first = middle + 1;
+      else
+        last = middle;
+    }
+    if (first == 0)
+      return OBELISK_RT_INVALID_HANDLE;
+    uint64_t lowIndex = first - 1;
+    CaptureRecord low = captureAt(image, lowIndex);
+    constexpr uint32_t highBank = uint32_t{1} << 11;
+    if (low.function != kDriverStateDescriptor ||
+        (low.argument & highBank) != 0 || lowOffset < low.valueOffset ||
+        lowOffset - low.valueOffset >= low.planeSize)
+      return OBELISK_RT_INVALID_HANDLE;
+
+    CaptureRecord high;
+    bool paired =
+        lowIndex + 1 < image.stateDescriptorCount &&
+        ((high = captureAt(image, lowIndex + 1)).argument & highBank) != 0;
+    if (paired != (highOffset != UINT64_MAX))
+      return OBELISK_RT_INVALID_HANDLE;
+    if (paired &&
+        (high.function != kDriverStateDescriptor ||
+         highOffset != high.valueOffset + (lowOffset - low.valueOffset)))
+      return OBELISK_RT_INVALID_HANDLE;
+
+    DriverStateReader stateBit(context, useNativeState,
+                               /*useSchedulePlan=*/useNativeState);
+    auto readStrengths = [&](const CaptureRecord &driver, uint64_t offset) {
+      return driverStrengths(stateBit(false, offset), stateBit(true, offset),
+                             decodeDriverStrength(driver.argument, 3),
+                             decodeDriverStrength(driver.argument, 7));
+    };
+    uint16_t strengths = readStrengths(low, lowOffset);
+    if (paired)
+      strengths =
+          combineStrengthRanges(strengths, readStrengths(high, highOffset));
+    *outStrengths = strengths;
     return OBELISK_RT_OK;
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }

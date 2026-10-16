@@ -1,6 +1,7 @@
 //===- DesignBytecodeTest.cpp - Design bytecode/reflection tests ----------===//
 
 #include "../lib/DesignBytecodeExecution.h"
+#include "../lib/DesignBytecodeNets.h"
 #include "../lib/ProcessShared.h"
 #include "../lib/RuntimeInternal.h"
 #include "../lib/VPIHandleToken.h"
@@ -5025,6 +5026,134 @@ TEST(DesignBytecode, ResolvedNetsReachGeneratedSchedulePlanes) {
   EXPECT_EQ(context->stateUnknown[0] & 1, 1u);
   EXPECT_EQ(planValue[0] & 1, 0u);
   EXPECT_EQ(planUnknown[0] & 1, 1u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignBytecode, ReadsExactDriverStrengthWithoutResolvedNetContamination) {
+  Fixture fixture;
+  fixture.bytecode = makeStrengthDriverBytecode();
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.state_bit_count = 260;
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  auto setState = [&](uint64_t offset, bool value, bool unknown) {
+    uint64_t mask = UINT64_C(1) << (offset % 64);
+    auto set = [&](auto &plane, bool bit) {
+      plane[offset / 64] =
+          bit ? plane[offset / 64] | mask : plane[offset / 64] & ~mask;
+    };
+    set(context->stateValue, value);
+    set(context->stateUnknown, unknown);
+  };
+  auto read = [&](uint64_t low, uint64_t high, uint16_t expected) {
+    uint16_t strengths = 0;
+    EXPECT_EQ(obelisk_rt_design_driver_strength(context, low, high, &strengths,
+                                                false),
+              OBELISK_RT_OK);
+    EXPECT_EQ(strengths, expected);
+  };
+  // The paired gate drives strong 0; a separate strong 1 driver makes the net
+  // unknown. Each object's own contribution remains independently readable.
+  setState(65, false, false);
+  setState(130, true, true);
+  setState(195, true, false);
+  ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196), OBELISK_RT_OK);
+  EXPECT_EQ(context->stateUnknown[0] & 1, 1u);
+  read(65, 130, uint16_t{1} << 1);
+  read(195, UINT64_MAX, uint16_t{1} << 13);
+
+  // The range represented by an unknown low bank must remain strong L, even
+  // when another driver collapses the resolved net to a known 0.
+  setState(65, false, true);
+  setState(195, false, false);
+  ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196), OBELISK_RT_OK);
+  EXPECT_EQ(context->stateUnknown[0] & 1, 0u);
+  read(65, 130, uint16_t{0x00fe});
+  read(195, UINT64_MAX, uint16_t{1} << 1);
+
+  // highz1 on the low bank means a logic 1 contributes Z, not 1. The next bit
+  // is a distinct scalar selection inside the same wide driver descriptors.
+  setState(65, true, false);
+  read(65, 130, uint16_t{1} << 7);
+  setState(66, true, true);
+  setState(131, true, false);
+  read(66, 131, uint16_t{1} << 13);
+  auto oldValue = context->stateValue;
+  auto oldUnknown = context->stateUnknown;
+  auto oldScheduler = context->schedulerStatus;
+  for (auto [low, high] : {std::pair<uint64_t, uint64_t>{0, UINT64_MAX},
+                           {65, UINT64_MAX},
+                           {130, UINT64_MAX},
+                           {65, 131},
+                           {65, 195},
+                           {195, 130},
+                           {260, UINT64_MAX}}) {
+    uint16_t strengths = UINT16_MAX;
+    EXPECT_EQ(obelisk_rt_design_driver_strength(context, low, high, &strengths,
+                                                false),
+              OBELISK_RT_INVALID_HANDLE);
+    EXPECT_EQ(strengths, 0u);
+  }
+  EXPECT_EQ(context->stateValue, oldValue);
+  EXPECT_EQ(context->stateUnknown, oldUnknown);
+  EXPECT_EQ(context->schedulerStatus, oldScheduler);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(DesignBytecode, DriverStrengthReadsCurrentNativePlanesAndDirtyRoots) {
+  Fixture fixture;
+  fixture.bytecode = makeStrengthDriverBytecode();
+  fixture.execution.bytecode = fixture.bytecode.data();
+  fixture.execution.bytecode_size = fixture.bytecode.size();
+  fixture.execution.state_bit_count = 260;
+  fixture.execution.checksum = imageChecksum(fixture.bytecode);
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  std::vector<uint8_t> value((260 + 7) / 8, 0);
+  std::vector<uint8_t> unknown(value.size(), 0);
+  value[195 / 8] |= uint8_t{1} << (195 % 8);
+  obelisk_rt_native_schedule_plan plan{};
+  plan.size = sizeof(plan);
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE;
+  plan.state_value = value.data();
+  plan.state_unknown = unknown.data();
+  plan.state_bit_count = 260;
+  context->nativeSchedulePlan = &plan;
+  uint16_t strengths = 0;
+  ASSERT_EQ(obelisk_rt_design_driver_strength(context, 195, UINT64_MAX,
+                                              &strengths, true),
+            OBELISK_RT_OK);
+  EXPECT_EQ(strengths, uint16_t{1} << 13);
+  // Canonical state still holds initial Z and is selected when direct-state
+  // observation is disabled or when this exact native root is dirty.
+  ASSERT_EQ(obelisk_rt_design_driver_strength(context, 195, UINT64_MAX,
+                                              &strengths, false),
+            OBELISK_RT_OK);
+  EXPECT_EQ(strengths, uint16_t{1} << 7);
+  NativeStaticState state{};
+  state.bitOffset = 195;
+  state.bitWidth = 65;
+  context->nativeStaticStates.emplace(17, state);
+  context->nativeScheduleDirtyRootsPresent = true;
+  context->nativeScheduleTransientDirtyRoots.insert(17);
+  ASSERT_EQ(obelisk_rt_design_driver_strength(context, 195, UINT64_MAX,
+                                              &strengths, true),
+            OBELISK_RT_OK);
+  EXPECT_EQ(strengths, uint16_t{1} << 7);
+  context->nativeScheduleTransientDirtyRoots.clear();
+  context->nativeScheduleDirtyRootsPresent = false;
+  ASSERT_EQ(obelisk_rt_design_driver_strength(context, 195, UINT64_MAX,
+                                              &strengths, true),
+            OBELISK_RT_OK);
+  EXPECT_EQ(strengths, uint16_t{1} << 13);
+  context->nativeStaticStates.clear();
+  context->nativeSchedulePlan = nullptr;
   obelisk_rt_v1_context_destroy(context);
 }
 
