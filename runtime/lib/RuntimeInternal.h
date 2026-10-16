@@ -714,6 +714,19 @@ struct SignalValueSnapshot {
   bool unknown = false;
 };
 
+// Read-only VPI access to an existing automatic allocation. Validation checks
+// the entire requested extent without copying it. Neither function retains the
+// allocation, changes scheduler status, nor supplies executable out-of-range
+// fallback bits. The caller keeps an active GC lane while consuming managed
+// words copied from a successful read.
+obelisk_rt_status obelisk_rt_vpi_automatic_validate(obelisk_rt_context *context,
+                                                    uint64_t reference,
+                                                    uint64_t bitWidth) noexcept;
+obelisk_rt_status
+obelisk_rt_vpi_automatic_read(obelisk_rt_context *context, uint64_t reference,
+                              uint64_t bitOffset, uint64_t bitWidth,
+                              uint8_t *outValue, uint8_t *outUnknown) noexcept;
+
 struct NativeAutomaticState {
   struct CandidateRoot {
     uint64_t byteOffset;

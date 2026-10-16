@@ -1,6 +1,7 @@
 //===- ProcessState.cpp - Native automatic state ownership --------------===//
 
 #include "ProcessContext.h"
+#include "ProcessPacking.h"
 #include "RuntimeInternal.h"
 #include "obelisk/Runtime/StableHandle.h"
 
@@ -21,6 +22,44 @@ bool decodeAutomatic(uint64_t handle, uint32_t &id, int64_t &offset) {
   id = decoded.id;
   offset = decoded.offset;
   return true;
+}
+
+// The caller holds the context lock. Automatic state may outlive its owner
+// because executable references retain it, so frame-handle lifetime is checked
+// separately by VPI before reaching this storage helper.
+obelisk_rt_status
+resolveVPIAutomaticSlice(obelisk_rt_context *context, uint64_t reference,
+                         uint64_t bitOffset, uint64_t bitWidth,
+                         const NativeAutomaticState *&outState,
+                         uint64_t &outOffset) {
+  uint32_t id = 0;
+  int64_t base = 0;
+  if (!decodeAutomatic(reference, id, base))
+    return OBELISK_RT_INVALID_HANDLE;
+  auto found = context->nativeAutomaticStates.find(id);
+  if (found == context->nativeAutomaticStates.end() ||
+      found->second.referenceCount == 0)
+    return OBELISK_RT_INVALID_HANDLE;
+  const auto &state = found->second;
+  if (base < 0 || bitOffset > UINT64_MAX - static_cast<uint64_t>(base))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const uint64_t offset = static_cast<uint64_t>(base) + bitOffset;
+  if (offset > state.bitWidth || bitWidth > state.bitWidth - offset)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (state.managedRootRegistered) {
+    if (state.bitWidth != 64 || offset != 0 || bitWidth != 64)
+      return OBELISK_RT_INVALID_ARGUMENT;
+  } else {
+    if (state.bitWidth > UINT64_MAX - 7)
+      return OBELISK_RT_INVALID_FRAME;
+    const uint64_t bytes = (state.bitWidth + 7) / 8;
+    if (state.value.size() < bytes ||
+        (!state.unknown.empty() && state.unknown.size() < bytes))
+      return OBELISK_RT_INVALID_FRAME;
+  }
+  outState = &state;
+  outOffset = offset;
+  return OBELISK_RT_OK;
 }
 
 bool validNonAutomaticHandle(uint64_t handle) {
@@ -73,6 +112,59 @@ obelisk_rt_status publishNativeAutomaticState(obelisk_rt_context *context,
 }
 
 } // namespace
+
+obelisk_rt_status
+obelisk_rt_vpi_automatic_validate(obelisk_rt_context *context,
+                                  uint64_t reference,
+                                  uint64_t bitWidth) noexcept {
+  if (!context || !bitWidth || bitWidth > UINT64_MAX - 7)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  OBELISK_RT_TRY {
+    ContextMutexLock lock(context);
+    const NativeAutomaticState *state = nullptr;
+    uint64_t offset = 0;
+    return resolveVPIAutomaticSlice(context, reference, 0, bitWidth, state,
+                                    offset);
+  }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+}
+
+obelisk_rt_status
+obelisk_rt_vpi_automatic_read(obelisk_rt_context *context, uint64_t reference,
+                              uint64_t bitOffset, uint64_t bitWidth,
+                              uint8_t *outValue, uint8_t *outUnknown) noexcept {
+  if (!context || !outValue || !outUnknown || !bitWidth ||
+      bitWidth > UINT64_MAX - 7 || (bitWidth + 7) / 8 > SIZE_MAX)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const size_t bytes = static_cast<size_t>((bitWidth + 7) / 8);
+  std::memset(outValue, 0, bytes);
+  std::memset(outUnknown, 0, bytes);
+  OBELISK_RT_TRY {
+    ContextMutexLock lock(context);
+    const NativeAutomaticState *state = nullptr;
+    uint64_t offset = 0;
+    auto status = resolveVPIAutomaticSlice(context, reference, bitOffset,
+                                           bitWidth, state, offset);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (state->managedRootRegistered) {
+      const auto word =
+          obelisk_rt_managed_word_from_object(state->managedValue);
+      std::memcpy(outValue, &word, sizeof(word));
+      return OBELISK_RT_OK;
+    }
+    for (uint64_t copied = 0; copied < bitWidth; copied += 8) {
+      const uint64_t width = std::min<uint64_t>(8, bitWidth - copied);
+      outValue[copied / 8] = static_cast<uint8_t>(
+          loadPackedBytes(state->value.data(), offset + copied, width));
+      if (!state->unknown.empty())
+        outUnknown[copied / 8] = static_cast<uint8_t>(
+            loadPackedBytes(state->unknown.data(), offset + copied, width));
+    }
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+}
 
 uint64_t
 obelisk_rt_canonical_state_handle_unlocked(const obelisk_rt_context *context,
