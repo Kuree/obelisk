@@ -63,18 +63,31 @@ TEST(GeneratedDesignDatabase, RTLStatementProperties) {
   EXPECT_EQ(vpi_get(vpiType, block), vpiBegin);
   auto statements = vpi_iterate(vpiStmt, block);
   ASSERT_NE(statements, nullptr);
-  const int operators[] = {vpiAssignmentOp,  vpiAssignmentOp, vpiAddOp,
-                           vpiSubOp,         vpiMultOp,       vpiDivOp,
-                           vpiModOp,         vpiBitAndOp,     vpiBitOrOp,
-                           vpiBitXorOp,      vpiLShiftOp,     vpiRShiftOp,
-                           vpiArithLShiftOp, vpiArithRShiftOp};
+  const std::pair<int, const char *> operators[] = {
+      {vpiAssignmentOp, "vpiAssignmentOp"},
+      {vpiAssignmentOp, "vpiAssignmentOp"},
+      {vpiAddOp, "vpiAddOp"},
+      {vpiSubOp, "vpiSubOp"},
+      {vpiMultOp, "vpiMultOp"},
+      {vpiDivOp, "vpiDivOp"},
+      {vpiModOp, "vpiModOp"},
+      {vpiBitAndOp, "vpiBitAndOp"},
+      {vpiBitOrOp, "vpiBitOrOp"},
+      {vpiBitXorOp, "vpiBitXorOp"},
+      {vpiLShiftOp, "vpiLShiftOp"},
+      {vpiRShiftOp, "vpiRShiftOp"},
+      {vpiArithLShiftOp, "vpiArithLShiftOp"},
+      {vpiArithRShiftOp, "vpiArithRShiftOp"},
+  };
   unsigned index = 0;
-  for (int op : operators) {
+  for (const auto &[op, spelling] : operators) {
     SCOPED_TRACE(index);
     auto statement = vpi_scan(statements);
     ASSERT_NE(statement, nullptr);
     EXPECT_EQ(vpi_get(vpiType, statement), vpiAssignment);
     EXPECT_EQ(vpi_get(vpiOpType, statement), op);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    EXPECT_STREQ(vpi_get_str(vpiOpType, statement), spelling);
     EXPECT_EQ(vpi_chk_error(nullptr), 0);
     EXPECT_EQ(vpi_get(vpiBlocking, statement), index++ != 1);
     EXPECT_EQ(vpi_chk_error(nullptr), 0);

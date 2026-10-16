@@ -1507,6 +1507,121 @@ TEST(VPIObjectModel, AlwaysTypeNumericDomainMatchesLrmConstants) {
             nullptr);
 }
 
+TEST(VPIObjectModel, OperatorSymbolicDomainMatchesLrmConstants) {
+  struct Entry {
+    uint32_t value;
+    const char *name;
+  };
+  const Entry entries[] = {
+      {vpiMinusOp, "vpiMinusOp"},
+      {vpiPlusOp, "vpiPlusOp"},
+      {vpiNotOp, "vpiNotOp"},
+      {vpiBitNegOp, "vpiBitNegOp"},
+      {vpiUnaryAndOp, "vpiUnaryAndOp"},
+      {vpiUnaryNandOp, "vpiUnaryNandOp"},
+      {vpiUnaryOrOp, "vpiUnaryOrOp"},
+      {vpiUnaryNorOp, "vpiUnaryNorOp"},
+      {vpiUnaryXorOp, "vpiUnaryXorOp"},
+      {vpiUnaryXNorOp, "vpiUnaryXNorOp"},
+      {vpiSubOp, "vpiSubOp"},
+      {vpiDivOp, "vpiDivOp"},
+      {vpiModOp, "vpiModOp"},
+      {vpiEqOp, "vpiEqOp"},
+      {vpiNeqOp, "vpiNeqOp"},
+      {vpiCaseEqOp, "vpiCaseEqOp"},
+      {vpiCaseNeqOp, "vpiCaseNeqOp"},
+      {vpiGtOp, "vpiGtOp"},
+      {vpiGeOp, "vpiGeOp"},
+      {vpiLtOp, "vpiLtOp"},
+      {vpiLeOp, "vpiLeOp"},
+      {vpiLShiftOp, "vpiLShiftOp"},
+      {vpiRShiftOp, "vpiRShiftOp"},
+      {vpiAddOp, "vpiAddOp"},
+      {vpiMultOp, "vpiMultOp"},
+      {vpiLogAndOp, "vpiLogAndOp"},
+      {vpiLogOrOp, "vpiLogOrOp"},
+      {vpiBitAndOp, "vpiBitAndOp"},
+      {vpiBitOrOp, "vpiBitOrOp"},
+      {vpiBitXorOp, "vpiBitXorOp"},
+      {vpiBitXNorOp, "vpiBitXNorOp"},
+      {vpiConditionOp, "vpiConditionOp"},
+      {vpiConcatOp, "vpiConcatOp"},
+      {vpiMultiConcatOp, "vpiMultiConcatOp"},
+      {vpiEventOrOp, "vpiEventOrOp"},
+      {vpiNullOp, "vpiNullOp"},
+      {vpiListOp, "vpiListOp"},
+      {vpiMinTypMaxOp, "vpiMinTypMaxOp"},
+      {vpiPosedgeOp, "vpiPosedgeOp"},
+      {vpiNegedgeOp, "vpiNegedgeOp"},
+      {vpiArithLShiftOp, "vpiArithLShiftOp"},
+      {vpiArithRShiftOp, "vpiArithRShiftOp"},
+      {vpiPowerOp, "vpiPowerOp"},
+      {vpiImplyOp, "vpiImplyOp"},
+      {vpiNonOverlapImplyOp, "vpiNonOverlapImplyOp"},
+      {vpiOverlapImplyOp, "vpiOverlapImplyOp"},
+      {vpiUnaryCycleDelayOp, "vpiUnaryCycleDelayOp"},
+      {vpiCycleDelayOp, "vpiCycleDelayOp"},
+      {vpiIntersectOp, "vpiIntersectOp"},
+      {vpiFirstMatchOp, "vpiFirstMatchOp"},
+      {vpiThroughoutOp, "vpiThroughoutOp"},
+      {vpiWithinOp, "vpiWithinOp"},
+      {vpiRepeatOp, "vpiRepeatOp"},
+      {vpiConsecutiveRepeatOp, "vpiConsecutiveRepeatOp"},
+      {vpiGotoRepeatOp, "vpiGotoRepeatOp"},
+      {vpiPostIncOp, "vpiPostIncOp"},
+      {vpiPreIncOp, "vpiPreIncOp"},
+      {vpiPostDecOp, "vpiPostDecOp"},
+      {vpiPreDecOp, "vpiPreDecOp"},
+      {vpiMatchOp, "vpiMatchOp"},
+      {vpiCastOp, "vpiCastOp"},
+      {vpiIffOp, "vpiIffOp"},
+      {vpiWildEqOp, "vpiWildEqOp"},
+      {vpiWildNeqOp, "vpiWildNeqOp"},
+      {vpiStreamLROp, "vpiStreamLROp"},
+      {vpiStreamRLOp, "vpiStreamRLOp"},
+      {vpiMatchedOp, "vpiMatchedOp"},
+      {vpiTriggeredOp, "vpiTriggeredOp"},
+      {vpiAssignmentPatternOp, "vpiAssignmentPatternOp"},
+      {vpiMultiAssignmentPatternOp, "vpiMultiAssignmentPatternOp"},
+      {vpiIfOp, "vpiIfOp"},
+      {vpiIfElseOp, "vpiIfElseOp"},
+      {vpiCompAndOp, "vpiCompAndOp"},
+      {vpiCompOrOp, "vpiCompOrOp"},
+      {vpiTypeOp, "vpiTypeOp"},
+      {vpiAssignmentOp, "vpiAssignmentOp"},
+      {vpiAcceptOnOp, "vpiAcceptOnOp"},
+      {vpiRejectOnOp, "vpiRejectOnOp"},
+      {vpiSyncAcceptOnOp, "vpiSyncAcceptOnOp"},
+      {vpiSyncRejectOnOp, "vpiSyncRejectOnOp"},
+      {vpiOverlapFollowedByOp, "vpiOverlapFollowedByOp"},
+      {vpiNonOverlapFollowedByOp, "vpiNonOverlapFollowedByOp"},
+      {vpiNexttimeOp, "vpiNexttimeOp"},
+      {vpiAlwaysOp, "vpiAlwaysOp"},
+      {vpiEventuallyOp, "vpiEventuallyOp"},
+      {vpiUntilOp, "vpiUntilOp"},
+      {vpiUntilWithOp, "vpiUntilWithOp"},
+      {vpiImpliesOp, "vpiImpliesOp"},
+      {vpiInsideOp, "vpiInsideOp"},
+  };
+  for (const auto &expected : entries) {
+    const auto *actual = findVPIIntegerPropertyValue(vpiOpType, expected.value);
+    ASSERT_NE(actual, nullptr) << expected.value;
+    EXPECT_STREQ(actual->symbolicName, expected.name);
+    VPIObjectModelImageIntegerPropertyValue image{};
+    ASSERT_TRUE(findVPIObjectModelImageIntegerPropertyValue(
+        vpiObjectModelImage, vpiOpType, expected.value, image));
+    ASSERT_NE(image.symbolicName, nullptr);
+    EXPECT_STREQ(reinterpret_cast<const char *>(image.symbolicName),
+                 expected.name);
+  }
+  for (uint32_t invalid : {0u, 44u, 45u, 46u, 47u, 48u, 49u, 96u, UINT32_MAX}) {
+    EXPECT_EQ(findVPIIntegerPropertyValue(vpiOpType, invalid), nullptr);
+    VPIObjectModelImageIntegerPropertyValue image{};
+    EXPECT_FALSE(findVPIObjectModelImageIntegerPropertyValue(
+        vpiObjectModelImage, vpiOpType, invalid, image));
+  }
+}
+
 TEST(VPIObjectModel, NetTypeSymbolicDomainMatchesLrmConstants) {
   struct Entry {
     uint32_t value;
@@ -2351,7 +2466,8 @@ TEST(VPIObjectModel, PortPropertiesHaveExactLrmApplicability) {
 TEST(VPIObjectModel, CompactImageExactlyMatchesTheLrmTraversalGraph) {
   ASSERT_TRUE(validateVPIObjectModelImage(vpiObjectModelImage,
                                           sizeof(vpiObjectModelImage)));
-  EXPECT_LT(sizeof(vpiObjectModelImage), 48u * 1024u);
+  // Include the complete Annex M operator domain and its symbolic spellings.
+  EXPECT_LT(sizeof(vpiObjectModelImage), 52u * 1024u);
   EXPECT_EQ(readVPIObjectModelImage32(vpiObjectModelImage, 60),
             kExpectedTraversalCount);
   EXPECT_EQ(readVPIObjectModelImage32(vpiObjectModelImage, 68),

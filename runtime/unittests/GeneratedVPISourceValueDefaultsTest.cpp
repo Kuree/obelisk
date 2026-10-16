@@ -144,6 +144,8 @@ TEST(GeneratedDesignDatabase, SourceValueDefaults) {
   EXPECT_EQ(decompile(sourceLiteral), binary(4));
   auto sourceAdd = keep(vpi_handle(vpiExpr, source[2]));
   EXPECT_EQ(vpi_get(vpiOpType, sourceAdd), vpiAddOp);
+  EXPECT_STREQ(vpi_get_str(vpiOpType, sourceAdd), "vpiAddOp");
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
   auto sourceOperands = operands(sourceAdd);
   ASSERT_EQ(sourceOperands.size(), 2u);
   EXPECT_EQ(vpi_get(vpiType, sourceOperands[0]), vpiParameter);
