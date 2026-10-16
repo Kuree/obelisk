@@ -11,6 +11,7 @@
 #include <initializer_list>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -2853,6 +2854,107 @@ TEST_F(ManagedValueTest, AssociativeElementKeyPlansAreValidatedAndInterned) {
   EXPECT_EQ(create(keyPlanBytes(
                 {keyPlanRecord(OBELISK_RT_ASSOC_KEY_PLAN_BITS, 0, 4, 1)})),
             OBELISK_RT_INVALID_DESIGN);
+}
+
+TEST_F(ManagedValueTest, BuiltinClassQueriesDistinguishMailboxFromQueue) {
+  obelisk_rt_object_v1 *mailbox = nullptr, *queue = nullptr,
+                       *semaphore = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_mailbox_create_typed(
+                lane, wordElement.type_id, wordElement.kind, wordElement.flags,
+                wordElement.value_size, wordElement.alignment,
+                wordElement.bit_width, nullptr, 0, 0, &mailbox),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 mailboxRoot{}, queueRoot{}, semaphoreRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &mailboxRoot, &mailbox),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_queue_create(lane, &wordElement, UINT64_MAX, &queue),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &queueRoot, &queue),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_semaphore_create(lane, 2, &semaphore), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &semaphoreRoot, &semaphore),
+            OBELISK_RT_OK);
+  for (auto [object, expected] :
+       {std::pair{mailbox, BuiltinClassKind::Mailbox},
+        std::pair{semaphore, BuiltinClassKind::Semaphore},
+        std::pair{queue, BuiltinClassKind::None}}) {
+    ManagedObjectLease lease;
+    ASSERT_EQ(obelisk_rt_managed_object_acquire(
+                  lane, object, OBELISK_RT_MANAGED_INVALID, &lease),
+              OBELISK_RT_OK);
+    EXPECT_EQ(obelisk_rt_builtin_class_kind(lease), expected);
+  }
+  ManagedObjectLease emptyLease;
+  EXPECT_EQ(obelisk_rt_builtin_class_kind(emptyLease), BuiltinClassKind::None);
+  const obelisk_rt_element_type_v1 *element = &wordElement;
+  std::vector<uint8_t> values{42};
+  EXPECT_EQ(obelisk_rt_mailbox_snapshot(queue, &element, values),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(element, nullptr);
+  EXPECT_TRUE(values.empty());
+  EXPECT_EQ(obelisk_rt_mailbox_snapshot(mailbox, nullptr, values),
+            OBELISK_RT_INVALID_ARGUMENT);
+  ASSERT_EQ(obelisk_rt_mailbox_snapshot(mailbox, &element, values),
+            OBELISK_RT_OK);
+  ASSERT_NE(element, nullptr);
+  EXPECT_EQ(element->kind, OBELISK_RT_ELEMENT_BITS);
+  EXPECT_TRUE(values.empty());
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &semaphoreRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &queueRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &mailboxRoot), OBELISK_RT_OK);
+}
+
+TEST_F(ManagedValueTest, MailboxSnapshotPreservesFourStateFIFOWithoutMutation) {
+  obelisk_rt_object_v1 *mailbox = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_mailbox_create_typed(
+                lane, logicElement.type_id, logicElement.kind,
+                logicElement.flags, logicElement.value_size,
+                logicElement.alignment, logicElement.bit_width, nullptr, 0, 0,
+                &mailbox),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 root{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &mailbox), OBELISK_RT_OK);
+  auto put = [&](uint8_t value) {
+    uint8_t unknown = value & 1;
+    uint32_t success = 0;
+    EXPECT_EQ(obelisk_rt_v1_mailbox_try_put(lane, mailbox, &value, &unknown,
+                                            &success),
+              OBELISK_RT_OK);
+    EXPECT_EQ(success, 1u);
+  };
+  auto get = [&](uint8_t expected) {
+    uint8_t value = 0, unknown = 0;
+    uint32_t present = 0;
+    EXPECT_EQ(
+        obelisk_rt_v1_mailbox_try_get(mailbox, &value, &unknown, &present),
+        OBELISK_RT_OK);
+    EXPECT_EQ(present, 1u);
+    EXPECT_EQ(value, expected);
+    EXPECT_EQ(unknown, expected & 1);
+  };
+  for (uint8_t value : {1, 2, 3, 4})
+    put(value);
+  get(1);
+  get(2);
+  put(5);
+  put(6);
+  const obelisk_rt_element_type_v1 *element = nullptr;
+  std::vector<uint8_t> values;
+  ASSERT_EQ(obelisk_rt_mailbox_snapshot(mailbox, &element, values),
+            OBELISK_RT_OK);
+  ASSERT_NE(element, nullptr);
+  EXPECT_EQ(element->kind, OBELISK_RT_ELEMENT_LOGIC);
+  EXPECT_EQ(element->bit_width, 4u);
+  EXPECT_EQ(element->value_size, 1u);
+  const std::vector<uint8_t> expected{3, 1, 4, 0, 5, 1, 6, 0};
+  EXPECT_EQ(values, expected);
+  uint32_t count = 0;
+  ASSERT_EQ(obelisk_rt_v1_mailbox_num(mailbox, &count), OBELISK_RT_OK);
+  EXPECT_EQ(count, 4u);
+  get(3);
+  put(7);
+  EXPECT_EQ(values, expected);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
 }
 
 } // namespace

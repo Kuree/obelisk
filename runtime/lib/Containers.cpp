@@ -4899,6 +4899,47 @@ extern "C" obelisk_rt_status obelisk_rt_v1_container_create_typed_pattern(
       outContainer);
 }
 
+BuiltinClassKind
+obelisk_rt_builtin_class_kind(const ManagedObjectLease &lease) noexcept {
+  if (!lease.metadata || !lease.object)
+    return BuiltinClassKind::None;
+  if (lease.extent == sizeof(SemaphoreHeader) &&
+      reinterpret_cast<const SemaphoreHeader *>(lease.object)->descriptor ==
+          &semaphoreDescriptorToken)
+    return BuiltinClassKind::Semaphore;
+  if (lease.extent == sizeof(ContainerHeader)) {
+    const auto *header =
+        reinterpret_cast<const ContainerHeader *>(lease.object);
+    if (header->descriptor == &containerDescriptorToken &&
+        header->kind == OBELISK_RT_CONTAINER_QUEUE && header->isMailbox == 1)
+      return BuiltinClassKind::Mailbox;
+  }
+  return BuiltinClassKind::None;
+}
+
+obelisk_rt_status
+obelisk_rt_mailbox_snapshot(obelisk_rt_object_v1 *mailbox,
+                            const obelisk_rt_element_type_v1 **outElement,
+                            std::vector<uint8_t> &outValues) {
+  outValues.clear();
+  if (!outElement)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outElement = nullptr;
+  ContainerHeader snapshot{};
+  obelisk_rt_status status = snapshotHeader(mailbox, snapshot);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (snapshot.kind != OBELISK_RT_CONTAINER_QUEUE || !snapshot.isMailbox)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  std::vector<uint8_t> values;
+  status = snapshotValues(mailbox, snapshot, values);
+  if (status == OBELISK_RT_OK) {
+    *outElement = snapshot.element;
+    outValues = std::move(values);
+  }
+  return status;
+}
+
 extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_create_typed(
     obelisk_rt_gc_lane_v1 *lane, uint64_t typeID, uint32_t elementKind,
     uint32_t elementFlags, uint64_t valueSize, uint64_t alignment,

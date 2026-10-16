@@ -197,6 +197,69 @@ designTaskWait(const ScheduledDesignTask &task) {
                                                              task.waitOffset);
 }
 
+obelisk_rt_status
+obelisk_rt_builtin_class_waiters(obelisk_rt_gc_lane_v1 *lane,
+                                 obelisk_rt_object_v1 *object,
+                                 std::vector<uint64_t> &outProcesses) {
+  outProcesses.clear();
+  if (!lane || !object)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  obelisk_rt_context *context = obelisk_rt_managed_lane_context(lane);
+  BuiltinClassKind kind = BuiltinClassKind::None;
+  {
+    ManagedObjectLease lease;
+    obelisk_rt_status status = obelisk_rt_managed_object_acquire(
+        lane, object, OBELISK_RT_MANAGED_INVALID, &lease);
+    if (status != OBELISK_RT_OK)
+      return status;
+    kind = obelisk_rt_builtin_class_kind(lease);
+  }
+  uint32_t suspendKind =
+      kind == BuiltinClassKind::Mailbox     ? OBELISK_RT_SUSPEND_MAILBOX
+      : kind == BuiltinClassKind::Semaphore ? OBELISK_RT_SUSPEND_SEMAPHORE
+                                            : OBELISK_RT_SUSPEND_NONE;
+  if (suspendKind == OBELISK_RT_SUSPEND_NONE)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  OBELISK_RT_TRY {
+    ContextMutexLock lock(context);
+    std::vector<uint64_t> processes;
+    auto append = [&](uint64_t token, uint64_t waitSize,
+                      const obelisk_rt_wait_record_v1 *wait) {
+      if (!wait ||
+          waitSize < sizeof(*wait) + sizeof(obelisk_rt_wait_entry_v1) ||
+          wait->version != OBELISK_RT_VERSION || wait->kind != suspendKind ||
+          wait->count != 1)
+        return false;
+      const obelisk_rt_wait_entry_v1 *entry = waitEntries(wait);
+      if (obelisk_rt_object_from_managed_word(entry->stable_id) == object)
+        processes.push_back(token);
+      return true;
+    };
+    for (const ScheduledProcess &process : context->scheduledProcesses) {
+      if (!process.instance ||
+          process.instance == context->activeNativeProcess ||
+          (OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | process.token) ==
+              context->activeLogicalProcessToken ||
+          process.suspendKind != suspendKind)
+        continue;
+      if (!append(OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | process.token,
+                  process.waitSize, currentWait(process)))
+        return OBELISK_RT_INVALID_FRAME;
+    }
+    for (const ScheduledDesignTask &task : context->scheduledDesignTasks) {
+      if (task.terminated || task.id == context->activeLogicalProcessToken ||
+          task.suspendKind != suspendKind)
+        continue;
+      if (!append(task.id, task.waitSize, designTaskWait(task)))
+        return OBELISK_RT_INVALID_FRAME;
+    }
+    outProcesses = std::move(processes);
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+}
+
 bool obelisk_rt_initialize_event_order_wait_unlocked(
     obelisk_rt_context *context, const obelisk_rt_wait_record_v1 *wait,
     uint32_t &index, bool &ready, bool &failed) {

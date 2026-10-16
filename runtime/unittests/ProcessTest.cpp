@@ -13976,4 +13976,146 @@ TEST(SampledValues, UsesBoundedGatedPerProcessHistory) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(RuntimeInternals, BuiltinClassWaitersSelectExactNativeAndDesignObjects) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+  obelisk_rt_object_v1 *mailbox = nullptr, *other = nullptr,
+                       *semaphore = nullptr;
+  auto createMailbox = [&](obelisk_rt_object_v1 **result) {
+    return obelisk_rt_v1_mailbox_create_typed(
+        lane, 1, OBELISK_RT_ELEMENT_BITS, 0, sizeof(uint32_t),
+        alignof(uint32_t), 32, nullptr, 0, 1, result);
+  };
+  obelisk_rt_gc_root_v1 mailboxRoot{}, otherRoot{}, semaphoreRoot{};
+  ASSERT_EQ(createMailbox(&mailbox), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &mailboxRoot, &mailbox),
+            OBELISK_RT_OK);
+  ASSERT_EQ(createMailbox(&other), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &otherRoot, &other),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_semaphore_create(lane, 0, &semaphore), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &semaphoreRoot, &semaphore),
+            OBELISK_RT_OK);
+  struct WaitRecord {
+    obelisk_rt_wait_record_v1 header;
+    obelisk_rt_wait_entry_v1 entry;
+  };
+  auto makeWait = [](obelisk_rt_object_v1 *object, uint32_t kind,
+                     uint32_t flags = 0) {
+    return WaitRecord{{OBELISK_RT_VERSION, kind, flags, 1,
+                       kind == OBELISK_RT_SUSPEND_SEMAPHORE ? UINT64_C(1) : 0,
+                       0},
+                      {obelisk_rt_managed_word_from_object(object),
+                       OBELISK_RT_WAIT_EDGE_NONE, 0}};
+  };
+  auto addDesign = [&](uint64_t id, const WaitRecord &wait,
+                       bool terminated = false) {
+    ScheduledDesignTask task;
+    task.id = id;
+    task.started = true;
+    task.terminated = terminated;
+    task.suspendKind = wait.header.kind;
+    task.waitSize = sizeof(wait);
+    task.scratchOffset = sizeof(wait);
+    task.frame.resize(sizeof(wait));
+    std::memcpy(task.frame.data(), &wait, sizeof(wait));
+    context->scheduledDesignTasks.push_back(std::move(task));
+  };
+  addDesign(1, makeWait(mailbox, OBELISK_RT_SUSPEND_MAILBOX,
+                        OBELISK_RT_WAIT_MAILBOX_NOT_EMPTY));
+  addDesign(2, makeWait(mailbox, OBELISK_RT_SUSPEND_MAILBOX,
+                        OBELISK_RT_WAIT_MAILBOX_NOT_FULL));
+  addDesign(3, makeWait(other, OBELISK_RT_SUSPEND_MAILBOX));
+  addDesign(4, makeWait(mailbox, OBELISK_RT_SUSPEND_MAILBOX), true);
+  addDesign(5, makeWait(semaphore, OBELISK_RT_SUSPEND_SEMAPHORE));
+  addDesign(6, makeWait(mailbox, OBELISK_RT_SUSPEND_MAILBOX));
+  context->activeLogicalProcessToken = 6;
+
+  const obelisk_rt_frame_field_v1 field{OBELISK_RT_FRAME_WAIT,
+                                        OBELISK_RT_FRAME_FIELD_FLAGS_NONE,
+                                        0,
+                                        sizeof(WaitRecord),
+                                        alignof(WaitRecord),
+                                        0};
+  const obelisk_rt_frame_layout_v1 layout{OBELISK_RT_VERSION,
+                                          0,
+                                          sizeof(WaitRecord),
+                                          alignof(WaitRecord),
+                                          &field,
+                                          1,
+                                          0,
+                                          nullptr,
+                                          0};
+  obelisk_rt_process_descriptor_v1 descriptor{};
+  descriptor.frame_layout = &layout;
+  std::array<WaitRecord, 3> waits{
+      makeWait(mailbox, OBELISK_RT_SUSPEND_MAILBOX),
+      makeWait(semaphore, OBELISK_RT_SUSPEND_SEMAPHORE),
+      makeWait(mailbox, OBELISK_RT_SUSPEND_MAILBOX)};
+  std::array<obelisk_rt_process_instance_v1, 3> instances{};
+  for (size_t index = 0; index != instances.size(); ++index) {
+    auto &instance = instances[index];
+    instance.descriptor = &descriptor;
+    instance.frame = &waits[index];
+    instance.frame_size = sizeof(WaitRecord);
+    ScheduledProcess process;
+    process.token = 11 + index;
+    process.started = true;
+    process.instance = &instance;
+    process.suspendKind = waits[index].header.kind;
+    process.waitSize = sizeof(WaitRecord);
+    context->scheduledProcesses.push_back(std::move(process));
+  }
+  context->activeNativeProcess = &instances[2];
+  const uint64_t selectionGeneration = context->schedulerSelectionGeneration;
+  const uint64_t schedulerEpoch = context->schedulerEpoch;
+  const obelisk_rt_status schedulerStatus = context->schedulerStatus;
+  std::vector<uint64_t> waiters;
+  ASSERT_EQ(obelisk_rt_builtin_class_waiters(lane, mailbox, waiters),
+            OBELISK_RT_OK);
+  std::sort(waiters.begin(), waiters.end());
+  EXPECT_EQ(waiters, (std::vector<uint64_t>{
+                         1, 2, OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | 11}));
+  ASSERT_EQ(obelisk_rt_builtin_class_waiters(lane, semaphore, waiters),
+            OBELISK_RT_OK);
+  std::sort(waiters.begin(), waiters.end());
+  EXPECT_EQ(waiters, (std::vector<uint64_t>{
+                         5, OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | 12}));
+  ASSERT_EQ(obelisk_rt_builtin_class_waiters(lane, other, waiters),
+            OBELISK_RT_OK);
+  EXPECT_EQ(waiters, (std::vector<uint64_t>{3}));
+  EXPECT_EQ(context->schedulerSelectionGeneration, selectionGeneration);
+  EXPECT_EQ(context->schedulerEpoch, schedulerEpoch);
+  EXPECT_EQ(context->schedulerStatus, schedulerStatus);
+  // Native AOT execution can identify the running process by token without
+  // publishing an active heap-backed process frame.
+  context->activeNativeProcess = nullptr;
+  context->activeLogicalProcessToken = OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | 13;
+  ASSERT_EQ(obelisk_rt_builtin_class_waiters(lane, mailbox, waiters),
+            OBELISK_RT_OK);
+  std::sort(waiters.begin(), waiters.end());
+  EXPECT_EQ(waiters, (std::vector<uint64_t>{
+                        1, 2, 6, OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | 11}));
+  waits[0].header.count = 2;
+  EXPECT_EQ(obelisk_rt_builtin_class_waiters(lane, mailbox, waiters),
+            OBELISK_RT_INVALID_FRAME);
+  EXPECT_TRUE(waiters.empty());
+  context->activeLogicalProcessToken = 0;
+  context->activeNativeProcess = nullptr;
+  context->scheduledProcesses.clear();
+  context->scheduledDesignTasks.clear();
+  ASSERT_EQ(obelisk_rt_builtin_class_waiters(lane, mailbox, waiters),
+            OBELISK_RT_OK);
+  EXPECT_TRUE(waiters.empty());
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &semaphoreRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &otherRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &mailboxRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 } // namespace

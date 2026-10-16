@@ -3100,6 +3100,29 @@ struct ManagedObjectLease {
   }
   ~ManagedObjectLease() { obelisk_rt_managed_object_release(this); }
 };
+// IEEE 1800-2023 37.33: mailboxes and semaphores are class objects even
+// though their implementation uses managed container storage. Inspect an
+// already-acquired lease so a caller never reacquires the same ticket lock.
+enum class BuiltinClassKind { None, Mailbox, Semaphore };
+BuiltinClassKind
+obelisk_rt_builtin_class_kind(const ManagedObjectLease &lease) noexcept;
+
+// Copies mailbox messages in FIFO order, with each value plane followed by
+// its unknown plane when the element is four-state. The caller must keep its
+// GC lane active and root traced copied values before reaching a safepoint.
+// No lease for mailbox may be held while calling this helper.
+obelisk_rt_status obelisk_rt_mailbox_snapshot(
+    obelisk_rt_object_v1 *mailbox,
+    const obelisk_rt_element_type_v1 **outElement,
+    std::vector<uint8_t> &outValues);
+
+// Returns logical process tokens, including the native-process tag. The
+// caller holds an active lane and no lease for object; the helper does not
+// change wait readiness or scheduler state and promises no iteration order.
+obelisk_rt_status obelisk_rt_builtin_class_waiters(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *object,
+    std::vector<uint64_t> &outProcesses);
+
 obelisk_rt_status obelisk_rt_managed_allocate(obelisk_rt_gc_lane_v1 *lane,
                                               obelisk_rt_managed_kind_v1 kind,
                                               uint64_t extent,
