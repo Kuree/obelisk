@@ -2963,11 +2963,10 @@ bool interfaceAssociativeKeys(
   }
 }
 
-bool readInterfaceAssociativeElement(__vpiHandle *source,
-                                     obelisk_rt_design_cursor_v1 semantic,
-                                     uint64_t word,
-                                     const VPIAssociativeSelection &key,
-                                     std::vector<uint8_t> &value) {
+bool readInterfaceAssociativeElement(
+    __vpiHandle *source, obelisk_rt_design_cursor_v1 semantic, uint64_t word,
+    const VPIAssociativeSelection &key, std::vector<uint8_t> &value,
+    const obelisk_rt_element_type_v1 **element = nullptr) {
   VPIAssocSnapshot snapshot;
   VPIValueLayoutOwner layout;
   obelisk_rt_design_cursor_v1 keySemantic{};
@@ -2980,6 +2979,8 @@ bool readInterfaceAssociativeElement(__vpiHandle *source,
   for (auto &entry : snapshot.entries)
     if (entry.keyWidth == key.width && entry.identity == key.identity) {
       value = std::move(entry.value);
+      if (element)
+        *element = snapshot.element;
       return true;
     }
   return false;
@@ -4751,7 +4752,9 @@ vpiHandle makeSemanticIterator(__vpiHandle *source, PLI_INT32 selector) {
     kind = VPISemanticIteratorKind::Elements;
   else if (selector == vpiMember &&
            (info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
-            info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT))
+            info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT ||
+            info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION ||
+            info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION))
     kind = VPISemanticIteratorKind::ObjectMembers;
   if (kind == VPISemanticIteratorKind::None)
     return nullptr;
@@ -5067,10 +5070,186 @@ obelisk_rt_status readClassMemberBits(__vpiHandle *handle,
   return OBELISK_RT_OK;
 }
 
+// Every tag and selected value comes from one coherent copy of the storage
+// segment. A managed-array hop starts a new segment, copied by the existing
+// container snapshot helper; later offsets are relative to that copy.
+obelisk_rt_status readTaggedSelection(
+    __vpiHandle *source, const std::vector<VPISelectionStep> &steps,
+    uint64_t firstBit, uint64_t bitWidth, uint64_t *value, uint64_t *unknown) {
+  if (steps.empty())
+    return OBELISK_RT_EOF;
+  OBELISK_RT_TRY {
+    struct Tag {
+      uint64_t offset, width, expected;
+    };
+    struct Segment {
+      std::vector<Tag> tags;
+      uint64_t offset = 0, width = 0;
+      const VPISelectionStep *transition = nullptr;
+      obelisk_rt_design_cursor_v1 semantic{};
+    };
+    obelisk_rt_design_info_v1 root{};
+    obelisk_rt_design_cursor_v1 semantic{};
+    if (obelisk_rt_cached_design_info(source->owner->context, source->cursor,
+                                      &root) != OBELISK_RT_OK)
+      return OBELISK_RT_INVALID_DESIGN;
+    const auto semanticStatus = obelisk_rt_cached_design_semantic_root(
+        source->owner->context, source->cursor, &semantic);
+    if (semanticStatus != OBELISK_RT_OK && semanticStatus != OBELISK_RT_EOF)
+      return OBELISK_RT_INVALID_DESIGN;
+    obelisk_rt_design_cursor_v1 physical{root.type_offset};
+    uint64_t offset = 0;
+    bool hasTag = false;
+    std::vector<Segment> segments(1);
+    for (const auto &step : steps) {
+      if (step.memberSelection) {
+        obelisk_rt_design_type_info_v1 parent{};
+        if (obelisk_rt_cached_design_type_info(source->owner->context, physical,
+                                               &parent) != OBELISK_RT_OK)
+          return OBELISK_RT_INVALID_DESIGN;
+        if (parent.kind == OBELISK_RT_DESIGN_TYPE_UNION &&
+            (parent.flags & OBELISK_RT_DESIGN_TYPE_TAGGED)) {
+          if (!parent.tag_bits || parent.tag_bits > 64 ||
+              parent.tag_bits > parent.bit_width ||
+              parent.bit_width > UINT64_MAX - offset || step.index < 0)
+            return OBELISK_RT_INVALID_DESIGN;
+          hasTag = true;
+          const bool packed = parent.flags & OBELISK_RT_DESIGN_TYPE_PACKED;
+          segments.back().tags.push_back(
+              {offset + parent.bit_width - parent.tag_bits, parent.tag_bits,
+               static_cast<uint64_t>(step.index) + (packed ? 0 : 1)});
+        }
+      }
+      if (step.managedContainer) {
+        segments.back().offset = offset;
+        segments.back().width = 64;
+        segments.back().transition = &step;
+        segments.back().semantic = semantic;
+        segments.emplace_back();
+      }
+      offset = step.bitOffset;
+      physical = step.physicalType;
+      semantic = step.semanticType;
+    }
+    if (!hasTag)
+      return OBELISK_RT_EOF;
+    segments.back().offset = firstBit;
+    segments.back().width = bitWidth;
+    ManagedExecutionScope managed(source->owner->context);
+    if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane())
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    std::vector<uint64_t> rootValue, rootUnknown;
+    std::vector<uint8_t> payload;
+    const obelisk_rt_element_type_v1 *element = nullptr;
+    for (size_t index = 0; index != segments.size(); ++index) {
+      const auto &segment = segments[index];
+      if (!segment.width || segment.width > UINT64_MAX - segment.offset)
+        return OBELISK_RT_INVALID_DESIGN;
+      uint64_t start = segment.offset, end = start + segment.width;
+      for (const auto &tag : segment.tags) {
+        start = std::min(start, tag.offset);
+        end = std::max(end, tag.offset + tag.width);
+      }
+      if (!index) {
+        size_t count = 0;
+        if (!checkedWordCount(end - start, 64, count))
+          return OBELISK_RT_OUT_OF_RESOURCES;
+        rootValue.assign(count, 0);
+        rootUnknown.assign(count, 0);
+        auto status =
+            readClassMemberBits(source, source->cursor, start, end - start,
+                                rootValue.data(), rootUnknown.data());
+        if (status == OBELISK_RT_EOF)
+          status = obelisk_rt_read_design_slice(
+              source->owner->context, source->cursor, start, end - start,
+              rootValue.data(), rootUnknown.data());
+        if (status != OBELISK_RT_OK)
+          return status;
+      } else if (!element || !element->value_size ||
+                 end / 8 + (end % 8 != 0) > element->value_size ||
+                 element->value_size >
+                     payload.size() /
+                         ((element->flags & OBELISK_RT_ELEMENT_FOUR_STATE)
+                              ? 2
+                              : 1)) {
+        return OBELISK_RT_INVALID_DESIGN;
+      }
+      auto bit = [&](uint64_t at, bool unknownPlane) {
+        if (!index) {
+          const auto &plane = unknownPlane ? rootUnknown : rootValue;
+          at -= start;
+          return (plane[at / 64] >> (at % 64)) & 1;
+        }
+        if (unknownPlane && !(element->flags & OBELISK_RT_ELEMENT_FOUR_STATE))
+          return uint64_t{0};
+        uint64_t byte = at / 8 + (unknownPlane ? element->value_size : 0);
+        return uint64_t{(payload[byte] >> (at % 8)) & 1u};
+      };
+      for (const auto &tag : segment.tags) {
+        uint64_t actual = 0, unknownTag = 0;
+        for (uint64_t i = 0; i != tag.width; ++i) {
+          actual |= bit(tag.offset + i, false) << i;
+          unknownTag |= bit(tag.offset + i, true) << i;
+        }
+        if (unknownTag || actual != tag.expected) {
+          setError(source->owner, "tagged union member is not currently active",
+                   vpiNotice);
+          return OBELISK_RT_INVALID_ARGUMENT;
+        }
+      }
+      if (!segment.transition) {
+        for (uint64_t i = 0; i != bitWidth; ++i) {
+          value[i / 64] |= bit(firstBit + i, false) << (i % 64);
+          if (unknown)
+            unknown[i / 64] |= bit(firstBit + i, true) << (i % 64);
+        }
+        return OBELISK_RT_OK;
+      }
+      uint64_t word = 0, unknownWord = 0;
+      for (uint64_t i = 0; i != 64; ++i) {
+        word |= bit(segment.offset + i, false) << i;
+        unknownWord |= bit(segment.offset + i, true) << i;
+      }
+      VPIContainerElementSnapshot selected;
+      const auto &step = *segment.transition;
+      bool found = !unknownWord;
+      if (found && step.associativeKey)
+        found = readInterfaceAssociativeElement(
+            source, segment.semantic, word, *step.associativeKey,
+            selected.value, &selected.element);
+      else if (found)
+        found = step.index >= 0 &&
+                sequentialInterfaceElement(source, segment.semantic, word,
+                                           static_cast<uint64_t>(step.index),
+                                           selected);
+      if (!found) {
+        if (!source->owner->errorLevel)
+          setError(source->owner,
+                   "selected managed array element is unavailable", vpiNotice);
+        return OBELISK_RT_INVALID_HANDLE;
+      }
+      payload = std::move(selected.value);
+      element = selected.element;
+    }
+    return OBELISK_RT_INVALID_DESIGN;
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(source->owner, "could not inspect tagged union selection",
+             vpiSystem);
+    return OBELISK_RT_OUT_OF_MEMORY;
+  }
+}
+
 bool readManagedSelectionWord(__vpiHandle *source,
                               const std::vector<VPISelectionStep> &steps,
                               uint64_t &word) {
   word = 0;
+  uint64_t guardedUnknown = 0;
+  const auto guarded = readTaggedSelection(
+      source, steps, steps.empty() ? 0 : steps.back().bitOffset, 64, &word,
+      &guardedUnknown);
+  if (guarded != OBELISK_RT_EOF)
+    return guarded == OBELISK_RT_OK && guardedUnknown == 0;
   ManagedExecutionScope managed(source->owner->context);
   if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane())
     return false;
@@ -5187,6 +5366,17 @@ bool readValue(__vpiHandle *handle, const VPIValueSource &source,
     value[0] = static_cast<uint64_t>(handle->integralValue);
     return true;
   }
+  if (source.form == VPIObjectForm::Indexed &&
+      source.cursor.offset == handle->cursor.offset) {
+    const auto guarded = readTaggedSelection(
+        handle, handle->selectionSteps, source.selectionBitOffset,
+        info.bit_width, value.data(), unknown.data());
+    if (guarded != OBELISK_RT_EOF) {
+      if (guarded != OBELISK_RT_OK && !handle->owner->errorLevel)
+        setError(handle->owner, "tagged union value read failed", vpiNotice);
+      return guarded == OBELISK_RT_OK;
+    }
+  }
   obelisk_rt_status memberStatus =
       readClassMemberBits(handle, source.cursor, source.selectionBitOffset,
                           info.bit_width, value.data(), unknown.data());
@@ -5290,6 +5480,18 @@ bool readManagedStateWord(__vpiHandle *handle,
     return readManagedSelectionWord(handle, handle->selectionSteps, word);
   uint64_t unknown = 0;
   word = 0;
+  if (form == VPIObjectForm::Indexed &&
+      cursor.offset == handle->cursor.offset) {
+    const auto guarded =
+        readTaggedSelection(handle, handle->selectionSteps, selectionBitOffset,
+                            64, &word, &unknown);
+    if (guarded != OBELISK_RT_EOF) {
+      if ((guarded != OBELISK_RT_OK || unknown) && !handle->owner->errorLevel)
+        setError(handle->owner, "tagged union reference read failed",
+                 vpiNotice);
+      return guarded == OBELISK_RT_OK && !unknown;
+    }
+  }
   obelisk_rt_status status = readClassMemberBits(
       handle, cursor, selectionBitOffset, 64, &word, &unknown);
   if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF)
@@ -9902,7 +10104,20 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
           state->handles.erase(iteratorToken);
           return nullptr;
         }
-      } while (edge.role != OBELISK_RT_DESIGN_SEMANTIC_EDGE_MEMBER);
+        if (edge.role == OBELISK_RT_DESIGN_SEMANTIC_EDGE_MEMBER) {
+          obelisk_rt_design_semantic_type_info_v1 child{};
+          if (!semanticTypeInfo(iterator, edge.child, child)) {
+            state->handles.erase(iteratorToken);
+            return nullptr;
+          }
+          // A tagged void variant has a TypespecMember but contains no
+          // variable. Its normalized i1 placeholder is never exposed as a
+          // BitVar.
+          if (child.kind == OBELISK_RT_DESIGN_SEMANTIC_VOID)
+            continue;
+          break;
+        }
+      } while (true);
       vpiHandle use = makeUseHandle(iterator);
       __vpiHandle *source = findHandle(use);
       vpiHandle result =
@@ -10646,6 +10861,16 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
       return vpiUndefined;
     uint32_t exactType = static_cast<uint32_t>(vpiTypeForHandle(handle));
     obelisk_rt_design_cursor_v1 semantic{};
+    if (exactType == vpiStructVar || exactType == vpiUnionVar ||
+        exactType == vpiStructNet || exactType == vpiUnionNet) {
+      obelisk_rt_design_semantic_type_info_v1 aggregate{};
+      if (semanticCursorFor(handle, semantic) &&
+          semanticTypeInfo(handle, semantic, aggregate) &&
+          (aggregate.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT ||
+           aggregate.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION))
+        return static_cast<PLI_INT32>(
+            std::min<uint32_t>(aggregate.edge_count, INT32_MAX));
+    }
     if (isSourceClassProperty(info)) {
       uint64_t width = 0;
       if (semanticCursorFor(handle, semantic) &&
