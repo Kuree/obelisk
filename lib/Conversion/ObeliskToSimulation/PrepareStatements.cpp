@@ -672,7 +672,8 @@ materializeProceduralCalls(sim::SimDesignOp design, const PreparedUnits &units,
       // in this procedural owner because they have no separate helper unit.
       if (source != unit.source && units.declarations.count(source))
         continue;
-      for (Operation *child : llvm::reverse(getChildren(source)))
+      auto children = getChildren(source);
+      for (Operation *child : llvm::reverse(children))
         pending.push_back(child);
       auto call = dyn_cast<semantic::SVCallExpressionOp>(source);
       if (!call)
