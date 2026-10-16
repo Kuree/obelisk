@@ -8,10 +8,64 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <unordered_map>
 #include <vector>
 
 namespace obelisk::runtime {
+
+/// Little-endian words with two stored inline. Every decision-diagram node
+/// holds a count and ranking shifts them per input, while the counts of the
+/// components a sampler meets rarely exceed 128 bits.
+class CountWords {
+public:
+  size_t size() const { return count; }
+  bool empty() const { return count == 0; }
+  uint64_t *begin() { return data(); }
+  uint64_t *end() { return data() + count; }
+  uint64_t &operator[](size_t index) { return data()[index]; }
+  uint64_t operator[](size_t index) const { return data()[index]; }
+  uint64_t &back() { return data()[count - 1]; }
+  uint64_t back() const { return data()[count - 1]; }
+  void push_back(uint64_t value) {
+    resize(count + 1);
+    back() = value;
+  }
+  void pop_back() { resize(count - 1); }
+  void assign(const uint64_t *first, const uint64_t *last) {
+    size_t size = size_t(last - first);
+    if (size <= inlineSize) {
+      std::copy(first, last, inlineWords);
+      heap.clear();
+    } else
+      heap.assign(first, last);
+    count = size;
+  }
+  void resize(size_t size, uint64_t value = 0) {
+    if (size <= inlineSize) {
+      if (count > inlineSize) {
+        std::copy(heap.begin(), heap.begin() + size, inlineWords);
+        heap.clear();
+      } else
+        std::fill(inlineWords + std::min(count, size), inlineWords + size,
+                  value);
+    } else {
+      if (count <= inlineSize)
+        heap.assign(inlineWords, inlineWords + count);
+      heap.resize(size, value);
+    }
+    count = size;
+  }
+
+private:
+  static constexpr size_t inlineSize = 2;
+  uint64_t *data() { return count > inlineSize ? heap.data() : inlineWords; }
+  const uint64_t *data() const {
+    return count > inlineSize ? heap.data() : inlineWords;
+  }
+
+  size_t count = 0;
+  uint64_t inlineWords[inlineSize] = {};
+  std::vector<uint64_t> heap;
+};
 
 /// Nonnegative arbitrary-precision cardinalities and integral mass factors.
 /// Counts include 2^N for a full N-bit domain, so a fixed-width assignment
@@ -178,7 +232,7 @@ private:
       words.pop_back();
   }
 
-  std::vector<uint64_t> words;
+  CountWords words;
 };
 
 /// Exact counts, projections and ranks for a compiler-produced Boolean plan.
@@ -194,8 +248,8 @@ public:
         fixed(variableCount, false), fixedValues(variableCount, false) {
     nodes.push_back({variableCount, 0, 0});
     nodes.push_back({variableCount, 1, 1});
-    circuits.emplace(0, 0);
-    circuits.emplace(1, 1);
+    circuits.insert(0, 0);
+    circuits.insert(1, 1);
   }
 
   bool build(random::BooleanCircuit::ID predicate) {
@@ -481,11 +535,8 @@ private:
 
   struct Hash {
     size_t operator()(const Key &key) const {
-      size_t hash = std::hash<size_t>{}(key.a);
-      for (size_t value : {key.b, key.c})
-        hash ^= std::hash<size_t>{}(value) + size_t(0x9e3779b9) + (hash << 6) +
-                (hash >> 2);
-      return hash;
+      random::IntegerHash mix;
+      return mix(key.a ^ mix(key.b ^ mix(key.c)));
     }
   };
 
@@ -493,10 +544,10 @@ private:
     if (low == high)
       return low;
     auto [found, inserted] =
-        unique.emplace(Key{variable, low, high}, nodes.size());
+        unique.insert(Key{variable, low, high}, nodes.size());
     if (inserted)
       nodes.push_back({variable, low, high});
-    return found->second;
+    return *found;
   }
 
   bool resolved(Key key, ID &result) const {
@@ -508,10 +559,10 @@ private:
       result = key.a;
       return true;
     }
-    auto found = cache.find(key);
-    if (found == cache.end())
+    const ID *found = cache.find(key);
+    if (!found)
       return false;
-    result = found->second;
+    result = *found;
     return true;
   }
 
@@ -553,7 +604,7 @@ private:
         continue;
       }
       result = makeNode(variable, lowResult, highResult);
-      cache.emplace(key, result);
+      cache.insert(key, result);
       pending.pop_back();
     }
     return result;
@@ -642,6 +693,8 @@ private:
       CircuitID remaining = 0;
       ID literals = 1;
       bool propagated = false;
+      bool decided = false;
+      CircuitID low = 0, high = 0;
     };
     std::vector<Frame> pending{{predicate}};
     std::vector<size_t> firstKept;
@@ -651,8 +704,7 @@ private:
         return false;
       Frame &frame = pending.back();
       CircuitID id = frame.predicate;
-      auto found = circuits.find(id);
-      if (found != circuits.end()) {
+      if (circuits.contains(id)) {
         pending.pop_back();
         continue;
       }
@@ -661,23 +713,30 @@ private:
       // before cofactoring its arithmetic decoder one bit at a time. The
       // literal diagram restores every forced input for exact counts and
       // projections; this is simplification, not a restriction of the domain.
+      // A decision node of a compiler-prepared diagram already names its
+      // cofactors by its first input, which is what the walk would choose.
       if (!frame.propagated) {
-        if (!extractLiterals(id, frame.remaining, frame.literals, budget,
+        frame.propagated = true;
+        frame.remaining = id;
+        frame.decided =
+            !retainedFirst && circuit->decision(id, circuit->firstVariable(id),
+                                                frame.low, frame.high);
+        if (!frame.decided &&
+            !extractLiterals(id, frame.remaining, frame.literals, budget,
                              circuitBudget, keep))
           return false;
-        frame.propagated = true;
       }
       if (frame.remaining != id) {
-        auto reduced = circuits.find(frame.remaining);
-        if (reduced == circuits.end()) {
+        const ID *reduced = circuits.find(frame.remaining);
+        if (!reduced) {
           pending.push_back({frame.remaining});
           continue;
         }
-        ID conjoined = conjunction(reduced->second, frame.literals);
+        ID conjoined = conjunction(*reduced, frame.literals);
         // An exhausted product returns a placeholder; never memoize it.
         if (constructionExhausted)
           return false;
-        circuits.emplace(id, conjoined);
+        circuits.insert(id, conjoined);
         pending.pop_back();
         continue;
       }
@@ -706,18 +765,20 @@ private:
       }
       if (variable >= variableCount)
         return false;
-      CircuitID low = circuit->cofactor(id, variable, false);
-      CircuitID high = circuit->cofactor(id, variable, true);
-      if (!circuits.count(low)) {
+      CircuitID low =
+          frame.decided ? frame.low : circuit->cofactor(id, variable, false);
+      CircuitID high =
+          frame.decided ? frame.high : circuit->cofactor(id, variable, true);
+      if (!circuits.contains(low)) {
         pending.push_back({low});
         continue;
       }
       if (keep && !(*keep)[variable] && circuits.at(low) == 1) {
-        circuits.emplace(id, 1);
+        circuits.insert(id, 1);
         pending.pop_back();
         continue;
       }
-      if (!circuits.count(high)) {
+      if (!circuits.contains(high)) {
         pending.push_back({high});
         continue;
       }
@@ -727,7 +788,7 @@ private:
               : makeNode(variable, circuits.at(low), circuits.at(high));
       if (constructionExhausted)
         return false;
-      circuits.emplace(id, expanded);
+      circuits.insert(id, expanded);
       pending.pop_back();
     }
     result = circuits.at(predicate);
@@ -744,8 +805,8 @@ private:
   std::vector<size_t> levels;
   std::vector<Node> nodes;
   std::vector<ModelCount> counts;
-  std::unordered_map<Key, ID, Hash> unique, cache;
-  std::unordered_map<random::BooleanCircuit::ID, ID> circuits;
+  random::FlatMap<Key, ID, Hash> unique, cache;
+  random::FlatMap<random::BooleanCircuit::ID, ID> circuits;
 };
 
 } // namespace obelisk::runtime

@@ -1,20 +1,26 @@
 //===- RandomProgramTestPass.cpp - Print constrained-random programs ------===//
 //
 // Decode the residual program of each random solve and cyclic sample op and
-// print its header, instructions and distribution records one per line, so
-// tests can check the encoded program without matching escaped bytes.
+// print its header, instructions, distribution records and compiled sampler
+// plan one per line, so tests can check the encoded program without matching
+// escaped bytes.
 //
 //===----------------------------------------------------------------------===//
 
 #include "AnalysisTestPasses.h"
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Runtime/RandomSamplerPlan.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 
 #include "llvm/Support/raw_ostream.h"
+
+#include <map>
+#include <set>
+#include <vector>
 
 using namespace mlir;
 
@@ -120,6 +126,71 @@ public:
 private:
   StringRef bytes;
 };
+
+/// Print a compiled sampler plan's shape: its gate count, the top-level
+/// conjuncts of each root, which the target samples apart when they read
+/// disjoint inputs, and the free fields the compiler proved, by the root and
+/// conjunct they belong to.
+LogicalResult printPlan(Operation *op, const RandomProgramReader &reader,
+                        size_t size, raw_ostream &os) {
+  using namespace obelisk::random;
+  if (size < samplerPlanTrailerSize)
+    return op->emitError("random program sampler plan is truncated");
+  size_t trailer = size - samplerPlanTrailerSize;
+  uint64_t planSize = reader.read(trailer + 8, 8);
+  if (reader.read(trailer, 4) != samplerTrailerMagic || planSize > trailer ||
+      planSize < samplerPlanHeaderSize)
+    return op->emitError("random program sampler plan is truncated");
+  size_t plan = trailer - planSize;
+  uint64_t nodes = reader.read(plan + 8, 4), roots = reader.read(plan + 12, 4);
+  size_t nodeBase = plan + samplerPlanHeaderSize;
+  size_t rootBase = nodeBase + nodes * samplerPlanNodeSize;
+  size_t freeBase = rootBase + roots * samplerPlanRootSize;
+  if (freeBase > trailer)
+    return op->emitError("random program sampler plan is truncated");
+  os << "  plan nodes " << nodes << " roots " << roots << "\n";
+  std::map<uint64_t, std::pair<uint64_t, size_t>> conjuncts;
+  for (uint64_t root = 0; root != roots; ++root) {
+    uint64_t instruction =
+        reader.read(rootBase + root * samplerPlanRootSize, 4);
+    std::vector<uint64_t> pending{
+        reader.read(rootBase + root * samplerPlanRootSize + 4, 4)};
+    std::set<uint64_t> seen;
+    size_t count = 0;
+    while (!pending.empty()) {
+      uint64_t id = pending.back();
+      pending.pop_back();
+      if (id == 1 || !seen.insert(id).second || id / 2 >= nodes)
+        continue;
+      size_t node = nodeBase + id / 2 * samplerPlanNodeSize;
+      if (!(id & 1) &&
+          reader.read(node, 4) == static_cast<uint32_t>(PlanOpcode::And)) {
+        pending.push_back(reader.read(node + 8, 4));
+        pending.push_back(reader.read(node + 4, 4));
+      } else
+        conjuncts.try_emplace(id, instruction, count++);
+    }
+    os << "  plan root " << instruction << " conjuncts " << count << "\n";
+  }
+  if (freeBase == trailer)
+    return success();
+  uint64_t count = reader.read(freeBase + 4, 4);
+  if (reader.read(freeBase, 4) != samplerFreeFieldMagic ||
+      freeBase + samplerFreeFieldHeaderSize + count * samplerFreeFieldSize !=
+          trailer)
+    return op->emitError("random program free fields are malformed");
+  for (uint64_t index = 0; index != count; ++index) {
+    size_t entry =
+        freeBase + samplerFreeFieldHeaderSize + index * samplerFreeFieldSize;
+    auto found = conjuncts.find(reader.read(entry, 4));
+    if (found == conjuncts.end())
+      return op->emitError("random program free field names no conjunct");
+    os << "  plan free root " << found->second.first << " conjunct "
+       << found->second.second << " offset " << reader.read(entry + 4, 4)
+       << " width " << reader.read(entry + 8, 4) << "\n";
+  }
+  return success();
+}
 
 LogicalResult printProgram(Operation *op, StringRef bytes, raw_ostream &os) {
   RandomProgramReader reader(bytes);
@@ -234,6 +305,8 @@ LogicalResult printProgram(Operation *op, StringRef bytes, raw_ostream &os) {
       os << "\n";
     }
   }
+  if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN)
+    return printPlan(op, reader, bytes.size(), os);
   return success();
 }
 

@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <numeric>
 #include <unordered_map>
@@ -183,13 +184,16 @@ struct CyclicHistory {
 constexpr size_t maxDistributionTerms = size_t{1} << 16;
 
 /// Union-find over relation inputs. A circuit node's representative is one
-/// input of its support; computing it unites that whole support.
+/// input of its support; computing it unites that whole support. With
+/// `within`, only the selected inputs count as support; the others connect
+/// nothing, as if they were constants.
 class InputPartition {
 public:
   static constexpr size_t none = SIZE_MAX;
 
-  InputPartition(const BooleanCircuit &circuit, size_t inputs)
-      : circuit(circuit), parent(inputs),
+  InputPartition(const BooleanCircuit &circuit, size_t inputs,
+                 const std::vector<bool> *within = nullptr)
+      : circuit(circuit), within(within), parent(inputs),
         representatives(circuit.getNodes().size(), unknown) {
     std::iota(parent.begin(), parent.end(), size_t{0});
   }
@@ -221,7 +225,7 @@ public:
       }
       const auto &plan = circuit.getNodes()[node];
       if (plan.opcode == PlanOpcode::RandomBit)
-        representatives[node] = plan.b;
+        representatives[node] = !within || (*within)[plan.b] ? plan.b : none;
       else if (plan.opcode != PlanOpcode::And)
         representatives[node] = none;
       else if (representatives[plan.a / 2] == unknown)
@@ -238,6 +242,7 @@ public:
 private:
   static constexpr size_t unknown = SIZE_MAX - 1;
   const BooleanCircuit &circuit;
+  const std::vector<bool> *within;
   std::vector<size_t> parent;
   std::vector<size_t> representatives;
 };
@@ -268,6 +273,132 @@ std::vector<size_t> circuitSupport(const BooleanCircuit &circuit,
   return support;
 }
 
+/// Per-node scratch reused across walks of a growing circuit. A node is
+/// marked in the current walk when its stamp equals the walk's generation,
+/// so starting a walk costs nothing for the nodes it never visits.
+class NodeScratch {
+public:
+  void begin(size_t nodes) {
+    if (stamps.size() < nodes) {
+      stamps.resize(nodes, 0);
+      values.resize(nodes, 0);
+    }
+    if (++generation == 0) {
+      std::fill(stamps.begin(), stamps.end(), 0);
+      generation = 1;
+    }
+  }
+  bool mark(size_t node) {
+    if (stamps[node] == generation)
+      return false;
+    stamps[node] = generation;
+    return true;
+  }
+  ID &value(size_t node) { return values[node]; }
+
+private:
+  std::vector<uint32_t> stamps;
+  std::vector<ID> values;
+  uint32_t generation = 0;
+};
+
+/// A relation copied into a circuit of its own whose inputs are its support
+/// plus `extra`, numbered in their original order. Decision diagrams, counts
+/// and ranks depend only on that order, so they are the original relation's;
+/// sizing a ModelCounter by one component instead of every input keeps the
+/// work for many independent components linear. Construction records only
+/// the shape: the reached gates in postorder, with operands renamed to local
+/// positions. Relations of one shape are the same relation over
+/// renamed inputs, so a constraint iterated over an array needs one circuit
+/// and one diagram for all of its elements.
+struct LocalRelation {
+  std::vector<size_t> originals;
+  std::vector<uint32_t> shape;
+  BooleanCircuit circuit;
+  Bits inputs;
+  ID root = 0;
+
+  LocalRelation(const BooleanCircuit &source, ID relation, NodeScratch &scratch,
+                const std::vector<size_t> &extra = {}) {
+    const auto &nodes = source.getNodes();
+    scratch.begin(nodes.size());
+    scratch.mark(0);
+    scratch.value(0) = 0;
+    // Postorder lists every operand before its gate.
+    std::vector<ID> reached;
+    std::vector<std::pair<ID, bool>> pending{{relation / 2, false}};
+    while (!pending.empty()) {
+      auto [node, expanded] = pending.back();
+      pending.pop_back();
+      if (expanded) {
+        reached.push_back(node);
+        continue;
+      }
+      if (!scratch.mark(node))
+        continue;
+      if (nodes[node].opcode == PlanOpcode::And) {
+        pending.push_back({node, true});
+        pending.push_back({nodes[node].b / 2, false});
+        pending.push_back({nodes[node].a / 2, false});
+        continue;
+      }
+      if (nodes[node].opcode == PlanOpcode::RandomBit)
+        originals.push_back(nodes[node].b);
+      reached.push_back(node);
+    }
+    originals.insert(originals.end(), extra.begin(), extra.end());
+    std::sort(originals.begin(), originals.end());
+    originals.erase(std::unique(originals.begin(), originals.end()),
+                    originals.end());
+    auto rename = [&](ID id) { return scratch.value(id / 2) ^ (id & 1); };
+    shape.reserve(reached.size() * 3 + 2);
+    shape.push_back(uint32_t(originals.size()));
+    for (size_t position = 0; position != reached.size(); ++position) {
+      const auto &plan = nodes[reached[position]];
+      if (plan.opcode == PlanOpcode::RandomBit) {
+        shape.push_back(0);
+        shape.push_back(
+            uint32_t(std::lower_bound(originals.begin(), originals.end(),
+                                      size_t(plan.b)) -
+                     originals.begin()));
+      } else {
+        shape.push_back(1);
+        shape.push_back(rename(plan.a));
+        shape.push_back(rename(plan.b));
+      }
+      scratch.value(reached[position]) = ID(position + 1) * 2;
+    }
+    shape.push_back(rename(relation));
+  }
+
+  /// Construct the local circuit from the shape.
+  void build() {
+    circuit.reserve(shape.size() / 3 + shape.front());
+    for (uint32_t index = 0; index != shape.front(); ++index)
+      inputs.push_back(circuit.input(PlanOpcode::RandomBit, 0, index));
+    std::vector<ID> handles{0};
+    auto handle = [&](uint32_t id) { return handles[id / 2] ^ (id & 1); };
+    for (size_t at = 1; at + 1 != shape.size();) {
+      if (shape[at] == 0) {
+        handles.push_back(inputs[shape[at + 1]]);
+        at += 2;
+      } else {
+        handles.push_back(
+            circuit.conjunction(handle(shape[at + 1]), handle(shape[at + 2])));
+        at += 3;
+      }
+    }
+    root = handle(shape.back());
+  }
+
+  uint64_t hash() const {
+    uint64_t value = shape.size();
+    for (uint32_t word : shape)
+      value = random::IntegerHash()(value ^ word);
+    return value;
+  }
+};
+
 /// The runtime handles Boolean cofactors and exact ranks only. Arithmetic
 /// expressions and their validity predicates were lowered by compiler Z3.
 class Formula {
@@ -285,13 +416,25 @@ public:
     return result;
   }
 
-  /// The relation's top-level conjuncts: requirements split at positive ANDs.
+  /// The relation's top-level conjuncts: requirements with the fixed inputs
+  /// substituted, split at positive ANDs. Substitution can expose new ones,
+  /// such as the body of a guard that an earlier solve-before layer decided.
+  /// A contradiction is the single conjunct 0.
   std::vector<ID> conjuncts() const {
+    bool restricted =
+        std::find(fixed.begin(), fixed.end(), true) != fixed.end();
     std::vector<ID> result;
-    std::vector<ID> pending(requirements.rbegin(), requirements.rend());
+    std::vector<ID> pending;
+    for (auto requirement = requirements.rbegin();
+         requirement != requirements.rend(); ++requirement)
+      pending.push_back(restricted
+                            ? circuit.restrict(*requirement, fixedValues, fixed)
+                            : *requirement);
     while (!pending.empty()) {
       ID id = pending.back();
       pending.pop_back();
+      if (id == 0)
+        return {0};
       const auto &node = circuit.getNodes()[id / 2];
       if (id == 1)
         continue;
@@ -311,12 +454,265 @@ public:
     checkpoints.pop_back();
   }
 
-  SamplerResult check() {
-    ModelCounter counter(circuit, bits);
-    if (!counter.build(predicate()))
-      return SamplerResult::Invalid;
-    return counter.count().zero() ? SamplerResult::Unsatisfiable
-                                  : SamplerResult::Satisfiable;
+  /// The relation's projection onto the unfixed inputs that `keep` selects,
+  /// as independent relations: each reads only kept inputs, and no two read
+  /// the same one. A decision diagram over interleaved independent fields
+  /// multiplies their widths, so nothing here builds one over the whole
+  /// relation. Conjuncts that share no eliminated input are projected apart,
+  /// since existential quantification distributes over a conjunction of
+  /// disjoint supports; the projections are then grouped by the kept inputs
+  /// they share. A nonzero `retainedFirstBudget` first tries deciding kept
+  /// inputs first in each projection (ModelCounter::buildProjection).
+  SamplerResult projections(const std::vector<bool> &keep,
+                            std::vector<ID> &result,
+                            size_t retainedFirstBudget = 0) {
+    result.clear();
+    std::vector<ID> parts = conjuncts();
+    if (parts.size() == 1 && parts.front() == 0)
+      return SamplerResult::Unsatisfiable;
+    std::vector<bool> kept(bits.size()), eliminated(bits.size());
+    for (size_t input = 0; input != bits.size(); ++input) {
+      kept[input] = keep[input] && !fixed[input];
+      eliminated[input] = !keep[input] && !fixed[input];
+    }
+    // Each group conjoins its parts; a single part keeps its own handle.
+    struct Group {
+      ID relation = 1;
+      size_t parts = 0;
+    };
+    std::map<size_t, Group> groups;
+    std::vector<ID> projected;
+    if (std::find(eliminated.begin(), eliminated.end(), true) ==
+        eliminated.end()) {
+      projected = std::move(parts);
+    } else {
+      InputPartition byEliminated(circuit, bits.size(), &eliminated);
+      std::vector<size_t> partInputs;
+      for (ID part : parts)
+        partInputs.push_back(byEliminated.join(part));
+      for (size_t index = 0; index != parts.size(); ++index) {
+        if (partInputs[index] == InputPartition::none) {
+          projected.push_back(parts[index]);
+          continue;
+        }
+        Group &group = groups[byEliminated.find(partInputs[index])];
+        group.relation = circuit.conjunction(group.relation, parts[index]);
+        ++group.parts;
+      }
+    }
+    for (const auto &entry : groups) {
+      const Group &group = entry.second;
+      if (group.parts == 1 && leavesFree(group.relation, eliminated))
+        continue;
+      LocalRelation local(circuit, group.relation, scratch);
+      local.build();
+      std::vector<bool> localKept;
+      Bits originals;
+      for (size_t original : local.originals) {
+        localKept.push_back(kept[original]);
+        originals.push_back(bits[original]);
+      }
+      ModelCounter counter(local.circuit, local.inputs);
+      if (!retainedFirstBudget ||
+          !counter.buildProjection(local.root, localKept,
+                                   retainedFirstBudget)) {
+        counter = ModelCounter(local.circuit, local.inputs);
+        if (!counter.buildProjection(local.root, localKept))
+          return SamplerResult::Invalid;
+      }
+      if (counter.count().zero())
+        return SamplerResult::Unsatisfiable;
+      ID projection = counter.exportDiagram(circuit, originals, true);
+      if (projection != 1)
+        projected.push_back(projection);
+    }
+    InputPartition byKept(circuit, bits.size());
+    std::vector<size_t> projectedInputs;
+    for (ID part : projected)
+      projectedInputs.push_back(byKept.join(part));
+    std::map<size_t, ID> components;
+    for (size_t index = 0; index != projected.size(); ++index) {
+      ID &component =
+          components.try_emplace(byKept.find(projectedInputs[index]), 1)
+              .first->second;
+      component = circuit.conjunction(component, projected[index]);
+    }
+    for (const auto &component : components)
+      result.push_back(component.second);
+    return SamplerResult::Satisfiable;
+  }
+
+  /// Whether eliminating `eliminated` from `part` leaves a true projection
+  /// by a compiler-proved free field: every input of the field is a mutable
+  /// input that is eliminated, and frozen inputs outside it are among the
+  /// inputs the proof quantifies over.
+  bool leavesFree(ID part, const std::vector<bool> &eliminated) const {
+    const auto *first = freeFieldIndex.find(part);
+    if (!first)
+      return false;
+    for (size_t index = *first;
+         index != freeFields.size() && freeFields[index].node == part;
+         ++index) {
+      const FreeField &field = freeFields[index];
+      bool free = true;
+      for (uint32_t bit = field.offset;
+           free && bit != field.offset + field.width; ++bit)
+        free = ordinals[bit] != SIZE_MAX && eliminated[ordinals[bit]];
+      if (free)
+        return true;
+    }
+    return false;
+  }
+
+  /// Compiler-proved free fields by the handle their node specializes to,
+  /// sorted by handle, and the variable index of each mutable physical bit.
+  struct FreeField {
+    ID node;
+    uint32_t offset, width;
+  };
+  void setFreeFields(std::vector<FreeField> fields) {
+    freeFields = std::move(fields);
+    std::stable_sort(
+        freeFields.begin(), freeFields.end(),
+        [](const FreeField &a, const FreeField &b) { return a.node < b.node; });
+    size_t size = 0;
+    for (size_t index = 0; index != freeFields.size(); ++index) {
+      freeFieldIndex.insert(freeFields[index].node, index);
+      size = std::max(size, size_t(freeFields[index].offset) +
+                                freeFields[index].width);
+    }
+    for (unsigned physical : physicalBits)
+      size = std::max(size, size_t(physical) + 1);
+    ordinals.assign(size, SIZE_MAX);
+    for (size_t bit = 0; bit != physicalBits.size(); ++bit)
+      ordinals[physicalBits[bit]] = bit;
+  }
+
+  /// Whether the relation has a solution, which is whether its projection
+  /// onto `separators` is nonempty. Inputs that an earlier solve-before layer
+  /// decides make good separators: a dynamic array's size guards the
+  /// constraint on each element, which leaves the elements independent.
+  SamplerResult check(const std::vector<bool> *separators = nullptr) {
+    std::vector<ID> relations;
+    SamplerResult status = projections(
+        separators ? *separators : std::vector<bool>(bits.size(), false),
+        relations);
+    if (status != SamplerResult::Satisfiable)
+      return status;
+    for (ID relation : relations) {
+      LocalRelation local(circuit, relation, scratch);
+      local.build();
+      ModelCounter counter(local.circuit, local.inputs);
+      if (!counter.build(local.root))
+        return SamplerResult::Invalid;
+      if (counter.count().zero())
+        return SamplerResult::Unsatisfiable;
+    }
+    return SamplerResult::Satisfiable;
+  }
+
+  /// Fix the unfixed inputs that `keep` selects to a uniform choice from the
+  /// relation's projection onto them. Independent projections are chosen
+  /// one at a time: a uniform choice from their product is a uniform choice
+  /// from each (IEEE 1800-2023 18.5.9 permits any solving order with the
+  /// same outcome). Kept inputs that no constraint reads are chosen with the
+  /// first projection, so a relation that does not separate consumes the
+  /// same draws as a single decision diagram of it. With `satisfiable`, the
+  /// relation is known to have a solution, so choosing no input needs no
+  /// projection; otherwise the projection also decides that.
+  SamplerResult choose(const std::vector<bool> &keep,
+                       obelisk_rt_random_state_v1 &state,
+                       bool satisfiable = false) {
+    bool open = false;
+    for (size_t input = 0; input != bits.size() && !open; ++input)
+      open = keep[input] && !fixed[input];
+    if (!open && satisfiable)
+      return SamplerResult::Satisfiable;
+    std::vector<ID> relations;
+    SamplerResult status = projections(keep, relations);
+    if (status != SamplerResult::Satisfiable)
+      return status;
+    std::vector<LocalRelation> locals;
+    std::vector<bool> unconstrained(bits.size());
+    for (size_t input = 0; input != bits.size(); ++input)
+      unconstrained[input] = keep[input] && !fixed[input];
+    for (ID relation : relations) {
+      locals.emplace_back(circuit, relation, scratch);
+      for (size_t input : locals.back().originals)
+        unconstrained[input] = false;
+    }
+    std::vector<size_t> extra;
+    for (size_t input = 0; input != bits.size(); ++input)
+      if (unconstrained[input])
+        extra.push_back(input);
+    if (!extra.empty()) {
+      if (locals.empty())
+        locals.emplace_back(circuit, 1, scratch, extra);
+      else
+        locals.front() =
+            LocalRelation(circuit, relations.front(), scratch, extra);
+    }
+    // Constraints iterated over an array give many components of one local
+    // shape; each distinct relation is built and counted once.
+    std::vector<std::pair<const LocalRelation *, ModelCounter>> counters;
+    std::unordered_map<uint64_t, std::vector<size_t>> shapes;
+    for (LocalRelation &local : locals) {
+      std::vector<size_t> &candidates = shapes[local.hash()];
+      auto same =
+          std::find_if(candidates.begin(), candidates.end(), [&](size_t index) {
+            return counters[index].first->shape == local.shape;
+          });
+      if (same == candidates.end()) {
+        local.build();
+        candidates.push_back(counters.size());
+        counters.emplace_back(&local,
+                              ModelCounter(local.circuit, local.inputs));
+        if (!counters.back().second.build(local.root))
+          return SamplerResult::Invalid;
+        same = candidates.end() - 1;
+      }
+      const ModelCounter &counter = counters[*same].second;
+      ModelCount count = counter.count();
+      if (count.zero())
+        return SamplerResult::Unsatisfiable;
+      std::vector<bool> value =
+          counter.assignment(ModelCount::randomBelow(count, state));
+      for (size_t input = 0; input != local.originals.size(); ++input) {
+        fixed[local.originals[input]] = true;
+        fixedValues[local.originals[input]] = value[input];
+      }
+    }
+    return SamplerResult::Satisfiable;
+  }
+
+  /// Choose every unfixed input, one solve-before layer at a time (IEEE
+  /// 1800-2023 18.5.9), then the rest jointly. An auxiliary target bit is
+  /// decided with the last of its inputs. A layer chosen from a projection
+  /// leaves a satisfiable relation.
+  SamplerResult layered(unsigned width, const uint64_t *masks,
+                        size_t layerCount, obelisk_rt_random_state_v1 &state) {
+    size_t words = (uint64_t(width) + 63) / 64;
+    bool satisfiable = false;
+    for (size_t layer = 0; layer != layerCount; ++layer) {
+      std::vector<bool> keep(bits.size(), false);
+      for (size_t bit = 0; bit != bits.size(); ++bit)
+        keep[bit] = !fixed[bit] && physicalBits[bit] < width &&
+                    ((masks[layer * words + physicalBits[bit] / 64] >>
+                      (physicalBits[bit] % 64)) &
+                     1);
+      for (size_t bit = 0; bit != bits.size(); ++bit)
+        if (physicalBits[bit] >= width)
+          keep[bit] =
+              !fixed[bit] &&
+              std::all_of(
+                  auxiliarySupport[bit].begin(), auxiliarySupport[bit].end(),
+                  [&](size_t input) { return fixed[input] || keep[input]; });
+      SamplerResult status = choose(keep, state, satisfiable);
+      if (status != SamplerResult::Satisfiable)
+        return status;
+      satisfiable = true;
+    }
+    return choose(std::vector<bool>(bits.size(), true), state, satisfiable);
   }
 
   // Distribution metadata contains concrete, at-most-64-bit interval bounds.
@@ -363,15 +759,21 @@ public:
     for (size_t bit = 0; bit != bits.size(); ++bit)
       keep[bit] = physicalBits[bit] >= request.offset &&
                   physicalBits[bit] - request.offset < request.width;
+    // Sparse domains often benefit from deciding the cyclic bits first.
+    // Broad arithmetic projections may need the compiler's interleaving; a
+    // bounded attempt falls back to constructing the exact relation there.
+    // Components without a cyclic bit only need a solution.
+    std::vector<ID> relations;
+    SamplerResult status = projections(keep, relations, 4096);
+    if (status != SamplerResult::Satisfiable)
+      return status;
+    ID cyclicRelation = 1;
+    for (ID relation : relations)
+      cyclicRelation = circuit.conjunction(cyclicRelation, relation);
     ModelCounter completions(circuit, bits);
-    if (!completions.buildProjection(predicate(), keep, 4096)) {
-      // Sparse domains often benefit from deciding the cyclic bits first.
-      // Broad arithmetic projections may need the compiler's interleaving;
-      // discard the bounded attempt and construct the exact relation there.
-      completions = ModelCounter(circuit, bits);
-      if (!completions.buildProjection(predicate(), keep))
-        return SamplerResult::Invalid;
-    }
+    if (!completions.build(cyclicRelation))
+      return SamplerResult::Invalid;
+    completions.project(keep);
     if (completions.count().zero())
       return SamplerResult::Unsatisfiable;
 
@@ -562,11 +964,24 @@ public:
     components.erase(std::unique(components.begin(), components.end()),
                      components.end());
 
+    auto owner = [&](size_t input) {
+      if (input == InputPartition::none)
+        return components.size();
+      size_t root = partition.find(input);
+      auto found = std::lower_bound(components.begin(), components.end(), root);
+      return found != components.end() && *found == root
+                 ? size_t(found - components.begin())
+                 : components.size();
+    };
+    bool remainder = false;
+    for (size_t input : partInputs)
+      remainder = remainder || owner(input) == components.size();
+
     obelisk_rt_random_state_v1 nextState = state;
     std::vector<bool> value;
     // Conjuncts are split before restriction; prioritized stages that fix
     // inputs never reach weighted sampling.
-    if (components.size() <= 1 ||
+    if ((components.size() == 1 && !remainder) ||
         std::find(fixed.begin(), fixed.end(), true) != fixed.end()) {
       SamplerResult result = weightedComponent(
           predicate(), active, width, variable, bits, physicalBits, groups,
@@ -576,19 +991,9 @@ public:
         return result;
     } else {
       // Components holding a distribution are sampled in input order, then
-      // every remaining input together.
+      // the remaining relation, which separates further on its own.
       value.assign(bits.size(), false);
-      auto owner = [&](size_t input) {
-        if (input == InputPartition::none)
-          return components.size();
-        size_t root = partition.find(input);
-        auto found =
-            std::lower_bound(components.begin(), components.end(), root);
-        return found != components.end() && *found == root
-                   ? size_t(found - components.begin())
-                   : components.size();
-      };
-      for (size_t component = 0; component <= components.size(); ++component) {
+      for (size_t component = 0; component != components.size(); ++component) {
         ID relation = 1;
         for (size_t index = 0; index != parts.size(); ++index)
           if (owner(partInputs[index]) == component)
@@ -608,6 +1013,24 @@ public:
           if (owner(bit) == component)
             value[bit] = sampled[bit];
       }
+      // Inputs of a distribution component are fixed in the remaining
+      // relation, which never reads them, so they consume no draw there.
+      Formula rest(circuit, bits);
+      rest.physicalBits = physicalBits;
+      rest.auxiliarySupport = auxiliarySupport;
+      rest.setFreeFields(freeFields);
+      for (size_t index = 0; index != parts.size(); ++index)
+        if (owner(partInputs[index]) == components.size())
+          rest.require(parts[index]);
+      for (size_t bit = 0; bit != bits.size(); ++bit)
+        rest.fixed[bit] = owner(bit) != components.size();
+      SamplerResult result = rest.layered(width, masks, layerCount, nextState);
+      if (result != SamplerResult::Satisfiable)
+        return result == SamplerResult::Unsatisfiable ? SamplerResult::Invalid
+                                                      : result;
+      for (size_t bit = 0; bit != bits.size(); ++bit)
+        if (owner(bit) == components.size())
+          value[bit] = rest.fixedValues[bit];
     }
     size_t words = (uint64_t(width) + 63) / 64;
     for (size_t word = 0; word != words; ++word)
@@ -877,71 +1300,49 @@ public:
     return SamplerResult::Satisfiable;
   }
 
-  bool ordered(unsigned width, const std::vector<ID> &bits,
-               const std::vector<unsigned> &physicalBits, const uint64_t *start,
-               const uint64_t *mutableMask, obelisk_rt_random_state_v1 &state,
-               const uint64_t *masks, size_t layerCount, uint64_t *output) {
-    ModelCounter counter(circuit, bits);
-    if (!counter.build(predicate()))
-      return false;
-    obelisk_rt_random_state_v1 nextState = state;
-    size_t words = (uint64_t(width) + 63) / 64;
-    for (size_t layer = 0; layer != layerCount; ++layer) {
-      std::vector<bool> keep(bits.size(), false);
-      for (size_t bit = 0; bit != bits.size(); ++bit)
-        keep[bit] = (masks[layer * words + physicalBits[bit] / 64] >>
-                     (physicalBits[bit] % 64)) &
-                    1;
-      counter.project(keep);
-      ModelCount count = counter.count();
-      if (count.zero())
-        return false;
-      auto value =
-          counter.assignment(ModelCount::randomBelow(count, nextState));
-      counter.restrict(value, keep);
-    }
+  /// The first layer's projection is empty exactly when the relation is, so
+  /// an unsatisfiable relation is reported without a separate check.
+  SamplerResult ordered(unsigned width, const uint64_t *start,
+                        const uint64_t *mutableMask,
+                        obelisk_rt_random_state_v1 &state,
+                        const uint64_t *masks, size_t layerCount,
+                        uint64_t *output) {
     // The unspecified remaining fields retain the ordinary joint distribution
     // conditional on the accepted earlier-layer values.
-    counter.project(std::vector<bool>(bits.size(), true));
-    ModelCount count = counter.count();
-    if (count.zero())
-      return false;
-    auto value = counter.assignment(ModelCount::randomBelow(count, nextState));
+    obelisk_rt_random_state_v1 nextState = state;
+    SamplerResult status = layered(width, masks, layerCount, nextState);
+    if (status != SamplerResult::Satisfiable)
+      return status;
+    size_t words = (uint64_t(width) + 63) / 64;
     for (size_t index = 0; index != words; ++index)
       output[index] = start[index] & ~mutableMask[index];
-    for (size_t bit = 0; bit != value.size(); ++bit)
-      if (value[bit])
+    for (size_t bit = 0; bit != bits.size(); ++bit)
+      if (fixedValues[bit])
         output[physicalBits[bit] / 64] |= uint64_t{1}
                                           << (physicalBits[bit] % 64);
     if (width % 64)
       output[words - 1] &= (uint64_t{1} << (width % 64)) - 1;
     state = nextState;
-    return true;
+    return SamplerResult::Satisfiable;
   }
 
-  bool projection(const Bits &bits, const std::vector<unsigned> &physicalBits,
-                  const OrderMask &mask, obelisk_rt_random_state_v1 &state,
+  bool projection(const OrderMask &mask, obelisk_rt_random_state_v1 &state,
                   OrderMask &output) {
     std::vector<bool> keep(bits.size(), false);
     for (size_t bit = 0; bit != bits.size(); ++bit)
       keep[bit] =
-          (mask[physicalBits[bit] / 64] >> (physicalBits[bit] % 64)) & 1;
-    ModelCounter counter(circuit, bits);
-    if (!counter.build(predicate()))
+          !fixed[bit] &&
+          ((mask[physicalBits[bit] / 64] >> (physicalBits[bit] % 64)) & 1);
+    // Each stage checks its relation before choosing its layers.
+    if (choose(keep, state, true) != SamplerResult::Satisfiable)
       return false;
-    counter.project(keep);
-    ModelCount count = counter.count();
-    if (count.zero())
-      return false;
-    auto selected = counter.assignment(ModelCount::randomBelow(count, state));
     for (size_t index = 0; index != bits.size(); ++index) {
       if (!keep[index])
         continue;
       unsigned bit = physicalBits[index];
       uint64_t field = uint64_t{1} << (bit % 64);
       output[bit / 64] =
-          (output[bit / 64] & ~field) | (selected[index] ? field : 0);
-      require(selected[index] ? bits[index] : bits[index] ^ 1);
+          (output[bit / 64] & ~field) | (fixedValues[index] ? field : 0);
     }
     return true;
   }
@@ -1044,7 +1445,7 @@ public:
       if (layers.empty())
         layers.push_back(stages[stage]);
       for (const OrderMask &layer : layers)
-        if (!projection(bits, physicalBits, layer, nextState, assignment))
+        if (!projection(layer, nextState, assignment))
           return SamplerResult::Invalid;
       for (size_t bit = 0; bit != bits.size(); ++bit)
         if ((stages[stage][physicalBits[bit] / 64] >>
@@ -1070,6 +1471,10 @@ public:
   std::vector<bool> fixed, fixedValues;
   std::vector<ID> requirements;
   std::vector<size_t> checkpoints;
+  NodeScratch scratch;
+  std::vector<FreeField> freeFields;
+  random::FlatMap<ID, size_t> freeFieldIndex;
+  std::vector<size_t> ordinals;
 };
 
 } // namespace
@@ -1123,6 +1528,8 @@ SamplerResult sampleRandomPlan(
       orderedBits[read32(p + 8)] = read32(p + 4);
   }
   BooleanCircuit circuit;
+  // Specialization creates about one gate per plan node.
+  circuit.reserve(plan.nodeCount);
   Bits variable(width), booleanBits;
   std::vector<unsigned> physicalBits;
   for (unsigned physical : orderedBits) {
@@ -1310,6 +1717,13 @@ SamplerResult sampleRandomPlan(
   Formula f(circuit, booleanBits);
   f.physicalBits = physicalBits;
   f.auxiliarySupport = std::move(auxiliarySupport);
+  std::vector<Formula::FreeField> freeFields;
+  for (uint32_t index = 0; index != plan.freeFieldCount; ++index) {
+    const uint8_t *p =
+        plan.freeFields + size_t(index) * random::samplerFreeFieldSize;
+    freeFields.push_back({handle(read32(p)), read32(p + 4), read32(p + 8)});
+  }
+  f.setFreeFields(std::move(freeFields));
   for (ID equivalence : auxiliaryEquivalences)
     f.require(equivalence);
   std::vector<ID> distributionGuards(weightedGroups.size(), missing);
@@ -1510,16 +1924,30 @@ SamplerResult sampleRandomPlan(
                          mutableMask, assignmentWords, constraintMask,
                          *randomState, assignment);
   }
-  auto result = f.check();
-  if (result != SamplerResult::Satisfiable)
-    return result;
+  bool hasSoft = std::any_of(soft.begin(), soft.end(),
+                             [](ID predicate) { return predicate != missing; });
+  // Preferences and distributions are decided against a satisfiable
+  // relation; plain ordered sampling detects an empty one itself. The first
+  // solve-before layer is decided first in any case; projecting onto it
+  // lets the inputs it guards be checked apart.
+  if (hasSoft || weighted) {
+    std::vector<bool> separators(booleanBits.size(), false);
+    if (orderedLayerCount)
+      for (size_t bit = 0; bit != booleanBits.size(); ++bit)
+        separators[bit] = physicalBits[bit] < width &&
+                          ((orderedMasks[physicalBits[bit] / 64] >>
+                            (physicalBits[bit] % 64)) &
+                           1);
+    auto result = f.check(&separators);
+    if (result != SamplerResult::Satisfiable)
+      return result;
+  }
   // IEEE 1800-2023 18.5.13.1: retain each preference, highest priority
   // first, that stays satisfiable with the hard constraints and every
   // preference retained before it. Preferences over independent inputs are
   // decided in independent relations, one per input component.
   std::vector<bool> retainedSoft(soft.size(), false);
-  if (std::any_of(soft.begin(), soft.end(),
-                  [](ID predicate) { return predicate != missing; })) {
+  if (hasSoft) {
     InputPartition partition(circuit, booleanBits.size());
     std::vector<ID> parts = f.conjuncts();
     std::vector<size_t> partInputs, softComponents(soft.size());
@@ -1565,10 +1993,8 @@ SamplerResult sampleRandomPlan(
                       retainedSoft, constraintMask, captures, captureWidths,
                       captureOffsets, start, mutableMask, *randomState,
                       orderedMasks, orderedLayerCount, assignment);
-  return f.ordered(width, booleanBits, physicalBits, start, mutableMask,
-                   *randomState, orderedMasks, orderedLayerCount, assignment)
-             ? SamplerResult::Satisfiable
-             : SamplerResult::Invalid;
+  return f.ordered(width, start, mutableMask, *randomState, orderedMasks,
+                   orderedLayerCount, assignment);
 }
 
 } // namespace obelisk::runtime

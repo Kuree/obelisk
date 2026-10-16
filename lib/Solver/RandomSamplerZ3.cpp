@@ -8,8 +8,10 @@
 #include "RandomRealZ3.h"
 #include <algorithm>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <z3.h>
 
@@ -1211,79 +1213,206 @@ public:
   void prepare(std::vector<std::pair<unsigned, ID>> &roots,
                const std::vector<unsigned> &boundaries,
                const std::vector<bool> &descending) {
-    // Each diagram attempt traverses the shared circuit. Bound the number of
-    // attempts globally so many atoms cannot cause quadratic compiler work.
-    // Skipping this optimization preserves the exact Boolean sampling plan.
-    if (roots.size() > 32)
-      return;
     auto nodes = circuit.getNodes();
-    struct Input {
-      uint32_t column, source;
-    };
-    std::vector<Input> inputs;
-    std::vector<unsigned> columns(boundaries.back());
+    std::vector<unsigned> bitColumns(boundaries.back());
     for (size_t field = 1; field != boundaries.size(); ++field)
       for (unsigned bit = boundaries[field - 1]; bit != boundaries[field];
            ++bit)
-        columns[bit] = descending[field] ? boundaries[field] - 1 - bit
-                                         : bit - boundaries[field - 1];
-    std::vector<std::vector<Input>> byColumn;
+        bitColumns[bit] = descending[field] ? boundaries[field] - 1 - bit
+                                            : bit - boundaries[field - 1];
+    std::vector<uint32_t> columns(nodes.size(), 0);
     for (uint32_t index = 1; index != nodes.size(); ++index) {
       const auto &node = nodes[index];
-      if (node.opcode == PlanOpcode::And)
-        continue;
-      uint32_t column = 0;
       if (node.opcode == PlanOpcode::RandomBit)
-        column = columns[node.a];
+        columns[index] = bitColumns[node.a];
       else if (node.opcode == PlanOpcode::CaptureBit)
-        column = node.b;
+        columns[index] = node.b;
       else if (unsigned precision = random::realCellPrecision(node.opcode))
-        column = (precision == 32 ? OBELISK_RT_REAL32_RANK_BITS
-                                  : OBELISK_RT_REAL64_RANK_BITS) -
-                 1 - node.b;
-      if (byColumn.size() <= column)
-        byColumn.resize(size_t(column) + 1);
-      byColumn[column].push_back({column, index});
+        columns[index] = (precision == 32 ? OBELISK_RT_REAL32_RANK_BITS
+                                          : OBELISK_RT_REAL64_RANK_BITS) -
+                         1 - node.b;
     }
-    for (const auto &column : byColumn)
-      inputs.insert(inputs.end(), column.begin(), column.end());
-    // One bounded diagram per atom preserves independent function stages and
-    // dynamic soft priorities. Joint satisfiability is handled after binding
-    // the live parameters, without freezing one compiler-selected model.
-    for (auto &root : roots) {
-      std::vector<bool> reached(nodes.size(), false);
-      std::vector<ID> pending{root.second};
+    // Each attempt traverses only its own subcircuit, and a failed one also
+    // spends its construction budget. This bounds their total, including
+    // subcircuits that atoms share. Skipping preparation preserves the exact
+    // Boolean sampling plan.
+    int64_t work = int64_t{1} << 24;
+    // The declared random field holding a physical bit.
+    auto fieldOf = [&](uint32_t bit) {
+      return size_t(
+                 std::upper_bound(boundaries.begin(), boundaries.end(), bit) -
+                 boundaries.begin()) -
+             1;
+    };
+    auto attempt = [&](const std::vector<ID> &conjuncts, ID &result) {
+      std::vector<uint32_t> reached;
+      std::unordered_set<uint32_t> seen{0};
+      std::vector<ID> pending(conjuncts.begin(), conjuncts.end());
       while (!pending.empty()) {
-        ID index = pending.back() / 2;
+        uint32_t index = pending.back() / 2;
         pending.pop_back();
-        if (reached[index])
+        if (!seen.insert(index).second)
           continue;
-        reached[index] = true;
+        reached.push_back(index);
         if (nodes[index].opcode == PlanOpcode::And) {
           pending.push_back(nodes[index].a);
           pending.push_back(nodes[index].b);
         }
       }
+      work -= int64_t(reached.size());
+      if (work < 0)
+        return false;
+      // Parameters and equally significant random bits share a prefix.
+      std::sort(reached.begin(), reached.end());
+      std::vector<uint32_t> inputs;
+      for (uint32_t index : reached)
+        if (nodes[index].opcode != PlanOpcode::And)
+          inputs.push_back(index);
+      std::stable_sort(inputs.begin(), inputs.end(),
+                       [&](uint32_t lhs, uint32_t rhs) {
+                         return columns[lhs] < columns[rhs];
+                       });
       BooleanCircuit prepared;
-      std::vector<ID> translated(nodes.size()), variables, original;
-      for (const auto &input : inputs) {
-        if (!reached[input.source])
-          continue;
-        translated[input.source] = prepared.input(
-            PlanOpcode::RandomBit, input.source, variables.size());
-        variables.push_back(translated[input.source]);
-        original.push_back(input.source * 2);
+      std::unordered_map<uint32_t, ID> translated{{0, 0}};
+      std::vector<ID> variables, original;
+      for (uint32_t index : inputs) {
+        ID input =
+            prepared.input(PlanOpcode::RandomBit, index, variables.size());
+        translated.emplace(index, input);
+        variables.push_back(input);
+        original.push_back(index * 2);
       }
-      auto handle = [&](ID id) { return translated[id / 2] ^ (id & 1); };
-      for (uint32_t index = 1; index != nodes.size(); ++index)
-        if (reached[index] && nodes[index].opcode == PlanOpcode::And)
-          translated[index] = prepared.conjunction(handle(nodes[index].a),
-                                                   handle(nodes[index].b));
+      auto handle = [&](ID id) { return translated.at(id / 2) ^ (id & 1); };
+      for (uint32_t index : reached)
+        if (nodes[index].opcode == PlanOpcode::And)
+          translated.emplace(index,
+                             prepared.conjunction(handle(nodes[index].a),
+                                                  handle(nodes[index].b)));
+      ID relation = 1;
+      for (ID conjunct : conjuncts)
+        relation = prepared.conjunction(relation, handle(conjunct));
       runtime::ModelCounter counter(prepared, variables);
-      if (counter.prepareDiagram(handle(root.second), 4096, 32768))
-        root.second = counter.exportDiagram(circuit, original);
+      if (!counter.prepareDiagram(relation, 4096, 32768)) {
+        work -= 4096;
+        return false;
+      }
+      result = counter.exportDiagram(circuit, original);
+      // Record each random field that the diagram leaves free: eliminating
+      // it alone leaves the projection true for every other input, state
+      // and mode parameters included. Over a single field, that projection
+      // is a constant the target decides cheaply. The target splits top-level
+      // ANDs, so only a diagram that stays one conjunct is found by its
+      // handle.
+      const auto &exported = circuit.getNodes()[result / 2];
+      if (result / 2 == 0 ||
+          (!(result & 1) && exported.opcode == PlanOpcode::And))
+        return true;
+      std::vector<size_t> fields(variables.size(), SIZE_MAX);
+      for (size_t variable = 0; variable != variables.size(); ++variable)
+        if (nodes[inputs[variable]].opcode == PlanOpcode::RandomBit)
+          fields[variable] = fieldOf(nodes[inputs[variable]].a);
+      std::vector<size_t> distinct(fields.begin(), fields.end());
+      std::sort(distinct.begin(), distinct.end());
+      distinct.erase(std::unique(distinct.begin(), distinct.end()),
+                     distinct.end());
+      if (std::count_if(distinct.begin(), distinct.end(),
+                        [](size_t field) { return field != SIZE_MAX; }) < 2)
+        return true;
+      for (size_t field : distinct) {
+        if (field == SIZE_MAX)
+          continue;
+        std::vector<bool> keep(variables.size());
+        unsigned kept = 0;
+        for (size_t variable = 0; variable != variables.size(); ++variable)
+          kept += keep[variable] = fields[variable] != field;
+        counter.project(keep);
+        work -= int64_t(variables.size());
+        if (counter.count().compare(runtime::ModelCount::powerOfTwo(kept)) == 0)
+          freeFields.push_back({result, boundaries[field],
+                                boundaries[field + 1] - boundaries[field]});
+      }
+      return true;
+    };
+    // One bounded diagram per atom preserves independent function stages and
+    // dynamic soft priorities. Joint satisfiability is handled after binding
+    // the live parameters, without freezing one compiler-selected model.
+    // Within an atom, top-level conjuncts get one diagram per set of random
+    // fields they read. The target samples conjuncts over disjoint inputs
+    // apart and splits them again once an earlier solve-before layer decides
+    // what joins them, such as a container size guarding each element; one
+    // diagram over interleaved independent fields would multiply their widths
+    // and hide that structure. Conjuncts over the same fields, such as both
+    // bounds of a range, share a diagram, or each gets its own when together
+    // they exceed the budget.
+    auto fieldsOf = [&](ID conjunct) {
+      std::vector<size_t> fields;
+      std::unordered_set<uint32_t> visited{0};
+      std::vector<ID> walk{conjunct};
+      while (!walk.empty()) {
+        uint32_t index = walk.back() / 2;
+        walk.pop_back();
+        if (!visited.insert(index).second)
+          continue;
+        if (nodes[index].opcode == PlanOpcode::And) {
+          walk.push_back(nodes[index].a);
+          walk.push_back(nodes[index].b);
+        } else if (nodes[index].opcode == PlanOpcode::RandomBit) {
+          fields.push_back(fieldOf(nodes[index].a));
+        }
+      }
+      work -= int64_t(visited.size());
+      std::sort(fields.begin(), fields.end());
+      fields.erase(std::unique(fields.begin(), fields.end()), fields.end());
+      return fields;
+    };
+    for (auto &root : roots) {
+      if (work < 0)
+        break;
+      std::vector<ID> conjuncts;
+      std::unordered_set<ID> unique;
+      std::vector<ID> pending{root.second};
+      while (!pending.empty()) {
+        ID id = pending.back();
+        pending.pop_back();
+        if (id == 1 || !unique.insert(id).second)
+          continue;
+        if (!(id & 1) && nodes[id / 2].opcode == PlanOpcode::And) {
+          pending.push_back(nodes[id / 2].b);
+          pending.push_back(nodes[id / 2].a);
+        } else
+          conjuncts.push_back(id);
+      }
+      std::vector<std::vector<ID>> groups;
+      std::map<std::vector<size_t>, size_t> bySupport;
+      for (ID conjunct : conjuncts) {
+        auto [group, inserted] =
+            bySupport.try_emplace(fieldsOf(conjunct), groups.size());
+        if (inserted)
+          groups.emplace_back();
+        groups[group->second].push_back(conjunct);
+      }
+      ID result = conjuncts.empty() ? root.second : 1;
+      for (const auto &group : groups) {
+        ID prepared;
+        if (work >= 0 && attempt(group, prepared)) {
+          result = circuit.conjunction(result, prepared);
+          continue;
+        }
+        for (ID conjunct : group) {
+          if (group.size() == 1 || work < 0 || !attempt({conjunct}, prepared))
+            prepared = conjunct;
+          result = circuit.conjunction(result, prepared);
+        }
+      }
+      root.second = result;
     }
   }
+
+  struct FreeField {
+    ID node;
+    uint32_t offset, width;
+  };
+  std::vector<FreeField> freeFields;
 
 private:
   int nextSymbol = 0;
@@ -1627,6 +1756,20 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
   for (auto [instruction, root] : roots) {
     append32(instruction);
     append32(root);
+  }
+  std::vector<PlanBuilder::FreeField> freeFields;
+  for (const auto &free : builder.freeFields)
+    if (reached[free.node / 2])
+      freeFields.push_back({handle(free.node), free.offset, free.width});
+  if (!freeFields.empty()) {
+    append32(random::samplerFreeFieldMagic);
+    append32(static_cast<uint32_t>(freeFields.size()));
+    for (const auto &free : freeFields) {
+      append32(free.node);
+      append32(free.offset);
+      append32(free.width);
+      append32(0);
+    }
   }
   size_t planSize = plan.size();
   append32(random::samplerTrailerMagic);

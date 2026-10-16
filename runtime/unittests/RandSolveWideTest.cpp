@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <iterator>
+#include <set>
 #include <vector>
 
 #include "RandomSamplerTestSupport.h"
@@ -1218,6 +1220,272 @@ TEST_F(RandSolveWideTest, WeightedProjectionNormalizesHugeLegalCardinalities) {
   EXPECT_GT(ones, 14u);
   EXPECT_LT(ones, 50u);
   EXPECT_EQ(otherBits, UINT64_MAX);
+}
+
+// IEEE 1800-2023 18.5.9: independent fields are sampled apart. One diagram
+// over their interleaved bits multiplied the states of every comparison, so
+// 64 range-constrained fields could not finish; apart, they are linear.
+TEST_F(RandSolveWideTest, SamplesIndependentFieldsApart) {
+  constexpr unsigned fields = 64, fieldWidth = 16;
+  std::vector<Instruction> instructions;
+  for (unsigned field = 0; field != fields; ++field) {
+    instructions.push_back({OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, fieldWidth, 0,
+                            field * fieldWidth});
+    instructions.push_back(
+        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, fieldWidth, 0, 0, 0, {1000}});
+    instructions.push_back({OBELISK_RT_RANDOM_LT_V1, 1});
+    if (field)
+      instructions.push_back({OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1});
+  }
+  instructions.push_back({OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                          OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1});
+  auto bytes = program(fields * fieldWidth, 0, instructions,
+                       OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM);
+  constexpr size_t words = fields * fieldWidth / 64;
+  std::vector<uint64_t> start(words, 0), mask(words, UINT64_MAX),
+      assignment(words, 0);
+  std::vector<std::set<uint64_t>> seen(fields);
+  uint64_t state = 71;
+  uint32_t success = 0;
+  for (unsigned draw = 0; draw != 16; ++draw) {
+    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                  context, bytes.data(), bytes.size(), start.data(),
+                  mask.data(), words, 0, 1, state, 15, nullptr, 0, nullptr, 0,
+                  assignment.data(), &success, &state),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    for (unsigned field = 0; field != fields; ++field) {
+      uint64_t value =
+          (assignment[field * fieldWidth / 64] >> (field * fieldWidth % 64)) &
+          0xffff;
+      EXPECT_LT(value, 1000u);
+      seen[field].insert(value);
+    }
+  }
+  for (const auto &values : seen)
+    EXPECT_GT(values.size(), 1u);
+}
+
+// A uniform choice from a product of independent relations is a uniform
+// choice from each, and an unconstrained field stays uniform alongside them.
+TEST_F(RandSolveWideTest, IndependentComponentsStayJointlyUniform) {
+  auto bytes = program(6, 0,
+                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2},
+                        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 0, {0}},
+                        {OBELISK_RT_RANDOM_NE_V1, 1},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 2},
+                        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 0, {3}},
+                        {OBELISK_RT_RANDOM_NE_V1, 1},
+                        {OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+                       OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM);
+  uint64_t start = 0, mask = 0x3f, assignment = 0, state = 71;
+  uint32_t success = 0;
+  unsigned pairs[16] = {}, free[4] = {};
+  for (unsigned draw = 0; draw != 9000; ++draw) {
+    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                  context, bytes.data(), bytes.size(), &start, &mask, 1, 0, 1,
+                  state, 15, nullptr, 0, nullptr, 0, &assignment, &success,
+                  &state),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    ++pairs[assignment & 15];
+    ++free[assignment >> 4];
+  }
+  for (unsigned a = 0; a != 4; ++a)
+    for (unsigned b = 0; b != 4; ++b) {
+      unsigned count = pairs[a | (b << 2)];
+      if (a == 0 || b == 3) {
+        EXPECT_EQ(count, 0u);
+      } else {
+        EXPECT_GT(count, 800u);
+        EXPECT_LT(count, 1200u);
+      }
+    }
+  for (unsigned count : free) {
+    EXPECT_GT(count, 1950u);
+    EXPECT_LT(count, 2550u);
+  }
+}
+
+// The dynamic array shape: a size solved first (18.5.7.1) guards each
+// element's constraint. Projecting onto the size eliminates every element
+// apart; once the size is chosen, the elements separate again.
+TEST_F(RandSolveWideTest, SizeLayerSeparatesGuardedElements) {
+  std::vector<Instruction> instructions{
+      {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+      {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {3}},
+      {OBELISK_RT_RANDOM_LE_V1, 1},
+      {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+       OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}};
+  for (unsigned element = 0; element != 3; ++element) {
+    instructions.push_back(
+        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {element}});
+    instructions.push_back({OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4});
+    instructions.push_back({OBELISK_RT_RANDOM_LT_V1, 1});
+    instructions.push_back(
+        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4, 0, 4 + 4 * element});
+    instructions.push_back(
+        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {5}});
+    instructions.push_back({OBELISK_RT_RANDOM_LT_V1, 1});
+    instructions.push_back({OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1});
+    if (element)
+      instructions.push_back({OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1});
+  }
+  instructions.push_back({OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                          OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1});
+  auto bytes = program(16, 0, instructions,
+                       OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                           OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE,
+                       {}, {{{0xf}, {0xfff0}}});
+  uint64_t start = 0, mask = 0xffff, assignment = 0, state = 71;
+  uint32_t success = 0;
+  unsigned sizes[4] = {}, unguardedLarge = 0, unguarded = 0;
+  for (unsigned draw = 0; draw != 4000; ++draw) {
+    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                  context, bytes.data(), bytes.size(), &start, &mask, 1, 0, 1,
+                  state, 15, nullptr, 0, nullptr, 0, &assignment, &success,
+                  &state),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    uint64_t size = assignment & 0xf;
+    ASSERT_LE(size, 3u);
+    ++sizes[size];
+    for (unsigned element = 0; element != 3; ++element) {
+      uint64_t value = (assignment >> (4 + 4 * element)) & 0xf;
+      if (element < size) {
+        EXPECT_LT(value, 5u);
+      } else {
+        ++unguarded;
+        unguardedLarge += value >= 5;
+      }
+    }
+  }
+  // The size is uniform over its own legal values, not weighted by how many
+  // element completions each one has.
+  for (unsigned count : sizes) {
+    EXPECT_GT(count, 850u);
+    EXPECT_LT(count, 1150u);
+  }
+  EXPECT_GT(unguardedLarge * 16, unguarded * 10);
+  EXPECT_LT(unguardedLarge * 16, unguarded * 12);
+}
+
+// A guarded element whose body excludes some sizes restricts the size layer:
+// eliminating it does not leave a true projection, so it is not a free field
+// and the projection keeps it. (1 < s) -> (e < s - 2) excludes s == 2.
+TEST_F(RandSolveWideTest, SizeLayerKeepsGuardsThatRestrictIt) {
+  auto bytes = program(8, 0,
+                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+                        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {3}},
+                        {OBELISK_RT_RANDOM_LE_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+                        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {1}},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+                        {OBELISK_RT_RANDOM_LT_V1, 1},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4, 0, 4},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+                        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {2}},
+                        {OBELISK_RT_RANDOM_SUB_V1, 4},
+                        {OBELISK_RT_RANDOM_LT_V1, 1},
+                        {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+                       OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                           OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE,
+                       {}, {{{0xf}, {0xf0}}});
+  uint64_t start = 0, mask = 0xff, assignment = 0, state = 71;
+  uint32_t success = 0;
+  unsigned sizes[4] = {};
+  for (unsigned draw = 0; draw != 3000; ++draw) {
+    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                  context, bytes.data(), bytes.size(), &start, &mask, 1, 0, 1,
+                  state, 15, nullptr, 0, nullptr, 0, &assignment, &success,
+                  &state),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    uint64_t size = assignment & 0xf, element = (assignment >> 4) & 0xf;
+    ASSERT_LE(size, 3u);
+    ++sizes[size];
+    if (size == 3)
+      EXPECT_EQ(element, 0u);
+  }
+  EXPECT_EQ(sizes[2], 0u);
+  for (unsigned size : {0u, 1u, 3u}) {
+    EXPECT_GT(sizes[size], 850u);
+    EXPECT_LT(sizes[size], 1150u);
+  }
+}
+
+// With every input frozen, nothing is left to choose, but the relation must
+// still be checked: violated frozen values fail without consuming a draw.
+TEST_F(RandSolveWideTest, FrozenViolatedRelationFailsWithoutDraws) {
+  auto bytes = program(8, 0,
+                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+                        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {3}},
+                        {OBELISK_RT_RANDOM_EQ_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+                       OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM);
+  uint64_t start = 5, mask = 0, assignment = 0, state = 71;
+  uint32_t success = 1;
+  ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                context, bytes.data(), bytes.size(), &start, &mask, 1, 0, 1,
+                state, 15, nullptr, 0, nullptr, 0, &assignment, &success,
+                &state),
+            OBELISK_RT_OK);
+  EXPECT_EQ(success, 0u);
+  EXPECT_EQ(state, 71u);
+  EXPECT_EQ(assignment, 0u);
+  start = 3;
+  ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                context, bytes.data(), bytes.size(), &start, &mask, 1, 0, 1,
+                state, 15, nullptr, 0, nullptr, 0, &assignment, &success,
+                &state),
+            OBELISK_RT_OK);
+  EXPECT_EQ(success, 1u);
+  EXPECT_EQ(state, 71u);
+  EXPECT_EQ(assignment, 3u);
+}
+
+// The compiler records free fields of guarded conjuncts; a malformed free
+// field section is rejected before specialization.
+TEST_F(RandSolveWideTest, RejectsMalformedFreeFields) {
+  auto bytes = program(8, 0,
+                       {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {1}},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+                        {OBELISK_RT_RANDOM_LT_V1, 1},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4, 0, 4},
+                        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {5}},
+                        {OBELISK_RT_RANDOM_LT_V1, 1},
+                        {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+                       OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM);
+  const uint8_t magic[] = {'F', 'R', 'E', 'E'};
+  auto section = std::search(bytes.begin(), bytes.end(), std::begin(magic),
+                             std::end(magic));
+  ASSERT_NE(section, bytes.end());
+  size_t entry = size_t(section - bytes.begin()) + 8;
+  auto solve = [&](const std::vector<uint8_t> &variant) {
+    uint64_t start = 0, mask = 0xff, assignment = 0, state = 71;
+    uint32_t success = 0;
+    return obelisk_rt_v1_random_solve_wide_modes_state(
+        context, variant.data(), variant.size(), &start, &mask, 1, 0, 1, state,
+        15, nullptr, 0, nullptr, 0, &assignment, &success, &state);
+  };
+  EXPECT_EQ(solve(bytes), OBELISK_RT_OK);
+  auto zeroWidth = bytes;
+  std::fill_n(zeroWidth.begin() + entry + 8, 4, 0);
+  EXPECT_EQ(solve(zeroWidth), OBELISK_RT_INVALID_ARGUMENT);
+  auto outside = bytes;
+  outside[entry + 4] = 8;
+  EXPECT_EQ(solve(outside), OBELISK_RT_INVALID_ARGUMENT);
+  auto badMagic = bytes;
+  badMagic[section - bytes.begin()] = 'X';
+  EXPECT_EQ(solve(badMagic), OBELISK_RT_INVALID_ARGUMENT);
 }
 
 #endif

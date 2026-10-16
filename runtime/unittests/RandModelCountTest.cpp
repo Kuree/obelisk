@@ -155,4 +155,82 @@ TEST_F(RandModelCountTest, ProjectionCountsChoicesIndependentlyOfCompletions) {
   }
 }
 
+// An exported decision diagram names both cofactors of each node in its
+// gates, so importing it needs no cofactor walk.
+TEST_F(RandModelCountTest, DecisionReadsExportedDiagramCofactors) {
+  std::vector<ID> variables;
+  for (unsigned index = 0; index != 6; ++index)
+    variables.push_back(bit(index));
+  ID predicate =
+      context.disjunction(context.exclusiveOr(variables[0], variables[3]),
+                          context.conjunction(variables[1], variables[4] ^ 1));
+  predicate = context.conjunction(
+      predicate, context.disjunction(variables[2], variables[5]));
+  ModelCounter counter(context, variables);
+  ASSERT_TRUE(counter.build(predicate));
+  BooleanCircuit exported;
+  std::vector<ID> inputs;
+  for (unsigned index = 0; index != 6; ++index)
+    inputs.push_back(exported.input(PlanOpcode::RandomBit, index, index));
+  ID root = counter.exportDiagram(exported, inputs);
+  std::vector<ID> pending{root};
+  std::set<ID> seen;
+  unsigned decisions = 0;
+  while (!pending.empty()) {
+    ID id = pending.back();
+    pending.pop_back();
+    if (id <= 1 || !seen.insert(id).second)
+      continue;
+    uint32_t variable = exported.firstVariable(id);
+    ID low = 0, high = 0;
+    ASSERT_TRUE(exported.decision(id, variable, low, high));
+    EXPECT_EQ(low, exported.cofactor(id, variable, false));
+    EXPECT_EQ(high, exported.cofactor(id, variable, true));
+    ++decisions;
+    pending.push_back(low);
+    pending.push_back(high);
+  }
+  EXPECT_GT(decisions, 6u);
+  // A gate over arithmetic, not a decision on its first input, is declined.
+  ID mixed = exported.exclusiveOr(inputs[0], inputs[1]);
+  ID low = 0, high = 0;
+  EXPECT_FALSE(
+      exported.decision(exported.conjunction(mixed, inputs[2]), 0, low, high));
+}
+
+// Counts keep two words inline and move wider values to the heap and back.
+TEST_F(RandModelCountTest, CountsCrossInlineStorage) {
+  ModelCount half = ModelCount::powerOfTwo(127);
+  ModelCount wide = half;
+  wide.add(half);
+  EXPECT_EQ(wide.compare(ModelCount::powerOfTwo(128)), 0);
+  EXPECT_EQ(wide.bitWidth(), 129u);
+  EXPECT_EQ(wide.word(2), 1u);
+  ModelCount product = wide.multiplied(wide);
+  EXPECT_EQ(product.compare(ModelCount::powerOfTwo(256)), 0);
+  EXPECT_EQ(product.divided(wide).compare(wide), 0);
+  product.subtract(ModelCount::powerOfTwo(256));
+  EXPECT_TRUE(product.zero());
+  wide.subtract(half);
+  EXPECT_EQ(wide.compare(half), 0);
+  EXPECT_EQ(wide.word(1), uint64_t{1} << 63);
+  EXPECT_EQ(wide.word(2), 0u);
+  EXPECT_EQ(half.shifted(70).compare(ModelCount::powerOfTwo(197)), 0);
+}
+
+TEST(RandomFlatMapTest, FindsEveryEntryAcrossGrowth) {
+  obelisk::random::FlatMap<uint64_t, uint32_t> map;
+  for (uint32_t key = 0; key != 5000; ++key)
+    ASSERT_TRUE(map.insert(uint64_t(key) * 7919, key).second);
+  for (uint32_t key = 0; key != 5000; ++key) {
+    const uint32_t *value = map.find(uint64_t(key) * 7919);
+    ASSERT_NE(value, nullptr);
+    EXPECT_EQ(*value, key);
+    auto [existing, inserted] = map.insert(uint64_t(key) * 7919, 0);
+    EXPECT_FALSE(inserted);
+    EXPECT_EQ(*existing, key);
+  }
+  EXPECT_FALSE(map.contains(1));
+}
+
 } // namespace

@@ -7,10 +7,11 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <optional>
-#include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace obelisk::random {
@@ -101,6 +102,84 @@ struct PlanNode {
   uint32_t a, b;
 };
 
+/// Mixes an integral key for FlatMap's power-of-two tables.
+struct IntegerHash {
+  size_t operator()(uint64_t value) const {
+    value ^= value >> 33;
+    value *= 0xff51afd7ed558ccdull;
+    value ^= value >> 33;
+    return static_cast<size_t>(value);
+  }
+};
+
+/// Open-addressing hash table for the integral keys of circuits and decision
+/// diagrams. A node-based std::unordered_map allocates once per entry, which
+/// dominated sampling relations made of many small components. A returned
+/// pointer stays valid until the next insertion.
+template <typename Key, typename Value, typename Hash = IntegerHash>
+class FlatMap {
+public:
+  Value *find(const Key &key) {
+    return const_cast<Value *>(std::as_const(*this).find(key));
+  }
+  const Value *find(const Key &key) const {
+    if (slots.empty())
+      return nullptr;
+    for (size_t index = Hash{}(key) & (slots.size() - 1);;
+         index = (index + 1) & (slots.size() - 1)) {
+      const Slot &slot = slots[index];
+      if (!slot.used)
+        return nullptr;
+      if (slot.key == key)
+        return &slot.value;
+    }
+  }
+  bool contains(const Key &key) const { return find(key) != nullptr; }
+  void reserve(size_t entries) {
+    while ((entries + 1) * 4 > slots.size() * 3)
+      grow();
+  }
+  /// The caller establishes that `key` is present.
+  const Value &at(const Key &key) const { return *find(key); }
+
+  /// Insert `value` unless `key` is present. Returns the entry and whether
+  /// it was inserted.
+  std::pair<Value *, bool> insert(const Key &key, const Value &value) {
+    if ((count + 1) * 4 > slots.size() * 3)
+      grow();
+    for (size_t index = Hash{}(key) & (slots.size() - 1);;
+         index = (index + 1) & (slots.size() - 1)) {
+      Slot &slot = slots[index];
+      if (!slot.used) {
+        slot = {key, value, true};
+        ++count;
+        return {&slot.value, true};
+      }
+      if (slot.key == key)
+        return {&slot.value, false};
+    }
+  }
+
+private:
+  struct Slot {
+    Key key{};
+    Value value{};
+    bool used = false;
+  };
+
+  void grow() {
+    std::vector<Slot> old(slots.empty() ? 16 : slots.size() * 2);
+    old.swap(slots);
+    count = 0;
+    for (const Slot &slot : old)
+      if (slot.used)
+        insert(slot.key, slot.value);
+  }
+
+  std::vector<Slot> slots;
+  size_t count = 0;
+};
+
 class BooleanCircuit {
 public:
   using ID = uint32_t;
@@ -111,6 +190,13 @@ public:
     nodes.push_back({PlanOpcode::Constant, 0, 0});
     firstVariables.push_back(noVariable);
     mandatoryLiterals.push_back(false);
+  }
+
+  void reserve(size_t gates) {
+    nodes.reserve(nodes.size() + gates);
+    firstVariables.reserve(firstVariables.size() + gates);
+    mandatoryLiterals.reserve(mandatoryLiterals.size() + gates);
+    unique.reserve(gates);
   }
 
   ID input(PlanOpcode opcode, uint32_t a, uint32_t b = 0) {
@@ -150,15 +236,15 @@ public:
     if (a > b)
       std::swap(a, b);
     uint64_t key = (uint64_t(a) << 32) | b;
-    auto found = unique.find(key);
-    if (found != unique.end())
-      return found->second;
-    result = static_cast<ID>(nodes.size() * 2);
+    auto [found, inserted] =
+        unique.insert(key, static_cast<ID>(nodes.size() * 2));
+    if (!inserted)
+      return *found;
+    result = *found;
     nodes.push_back({PlanOpcode::And, a, b});
     firstVariables.push_back(std::min(firstVariable(a), firstVariable(b)));
     mandatoryLiterals.push_back(hasMandatoryLiteral(a) ||
                                 hasMandatoryLiteral(b));
-    unique.emplace(key, result);
     return result;
   }
 
@@ -192,6 +278,65 @@ public:
   }
   const std::vector<PlanNode> &getNodes() const { return nodes; }
 
+  /// The cofactors of `id` by `variable`, read off the gates conditional()
+  /// builds, when `id` decides `variable` and its branches do not read it.
+  /// Exported decision diagrams have this form; a decision diagram's import
+  /// then needs no cofactor walk.
+  bool decision(ID id, uint32_t variable, ID &low, ID &high) const {
+    auto literal = [&](ID input) {
+      return input > 1 && nodes[input / 2].opcode == PlanOpcode::RandomBit &&
+             nodes[input / 2].b == variable;
+    };
+    auto independent = [&](ID input) {
+      return firstVariable(input) > variable;
+    };
+    // Finds the literal operand of a positive AND and its other operand.
+    auto split = [&](ID gate, ID &other, bool &positive) {
+      const PlanNode &node = nodes[gate / 2];
+      if ((gate & 1) || node.opcode != PlanOpcode::And)
+        return false;
+      for (auto [input, rest] :
+           {std::pair(node.a, node.b), std::pair(node.b, node.a)})
+        if (literal(input) && independent(rest)) {
+          other = rest;
+          positive = !(input & 1);
+          return true;
+        }
+      return false;
+    };
+    if (literal(id)) {
+      high = (id & 1) ^ 1;
+      low = high ^ 1;
+      return true;
+    }
+    ID other;
+    bool positive;
+    if (split(id, other, positive)) {
+      // x & y, or !x & n.
+      high = positive ? other : 0;
+      low = positive ? 0 : other;
+      return true;
+    }
+    if (split(id ^ 1, other, positive)) {
+      // !(x & q) = x ? !q : 1, or !(!x & q) = x ? 1 : !q.
+      high = positive ? other ^ 1 : 1;
+      low = positive ? 1 : other ^ 1;
+      return true;
+    }
+    // !(!(x & y) & !(!x & n)) = x ? y : n.
+    const PlanNode &node = nodes[id / 2];
+    ID first, second;
+    bool firstPositive, secondPositive;
+    if (!(id & 1) || node.opcode != PlanOpcode::And ||
+        !split(node.a ^ 1, first, firstPositive) ||
+        !split(node.b ^ 1, second, secondPositive) ||
+        firstPositive == secondPositive)
+      return false;
+    high = firstPositive ? first : second;
+    low = firstPositive ? second : first;
+    return true;
+  }
+
   /// Restrict one variable. Hash-consing the simplified
   /// cofactors lets the sampler construct only the final relation's decision
   /// diagram, without constructing diagrams for intermediate arithmetic.
@@ -203,11 +348,10 @@ public:
         result = id;
         return true;
       }
-      uint64_t key = (uint64_t(id) << 32) | variable;
-      auto found = cofactors.find(key);
-      if (found == cofactors.end())
+      const auto *found = cofactors.find((uint64_t(id) << 32) | variable);
+      if (!found)
         return false;
-      result = high ? found->second.second : found->second.first;
+      result = high ? found->second : found->first;
       return result != missing;
     };
     std::vector<ID> pending{root};
@@ -233,10 +377,11 @@ public:
         }
         result = conjunction(a, b) ^ (id & 1);
       }
-      uint64_t key = (uint64_t(id) << 32) | variable;
-      auto found =
-          cofactors.emplace(key, std::make_pair(missing, missing)).first;
-      (high ? found->second.second : found->second.first) = result;
+      auto *found = cofactors
+                        .insert((uint64_t(id) << 32) | variable,
+                                std::make_pair(missing, missing))
+                        .first;
+      (high ? found->second : found->first) = result;
       pending.pop_back();
     }
     return result;
@@ -246,10 +391,27 @@ public:
   /// visited; fixed bits remain constants and never multiply a model count.
   ID restrict(ID root, const std::vector<bool> &values,
               const std::vector<bool> &selected) {
-    std::unordered_map<ID, ID> reduced;
-    reduced.emplace(0, 0);
-    auto known = [&](ID id) { return reduced.count(id & ~ID(1)); };
-    auto value = [&](ID id) { return reduced.at(id & ~ID(1)) ^ (id & 1); };
+    // Memoize in arrays stamped per call; the gates this call creates are
+    // results only and are never looked up.
+    size_t size = nodes.size();
+    if (restrictStamps.size() < size) {
+      restrictStamps.resize(size, 0);
+      restrictValues.resize(size, 0);
+    }
+    if (++restrictGeneration == 0) {
+      std::fill(restrictStamps.begin(), restrictStamps.end(), 0);
+      restrictGeneration = 1;
+    }
+    auto settle = [&](ID id, ID value) {
+      restrictStamps[id / 2] = restrictGeneration;
+      restrictValues[id / 2] = value;
+    };
+    auto known = [&](ID id) {
+      return id / 2 == 0 || restrictStamps[id / 2] == restrictGeneration;
+    };
+    auto value = [&](ID id) {
+      return (id / 2 == 0 ? 0 : restrictValues[id / 2]) ^ (id & 1);
+    };
     std::vector<ID> pending{root & ~ID(1)};
     while (!pending.empty()) {
       ID id = pending.back();
@@ -259,7 +421,7 @@ public:
       }
       PlanNode node = nodes[id / 2];
       if (node.opcode == PlanOpcode::RandomBit)
-        reduced.emplace(id, selected[node.b] ? ID(values[node.b]) : id);
+        settle(id, selected[node.b] ? ID(values[node.b]) : id);
       else {
         if (!known(node.a)) {
           pending.push_back(node.a & ~ID(1));
@@ -269,7 +431,9 @@ public:
           pending.push_back(node.b & ~ID(1));
           continue;
         }
-        reduced.emplace(id, conjunction(value(node.a), value(node.b)));
+        ID a = value(node.a), b = value(node.b);
+        // An untouched subcircuit keeps its gate without a table lookup.
+        settle(id, a == node.a && b == node.b ? id : conjunction(a, b));
       }
       pending.pop_back();
     }
@@ -280,8 +444,11 @@ private:
   std::vector<PlanNode> nodes;
   std::vector<uint32_t> firstVariables;
   std::vector<bool> mandatoryLiterals;
-  std::unordered_map<uint64_t, ID> unique;
-  std::unordered_map<uint64_t, std::pair<ID, ID>> cofactors;
+  FlatMap<uint64_t, ID> unique;
+  FlatMap<uint64_t, std::pair<ID, ID>> cofactors;
+  std::vector<uint32_t> restrictStamps;
+  std::vector<ID> restrictValues;
+  uint32_t restrictGeneration = 0;
 };
 
 constexpr uint32_t samplerPlanMagic = 0x504d4153;    // SAMP
@@ -292,20 +459,39 @@ constexpr size_t samplerPlanNodeSize = 16;
 constexpr size_t samplerPlanRootSize = 8;
 constexpr size_t samplerPlanTrailerSize = 16;
 
+/// Plans are little-endian. The sampler validates and specializes every
+/// node on each call, so a word is one load where the host agrees.
 inline uint32_t planRead32(const uint8_t *bytes) {
-  uint32_t value = 0;
-  for (unsigned index = 0; index != 4; ++index)
-    value |= uint32_t(bytes[index]) << (index * 8);
+  uint32_t value;
+  std::memcpy(&value, bytes, sizeof(value));
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+  value = __builtin_bswap32(value);
+#endif
   return value;
 }
 
 inline uint64_t planRead64(const uint8_t *bytes) {
-  return uint64_t(planRead32(bytes)) | (uint64_t(planRead32(bytes + 4)) << 32);
+  uint64_t value;
+  std::memcpy(&value, bytes, sizeof(value));
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+  value = __builtin_bswap64(value);
+#endif
+  return value;
 }
 
+/// An optional section after the roots lists free fields: a node D and the
+/// physical bits [offset, offset + width) of one random field F such that
+/// every assignment of D's other inputs, state and mode parameters
+/// included, extends to a solution of D by choosing F alone (the projection
+/// that eliminates F is true). The compiler proves this once; projecting such
+/// a conjunct onto inputs decided before F then needs no work at run time.
+constexpr uint32_t samplerFreeFieldMagic = 0x45455246; // FREE
+constexpr size_t samplerFreeFieldHeaderSize = 8;
+constexpr size_t samplerFreeFieldSize = 16;
+
 struct SamplerPlanView {
-  const uint8_t *nodes = nullptr, *roots = nullptr;
-  uint32_t nodeCount = 0, rootCount = 0;
+  const uint8_t *nodes = nullptr, *roots = nullptr, *freeFields = nullptr;
+  uint32_t nodeCount = 0, rootCount = 0, freeFieldCount = 0;
   size_t coreSize = 0;
 };
 
@@ -405,15 +591,26 @@ inline bool readSamplerPlan(const uint8_t *program, size_t size,
   const uint8_t *header = program + coreSize;
   uint32_t nodes = planRead32(header + 8), roots = planRead32(header + 12);
   uint32_t width = planRead32(program + 8), captures = planRead32(program + 16);
+  uint64_t baseSize = samplerPlanHeaderSize +
+                      uint64_t(nodes) * samplerPlanNodeSize +
+                      uint64_t(roots) * samplerPlanRootSize;
   if (planRead32(header) != samplerPlanMagic ||
       planRead32(header + 4) != samplerPlanVersion || !nodes ||
       nodes >= (UINT32_MAX / 2) || planRead32(header + 16) != width ||
       planRead32(header + 20) != captures ||
-      planRead64(header + 24) != coreSize ||
-      planSize != samplerPlanHeaderSize +
-                      uint64_t(nodes) * samplerPlanNodeSize +
-                      uint64_t(roots) * samplerPlanRootSize)
+      planRead64(header + 24) != coreSize || planSize < baseSize)
     return false;
+  uint32_t freeFields = 0;
+  if (planSize != baseSize) {
+    const uint8_t *section = header + baseSize;
+    if (planSize - baseSize < samplerFreeFieldHeaderSize ||
+        planRead32(section) != samplerFreeFieldMagic)
+      return false;
+    freeFields = planRead32(section + 4);
+    if (planSize != baseSize + samplerFreeFieldHeaderSize +
+                        uint64_t(freeFields) * samplerFreeFieldSize)
+      return false;
+  }
   bool wide = program[4] == 2 && program[5] == 0;
   size_t instructionHeader = wide ? 32 : 24;
   uint32_t instructions = planRead32(program + 12);
@@ -514,7 +711,18 @@ inline bool readSamplerPlan(const uint8_t *program, size_t size,
       return false;
     previous = instruction;
   }
-  view = {nodeBytes, rootBytes, nodes, roots, coreSize};
+  const uint8_t *freeBytes = rootBytes + size_t(roots) * samplerPlanRootSize +
+                             samplerFreeFieldHeaderSize;
+  for (uint32_t index = 0; index != freeFields; ++index) {
+    const uint8_t *p = freeBytes + size_t(index) * samplerFreeFieldSize;
+    uint32_t handle = planRead32(p), offset = planRead32(p + 4),
+             fieldWidth = planRead32(p + 8);
+    if (handle / 2 >= nodes || !fieldWidth || offset > width ||
+        fieldWidth > width - offset || planRead32(p + 12))
+      return false;
+  }
+  view = {nodeBytes,  rootBytes, freeFields ? freeBytes : nullptr, nodes, roots,
+          freeFields, coreSize};
   return true;
 }
 
