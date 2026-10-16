@@ -334,10 +334,10 @@ struct VPIFrameActivation {
 
 enum class VPIFrameCallPhase { Prepared, Entered, Completed, Cancelled };
 struct VPIFrameCall {
-  uint64_t ticket, callID, parent;
+  uint64_t ticket, originID, parent;
+  uint32_t originKind = OBELISK_RT_VPI_FRAME_CALL;
   uint64_t callee = 0;
   VPIFrameCallPhase phase = VPIFrameCallPhase::Prepared;
-  bool isTask = false;
 };
 
 struct VPIState {
@@ -7246,7 +7246,7 @@ extern "C" OBELISK_VPI_EXPORT obelisk_rt_status obelisk_rt_v1_vpi_frame_enter(
   if (outActivation)
     *outActivation = 0;
   if (!context || !outActivation ||
-      originKind > OBELISK_RT_VPI_FRAME_STATEMENT_SCOPE)
+      originKind > OBELISK_RT_VPI_FRAME_NET_RESOLUTION)
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
@@ -7281,6 +7281,11 @@ extern "C" OBELISK_VPI_EXPORT obelisk_rt_status obelisk_rt_v1_vpi_frame_enter(
   if (originKind == OBELISK_RT_VPI_FRAME_CODE_UNIT_SCOPE) {
     if (parent || originID != codeUnitID)
       return OBELISK_RT_INVALID_FRAME;
+  } else if (originKind == OBELISK_RT_VPI_FRAME_NET_RESOLUTION) {
+    status =
+        obelisk_rt_cached_vpi_resolution_target(context, originID, codeUnitID);
+    if (status != OBELISK_RT_OK)
+      return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
   } else {
     if (!parent)
       return OBELISK_RT_INVALID_FRAME;
@@ -7355,6 +7360,43 @@ extern "C" OBELISK_VPI_EXPORT obelisk_rt_status obelisk_rt_v1_vpi_frame_enter(
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
 }
 
+static obelisk_rt_status prepareVPIFrameCall(VPIState *state, uint64_t process,
+                                             uint64_t parent,
+                                             uint32_t originKind,
+                                             uint64_t originID,
+                                             uint64_t *outTicket) {
+  if (!state->nextCallTicket)
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  OBELISK_RT_TRY {
+    auto [calls, inserted] = state->frameCalls.try_emplace(process);
+    auto &records = calls->second;
+    while (!records.empty() &&
+           records.back().phase == VPIFrameCallPhase::Cancelled)
+      records.pop_back();
+    if (!records.empty() && records.back().phase != VPIFrameCallPhase::Entered)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    struct Rollback {
+      VPIState *state;
+      uint64_t process;
+      bool inserted;
+      bool committed = false;
+      ~Rollback() {
+        if (inserted && !committed)
+          state->frameCalls.erase(process);
+      }
+    } rollback{state, process, inserted};
+    uint64_t ticket = state->nextCallTicket;
+    records.push_back(
+        {ticket, originID, parent, originKind, 0, VPIFrameCallPhase::Prepared});
+    ++state->nextCallTicket;
+    *outTicket = ticket;
+    rollback.committed = true;
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
+}
+
 // A pending call is an explicit source occurrence, separate from its eventual
 // activation. In particular, preparing a task call must not increase the frame
 // depth that the scheduler saves for its caller.
@@ -7385,41 +7427,30 @@ extern "C" OBELISK_VPI_EXPORT obelisk_rt_status obelisk_rt_v1_vpi_call_prepare(
       context, OBELISK_RT_VPI_FRAME_CALL, callID, &source, &statement);
   if (status != OBELISK_RT_OK)
     return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
-  uint32_t kind = 0;
-  status = obelisk_rt_cached_vpi_type(context, source, &kind);
-  if (status != OBELISK_RT_OK)
-    return status;
-  const bool isTask = kind == vpiTaskCall || kind == vpiMethodTaskCall;
-  if (!state->nextCallTicket)
-    return OBELISK_RT_OUT_OF_RESOURCES;
-  OBELISK_RT_TRY {
-    auto [calls, inserted] = state->frameCalls.try_emplace(process);
-    auto &records = calls->second;
-    while (!records.empty() &&
-           records.back().phase == VPIFrameCallPhase::Cancelled)
-      records.pop_back();
-    if (!records.empty() && records.back().phase != VPIFrameCallPhase::Entered)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    struct Rollback {
-      VPIState *state;
-      uint64_t process;
-      bool inserted;
-      bool committed = false;
-      ~Rollback() {
-        if (inserted && !committed)
-          state->frameCalls.erase(process);
-      }
-    } rollback{state, process, inserted};
-    uint64_t ticket = state->nextCallTicket;
-    records.push_back(
-        {ticket, callID, parent, 0, VPIFrameCallPhase::Prepared, isTask});
-    ++state->nextCallTicket;
-    *outTicket = ticket;
-    rollback.committed = true;
+  return prepareVPIFrameCall(state, process, parent, OBELISK_RT_VPI_FRAME_CALL,
+                             callID, outTicket);
+}
+
+extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
+obelisk_rt_v1_vpi_resolution_prepare(obelisk_rt_context *context,
+                                     uint64_t netID, uint64_t *outTicket) {
+  if (outTicket)
+    *outTicket = 0;
+  if (!context || !outTicket)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextMutexLock lock(context);
+  auto *state = static_cast<VPIState *>(context->vpiState);
+  if (!state)
     return OBELISK_RT_OK;
-  }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
+  obelisk_rt_design_cursor_v1 net{}, function{};
+  auto status =
+      obelisk_rt_cached_vpi_net_resolution(context, netID, &net, &function);
+  if (status != OBELISK_RT_OK)
+    return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
+  const uint64_t process = context->activeLogicalProcessToken;
+  return prepareVPIFrameCall(state, process, topFrame(state, process),
+                             OBELISK_RT_VPI_FRAME_NET_RESOLUTION, netID,
+                             outTicket);
 }
 
 obelisk_rt_status obelisk_rt_vpi_pending_call(obelisk_rt_context *context,
@@ -7439,7 +7470,8 @@ obelisk_rt_status obelisk_rt_vpi_pending_call(obelisk_rt_context *context,
     return OBELISK_RT_OK;
   if (topFrame(state, process) != calls->second.back().parent)
     return OBELISK_RT_INVALID_FRAME;
-  *outCallID = calls->second.back().callID;
+  if (calls->second.back().originKind == OBELISK_RT_VPI_FRAME_CALL)
+    *outCallID = calls->second.back().originID;
   return OBELISK_RT_OK;
 }
 
@@ -7461,19 +7493,37 @@ obelisk_rt_v1_vpi_frame_enter_prepared(obelisk_rt_context *context,
     return OBELISK_RT_INVALID_FRAME;
   auto &call = calls->second.back();
   if (call.phase != VPIFrameCallPhase::Prepared ||
-      topFrame(state, process) != call.parent || call.isTask != bool(isTask))
+      topFrame(state, process) != call.parent)
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  // Check the source target before the execution transport. A function that
+  // cannot implement this invocation is a bad target even if its ABI mode also
+  // differs from the requested handoff.
+  auto targetStatus = call.originKind == OBELISK_RT_VPI_FRAME_CALL
+                          ? obelisk_rt_cached_vpi_call_target(
+                                context, call.originID, codeUnitID)
+                          : obelisk_rt_cached_vpi_resolution_target(
+                                context, call.originID, codeUnitID);
+  if (targetStatus != OBELISK_RT_OK)
+    return targetStatus == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT
+                                          : targetStatus;
+  bool physicalTask = false;
+  auto transport = obelisk_rt_cached_vpi_code_unit_transport(
+      context, codeUnitID, &physicalTask);
+  if (transport != OBELISK_RT_OK)
+    return transport == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT
+                                       : transport;
+  if (physicalTask != bool(isTask))
     return OBELISK_RT_INVALID_LIFECYCLE;
   if (isTask) {
     uint64_t actualCall = 0;
     auto status = obelisk_rt_vpi_activation_callsite(context, &actualCall);
     if (status != OBELISK_RT_OK)
       return status;
-    if (actualCall != call.callID)
+    if (actualCall != call.originID)
       return OBELISK_RT_INVALID_FRAME;
   }
-  auto status = obelisk_rt_v1_vpi_frame_enter(context, codeUnitID,
-                                              OBELISK_RT_VPI_FRAME_CALL,
-                                              call.callID, outActivation);
+  auto status = obelisk_rt_v1_vpi_frame_enter(
+      context, codeUnitID, call.originKind, call.originID, outActivation);
   if (status != OBELISK_RT_OK)
     return status;
   call.callee = *outActivation;
@@ -7606,7 +7656,7 @@ obelisk_rt_vpi_frame_unwind_process(obelisk_rt_context *context,
   } else if (auto calls = state->frameCalls.find(logicalProcess);
              calls != state->frameCalls.end()) {
     for (auto &call : calls->second) {
-      if (!state->frames.count(call.parent))
+      if (call.parent && !state->frames.count(call.parent))
         call.phase = VPIFrameCallPhase::Cancelled;
       else if (call.phase == VPIFrameCallPhase::Entered &&
                !state->frames.count(call.callee))
@@ -7665,6 +7715,23 @@ extern "C" OBELISK_VPI_EXPORT obelisk_rt_status obelisk_rt_v1_vpi_frame_leave(
   const uint64_t process = context->activeLogicalProcessToken;
   if (!activation || topFrame(state, process) != activation)
     return OBELISK_RT_INVALID_FRAME;
+  // A synchronous resolution call may have no procedural parent. Its normal
+  // return must retain the completed ticket until the generated caller reaches
+  // call_finish; abrupt process unwinding still discards every pending call.
+  if (state->frameStacks.at(process).size() == 1) {
+    auto calls = state->frameCalls.find(process);
+    if (calls != state->frameCalls.end() && !calls->second.empty()) {
+      auto &call = calls->second.back();
+      if (!call.parent && call.callee == activation &&
+          call.phase == VPIFrameCallPhase::Entered) {
+        state->frames.erase(activation);
+        state->frameStacks.erase(process);
+        call.phase = VPIFrameCallPhase::Completed;
+        ++state->frameGeneration;
+        return OBELISK_RT_OK;
+      }
+    }
+  }
   return obelisk_rt_vpi_frame_unwind_process(
       context, process, state->frameStacks.at(process).size() - 1);
 }

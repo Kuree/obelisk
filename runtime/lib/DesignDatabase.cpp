@@ -9197,6 +9197,38 @@ obelisk_rt_cached_vpi_call(const obelisk_rt_context *context, uint64_t callID,
 }
 
 obelisk_rt_status
+obelisk_rt_cached_vpi_code_unit_transport(const obelisk_rt_context *context,
+                                          uint64_t codeUnitID,
+                                          bool *outIsTask) noexcept {
+  if (!outIsTask)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outIsTask = false;
+  const Database *database = cachedDatabase(context);
+  if (!database)
+    return OBELISK_RT_INVALID_HANDLE;
+  for (uint64_t index = 0; index != database->objectCount; ++index) {
+    const uint8_t *object =
+        database->data + database->objects + index * kObjectSize;
+    const uint32_t kind = recordKind(object);
+    if ((kind != OBELISK_RT_DESIGN_RECORD_PROCESS &&
+         kind != OBELISK_RT_DESIGN_RECORD_FUNCTION) ||
+        read64(object + 8) != codeUnitID)
+      continue;
+    uint32_t packedSource = 0;
+    uint64_t sourceOffset = 0;
+    if (!findCallableSource(*database, static_cast<uint32_t>(index),
+                            packedSource, sourceOffset))
+      return OBELISK_RT_EOF;
+    // The validated mapping proves TaskViaFunction explicitly. The physical
+    // record decides scheduler handoff; source identity still controls the
+    // independent call-target proof and the public Frame scope.
+    *outIsTask = kind == OBELISK_RT_DESIGN_RECORD_PROCESS;
+    return OBELISK_RT_OK;
+  }
+  return OBELISK_RT_EOF;
+}
+
+obelisk_rt_status
 obelisk_rt_cached_vpi_code_unit_scope(const obelisk_rt_context *context,
                                       uint64_t codeUnitID,
                                       obelisk_rt_design_cursor_v1 *outCursor,
@@ -9416,6 +9448,97 @@ obelisk_rt_cached_vpi_call_target(const obelisk_rt_context *context,
   return OBELISK_RT_EOF;
 }
 
+obelisk_rt_status obelisk_rt_cached_vpi_net_resolution(
+    const obelisk_rt_context *context, uint64_t netID,
+    obelisk_rt_design_cursor_v1 *outNet,
+    obelisk_rt_design_cursor_v1 *outFunction) noexcept {
+  if (!outNet || !outFunction)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outNet = {};
+  *outFunction = {};
+  const Database *database = cachedDatabase(context);
+  if (!database)
+    return OBELISK_RT_INVALID_HANDLE;
+  obelisk_rt_design_cursor_v1 net{};
+  for (uint64_t index = 0; index != database->objectCount; ++index) {
+    uint64_t offset = database->objects + index * kObjectSize;
+    const uint8_t *object = database->data + offset;
+    if (recordKind(object) == OBELISK_RT_DESIGN_RECORD_NET &&
+        read64(object + 8) == netID) {
+      const auto *origin = obelisk::reflection::findVPITraversal(
+          static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Frame),
+          static_cast<uint32_t>(
+              obelisk::reflection::VPIRelationKind::OriginRel),
+          obelisk::reflection::VPITraversalMode::Handle);
+      if (!origin || !obelisk::reflection::vpiObjectSetContains(
+                         origin->targets, recordVPIKind(object)))
+        return OBELISK_RT_EOF;
+      net.offset = offset;
+      break;
+    }
+  }
+  if (!net.offset)
+    return OBELISK_RT_EOF;
+  auto target = [&](obelisk_rt_design_cursor_v1 source, uint32_t selector,
+                    uint32_t expected, obelisk_rt_design_cursor_v1 &result) {
+    VPIRelationRange range{};
+    auto status = obelisk_rt_cached_vpi_relation_range(context, source,
+                                                       selector, false, &range);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (range.count != 1)
+      return OBELISK_RT_INVALID_DESIGN;
+    uint32_t kind = 0;
+    bool statement = false;
+    status = obelisk_rt_cached_vpi_relation_target(context, range.first,
+                                                   &result, &kind, &statement);
+    if (status != OBELISK_RT_OK)
+      return status;
+    return !statement && kind == expected ? OBELISK_RT_OK : OBELISK_RT_EOF;
+  };
+  using Kind = obelisk::reflection::VPIObjectKind;
+  obelisk_rt_design_cursor_v1 nettype{}, function{};
+  auto status = target(net, static_cast<uint32_t>(Kind::Typespec),
+                       static_cast<uint32_t>(Kind::NettypeDecl), nettype);
+  if (status != OBELISK_RT_OK)
+    return status;
+  status = target(
+      nettype,
+      static_cast<uint32_t>(obelisk::reflection::VPIRelationKind::WithRel),
+      static_cast<uint32_t>(Kind::Function), function);
+  if (status != OBELISK_RT_OK)
+    return status;
+  *outNet = net;
+  *outFunction = function;
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status
+obelisk_rt_cached_vpi_resolution_target(const obelisk_rt_context *context,
+                                        uint64_t netID,
+                                        uint64_t calleeCodeUnitID) noexcept {
+  obelisk_rt_design_cursor_v1 net{}, function{};
+  auto status =
+      obelisk_rt_cached_vpi_net_resolution(context, netID, &net, &function);
+  if (status != OBELISK_RT_OK)
+    return status;
+  const Database *database = cachedDatabase(context);
+  for (uint32_t index = 0; index != database->objectCount; ++index) {
+    const uint8_t *unit =
+        database->data + database->objects + uint64_t{index} * kObjectSize;
+    if (recordKind(unit) != OBELISK_RT_DESIGN_RECORD_FUNCTION ||
+        read64(unit + 8) != calleeCodeUnitID)
+      continue;
+    uint32_t packed = 0;
+    uint64_t source = 0;
+    return findCallableSource(*database, index, packed, source) &&
+                   source == function.offset
+               ? OBELISK_RT_OK
+               : OBELISK_RT_EOF;
+  }
+  return OBELISK_RT_EOF;
+}
+
 obelisk_rt_status obelisk_rt_cached_vpi_frame_origin(
     const obelisk_rt_context *context, uint32_t originKind, uint64_t originID,
     obelisk_rt_design_cursor_v1 *outCursor, bool *outIsStatement) noexcept {
@@ -9482,6 +9605,11 @@ obelisk_rt_status obelisk_rt_cached_vpi_frame_origin(
     *outCursor = statement;
     *outIsStatement = true;
     return OBELISK_RT_OK;
+  }
+  case 3: {
+    obelisk_rt_design_cursor_v1 function{};
+    return obelisk_rt_cached_vpi_net_resolution(context, originID, outCursor,
+                                                &function);
   }
   default:
     return OBELISK_RT_INVALID_ARGUMENT;

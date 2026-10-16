@@ -1,3 +1,4 @@
+// RUN: env OBELISK_TEST_INPUT=%s %obj_root/test/obelisk-design-database-dump-test --gtest_filter=GeneratedDesignDatabase.InterfaceDPITaskFrameTransport
 // RUN: env OBELISK_TEST_INPUT=%s %obj_root/test/obelisk-design-database-dump-test \
 // RUN:   --gtest_filter=GeneratedDesignDatabase.InterfaceCallDispatch
 // IEEE 1800-2023 37.43: a frame identifies the actual invocation. Nominal

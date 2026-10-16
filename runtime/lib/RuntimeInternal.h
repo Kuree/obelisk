@@ -3938,6 +3938,12 @@ obelisk_rt_cached_vpi_statement(const obelisk_rt_context *context,
                                 uint64_t statementID,
                                 obelisk_rt_design_cursor_v1 *outCursor,
                                 uint64_t *outOwnerCodeUnitID) noexcept;
+// Resolve the executable call transport independently of the public source
+// callable kind. A mapped DPI task has a Function transport and Task scope.
+obelisk_rt_status
+obelisk_rt_cached_vpi_code_unit_transport(const obelisk_rt_context *context,
+                                          uint64_t codeUnitID,
+                                          bool *outIsTask) noexcept;
 obelisk_rt_status
 obelisk_rt_cached_vpi_code_unit_scope(const obelisk_rt_context *context,
                                       uint64_t codeUnitID,
@@ -3947,7 +3953,16 @@ obelisk_rt_status
 obelisk_rt_cached_vpi_call_target(const obelisk_rt_context *context,
                                   uint64_t callID,
                                   uint64_t calleeCodeUnitID) noexcept;
-// OriginKind: 0 exact code-unit scope, 1 call occurrence, 2 scoped statement.
+// Resolve the exact net and its retained nettype resolution function.
+obelisk_rt_status obelisk_rt_cached_vpi_net_resolution(
+    const obelisk_rt_context *context, uint64_t netID,
+    obelisk_rt_design_cursor_v1 *outNet,
+    obelisk_rt_design_cursor_v1 *outFunction) noexcept;
+obelisk_rt_status
+obelisk_rt_cached_vpi_resolution_target(const obelisk_rt_context *context,
+                                        uint64_t netID,
+                                        uint64_t calleeCodeUnitID) noexcept;
+// OriginKind: 0 code-unit scope, 1 call, 2 scoped statement, 3 resolution net.
 obelisk_rt_status obelisk_rt_cached_vpi_frame_origin(
     const obelisk_rt_context *context, uint32_t originKind, uint64_t originID,
     obelisk_rt_design_cursor_v1 *outCursor, bool *outIsStatement) noexcept;

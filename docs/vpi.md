@@ -134,6 +134,9 @@ activations without invalidating their immutable source objects. Bytecode,
 native, and AOT scheduler paths restore the saved caller frame depth. A checked
 prepare/consume/finish protocol carries the exact source call through nested
 synchronous and suspending calls, including native and AOT task handoffs.
+Resolution-function activations use the exact net or net-array origin and verify
+its retained nettype resolution function. Imported DPI tasks retain their public
+task identity while entering through their physical synchronous function ABI.
 Frame-local declaration inventories can be enumerated before storage is bound.
 Bound local values and selections use weak automatic references and expire with
 their activation; structural typespec and lexical-scope handles remain valid.
