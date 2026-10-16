@@ -123,7 +123,13 @@ TEST(GeneratedDesignDatabase, PortExpressions) {
   }
   for (unsigned i = 0; i != connections.size(); ++i)
     for (unsigned j = 0; j != i; ++j)
-      EXPECT_EQ(vpi_compare_objects(connections[i], connections[j]), 0);
+      EXPECT_EQ(vpi_compare_objects(connections[i], connections[j]),
+                i == 1 && j == 0 ? 1 : 0);
+  // The two range expressions are distinct source occurrences even though
+  // their current selections denote the same underlying four bits.
+  EXPECT_EQ(vpi_compare_objects(keep(vpi_handle(vpiLeftRange, connections[0])),
+                                keep(vpi_handle(vpiLeftRange, connections[1]))),
+            0);
   auto write = [&](vpiHandle object, int value) {
     s_vpi_value data{};
     data.format = vpiIntVal;

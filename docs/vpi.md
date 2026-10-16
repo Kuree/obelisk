@@ -70,8 +70,12 @@ identities. Both-edge and implicit event-list source queries remain incomplete.
 
 Port `vpiHighConn` relations also retain supported selected and compound
 expressions in the instantiating scope. Selected output connections preserve
-their source parent, while repeated connections retain distinct expression
-identities and deduplicated declaration uses. These connections reuse the same
+their source parent, while repeated connections retain distinct source range
+expressions and deduplicated declaration uses. `vpi_compare_objects` compares
+part-selects by their currently existing backing spans: equivalent ordinary and
+indexed selections compare equal, including a whole-span or indexed-bit handle.
+Unknown or out-of-range selections compare unequal, including to themselves.
+Constant and Operation occurrences keep their source identities. These connections reuse the same
 expression templates and bindings.
 
 Continuous-assignment `vpiLhs`/`vpiRhs` and primitive-terminal `vpiExpr`

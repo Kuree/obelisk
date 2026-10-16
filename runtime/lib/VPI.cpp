@@ -6144,11 +6144,21 @@ bool readNetStrength(__vpiHandle *handle, obelisk_rt_design_cursor_v1 cursor,
   return false;
 }
 
-// Pure selections preserve the underlying net bit's resolved strength. Other
-// expressions have ordinary value strength; they are not aliases to a net.
-obelisk_rt_status readSelectedNetStrength(__vpiHandle *handle,
-                                          const VPIValueSource &initial,
-                                          uint16_t &strength) {
+struct VPISelectedSpan {
+  obelisk_rt_design_cursor_v1 cursor{};
+  obelisk_rt_design_info_v1 info{};
+  uint32_t exactType = 0;
+  uint64_t offset = 0;
+  uint64_t width = 0;
+};
+
+// Resolve source selections to their current underlying declaration and span.
+// Strength forwarding alone may look through scalar concat/replication. Those
+// Operation occurrences never become aliases for object comparison (38.3).
+obelisk_rt_status selectedObjectSpan(__vpiHandle *handle,
+                                     const VPIValueSource &initial,
+                                     uint64_t width, bool forwardScalarConcat,
+                                     VPISelectedSpan &span) {
   auto *context = handle->owner->context;
   __vpiHandle selected;
   selected.owner = handle->owner;
@@ -6183,22 +6193,22 @@ obelisk_rt_status readSelectedNetStrength(__vpiHandle *handle,
                                   result);
   };
   for (;;) {
-    if (source.info.kind == OBELISK_RT_DESIGN_RECORD_NET) {
-      uint64_t base =
-          source.form == VPIObjectForm::Indexed ? source.selectionBitOffset : 0;
-      if (offset >= source.info.bit_width || offset > UINT64_MAX - base)
-        return OBELISK_RT_EOF;
-      return readNetStrength(handle, source.cursor, base + offset, strength)
-                 ? OBELISK_RT_OK
-                 : OBELISK_RT_INVALID_HANDLE;
-    }
     VPIExpressionInfo expression{};
     if (obelisk_rt_cached_vpi_expression(context, selected.cursor,
-                                         &expression) != OBELISK_RT_OK)
-      return OBELISK_RT_EOF;
+                                         &expression) != OBELISK_RT_OK) {
+      uint64_t base =
+          source.form == VPIObjectForm::Indexed ? source.selectionBitOffset : 0;
+      if (!width || offset > source.info.bit_width ||
+          width > source.info.bit_width - offset || offset > UINT64_MAX - base)
+        return OBELISK_RT_EOF;
+      span = {source.cursor, source.info, source.exactType, base + offset,
+              width};
+      return OBELISK_RT_OK;
+    }
     // A one-bit concatenation can contain exactly one positive-width data
     // operand. Preserve its structural net connection, including {1{net}}.
-    if (expression.kind == vpiOperation && expression.bitWidth == 1) {
+    if (forwardScalarConcat && expression.kind == vpiOperation &&
+        expression.bitWidth == 1) {
       bool concat =
           expression.code == vpiConcatOp && expression.operandCount == 1;
       int64_t repetitions = 0;
@@ -6231,7 +6241,10 @@ obelisk_rt_status readSelectedNetStrength(__vpiHandle *handle,
             context, parentSource.semanticCursor, &semantic) != OBELISK_RT_OK)
       return OBELISK_RT_INVALID_DESIGN;
     bool indexed = expression.kind == vpiIndexedPartSelect;
-    bool ascending = semantic.range_left < semantic.range_right;
+    bool hasRange =
+        (semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0;
+    bool ascending = hasRange && semantic.range_left < semantic.range_right;
+    int64_t right = hasRange ? semantic.range_right : 0;
     int64_t bound = 0;
     if (!integer(indexed ? 1 : 2, bound))
       return handle->owner->errorLevel ? OBELISK_RT_INVALID_HANDLE
@@ -6242,16 +6255,87 @@ obelisk_rt_status readSelectedNetStrength(__vpiHandle *handle,
     if (indexed && expression.code == 2 && !ascending)
       first -= expression.bitWidth - 1;
     __int128 index = ascending ? first - offset : first + offset;
-    __int128 parentOffset =
-        ascending ? static_cast<__int128>(semantic.range_right) - index
-                  : index - static_cast<__int128>(semantic.range_right);
-    if (parentOffset < 0 || parentOffset >= parentSource.info.bit_width)
+    __int128 parentOffset = ascending ? static_cast<__int128>(right) - index
+                                      : index - static_cast<__int128>(right);
+    if (parentOffset < 0 || parentOffset > parentSource.info.bit_width ||
+        width >
+            parentSource.info.bit_width - static_cast<uint64_t>(parentOffset))
       return OBELISK_RT_EOF;
     offset = static_cast<uint64_t>(parentOffset);
     selected.cursor = parent.cursor;
     selected.exactVpiType = parent.exactVpiType;
     source = parentSource;
   }
+}
+
+// Pure selections preserve the underlying net bit's resolved strength. Other
+// expressions have ordinary value strength; they are not aliases to a net.
+obelisk_rt_status readSelectedNetStrength(__vpiHandle *handle,
+                                          const VPIValueSource &initial,
+                                          uint16_t &strength) {
+  VPISelectedSpan span{};
+  auto status = selectedObjectSpan(handle, initial, 1, true, span);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (span.info.kind != OBELISK_RT_DESIGN_RECORD_NET)
+    return OBELISK_RT_EOF;
+  return readNetStrength(handle, span.cursor, span.offset, strength)
+             ? OBELISK_RT_OK
+             : OBELISK_RT_INVALID_HANDLE;
+}
+
+bool isSourceSelection(__vpiHandle *handle) {
+  if (handle->form != VPIObjectForm::Design || handle->statement)
+    return false;
+  VPIExpressionInfo expression{};
+  return obelisk_rt_cached_vpi_expression(handle->owner->context,
+                                          handle->cursor,
+                                          &expression) == OBELISK_RT_OK &&
+         (expression.kind == vpiPartSelect ||
+          expression.kind == vpiIndexedPartSelect);
+}
+
+struct VPISelectedObjectIdentity {
+  uint32_t domain = 0;
+  uint64_t backing = 0, offset = 0, width = 0;
+  bool operator==(const VPISelectedObjectIdentity &other) const {
+    return domain == other.domain && backing == other.backing &&
+           offset == other.offset && width == other.width;
+  }
+};
+
+bool selectedObjectIdentity(__vpiHandle *handle,
+                            VPISelectedObjectIdentity &identity) {
+  if (handle->form != VPIObjectForm::Design &&
+      handle->form != VPIObjectForm::Indexed)
+    return false;
+  const auto *policy = valuePolicyFor(handle);
+  VPIValueSource source{};
+  VPISelectedSpan span{};
+  if (!policy || !valueSourceFor(handle, *policy, source) ||
+      selectedObjectSpan(handle, source, source.info.bit_width, false, span) !=
+          OBELISK_RT_OK)
+    return false;
+  // Physical state and immutable declarations occupy separate identity
+  // domains. Equal parameter values never identify different declarations.
+  if (span.info.kind == OBELISK_RT_DESIGN_RECORD_STORAGE ||
+      span.info.kind == OBELISK_RT_DESIGN_RECORD_NET) {
+    uint64_t stateOffset = 0;
+    if (obelisk_rt_design_state_offset(handle->owner->context, span.cursor,
+                                       span.offset,
+                                       &stateOffset) != OBELISK_RT_OK)
+      return false;
+    identity = {span.info.kind, 0, stateOffset, span.width};
+    return true;
+  }
+  if (span.exactType == vpiParameter || span.exactType == vpiSpecParam) {
+    identity = {OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, span.cursor.offset,
+                span.offset, span.width};
+    return true;
+  }
+  // Weak automatic/class storage needs its exact live binding. A recipe
+  // cursor alone cannot prove that a selected simulation object exists.
+  return false;
 }
 
 bool preparePrimitiveValue(__vpiHandle *handle, VPIValueSource &source) {
@@ -13228,6 +13312,11 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_compare_objects(vpiHandle first,
       right->form == VPIObjectForm::ClassObject)
     return left->form == right->form &&
            left->dynamicIdentity == right->dynamicIdentity;
+  if (isSourceSelection(left) || isSourceSelection(right)) {
+    VPISelectedObjectIdentity a{}, b{};
+    return left->owner == right->owner && selectedObjectIdentity(left, a) &&
+           selectedObjectIdentity(right, b) && a == b;
+  }
   if (left->dynamicIdentity != right->dynamicIdentity ||
       left->frameActivation != right->frameActivation ||
       left->localDeclarationID != right->localDeclarationID)
