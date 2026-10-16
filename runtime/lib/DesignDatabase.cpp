@@ -50,6 +50,8 @@ constexpr uint64_t kSemanticClassBindingSize =
     obelisk::reflection::SemanticClassBindingLayout.size;
 constexpr uint64_t kClassMemberBindingSize =
     obelisk::reflection::ClassMemberBindingLayout.size;
+constexpr uint64_t kThreadOriginBindingSize =
+    obelisk::reflection::ThreadOriginBindingLayout.size;
 constexpr uint64_t kEventBindingSize =
     obelisk::reflection::EventBindingLayout.size;
 constexpr uint64_t kEventArrayStorageBindingSize =
@@ -261,6 +263,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
   uint64_t eventBindingOffset = 0, eventBindingCount = 0;
   uint64_t eventArrayStorageBindingOffset = 0,
            eventArrayStorageBindingCount = 0;
+  uint64_t threadOriginBindingOffset = 0, threadOriginBindingCount = 0;
   uint64_t relationIndexOffset = 0, relationIndexCount = 0;
   uint64_t relationIndexDimensionOffset = 0, relationIndexDimensionCount = 0;
   uint64_t relationIndexKeyOffset = 0, relationIndexKeyCount = 0;
@@ -362,6 +365,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     eventBindingCount = reader.getEventBindingCount();
     eventArrayStorageBindingOffset = reader.getEventArrayStorageBindingOffset();
     eventArrayStorageBindingCount = reader.getEventArrayStorageBindingCount();
+    threadOriginBindingOffset = reader.getThreadOriginBindingOffset();
+    threadOriginBindingCount = reader.getThreadOriginBindingCount();
   }
   database = {data,
               execution->design_database_size,
@@ -403,6 +408,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               eventBindingCount,
               eventArrayStorageBindingOffset,
               eventArrayStorageBindingCount,
+              threadOriginBindingOffset,
+              threadOriginBindingCount,
               relationIndexOffset,
               relationIndexCount,
               relationIndexDimensionOffset,
@@ -482,6 +489,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         {database.eventBindings, database.eventBindingCount, kEventBindingSize},
         {database.eventArrayStorageBindings,
          database.eventArrayStorageBindingCount, kEventArrayStorageBindingSize},
+        {database.threadOriginBindings, database.threadOriginBindingCount,
+         kThreadOriginBindingSize},
         {database.relationIndices, database.relationIndexCount,
          kRelationIndexSize},
         {database.relationIndexDimensions, database.relationIndexDimensionCount,
@@ -558,6 +567,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         database.mailboxElementBindingCount != 0 ||
         database.eventBindingCount != 0 ||
         database.eventArrayStorageBindingCount != 0 ||
+        database.threadOriginBindingCount != 0 ||
         database.relationIndexCount != 0 ||
         database.relationIndexDimensionCount != 0 ||
         database.relationIndexKeyCount != 0 ||
@@ -617,6 +627,9 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       !validRange(database.eventArrayStorageBindings,
                   database.eventArrayStorageBindingCount,
                   kEventArrayStorageBindingSize, database.size) ||
+      !validRange(database.threadOriginBindings,
+                  database.threadOriginBindingCount, kThreadOriginBindingSize,
+                  database.size) ||
       !validRange(database.relationIndices, database.relationIndexCount,
                   kRelationIndexSize, database.size) ||
       !validRange(database.relationIndexDimensions,
@@ -696,6 +709,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        database.eventBindings < kHeaderSize) ||
       (database.eventArrayStorageBindingCount != 0 &&
        database.eventArrayStorageBindings < kHeaderSize) ||
+      (database.threadOriginBindingCount != 0 &&
+       database.threadOriginBindings < kHeaderSize) ||
       (database.semanticRootBindingCount != 0 &&
        database.semanticRootBindings < kHeaderSize) ||
       (database.relationIndexCount != 0 &&
@@ -771,6 +786,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       database.mailboxElementBindingCount > UINT32_MAX ||
       database.eventBindingCount > UINT32_MAX ||
       database.eventArrayStorageBindingCount > UINT32_MAX ||
+      database.threadOriginBindingCount > UINT32_MAX ||
       database.relationIndexCount > UINT32_MAX ||
       database.relationIndexDimensionCount > UINT32_MAX ||
       database.relationIndexKeyCount > UINT32_MAX ||
@@ -994,6 +1010,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       {database.eventBindings, database.eventBindingCount, kEventBindingSize},
       {database.eventArrayStorageBindings,
        database.eventArrayStorageBindingCount, kEventArrayStorageBindingSize},
+      {database.threadOriginBindings, database.threadOriginBindingCount,
+       kThreadOriginBindingSize},
       {database.relationIndices, database.relationIndexCount,
        kRelationIndexSize},
       {database.relationIndexDimensions, database.relationIndexDimensionCount,
@@ -3817,6 +3835,55 @@ bool validateDatabaseImpl(const Database &database) {
     if (named != (name != 0))
       return false;
   }
+  if (database.threadOriginBindingCount) {
+    // IDs belong to a shared executable code-unit namespace. Legacy images
+    // without origin bindings retain their existing per-record-kind checks.
+    std::unordered_map<uint64_t, uint64_t> codeUnits;
+    for (uint64_t index = 0; index != database.objectCount; ++index) {
+      const uint64_t offset = database.objects + index * kObjectSize;
+      const uint8_t *record = database.data + offset;
+      if (recordKind(record) != OBELISK_RT_DESIGN_RECORD_PROCESS &&
+          recordKind(record) != OBELISK_RT_DESIGN_RECORD_FUNCTION)
+        continue;
+      auto [entry, inserted] = codeUnits.emplace(read64(record + 8), offset);
+      if (!inserted)
+        entry->second = 0;
+    }
+    const auto *originEdge = obelisk::reflection::findVPITraversal(
+        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Thread),
+        static_cast<uint32_t>(obelisk::reflection::VPIRelationKind::OriginRel),
+        obelisk::reflection::VPITraversalMode::Handle);
+    uint64_t previous = 0;
+    for (uint64_t index = 0; index != database.threadOriginBindingCount;
+         ++index) {
+      obelisk::reflection::ThreadOriginBindingView binding(
+          database.data + database.threadOriginBindings +
+          index * kThreadOriginBindingSize);
+      const uint64_t codeUnitID = binding.getCodeUnitID();
+      auto codeUnit = codeUnits.find(codeUnitID);
+      if (!codeUnitID || codeUnitID > INT64_MAX ||
+          (index && codeUnitID <= previous) || binding.getReserved() ||
+          binding.getStatementIndex() >= database.statementCount ||
+          codeUnit == codeUnits.end() || !codeUnit->second)
+        return false;
+      const uint8_t *record = database.data + codeUnit->second;
+      const uint8_t *statement =
+          database.data + database.statements +
+          uint64_t{binding.getStatementIndex()} * kStatementSize;
+      const uint32_t owner = read32(statement + 8);
+      if (owner == UINT32_MAX ||
+          read64(record + 16) !=
+              database.scopes + uint64_t{read32(statement + 12)} * kScopeSize ||
+          (codeUnit->second !=
+               database.objects + uint64_t{owner} * kObjectSize &&
+           !(read32(record + 4) & OBELISK_RT_DESIGN_CAP_INTERNAL)) ||
+          !originEdge ||
+          !obelisk::reflection::vpiObjectSetContains(originEdge->targets,
+                                                     read16(statement + 36)))
+        return false;
+      previous = codeUnitID;
+    }
+  }
   struct ParentWorkItem {
     uint32_t index;
     bool finish;
@@ -5649,6 +5716,8 @@ bool sameDatabase(const Database &left, const Database &right) noexcept {
          left.eventArrayStorageBindings == right.eventArrayStorageBindings &&
          left.eventArrayStorageBindingCount ==
              right.eventArrayStorageBindingCount &&
+         left.threadOriginBindings == right.threadOriginBindings &&
+         left.threadOriginBindingCount == right.threadOriginBindingCount &&
          left.relationIndices == right.relationIndices &&
          left.relationIndexCount == right.relationIndexCount &&
          left.relationIndexDimensions == right.relationIndexDimensions &&
@@ -7426,6 +7495,38 @@ obelisk_rt_status obelisk_rt_cached_vpi_event_array_cell(
   }
   outBinding->storage.offset = storage;
   outBinding->bitOffset = bitOffset;
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status obelisk_rt_cached_vpi_thread_origin(
+    const obelisk_rt_context *context, uint64_t codeUnitID,
+    obelisk_rt_design_cursor_v1 *outStatement) noexcept {
+  if (!outStatement)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outStatement = {};
+  const Database *database = cachedDatabase(context);
+  if (!database)
+    return OBELISK_RT_INVALID_HANDLE;
+  uint64_t low = 0, high = database->threadOriginBindingCount;
+  while (low < high) {
+    const uint64_t middle = low + (high - low) / 2;
+    obelisk::reflection::ThreadOriginBindingView binding(
+        database->data + database->threadOriginBindings +
+        middle * kThreadOriginBindingSize);
+    if (binding.getCodeUnitID() < codeUnitID)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == database->threadOriginBindingCount)
+    return OBELISK_RT_EOF;
+  obelisk::reflection::ThreadOriginBindingView binding(
+      database->data + database->threadOriginBindings +
+      low * kThreadOriginBindingSize);
+  if (binding.getCodeUnitID() != codeUnitID)
+    return OBELISK_RT_EOF;
+  outStatement->offset = database->statements +
+                         uint64_t{binding.getStatementIndex()} * kStatementSize;
   return OBELISK_RT_OK;
 }
 

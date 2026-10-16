@@ -2172,8 +2172,9 @@ LogicalResult NativePipelineAnalysis::materialize() {
               sim::SimVPIObjectAnchorOp, sim::SimVPINettypeDeclOp,
               sim::SimVPITypespecDeclOp, sim::SimVPIEnumConstDeclOp,
               sim::SimVPIClassMemberDeclOp, sim::SimVPIEventBindingOp,
-              sim::SimClassFieldDeclOp, schedule::NativeMethodOp,
-              sim::SimRandomConstraintTemplateOp>(operation)) {
+              sim::SimVPIThreadOriginBindingOp, sim::SimClassFieldDeclOp,
+              schedule::NativeMethodOp, sim::SimRandomConstraintTemplateOp>(
+              operation)) {
         operation->erase();
         continue;
       }

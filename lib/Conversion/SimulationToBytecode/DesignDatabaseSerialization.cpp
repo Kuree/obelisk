@@ -245,6 +245,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint32_t storage = 0;
   };
   SmallVector<EventArrayStorageBindingRecord> eventArrayStorageBindings;
+  struct ThreadOriginBindingRecord {
+    uint64_t codeUnit;
+    uint32_t statement;
+  };
+  SmallVector<ThreadOriginBindingRecord> threadOriginBindings;
   struct FrozenValueRecord {
     uint32_t kindAndFlags = 0;
     uint64_t bitWidth = 0;
@@ -1268,6 +1273,20 @@ SmallVector<uint8_t> serializeDesignDatabase(
         static_cast<uint32_t>(index);
     statementKinds[statement.declaration.getId()] =
         statement.declaration.getVpiKind();
+  }
+
+  if (includeStatements) {
+    for (auto binding :
+         design.getBody().front().getOps<sim::SimVPIThreadOriginBindingOp>()) {
+      auto statement = statementIndices.find(binding.getStatementId());
+      if (!codeUnitObjectIndices.contains(binding.getCodeUnitId()) ||
+          statement == statementIndices.end()) {
+        binding.emitOpError("thread-origin endpoint was not serialized");
+        return {};
+      }
+      threadOriginBindings.push_back(
+          {binding.getCodeUnitId(), statement->second});
+    }
   }
 
   DenseMap<uint64_t, uint32_t> automaticOrdinals;
@@ -4214,9 +4233,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
       mailboxElementBindings.size() * MailboxElementBindingLayout.size;
   uint64_t eventArrayStorageBindingOffset =
       eventBindingOffset + eventBindings.size() * EventBindingLayout.size;
-  uint64_t relationIndexOffset =
+  uint64_t threadOriginBindingOffset =
       eventArrayStorageBindingOffset +
       eventArrayStorageBindings.size() * EventArrayStorageBindingLayout.size;
+  uint64_t relationIndexOffset =
+      threadOriginBindingOffset +
+      threadOriginBindings.size() * ThreadOriginBindingLayout.size;
   uint64_t relationIndexDimensionOffset =
       relationIndexOffset + relationIndices.size() * RelationIndexLayout.size;
   uint64_t relationIndexKeyOffset =
@@ -4537,6 +4559,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setEventBindingCount(eventBindings.size());
     writer.setEventArrayStorageBindingOffset(eventArrayStorageBindingOffset);
     writer.setEventArrayStorageBindingCount(eventArrayStorageBindings.size());
+    writer.setThreadOriginBindingOffset(threadOriginBindingOffset);
+    writer.setThreadOriginBindingCount(threadOriginBindings.size());
     writer.setRelationIndexOffset(relationIndexOffset);
     writer.setRelationIndexCount(relationIndices.size());
     writer.setRelationIndexDimensionOffset(relationIndexDimensionOffset);
@@ -4683,6 +4707,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setPhysicalTypeIndex(binding.physicalType);
   }
 
+  llvm::sort(threadOriginBindings, [](const auto &left, const auto &right) {
+    return left.codeUnit < right.codeUnit;
+  });
+  for (auto [index, binding] : llvm::enumerate(threadOriginBindings)) {
+    ThreadOriginBindingWriter writer(output.data() + threadOriginBindingOffset +
+                                     index * ThreadOriginBindingLayout.size);
+    writer.setCodeUnitID(binding.codeUnit);
+    writer.setStatementIndex(binding.statement);
+    writer.setReserved(0);
+  }
   llvm::sort(eventArrayStorageBindings,
              [](const auto &left, const auto &right) {
                return left.array < right.array;

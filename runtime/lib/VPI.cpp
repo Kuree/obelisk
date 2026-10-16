@@ -6293,9 +6293,38 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
   if (handle->form == VPIObjectForm::Thread) {
     if (type == vpiParent)
       return threadParent(handle);
-    if (type == vpiOrigin || type == vpiFrame)
-      setError(handle->owner,
-               "VPI thread source statement and frame metadata are unavailable",
+    if (type == vpiOrigin) {
+      uint64_t codeUnit = UINT64_MAX;
+      auto status = obelisk_rt_logical_process_origin(
+          handle->owner->context, handle->logicalProcess, &codeUnit);
+      if (status != OBELISK_RT_OK) {
+        setError(handle->owner, "VPI thread activation lookup failed",
+                 status == OBELISK_RT_OUT_OF_RESOURCES ? vpiSystem
+                                                       : vpiInternal);
+        return nullptr;
+      }
+      obelisk_rt_design_cursor_v1 statement{};
+      status = obelisk_rt_cached_vpi_thread_origin(handle->owner->context,
+                                                   codeUnit, &statement);
+      if (status == OBELISK_RT_EOF) {
+        setError(handle->owner, "VPI thread source statement is unavailable",
+                 vpiNotice);
+        return nullptr;
+      }
+      uint32_t statementType = 0;
+      if (status != OBELISK_RT_OK ||
+          obelisk_rt_cached_vpi_type(handle->owner->context, statement,
+                                     &statementType) != OBELISK_RT_OK) {
+        setError(handle->owner, "VPI thread source statement lookup failed",
+                 vpiInternal);
+        return nullptr;
+      }
+      // The source statement is immutable elaboration inventory. Its lexical
+      // owner and lifetime are independent of this dynamic thread activation.
+      return makeHandle(handle->owner, statement, statementType, true);
+    }
+    if (type == vpiFrame)
+      setError(handle->owner, "VPI thread frame metadata is unavailable",
                vpiNotice);
     return nullptr;
   }

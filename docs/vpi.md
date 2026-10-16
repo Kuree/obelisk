@@ -78,8 +78,11 @@ include only their remaining events; a satisfied wait is excluded even before
 the scheduler dispatches its thread. Thread handles
 expose `vpiParent`, child `vpiThread` iteration, and `vpiActive`, which is true
 only during that thread's execution. Thread handles expire on finish or kill;
-they have `vpiAutomaticScheme` lifetime. Thread source-statement and frame
-relations are still being completed.
+they have `vpiAutomaticScheme` lifetime. Exact code-unit-to-statement bindings
+provide `vpiOrigin`, including outlined fork branches and nested native or
+bytecode calls. The origin statement keeps its lexical owner and survives
+thread termination. Automatic production of these bindings from procedural
+source statements and frame relations are still being completed.
 
 `vpiMessages` snapshots mailbox contents in FIFO order without consuming them.
 Integral and packed values retain every bit and unknown bit; real and string

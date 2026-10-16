@@ -656,7 +656,11 @@ def SemanticDirectoryEventArrayStorageBindingOffset
     : ReflectionField<"EventArrayStorageBindingOffset", 496, U64LE>;
 def SemanticDirectoryEventArrayStorageBindingCount
     : ReflectionField<"EventArrayStorageBindingCount", 504, U64LE>;
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 512,
+def SemanticDirectoryThreadOriginBindingOffset
+    : ReflectionField<"ThreadOriginBindingOffset", 512, U64LE>;
+def SemanticDirectoryThreadOriginBindingCount
+    : ReflectionField<"ThreadOriginBindingCount", 520, U64LE>;
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 528,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -717,7 +721,17 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 512,
    SemanticDirectoryEventBindingOffset,
    SemanticDirectoryEventBindingCount,
    SemanticDirectoryEventArrayStorageBindingOffset,
-   SemanticDirectoryEventArrayStorageBindingCount]>;
+   SemanticDirectoryEventArrayStorageBindingCount,
+   SemanticDirectoryThreadOriginBindingOffset,
+   SemanticDirectoryThreadOriginBindingCount]>;
+
+// Sparse exact code-unit identity to immutable source statement mapping.
+def ThreadOriginBindingCodeUnitID : ReflectionField<"CodeUnitID", 0, U64LE>;
+def ThreadOriginBindingStatement : ReflectionField<"StatementIndex", 8, U32LE>;
+def ThreadOriginBindingReserved : ReflectionField<"Reserved", 12, U32LE>;
+def ThreadOriginBinding : ReflectionLayout<"ThreadOriginBinding", 16,
+  [ThreadOriginBindingCodeUnitID, ThreadOriginBindingStatement,
+   ThreadOriginBindingReserved]>;
 
 // Exact runtime identity of a source named event without a mutable event cell.
 // Event zero is valid. The all-ones sentinel is never an event identity.

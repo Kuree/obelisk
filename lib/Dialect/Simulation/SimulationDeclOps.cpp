@@ -501,6 +501,17 @@ LogicalResult SimStatementDeclOp::verify() {
                                reflectionDefinitionLoc(*this));
 }
 
+LogicalResult SimVPIThreadOriginBindingOp::verify() {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("requires a simulation.design owner");
+  if (failed(verifyNonnegative(*this, getCodeUnitIdAttr(), "code-unit ID")) ||
+      failed(verifyNonnegative(*this, getStatementIdAttr(), "statement ID")))
+    return failure();
+  if (!getCodeUnitId() || !getStatementId())
+    return emitOpError("code-unit and statement IDs must be nonzero");
+  return success();
+}
+
 LogicalResult SimStatementSiteDeclOp::verify() {
   if (failed(verifyNonnegative(*this, getIdAttr(), "statement-site ID")) ||
       failed(verifyNonnegative(*this, getStatementIdAttr(), "statement ID")) ||
@@ -3149,6 +3160,7 @@ LogicalResult SimDesignOp::verifyRegions() {
   llvm::DenseMap<uint64_t, SimStorageDeclOp> storagesById;
   SmallVector<SimStatementDeclOp> statementInventory;
   SmallVector<SimStatementSiteDeclOp> statementSites;
+  SmallVector<SimVPIThreadOriginBindingOp> threadOrigins;
   SmallVector<SimVPIStatementRelationDeclOp> statementRelations;
   SmallVector<SimVPIRelationDeclOp> vpiRelations;
   SmallVector<SimVPIDefinitionMemberDeclOp> definitionMembers;
@@ -3206,6 +3218,8 @@ LogicalResult SimDesignOp::verifyRegions() {
         return failure();
       statements[statement.getId()] = statement;
       statementInventory.push_back(statement);
+    } else if (auto binding = dyn_cast<SimVPIThreadOriginBindingOp>(op)) {
+      threadOrigins.push_back(binding);
     } else if (auto site = dyn_cast<SimStatementSiteDeclOp>(op)) {
       if (failed(addId(site.getIdAttr(), statementSiteIds, "statement-site")))
         return failure();
@@ -3993,6 +4007,34 @@ LogicalResult SimDesignOp::verifyRegions() {
       if (!entry.second.contains(ordinal))
         return emitOpError(
             "VPI enum-constant ordinals must be dense declaration order");
+
+  llvm::DenseSet<uint64_t> threadOriginCodeUnits;
+  const auto *originEdge = reflection::findVPITraversal(
+      static_cast<uint32_t>(reflection::VPIObjectKind::Thread),
+      static_cast<uint32_t>(reflection::VPIRelationKind::OriginRel),
+      reflection::VPITraversalMode::Handle);
+  for (SimVPIThreadOriginBindingOp binding : threadOrigins) {
+    auto codeUnit = codeUnits.find(binding.getCodeUnitId());
+    auto statement = statements.find(binding.getStatementId());
+    if (codeUnit == codeUnits.end())
+      return binding.emitOpError("references an unknown code-unit ID");
+    if (statement == statements.end() || !statement->second.getCodeUnitId())
+      return binding.emitOpError(
+          "origin must name an existing behavioral statement");
+    if (!threadOriginCodeUnits.insert(binding.getCodeUnitId()).second)
+      return binding.emitOpError(
+          "duplicates a thread-origin code-unit binding");
+    if (statement->second.getScopeId() != codeUnit->second.getScopeId())
+      return binding.emitOpError(
+          "origin and code unit must have the same scope");
+    if (*statement->second.getCodeUnitId() != binding.getCodeUnitId() &&
+        isVPIVisibleCodeUnit(codeUnit->second))
+      return binding.emitOpError(
+          "only an internal code unit may reference another owner's statement");
+    if (!originEdge || !reflection::vpiObjectSetContains(
+                           originEdge->targets, statement->second.getVpiKind()))
+      return binding.emitOpError("statement is not a legal thread origin");
+  }
 
   llvm::DenseMap<uint64_t, uint8_t> statementSiteMasks;
   for (SimStatementSiteDeclOp site : statementSites) {

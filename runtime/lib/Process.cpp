@@ -1,5 +1,6 @@
 //===- Process.cpp - Shared native/bytecode process instances ------------===//
 
+#include "DesignBytecodeImage.h"
 #include "DesignBytecodeNets.h"
 #include "ProcessAllocation.h"
 #include "ProcessContext.h"
@@ -258,6 +259,60 @@ obelisk_rt_builtin_class_waiters(obelisk_rt_gc_lane_v1 *lane,
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+}
+
+obelisk_rt_status
+obelisk_rt_logical_process_origin(obelisk_rt_context *context,
+                                  uint64_t logicalProcess,
+                                  uint64_t *outCodeUnit) noexcept {
+  if (!context || !logicalProcess || !outCodeUnit)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outCodeUnit = UINT64_MAX;
+  OBELISK_RT_TRY {
+    ContextMutexLock lock(context);
+    if (logicalProcess & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) {
+      const uint64_t token =
+          logicalProcess & ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+      auto found = context->scheduledProcessIndices.find(token);
+      if (found == context->scheduledProcessIndices.end() ||
+          found->second >= context->scheduledProcesses.size())
+        return OBELISK_RT_INVALID_HANDLE;
+      const auto &process = context->scheduledProcesses[found->second];
+      if (process.token != token || !process.instance ||
+          context->killedNativeProcesses.count(token) ||
+          context->terminatedNativeProcesses.count(token))
+        return OBELISK_RT_INVALID_HANDLE;
+      const auto *origin =
+          process.callers.empty() ? process.instance : process.callers.front();
+      if (!origin || !origin->descriptor)
+        return OBELISK_RT_INVALID_HANDLE;
+      *outCodeUnit = origin->descriptor->handle.id;
+      return OBELISK_RT_OK;
+    }
+    // Executing bytecode tasks are temporarily removed from the scheduler
+    // vector. Their active record retains the same outermost activation.
+    const ScheduledDesignTask *task = nullptr;
+    if (context->activeLogicalProcessToken == logicalProcess &&
+        context->activeDesignTask &&
+        context->activeDesignTask->id == logicalProcess) {
+      task = context->activeDesignTask;
+    } else {
+      auto found = context->scheduledDesignTaskIndices.find(logicalProcess);
+      if (found != context->scheduledDesignTaskIndices.end() &&
+          found->second < context->scheduledDesignTasks.size())
+        task = &context->scheduledDesignTasks[found->second];
+    }
+    if (!task || task->id != logicalProcess || task->terminated)
+      return OBELISK_RT_INVALID_HANDLE;
+    const uint32_t function =
+        task->callers.empty() ? task->function : task->callers.front().function;
+    const auto &image = context->designBytecodeImage;
+    if (function >= image.functionCount)
+      return OBELISK_RT_INVALID_DESIGN;
+    *outCodeUnit = obelisk::designbytecode::functionAt(image, function).id;
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
 }
 
 // Query only the blocked portion of a wait. A process whose event occurrence

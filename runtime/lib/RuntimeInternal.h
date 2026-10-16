@@ -1705,6 +1705,8 @@ struct DesignDatabaseCache {
   uint64_t eventBindingCount = 0;
   uint64_t eventArrayStorageBindings = 0;
   uint64_t eventArrayStorageBindingCount = 0;
+  uint64_t threadOriginBindings = 0;
+  uint64_t threadOriginBindingCount = 0;
   uint64_t relationIndices = 0;
   uint64_t relationIndexCount = 0;
   uint64_t relationIndexDimensions = 0;
@@ -3188,6 +3190,13 @@ obelisk_rt_status
 obelisk_rt_named_event_waiters(obelisk_rt_context *context, uint64_t eventID,
                                std::vector<uint64_t> &outProcesses);
 
+// The outermost activation defines a thread's source origin, independently
+// of the currently executing task/function or its lexical containment.
+obelisk_rt_status
+obelisk_rt_logical_process_origin(obelisk_rt_context *context,
+                                  uint64_t logicalProcess,
+                                  uint64_t *outCodeUnit) noexcept;
+
 // Copies a sequential value container without changing its contents. Mailbox
 // identities are excluded; callers preserve class references instead. The
 // active lane must remain entered until copied managed words are inspected.
@@ -3801,6 +3810,11 @@ obelisk_rt_status obelisk_rt_cached_vpi_event_array_cell(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 event,
     VPIEventCellBinding *outBinding) noexcept;
 
+// Returns the immutable source statement for an exact executable code unit,
+// or EOF when this image has no retained thread-origin binding.
+obelisk_rt_status obelisk_rt_cached_vpi_thread_origin(
+    const obelisk_rt_context *context, uint64_t codeUnitID,
+    obelisk_rt_design_cursor_v1 *outStatement) noexcept;
 // Returns EOF when the source event uses a mutable cell or has no executable
 // binding in this image. A successful lookup may return event identity zero.
 obelisk_rt_status

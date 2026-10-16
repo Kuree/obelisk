@@ -266,6 +266,8 @@ add_executable(obelisk-design-database-dump-test EXCLUDE_FROM_ALL
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIUnionMessagesTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIBitTypespecTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPINestedWeakTest.cpp"
+  "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIThreadOriginsTest.cpp"
+  "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIThreadCallOriginsTest.cpp"
 )
 target_link_libraries(obelisk-design-database-dump-test PRIVATE
   ObeliskSimulationToBytecode

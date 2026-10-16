@@ -257,6 +257,21 @@ def SimStatementDeclOp : SimOp<"statement.decl", [
   let hasVerifier = 1;
 }
 
+def SimVPIThreadOriginBindingOp : SimOp<"vpi_thread_origin_binding", [
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "exact source statement of a runtime thread activation";
+  let description = [{
+    Associates an executable code-unit identity with the source statement that
+    created that thread. This is immutable reflection inventory, independent of
+    statement containment. An outlined internal fork branch can therefore name
+    its original statement without moving that statement from its lexical owner.
+  }];
+  let arguments = (ins I64Attr:$code_unit_id, I64Attr:$statement_id);
+  let assemblyFormat = "$code_unit_id `origin` $statement_id attr-dict";
+  let hasVerifier = 1;
+}
+
 def SimStatementSiteDeclOp : SimOp<"statement_site.decl", [
     MemoryEffects<[MemWrite<SimInventoryResource>]>
   ]> {
