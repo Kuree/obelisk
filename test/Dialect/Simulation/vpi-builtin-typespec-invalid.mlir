@@ -4,7 +4,7 @@ module {
   simulation.design @invalid_builtin_kind {
     simulation.scope.decl 0 hierarchy "$root"
     simulation.vpi_object.anchor @std id 0 type 600 in 0 ordinal 0 hierarchy "std" debug "std"
-    // expected-error @+1 {{builtin-class origin requires an unaliased semaphore or mailbox type}}
+    // expected-error @+1 {{builtin-class origin requires an unaliased process, semaphore, or mailbox type}}
     simulation.vpi_typespec.decl @type id 0 in 0 owner @std hierarchy "std::int" debug "int" {
       origin = 4 : i32,
       target_type = #simulation.vpi_type<kind = int, isSigned = true,
@@ -24,7 +24,7 @@ module {
       target_type = #simulation.vpi_type<kind = int, isSigned = true,
           isFourState = false, range = [31, 0], children = [], childNames = []>
     }
-    // expected-error @+1 {{builtin-class origin requires an unaliased semaphore or mailbox type}}
+    // expected-error @+1 {{builtin-class origin requires an unaliased process, semaphore, or mailbox type}}
     simulation.vpi_typespec.decl @type id 1 in 0 owner @std hierarchy "std::mailbox" debug "mailbox" {
       origin = 4 : i32,
       target_type = #simulation.vpi_type<kind = mailbox, isSigned = false,

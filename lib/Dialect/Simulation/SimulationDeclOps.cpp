@@ -1074,12 +1074,14 @@ LogicalResult SimVPITypespecDeclOp::verify() {
         "class-specialization origin requires an exact class symbol and no "
         "typedef aliases");
   if (getOrigin() == VPITypespecOrigin::BuiltinClass &&
-      ((getTargetType().getKind() != VPITypeKind::Semaphore &&
+      ((getTargetType().getKind() != VPITypeKind::Process &&
+        getTargetType().getKind() != VPITypeKind::Semaphore &&
         getTargetType().getKind() != VPITypeKind::Mailbox) ||
        getTargetType().getSymbol() ||
        stripVPITypedefAliases(getTargetType()) != getTargetType()))
     return emitOpError(
-        "builtin-class origin requires an unaliased semaphore or mailbox type");
+        "builtin-class origin requires an unaliased process, semaphore, or "
+        "mailbox type");
   if (getOrigin() == VPITypespecOrigin::AnonymousEnum &&
       (getTargetType().getKind() != VPITypeKind::Enum ||
        !getSourceTypeIdentityAttr()))

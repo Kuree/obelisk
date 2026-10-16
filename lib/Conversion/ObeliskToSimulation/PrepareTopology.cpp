@@ -14,6 +14,7 @@
 #include "obelisk/Dialect/Simulation/SimulationVPI.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
 
+#include "mlir/IR/AttrTypeSubElements.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Threading.h"
 
@@ -2567,41 +2568,87 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   // Class declarations and their fully resolved types have independent VPI
   // identities. The latter are shared by every variable of that class type,
   // including variables whose current value is null.
+  auto isBuiltinVPIClass = [](sim::VPITypeKind kind) {
+    return kind == sim::VPITypeKind::Process ||
+           kind == sim::VPITypeKind::Semaphore ||
+           kind == sim::VPITypeKind::Mailbox;
+  };
+  // Keep source identities separate from declared typedef spellings. The
+  // original standard package owns builtin typespecs, including specializations
+  // observed only through a variable, field, parameter, or aggregate child.
+  llvm::DenseMap<Attribute, Operation *> builtinClassSources;
+  bool hasStandardPackage = false;
+  module.walk([&](semantic::SVPackageSymbolOp package) {
+    hasStandardPackage |= getDebugName(package) == "std";
+  });
+  module.walk([&](semantic::SVClassTypeOp source) {
+    if (source.getIsUninstantiated())
+      return;
+    Operation *parent = source->getParentOp();
+    if (isa<semantic::SVGenericClassDefSymbolOp>(parent))
+      parent = parent->getParentOp();
+    auto package = dyn_cast<semantic::SVPackageSymbolOp>(parent);
+    StringRef name = getDebugName(source);
+    if (!package || getDebugName(package) != "std" ||
+        (name != "process" && name != "semaphore" && name != "mailbox"))
+      return;
+    auto semantic = makeVPITypeSemantics(
+        source.getSemanticType(), getSemanticLocation(source), {}, source);
+    if (failed(semantic) || !isBuiltinVPIClass(semantic->getKind())) {
+      emitError(getSemanticLocation(source))
+          << "standard builtin class has no exact VPI semantic type";
+      invalid = true;
+      return;
+    }
+    builtinClassSources.try_emplace(sim::stripVPITypedefAliases(*semantic),
+                                    source);
+  });
   llvm::DenseMap<Attribute, FlatSymbolRefAttr> builtinClassTypespecs;
+  auto internBuiltinTypespec = [&](sim::VPITypeSemanticsAttr semantic,
+                                   Operation *use,
+                                   bool requireSource) -> FlatSymbolRefAttr {
+    auto canonical = sim::stripVPITypedefAliases(semantic);
+    if (auto found = builtinClassTypespecs.find(canonical);
+        found != builtinClassTypespecs.end())
+      return found->second;
+    Operation *source = builtinClassSources.lookup(canonical);
+    FlatSymbolRefAttr owner =
+        source ? ownerAnchorFor(source->getParentOp()) : FlatSymbolRefAttr{};
+    if (!source || !owner) {
+      // Legacy authored normalized IR may contain builtin types without the
+      // source std package. Retain its existing semantic-only representation;
+      // normal frontend inventory must provide the exact standard declaration.
+      if (requireSource || hasStandardPackage) {
+        emitError(getSemanticLocation(use))
+            << "VPI builtin class has no preserved source type or package";
+        invalid = true;
+      }
+      return {};
+    }
+    std::string symbolName =
+        "__obelisk_vpi_builtin_class_" + std::to_string(nextTypespecId);
+    auto declaration = sim::SimVPITypespecDeclOp::create(
+        builder, getSemanticLocation(source), symbolName, nextTypespecId++,
+        scopes.lookup(source), owner.getValue(), getHierarchyName(source),
+        getDebugName(source), canonical, sim::VPITypespecOrigin::BuiltinClass,
+        IntegerAttr{});
+    auto reference = FlatSymbolRefAttr::get(declaration.getSymNameAttr());
+    builtinClassTypespecs[canonical] = reference;
+    return reference;
+  };
   llvm::DenseMap<Operation *, FlatSymbolRefAttr> builtinBaseTypespecs;
-  SymbolTableCollection builtinSymbols;
   for (semantic::SVClassTypeOp classType : classes.sources) {
     auto builtin = classType->getAttrOfType<TypeAttr>(builtinBaseTypeAttrName);
     if (!builtin)
       continue;
-    auto sourceType = dyn_cast<semantic::ClassHandleType>(builtin.getValue());
-    Operation *source =
-        sourceType
-            ? builtinSymbols.lookupSymbolIn(module, sourceType.getClassName())
-            : nullptr;
-    FlatSymbolRefAttr owner =
-        source ? ownerAnchorFor(source->getParentOp()) : FlatSymbolRefAttr{};
-    FailureOr<sim::VPITypeSemanticsAttr> target = makeVPITypeSemantics(
+    auto target = makeVPITypeSemantics(
         builtin.getValue(), getSemanticLocation(classType), {}, classType);
-    if (!source || !owner || failed(target)) {
-      emitError(getSemanticLocation(classType))
-          << "VPI builtin base has no preserved source type or package";
+    if (failed(target)) {
       invalid = true;
       continue;
     }
-    sim::VPITypeSemanticsAttr canonical = sim::stripVPITypedefAliases(*target);
-    auto [entry, inserted] = builtinClassTypespecs.try_emplace(canonical);
-    if (inserted) {
-      std::string symbolName =
-          "__obelisk_vpi_builtin_class_" + std::to_string(nextTypespecId);
-      auto declaration = sim::SimVPITypespecDeclOp::create(
-          builder, getSemanticLocation(source), symbolName, nextTypespecId++,
-          scopes.lookup(source), owner.getValue(), getHierarchyName(source),
-          getDebugName(source), canonical, sim::VPITypespecOrigin::BuiltinClass,
-          IntegerAttr{});
-      entry->second = FlatSymbolRefAttr::get(declaration.getSymNameAttr());
-    }
-    builtinBaseTypespecs[classType] = entry->second;
+    builtinBaseTypespecs[classType] =
+        internBuiltinTypespec(*target, classType, /*requireSource=*/true);
   }
   for (semantic::SVClassTypeOp classType : classes.sources) {
     FlatSymbolRefAttr owner = classDefinitionSymbols.lookup(classType);
@@ -4583,6 +4630,25 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         builder, relation.location, relation.source, relation.selector,
         sim::VPIRelationMode::Iterate, ordinal++, relation.target);
   }
+  // Gather first, then emit: creating declarations inside the IR walk would
+  // invalidate its operation iterator. AttrTypeWalker memoizes the attribute
+  // DAG, so shared nested semantic types are visited once in deterministic
+  // declaration/attribute/child order.
+  SmallVector<std::pair<sim::VPITypeSemanticsAttr, Operation *>>
+      observedBuiltins;
+  Operation *observedOwner = nullptr;
+  AttrTypeWalker semanticWalker;
+  semanticWalker.addWalk([&](sim::VPITypeSemanticsAttr type) {
+    if (isBuiltinVPIClass(type.getKind()))
+      observedBuiltins.emplace_back(type, observedOwner);
+  });
+  design.walk([&](Operation *operation) {
+    observedOwner = operation;
+    for (NamedAttribute attribute : operation->getAttrs())
+      semanticWalker.walk(attribute.getValue());
+  });
+  for (auto [semantic, owner] : observedBuiltins)
+    internBuiltinTypespec(semantic, owner, /*requireSource=*/false);
   if (invalid)
     return failure();
   return descriptors;

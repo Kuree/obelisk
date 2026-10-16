@@ -461,7 +461,10 @@ def SimVPITypespecDeclOp : SimOp<"vpi_typespec.decl", [
     compilation-unit, class, subroutine, property, or sequence scopes. An
     interface typespec uses its enclosing persistent anchor as an image
     namespace because IEEE 1800 exposes it through `vpiTypespec`, not an owner
-    traversal. `target_type` retains the complete canonical source shape,
+    traversal. A builtin class typespec represents the alias-free process,
+    semaphore, or mailbox specialization and is owned by the source standard
+    package; it has no class definition or executable class descriptor.
+    `target_type` retains the complete canonical source shape,
     optional interface/modport identity, and ordered typedef-alias layers. The
     declaration is reflection inventory only and never participates in
     executable type conversion or scheduling.

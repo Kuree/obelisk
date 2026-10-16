@@ -4157,3 +4157,414 @@ TEST(GeneratedDesignDatabase, BuiltinClassInheritance) {
   EXPECT_EQ(vpi_release_handle(sharedBuiltinType), 1);
   obelisk_rt_v1_context_destroy(runtime);
 }
+
+TEST(GeneratedDesignDatabase, LiveBuiltinClasses) {
+  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  ASSERT_NE(inputPath, nullptr);
+  mlir::DialectRegistry registry;
+  registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
+                  obelisk::sim::ObeliskSimulationDialect>();
+  mlir::MLIRContext context(registry);
+  auto module = mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
+  ASSERT_TRUE(module);
+  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
+  auto layouts = obelisk::analysis::ManagedClassLayoutAnalysis::compute(
+      design,
+      llvm::DataLayout((*module)
+                           ->getAttrOfType<mlir::StringAttr>("llvm.data_layout")
+                           .getValue()));
+  ASSERT_TRUE(mlir::succeeded(layouts));
+  obelisk::SimulationBytecodeOptions options;
+  options.vpi = "full";
+  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  ASSERT_TRUE(mlir::succeeded(encoded));
+  uint64_t checksum = 0;
+  for (unsigned byte = 0; byte != 8; ++byte)
+    checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
+  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+                                               encoded->executionFlags,
+                                               0,
+                                               encoded->bytecode.data(),
+                                               encoded->bytecode.size(),
+                                               encoded->designDatabase.data(),
+                                               encoded->designDatabase.size(),
+                                               encoded->stateBitCount,
+                                               checksum};
+  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+  obelisk_rt_context *runtime = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(runtime, &lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+
+  std::vector<vpiHandle> handles;
+  auto keep = [&](vpiHandle handle) {
+    EXPECT_NE(handle, nullptr);
+    if (handle)
+      handles.push_back(handle);
+    return handle;
+  };
+  auto lookup = [&](std::string name) {
+    return keep(vpi_handle_by_name(name.data(), nullptr));
+  };
+  auto specialization = [&](const char *name) {
+    vpiHandle definition = lookup(name);
+    vpiHandle iterator = vpi_iterate(vpiClassTypespec, definition);
+    EXPECT_NE(iterator, nullptr);
+    vpiHandle type = keep(iterator ? vpi_scan(iterator) : nullptr);
+    if (iterator) {
+      EXPECT_EQ(vpi_scan(iterator), nullptr);
+    }
+    return type;
+  };
+  vpiHandle semaphoreVariable = lookup("top.semaphore");
+  vpiHandle aliasedVariable = lookup("top.aliased");
+  vpiHandle mailboxVariable = lookup("top.mailbox");
+  vpiHandle wideVariable = lookup("top.wide_mailbox");
+  vpiHandle firstClassMailbox = lookup("top.mailbox_one");
+  vpiHandle secondClassMailbox = lookup("top.mailbox_two");
+  vpiHandle sType = specialization("top.S");
+  vpiHandle tType = specialization("top.T");
+  vpiHandle mType = specialization("top.M");
+  vpiHandle semaphoreType = keep(vpi_handle(vpiExtends, sType));
+  vpiHandle mailboxType = keep(vpi_handle(vpiExtends, mType));
+  vpiHandle declaredSemaphore =
+      keep(vpi_handle(vpiClassTypespec, semaphoreVariable));
+  vpiHandle declaredMailbox =
+      keep(vpi_handle(vpiClassTypespec, mailboxVariable));
+  vpiHandle declaredAlias = keep(vpi_handle(vpiClassTypespec, aliasedVariable));
+  EXPECT_EQ(vpi_compare_objects(declaredSemaphore, semaphoreType), 1);
+  EXPECT_EQ(vpi_compare_objects(declaredMailbox, mailboxType), 1);
+  EXPECT_EQ(vpi_compare_objects(declaredAlias, mailboxType), 1);
+  EXPECT_EQ(vpi_get(vpiClassType, semaphoreType), vpiSemaphoreClass);
+  EXPECT_EQ(vpi_get(vpiClassType, mailboxType), vpiMailboxClass);
+  EXPECT_EQ(vpi_handle(vpiClassDefn, semaphoreType), nullptr);
+  EXPECT_EQ(vpi_handle(vpiClassDefn, mailboxType), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  vpiHandle wideType = keep(vpi_handle(vpiClassTypespec, wideVariable));
+  EXPECT_EQ(vpi_compare_objects(wideType, mailboxType), 0);
+  vpiHandle firstMailboxType =
+      keep(vpi_handle(vpiClassTypespec, firstClassMailbox));
+  vpiHandle secondMailboxType =
+      keep(vpi_handle(vpiClassTypespec, secondClassMailbox));
+  EXPECT_EQ(vpi_compare_objects(firstMailboxType, secondMailboxType), 0);
+  vpiHandle processVariable = lookup("top.process");
+  vpiHandle processAliasVariable = lookup("top.process_alias");
+  vpiHandle processType = keep(vpi_handle(vpiClassTypespec, processVariable));
+  vpiHandle processAliasType =
+      keep(vpi_handle(vpiClassTypespec, processAliasVariable));
+  EXPECT_EQ(vpi_compare_objects(processType, processAliasType), 1);
+  EXPECT_EQ(vpi_get(vpiClassType, processType), vpiProcessClass);
+  EXPECT_EQ(vpi_handle(vpiClassDefn, processType), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+  std::array<obelisk_rt_class_descriptor_v1, 3> descriptors{};
+  std::array<obelisk_rt_trace_entry_v1, 3> traces{};
+  std::array<obelisk_rt_trace_layout_v1, 3> runtimeLayouts{};
+  for (uint64_t id = 1; id <= descriptors.size(); ++id) {
+    const auto *layout = layouts->lookup(id);
+    ASSERT_NE(layout, nullptr);
+    auto &descriptor = descriptors[id - 1];
+    auto &trace = traces[id - 1];
+    auto &runtimeLayout = runtimeLayouts[id - 1];
+    runtimeLayout = {OBELISK_RT_VERSION, 0,      layout->size,
+                     layout->alignment,  &trace, 1};
+    trace.count = 1;
+    descriptor.version = OBELISK_RT_VERSION;
+    descriptor.class_id = id;
+    descriptor.instance_size = layout->size;
+    descriptor.instance_alignment = layout->alignment;
+    descriptor.layout = &runtimeLayout;
+    if (id == 2) {
+      descriptor.base = &descriptors[0];
+      trace.kind = OBELISK_RT_TRACE_EMBEDDED;
+      trace.child_layout = &runtimeLayouts[0];
+    } else {
+      ASSERT_TRUE(layout->builtinBaseOffset);
+      descriptor.builtin_base_offset = *layout->builtinBaseOffset;
+      descriptor.builtin_base_kind = id == 1
+                                         ? OBELISK_RT_BUILTIN_CLASS_SEMAPHORE
+                                         : OBELISK_RT_BUILTIN_CLASS_MAILBOX;
+      trace.offset = *layout->builtinBaseOffset;
+      trace.kind = OBELISK_RT_TRACE_STRONG;
+      trace.slot_kind = id == 1 ? OBELISK_RT_MANAGED_SLOT_SEMAPHORE
+                                : OBELISK_RT_MANAGED_SLOT_MAILBOX;
+    }
+    ASSERT_EQ(obelisk_rt_v1_class_register(runtime, &descriptor),
+              OBELISK_RT_OK);
+  }
+  std::array<obelisk_rt_object_v1 *, 4> objects{};
+  obelisk_rt_gc_root_range_v1 roots{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_range_push(lane, &roots, objects.data(),
+                                             objects.size()),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_semaphore_create(lane, 2, &objects[0]),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &descriptors[1], &objects[1]),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_mailbox_create_typed(
+                lane, 77, OBELISK_RT_ELEMENT_BITS, OBELISK_RT_ELEMENT_SIGNED, 4,
+                4, 32, nullptr, 0, 0, &objects[2]),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &descriptors[2], &objects[3]),
+            OBELISK_RT_OK);
+  for (size_t i = 0; i != 2; ++i) {
+    uint64_t payload = obelisk_rt_managed_word_from_object(objects[2 * i]);
+    ASSERT_EQ(
+        obelisk_rt_v1_object_write(objects[2 * i + 1],
+                                   descriptors[i ? 2 : 0].builtin_base_offset,
+                                   &payload, sizeof(payload)),
+        OBELISK_RT_OK);
+  }
+  std::array<obelisk_rt_design_cursor_v1, 8> storage{};
+  const std::array<const char *, 8> names{
+      "top.semaphore",   "top.aliased",     "top.mailbox", "top.wide_mailbox",
+      "top.mailbox_one", "top.mailbox_two", "top.process", "top.process_alias"};
+  for (size_t i = 0; i != names.size(); ++i) {
+    ASSERT_EQ(obelisk_rt_cached_design_lookup(
+                  runtime, reinterpret_cast<const uint8_t *>(names[i]),
+                  std::strlen(names[i]), &storage[i]),
+              OBELISK_RT_OK);
+  }
+  // Match generated scheduler initialization: design state is rooted only
+  // after its managed slots are registered with the runtime.
+  for (size_t i = 0; i != 6; ++i) {
+    ObjectView object(encoded->designDatabase.data() + storage[i].offset);
+    ASSERT_EQ(obelisk_rt_v1_gc_design_candidate_root_register(
+                  runtime, object.getStateOffset(),
+                  OBELISK_RT_MANAGED_ROOT_KIND_CLASS |
+                      OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER),
+              OBELISK_RT_OK);
+  }
+  for (size_t i = 0; i != 3; ++i) {
+    uint64_t word = obelisk_rt_managed_word_from_object(objects[i ? 3 : 1]);
+    ASSERT_EQ(
+        obelisk_rt_v1_design_write(runtime, storage[i], &word, nullptr, 64),
+        OBELISK_RT_OK);
+  }
+  vpiHandle semaphoreObject = vpi_handle(vpiClassObj, semaphoreVariable);
+  vpiHandle mailboxObject = vpi_handle(vpiClassObj, aliasedVariable);
+  vpiHandle mailboxAlias = vpi_handle(vpiClassObj, mailboxVariable);
+  ASSERT_NE(semaphoreObject, nullptr);
+  ASSERT_NE(mailboxObject, nullptr);
+  ASSERT_NE(mailboxAlias, nullptr);
+  EXPECT_EQ(vpi_compare_objects(mailboxObject, mailboxAlias), 1);
+  EXPECT_EQ(vpi_get64(vpiObjId, semaphoreObject),
+            static_cast<PLI_INT64>(obelisk_rt_v1_object_id(objects[1])));
+  EXPECT_NE(vpi_get64(vpiObjId, semaphoreObject),
+            static_cast<PLI_INT64>(obelisk_rt_v1_object_id(objects[0])));
+  vpiHandle actualSemaphore =
+      keep(vpi_handle(vpiClassTypespec, semaphoreObject));
+  vpiHandle actualMailbox = keep(vpi_handle(vpiClassTypespec, mailboxObject));
+  EXPECT_EQ(vpi_compare_objects(actualSemaphore, tType), 1);
+  EXPECT_EQ(vpi_compare_objects(actualMailbox, mType), 1);
+  EXPECT_EQ(vpi_compare_objects(actualSemaphore, semaphoreType), 0);
+  EXPECT_EQ(vpi_compare_objects(actualMailbox, mailboxType), 0);
+  EXPECT_EQ(vpi_get(vpiClassType, actualSemaphore), vpiUserDefinedClass);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_range_pop(lane, &roots), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  // Only the builtin-typed design roots retain these outer class objects.
+  EXPECT_EQ(vpi_get(vpiType, semaphoreObject), vpiClassObj);
+  EXPECT_EQ(vpi_get(vpiType, mailboxObject), vpiClassObj);
+  uint32_t success = 0;
+  ASSERT_EQ(obelisk_rt_v1_semaphore_try_get(objects[1], 2, &success),
+            OBELISK_RT_OK);
+  EXPECT_EQ(success, 1u);
+  uint32_t message = 23;
+  ASSERT_EQ(obelisk_rt_v1_mailbox_try_put(lane, objects[3], &message, nullptr,
+                                          &success),
+            OBELISK_RT_OK);
+  EXPECT_EQ(success, 1u);
+
+  HeaderView header(encoded->designDatabase.data());
+  SemanticDirectoryView directory(encoded->designDatabase.data() +
+                                  header.getReserved());
+  EXPECT_EQ(directory.getClassTypeBindingCount(), 5u);
+  std::array<uint64_t, 8> bindingOffsets{};
+  std::array<uint32_t, 8> targets{};
+  for (size_t i = 0; i != storage.size(); ++i) {
+    obelisk_rt_design_cursor_v1 semantic{};
+    ASSERT_EQ(
+        obelisk_rt_cached_design_semantic_root(runtime, storage[i], &semantic),
+        OBELISK_RT_OK);
+    ASSERT_GT(semantic.offset, 0u);
+    ASSERT_LE(semantic.offset, directory.getSemanticTypeCount());
+    const uint64_t semanticIndex = semantic.offset - 1;
+    bool found = false;
+    for (uint64_t j = 0; j != directory.getSemanticClassBindingCount(); ++j) {
+      uint64_t offset = directory.getSemanticClassBindingOffset() +
+                        j * SemanticClassBindingLayout.size;
+      SemanticClassBindingView binding(encoded->designDatabase.data() + offset);
+      if (binding.getSemanticType() == semanticIndex) {
+        bindingOffsets[i] = offset;
+        targets[i] = binding.getTypespecIndexAndTable();
+        found = true;
+        break;
+      }
+    }
+    ASSERT_TRUE(found);
+  }
+  EXPECT_EQ(targets[1], targets[2]);
+  EXPECT_NE(targets[2], targets[3]);
+  EXPECT_NE(targets[4], targets[5]);
+  EXPECT_EQ(targets[6], targets[7]);
+  EXPECT_NE(bindingOffsets[6], bindingOffsets[7]);
+  obelisk_rt_design_cursor_v1 typedefCursor{};
+  const char aliasName[] = "top.MailboxAlias";
+  ASSERT_EQ(obelisk_rt_cached_design_lookup(
+                runtime, reinterpret_cast<const uint8_t *>(aliasName),
+                sizeof(aliasName) - 1, &typedefCursor),
+            OBELISK_RT_OK);
+  ASSERT_TRUE(isRecordOffset(typedefCursor.offset, header.getObjectOffset(),
+                             header.getObjectCount(), ObjectLayout.size));
+  const uint32_t aliasPacked =
+      (static_cast<uint32_t>(TableKind::Object) << 30) |
+      static_cast<uint32_t>((typedefCursor.offset - header.getObjectOffset()) /
+                            ObjectLayout.size);
+
+  const uint64_t zero = 0;
+  for (size_t i = 0; i != 3; ++i)
+    ASSERT_EQ(
+        obelisk_rt_v1_design_write(runtime, storage[i], &zero, nullptr, 64),
+        OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  for (vpiHandle handle : {semaphoreObject, mailboxObject, mailboxAlias}) {
+    EXPECT_EQ(vpi_get(vpiType, handle), vpiUndefined);
+    EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  }
+  EXPECT_EQ(vpi_get(vpiType, actualSemaphore), vpiClassTypespec);
+  EXPECT_EQ(vpi_compare_objects(actualMailbox, mType), 1);
+  for (vpiHandle handle : handles)
+    EXPECT_EQ(vpi_release_handle(handle), 1);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(runtime);
+
+  auto original = [&] {
+    return std::vector<uint8_t>(encoded->designDatabase.begin(),
+                                encoded->designDatabase.end());
+  };
+  auto expectRejected = [&](std::vector<uint8_t> bytes) {
+    put64(bytes, field::HeaderChecksum, imageChecksum(bytes));
+    execution.design_database = bytes.data();
+    execution.design_database_size = bytes.size();
+    EXPECT_EQ(obelisk_rt_v1_design_validate(&execution),
+              OBELISK_RT_INVALID_DESIGN);
+  };
+  auto bytes = original();
+  SemanticClassBindingWriter(bytes.data() + bindingOffsets[1])
+      .setTypespecIndexAndTable(targets[3]);
+  expectRejected(std::move(bytes));
+  bytes = original();
+  SemanticClassBindingWriter(bytes.data() + bindingOffsets[4])
+      .setTypespecIndexAndTable(targets[5]);
+  expectRejected(std::move(bytes));
+  bytes = original();
+  // Redirect all matching roots so alias consistency remains intact: only
+  // the fact that a typedef cannot be the canonical builtin target rejects it.
+  for (uint64_t i = 0; i != directory.getSemanticClassBindingCount(); ++i) {
+    uint64_t offset = directory.getSemanticClassBindingOffset() +
+                      i * SemanticClassBindingLayout.size;
+    if (SemanticClassBindingView(bytes.data() + offset)
+            .getTypespecIndexAndTable() == targets[2])
+      SemanticClassBindingWriter(bytes.data() + offset)
+          .setTypespecIndexAndTable(aliasPacked);
+  }
+  expectRejected(std::move(bytes));
+  // Without any incoming canonical binding the semaphore type remains a
+  // valid legacy semantic view; the image format does not encode its origin.
+  bytes = original();
+  const uint64_t bindingEnd = directory.getSemanticClassBindingOffset() +
+                              directory.getSemanticClassBindingCount() *
+                                  SemanticClassBindingLayout.size;
+  auto removeBinding = [&](uint64_t offset) {
+    std::memmove(bytes.data() + offset,
+                 bytes.data() + offset + SemanticClassBindingLayout.size,
+                 bindingEnd - offset - SemanticClassBindingLayout.size);
+    SemanticDirectoryWriter(bytes.data() + header.getReserved())
+        .setSemanticClassBindingCount(directory.getSemanticClassBindingCount() -
+                                      1);
+  };
+  removeBinding(bindingOffsets[0]);
+  put64(bytes, field::HeaderChecksum, imageChecksum(bytes));
+  execution.design_database = bytes.data();
+  execution.design_database_size = bytes.size();
+  EXPECT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+  // The remaining aliased Process source still targets the canonical Process
+  // typespec, so removing that target's own binding is inconsistent.
+  bytes = original();
+  removeBinding(bindingOffsets[6]);
+  expectRejected(std::move(bytes));
+}
+
+TEST(GeneratedDesignDatabase, BuiltinClassAliases) {
+  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  ASSERT_NE(inputPath, nullptr);
+  mlir::DialectRegistry registry;
+  registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
+                  obelisk::sim::ObeliskSimulationDialect>();
+  mlir::MLIRContext context(registry);
+  auto module = mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
+  ASSERT_TRUE(module);
+  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
+  obelisk::SimulationBytecodeOptions options;
+  options.vpi = "read";
+  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  ASSERT_TRUE(mlir::succeeded(encoded));
+  uint64_t checksum = 0;
+  for (unsigned byte = 0; byte != 8; ++byte)
+    checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
+  const obelisk_rt_execution_descriptor_v1 execution{
+      OBELISK_RT_VERSION,
+      encoded->executionFlags,
+      0,
+      encoded->bytecode.data(),
+      encoded->bytecode.size(),
+      encoded->designDatabase.data(),
+      encoded->designDatabase.size(),
+      encoded->stateBitCount,
+      checksum};
+  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+  HeaderView header(encoded->designDatabase.data());
+  SemanticDirectoryView directory(encoded->designDatabase.data() +
+                                  header.getReserved());
+  EXPECT_EQ(directory.getClassTypeBindingCount(), 0u);
+  EXPECT_GE(directory.getSemanticClassBindingCount(), 3u);
+  obelisk_rt_context *runtime = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  const std::array<const char *, 3> names{"sem", "process", "mailbox"};
+  const std::array<PLI_INT32, 3> kinds{vpiSemaphoreClass, vpiProcessClass,
+                                       vpiMailboxClass};
+  for (size_t i = 0; i != names.size(); ++i) {
+    std::string name = std::string("top.") + names[i];
+    std::string aliasName = name + "_alias";
+    vpiHandle variable = vpi_handle_by_name(name.data(), nullptr);
+    vpiHandle alias = vpi_handle_by_name(aliasName.data(), nullptr);
+    ASSERT_NE(variable, nullptr);
+    ASSERT_NE(alias, nullptr);
+    vpiHandle type = vpi_handle(vpiClassTypespec, variable);
+    vpiHandle aliasType = vpi_handle(vpiClassTypespec, alias);
+    ASSERT_NE(type, nullptr);
+    ASSERT_NE(aliasType, nullptr);
+    EXPECT_EQ(vpi_compare_objects(type, aliasType), 1);
+    EXPECT_EQ(vpi_get(vpiType, type), vpiClassTypespec);
+    EXPECT_EQ(vpi_get(vpiClassType, type), kinds[i]);
+    EXPECT_NE(vpi_get_str(vpiName, type), nullptr);
+    EXPECT_EQ(vpi_handle(vpiClassDefn, type), nullptr);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    EXPECT_EQ(vpi_get64(vpiObjId, variable), 0);
+    EXPECT_EQ(vpi_handle(vpiClassObj, variable), nullptr);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    for (vpiHandle handle : {type, aliasType, variable, alias})
+      EXPECT_EQ(vpi_release_handle(handle), 1);
+  }
+  obelisk_rt_v1_context_destroy(runtime);
+}

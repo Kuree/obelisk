@@ -2926,6 +2926,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
 
   llvm::StringMap<ImageObjectRef> semanticIdentityObjects;
   llvm::StringMap<ImageObjectRef> classSpecializationObjects;
+  DenseMap<Attribute, ImageObjectRef> builtinClassObjects;
   for (sim::SimVPIObjectAnchorOp anchor : anchors) {
     sim::VPIObjectBackingAttr backing = anchor.getBackingAttr();
     if (!backing || backing.getKind() != sim::VPIObjectBackingKind::Class ||
@@ -2940,6 +2941,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
   }
   for (sim::SimVPITypespecDeclOp typespec : typespecs) {
     sim::VPITypeSemanticsAttr semantic = typespec.getTargetType();
+    if (typespec.getOrigin() == sim::VPITypespecOrigin::BuiltinClass) {
+      auto reference = typespecRefs.find(typespec);
+      if (reference == typespecRefs.end()) {
+        typespec.emitOpError("canonical builtin class was not serialized");
+        return {};
+      }
+      builtinClassObjects[sim::stripVPITypedefAliases(semantic)] =
+          reference->second;
+      continue;
+    }
     if (typespec.getOrigin() == sim::VPITypespecOrigin::ClassSpecialization) {
       auto owner = anchorsBySymbol.find(typespec.getOwnerAttr().getValue());
       auto reference = typespecRefs.find(typespec);
@@ -3178,6 +3189,18 @@ SmallVector<uint8_t> serializeDesignDatabase(
       auto canonical = classSpecializationObjects.find(
           semantic.getSymbol().getRootReference().getValue());
       if (canonical != classSpecializationObjects.end()) {
+        uint32_t packed = 0;
+        if (!packSemanticObject(canonical->second, packed))
+          return std::nullopt;
+        semanticClassBindings.push_back({index, packed});
+      }
+    }
+    if (semantic.getKind() == sim::VPITypeKind::Mailbox ||
+        semantic.getKind() == sim::VPITypeKind::Semaphore ||
+        semantic.getKind() == sim::VPITypeKind::Process) {
+      auto canonical =
+          builtinClassObjects.find(sim::stripVPITypedefAliases(semantic));
+      if (canonical != builtinClassObjects.end()) {
         uint32_t packed = 0;
         if (!packSemanticObject(canonical->second, packed))
           return std::nullopt;

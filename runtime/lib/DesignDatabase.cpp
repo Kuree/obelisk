@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <mutex>
 #include <new>
 #include <optional>
@@ -2690,8 +2691,9 @@ bool validateDatabaseImpl(const Database &database) {
       return false;
   }
 
-  // Each runtime class has one canonical specialization. Semantic aliases
-  // may bind to it independently while retaining their lexical ClassDefn.
+  // Runtime classes and builtins have canonical typespec identities. Only
+  // user classes need a runtime class-ID binding; builtins bind their exact
+  // semantic specialization directly. Aliases retain their lexical spelling.
   std::unordered_map<uint32_t, uint32_t> canonicalClassRoots;
   std::unordered_map<uint64_t, uint32_t> canonicalClassTypes;
   uint64_t previousClassID = 0;
@@ -2722,6 +2724,15 @@ bool validateDatabaseImpl(const Database &database) {
   }
   std::unordered_set<uint32_t> canonicalClassRootBindings;
   std::unordered_map<uint32_t, uint32_t> semanticClassTargets;
+  auto semanticRecord = [&](uint32_t index) {
+    return database.data + database.semanticTypes +
+           uint64_t{index} * kSemanticTypeSize;
+  };
+  auto isBuiltinClassKind = [](uint32_t kind) {
+    return kind == OBELISK_RT_DESIGN_SEMANTIC_MAILBOX ||
+           kind == OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE ||
+           kind == OBELISK_RT_DESIGN_SEMANTIC_PROCESS;
+  };
   uint32_t previousClassSemantic = 0;
   for (uint64_t index = 0; index != database.semanticClassBindingCount;
        ++index) {
@@ -2729,22 +2740,148 @@ bool validateDatabaseImpl(const Database &database) {
         database.data + database.semanticClassBindings +
         index * kSemanticClassBindingSize);
     uint32_t semantic = binding.getSemanticType();
-    auto target = canonicalClassRoots.find(binding.getTypespecIndexAndTable());
+    uint32_t packedTarget = binding.getTypespecIndexAndTable();
     if (semantic >= database.semanticTypeCount ||
-        (index && semantic <= previousClassSemantic) ||
-        target == canonicalClassRoots.end())
+        (index && semantic <= previousClassSemantic))
       return false;
-    const uint8_t *type = database.data + database.semanticTypes +
-                          uint64_t{semantic} * kSemanticTypeSize;
-    const uint8_t *canonical = database.data + database.semanticTypes +
-                               uint64_t{target->second} * kSemanticTypeSize;
-    if ((read32(type) & UINT32_C(0xff)) != OBELISK_RT_DESIGN_SEMANTIC_CLASS ||
-        read32(type + 16) != read32(canonical + 16))
+    auto target = canonicalClassRoots.find(packedTarget);
+    if (target == canonicalClassRoots.end()) {
+      uint64_t targetOffset = 0;
+      uint32_t root = UINT32_MAX;
+      if (!packedObjectReferenceOffset(database, packedTarget, targetOffset) ||
+          objectReferenceVPIKind(database, targetOffset) !=
+              static_cast<uint32_t>(
+                  obelisk::reflection::VPIObjectKind::ClassTypespec) ||
+          !findSemanticRootBinding(database, packedTarget, root) ||
+          root >= database.semanticTypeCount ||
+          !isBuiltinClassKind(read32(semanticRecord(root)) & UINT32_C(0xff)) ||
+          read32(semanticRecord(root) + 12) != UINT32_MAX)
+        return false;
+      target = canonicalClassRoots.emplace(packedTarget, root).first;
+    }
+    const uint8_t *type = semanticRecord(semantic);
+    const uint8_t *canonical = semanticRecord(target->second);
+    uint32_t kind = read32(type) & UINT32_C(0xff);
+    if (kind != (read32(canonical) & UINT32_C(0xff)) ||
+        (!isBuiltinClassKind(kind) &&
+         (kind != OBELISK_RT_DESIGN_SEMANTIC_CLASS ||
+          read32(type + 16) != read32(canonical + 16))))
       return false;
     if (semantic == target->second)
-      canonicalClassRootBindings.insert(binding.getTypespecIndexAndTable());
-    semanticClassTargets.emplace(semantic, binding.getTypespecIndexAndTable());
+      canonicalClassRootBindings.insert(packedTarget);
+    semanticClassTargets.emplace(semantic, packedTarget);
     previousClassSemantic = semantic;
+  }
+
+  // Normalize the already validated DAG structurally, ignoring typedef
+  // spelling. A class child uses its canonical specialization, since generic
+  // siblings can share a lexical ClassDefn. Interned keys make repeated
+  // subgraphs and duplicate canonical builtin types exact, without recursion.
+  std::vector<uint32_t> normalizedTypes;
+  std::map<std::vector<uint64_t>, uint32_t> normalizedTypeKeys;
+  std::unordered_map<std::string_view, uint64_t> normalizedNames;
+  auto normalizeName = [&](uint32_t relative) -> uint64_t {
+    if (relative == 0)
+      return 0;
+    std::string_view name;
+    if (!getRelativeString(relative, name))
+      return UINT64_MAX;
+    return normalizedNames.emplace(name, normalizedNames.size() + 1)
+        .first->second;
+  };
+  auto normalizeType = [&](uint32_t root) {
+    if (normalizedTypes.empty())
+      normalizedTypes.resize(database.semanticTypeCount, 0);
+    std::vector<SemanticWorkItem> work{{root, false}};
+    while (!work.empty()) {
+      auto [index, finish] = work.back();
+      work.pop_back();
+      if (normalizedTypes[index])
+        continue;
+      const uint8_t *type = semanticRecord(index);
+      uint32_t firstEdge = read32(type + 4), count = read32(type + 8);
+      if (!finish) {
+        work.push_back({index, true});
+        for (uint32_t ordinal = count; ordinal != 0; --ordinal) {
+          const uint8_t *edge =
+              database.data + database.semanticTypeEdges +
+              uint64_t{firstEdge + ordinal - 1} * kSemanticTypeEdgeSize;
+          work.push_back({read32(edge), false});
+        }
+        continue;
+      }
+      uint32_t classTarget = UINT32_MAX;
+      if ((read32(type) & UINT32_C(0xff)) == OBELISK_RT_DESIGN_SEMANTIC_CLASS) {
+        auto binding = semanticClassTargets.find(index);
+        if (binding == semanticClassTargets.end())
+          return false;
+        classTarget = binding->second;
+      }
+      uint64_t name = normalizeName(read32(type + 20));
+      uint64_t modport = normalizeName(read32(type + 24));
+      if (name == UINT64_MAX || modport == UINT64_MAX)
+        return false;
+      std::vector<uint64_t> key{read32(type),
+                                read32(type + 16),
+                                classTarget,
+                                name,
+                                modport,
+                                read32(type + 28),
+                                read64(type + 32),
+                                read64(type + 40),
+                                read64(type + 48),
+                                read64(type + 56),
+                                count};
+      for (uint32_t ordinal = 0; ordinal != count; ++ordinal) {
+        const uint8_t *edge =
+            database.data + database.semanticTypeEdges +
+            uint64_t{firstEdge + ordinal} * kSemanticTypeEdgeSize;
+        uint64_t edgeName = normalizeName(read32(edge + 12));
+        if (edgeName == UINT64_MAX)
+          return false;
+        key.insert(key.end(), {normalizedTypes[read32(edge)], read32(edge + 4),
+                               read32(edge + 8), edgeName, read64(edge + 16)});
+      }
+      normalizedTypes[index] =
+          normalizedTypeKeys
+              .emplace(std::move(key), normalizedTypeKeys.size() + 1)
+              .first->second;
+    }
+    return true;
+  };
+  std::unordered_map<uint32_t, uint32_t> canonicalBuiltinTypes;
+  std::unordered_set<uint32_t> canonicalBuiltinObjects;
+  std::unordered_set<uint32_t> canonicalBuiltinChildren;
+  for (const auto &[target, root] : canonicalClassRoots) {
+    if (!isBuiltinClassKind(read32(semanticRecord(root)) & UINT32_C(0xff)))
+      continue;
+    canonicalBuiltinObjects.insert(target);
+    std::vector<uint32_t> work{root};
+    while (!work.empty()) {
+      uint32_t index = work.back();
+      work.pop_back();
+      if (!canonicalBuiltinChildren.insert(index).second)
+        continue;
+      const uint8_t *type = semanticRecord(index);
+      if (read32(type + 12) != UINT32_MAX)
+        return false;
+      for (uint32_t ordinal = 0; ordinal != read32(type + 8); ++ordinal) {
+        const uint8_t *edge =
+            database.data + database.semanticTypeEdges +
+            uint64_t{read32(type + 4) + ordinal} * kSemanticTypeEdgeSize;
+        work.push_back(read32(edge));
+      }
+    }
+    if (!normalizeType(root) ||
+        !canonicalBuiltinTypes.emplace(normalizedTypes[root], target).second)
+      return false;
+  }
+  for (const auto &[semantic, target] : semanticClassTargets) {
+    if (isBuiltinClassKind(read32(semanticRecord(semantic)) & UINT32_C(0xff)) &&
+        (!normalizeType(semantic) ||
+         normalizedTypes[semantic] !=
+             normalizedTypes[canonicalClassRoots.at(target)]))
+      return false;
   }
   for (const auto &[semantic, target] : semanticClassTargets) {
     const uint8_t *type = database.data + database.semanticTypes +
@@ -3945,6 +4082,17 @@ bool validateDatabaseImpl(const Database &database) {
         ordinal != expectedOrdinal || (!iterate && ordinal != 0))
       return false;
     ++expectedOrdinal;
+    // Canonical builtin identity must not name a typedef declaration, whose
+    // independent source identity is encoded by its intrinsic inventory edge.
+    if (iterate &&
+        selector == static_cast<uint32_t>(
+                        obelisk::reflection::VPIRelationKind::TypedefRel)) {
+      uint32_t packedTarget = 0;
+      if (obelisk::reflection::tryPackTableIndex(targetTable, targetIndex,
+                                                 packedTarget) &&
+          canonicalBuiltinObjects.count(packedTarget))
+        return false;
+    }
     if (targetTable == obelisk::reflection::TableKind::StaticObject) {
       if (sourceTable == obelisk::reflection::TableKind::StaticObject) {
         if (firstStaticSuccessor[sourceIndex] == UINT32_MAX)
