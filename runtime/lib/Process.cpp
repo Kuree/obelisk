@@ -3239,6 +3239,114 @@ adoptScheduledSuspendUnlocked(obelisk_rt_context *context,
   return OBELISK_RT_OK;
 }
 
+namespace {
+/// Whether the current time slot holds runtime work or bookkeeping that the
+/// loop in runScheduler must perform: every queue, latch and pending flag it
+/// consults before it selects an activation, region or barrier. A new source
+/// of runtime work must be listed here too.
+bool runtimeSlotWorkPendingUnlocked(const obelisk_rt_context *context) {
+  const ReplaceableEventFeatureState *replaceable =
+      obelisk_rt_replaceable_events(context);
+  return context->destroyPending || context->schedulerStatus != OBELISK_RT_OK ||
+         context->schedulerPreponedTime != context->schedulerTime ||
+         context->schedulerRunningFinals ||
+         context->schedulerDrainingReactive ||
+         context->schedulerFinishRequested.load(std::memory_order_relaxed) ||
+         context->vpiTimeCallbackActive || context->nextVPITimeCallback ||
+         context->nextVPISyncCallback ||
+         context->nativeScheduleForcedSlot != UINT32_MAX ||
+         context->nativeScheduleProcessFilterActive ||
+         context->nativeScheduleControlOnly ||
+         context->nativeScheduleStopAtCleanBoundary ||
+         context->scheduledProcessIndices.size() !=
+             context->scheduledProcesses.size() ||
+         !context->nativePollCandidates.empty() ||
+         !context->designPollCandidates.empty() ||
+         (context->designReadyCohort && context->designReadyCohort->valid) ||
+         context->scheduledDesignTaskIndices.size() !=
+             context->scheduledDesignTasks.size() ||
+         !context->scheduledNBAs.empty() ||
+         !context->scheduledDesignNBAs.empty() ||
+         !context->scheduledDesignEvents.empty() ||
+         !context->scheduledManagedNBAs.empty() ||
+         !context->scheduledInertialPathNBAs.empty() ||
+         !context->scheduledPassSwitchEvents.empty() ||
+         (replaceable && !replaceable->calendar.empty()) ||
+         context->staticNBAAccumulatorsPending ||
+         context->staticNBASlowRootsPresent ||
+         context->nativeScheduleExternalWritePending ||
+         !context->nativeScheduleTransientDirtyRoots.empty() ||
+         !context->nativeSchedulePersistentDirtyRoots.empty() ||
+         obelisk_rt_covergroup_strobes_pending_unlocked(context);
+}
+
+// IEEE 1800-2023 4.5: execute_region runs a region only while it holds
+// events. Generated code enters the shared loop at fixed points of every time
+// slot: to drain it, before its NBA barrier and to complete that barrier. In
+// steady state the runtime regions are usually all empty there, so return
+// what the loop returns in that state without building its selection caches.
+// An indexed runtime calendar keeps every runnable actor in the poll
+// candidate set (see the index rebuild below), so an empty set proves that no
+// process can be selected. Lazy erasure of stale unstarted actor entries is
+// left to the next full pass.
+std::optional<obelisk_rt_status>
+idleCurrentSlotResult(obelisk_rt_context *context,
+                      const SchedulerRunOptions &options) {
+  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+  bool complete = options.completeNBABarrier != UINT32_MAX;
+  if (!options.nativePlan || !options.currentSlotOnly ||
+      (complete && options.stopBeforeNBA) ||
+      !(plan->flags & OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) ||
+      context->nativeStaticEvalIslandCertified)
+    return std::nullopt;
+  ContextMutexLock lock(context);
+  if (runtimeSlotWorkPendingUnlocked(context))
+    return std::nullopt;
+  if (context->schedulerCompactionPending && !context->activeNativeProcess &&
+      !context->designTaskExecuting) {
+    size_t processes = context->scheduledProcesses.size();
+    size_t threshold =
+        std::max<size_t>(1, processes / 4 + (processes % 4 != 0));
+    size_t dead = context->schedulerDeadProcessCount;
+    if (context->schedulerDeadDesignTaskCount != 0 ||
+        (dead != 0 && (dead == processes || dead >= threshold)))
+      return std::nullopt;
+    context->schedulerCompactionPending = dead != 0;
+  }
+  // Pending generated ingress makes a drain call the coordinator, and a due
+  // generated NBA makes it commit the barrier.
+  if (!complete && !options.stopBeforeNBA &&
+      (context->nativeScheduleClockIngressPending ||
+       nextDueNativeNBABarrierRegionUnlocked(context, true) != UINT32_MAX))
+    return std::nullopt;
+  if (complete && context->schedulerSlotProgress == UINT64_MAX)
+    return std::nullopt;
+  if (plan->state_bit_count != 0 &&
+      !importNativeStatePlanesUnlocked(context, plan->state_value,
+                                       plan->state_unknown,
+                                       plan->state_bit_count))
+    return std::nullopt;
+  // Entering the full loop invalidates an enclosing publication batch.
+  if (context->nativeReadyPublicationBatch)
+    context->nativeReadyPublicationBatch->valid = false;
+  if (context->signalDiagnosticsEnabled)
+    ++context->signalDiagnostics.schedulerIterations;
+  if (complete) {
+    // The empty barrier still accounts for the generated prefix's update.
+    if (options.generatedNBAChanged && ++context->schedulerEpoch == 0)
+      context->schedulerEpoch = 1;
+    ++context->schedulerSlotProgress;
+    return OBELISK_RT_OK;
+  }
+  // Before the barrier, the loop stops at the NBA cut once Active and
+  // Inactive are empty, with any ingress or generated NBA still pending.
+  if (options.stopBeforeNBA)
+    return OBELISK_RT_OK;
+  refreshNativeStaticSpecializationFastUnlocked(context);
+  return context->schedulerFinishStatus;
+}
+} // namespace
+
 obelisk_rt_status runScheduler(obelisk_rt_context *context,
                                SchedulerRunOptions options) {
   if (!context)
@@ -3247,6 +3355,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       (!context->nativeSchedulePlan || activeNativeAOTContext != context ||
        lockedNativeAOTContext != context))
     return OBELISK_RT_INVALID_LIFECYCLE;
+  if (std::optional<obelisk_rt_status> idle =
+          idleCurrentSlotResult(context, options))
+    return *idle;
   NativeReadyPublicationBatch publications;
   struct PublicationBatchScope {
     obelisk_rt_context *context;

@@ -9093,6 +9093,93 @@ TEST(Scheduler, EvalNBACutRetainsCanonicalNBAs) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, IdleCurrentSlotEntriesKeepLoopEffects) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  obelisk_rt_native_schedule_plan plan{};
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL;
+  context->nativeSchedulePlan = &plan;
+  {
+    ContextMutexLock lock(context);
+    NativeAOTContextScope aot(context);
+    NativeAOTMutexScope mutex(context);
+    uint32_t region = 99;
+    // The first entry also enters the time slot; every region is empty after.
+    ASSERT_EQ(obelisk_rt_v1_scheduler_prepare_eval_nba(context, &region),
+              OBELISK_RT_OK);
+    EXPECT_EQ(region, UINT32_MAX);
+    ASSERT_EQ(context->schedulerPreponedTime, context->schedulerTime);
+    // An empty barrier still accounts for the generated prefix's update.
+    uint64_t epoch = context->schedulerEpoch;
+    uint64_t progress = context->schedulerSlotProgress;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_complete_eval_nba(
+                  context, OBELISK_RT_REGION_NBA, 1),
+              OBELISK_RT_OK);
+    EXPECT_EQ(context->schedulerEpoch, epoch + 1);
+    EXPECT_EQ(context->schedulerSlotProgress, progress + 1);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_complete_eval_nba(
+                  context, OBELISK_RT_REGION_NBA, 0),
+              OBELISK_RT_OK);
+    EXPECT_EQ(context->schedulerEpoch, epoch + 1);
+    EXPECT_EQ(context->schedulerSlotProgress, progress + 2);
+    // Entering the loop invalidates an enclosing publication batch, and an
+    // empty compaction request is retired.
+    NativeReadyPublicationBatch outer;
+    outer.valid = true;
+    context->nativeReadyPublicationBatch = &outer;
+    context->schedulerCompactionPending = true;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_prepare_eval_nba(context, &region),
+              OBELISK_RT_OK);
+    EXPECT_FALSE(outer.valid);
+    EXPECT_EQ(context->nativeReadyPublicationBatch, &outer);
+    EXPECT_FALSE(context->schedulerCompactionPending);
+    context->nativeReadyPublicationBatch = nullptr;
+    // Generated ingress stays for the continuation, which consumes it at the
+    // NBA cut.
+    context->nativeScheduleClockIngressPending = true;
+    ASSERT_EQ(obelisk_rt_v1_scheduler_prepare_eval_nba(context, &region),
+              OBELISK_RT_OK);
+    EXPECT_EQ(region, UINT32_MAX);
+    EXPECT_FALSE(context->nativeScheduleClockIngressPending);
+    // Exhausted slot progress still fails in the full loop.
+    context->schedulerSlotProgress = UINT64_MAX;
+    EXPECT_EQ(obelisk_rt_v1_scheduler_complete_eval_nba(
+                  context, OBELISK_RT_REGION_NBA, 0),
+              OBELISK_RT_OUT_OF_RESOURCES);
+    context->schedulerStatus = OBELISK_RT_OK;
+    context->schedulerSlotProgress = 0;
+    // Pending work in any region still runs (LRM 4.5).
+    ScheduledDesignEvent event;
+    event.stableID = 1;
+    event.execRegion = OBELISK_RT_REGION_INACTIVE;
+    event.sequence = context->nextSchedulerSequence++;
+    context->scheduledDesignEvents.push_back(event);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_prepare_eval_nba(context, &region),
+              OBELISK_RT_OK);
+    EXPECT_EQ(context->events.count(1), 1u);
+    EXPECT_TRUE(context->scheduledDesignEvents.empty());
+    // A periodic drain of an idle slot leaves the coordinator alone; pending
+    // generated ingress still runs it.
+    plan.flags |= OBELISK_RT_NATIVE_SCHEDULE_SHARED_PERIODIC;
+    uint64_t ingress = 0;
+    clockCoordinatorIngress = &ingress;
+    clockCoordinatorWords = 1;
+    clockCoordinatorCalls = 0;
+    plan.timeslot_coordinator = clockCoordinator;
+    obelisk_rt_native_periodic_control_v1 control{};
+    EXPECT_EQ(obelisk_rt_v1_scheduler_drain_periodic_aot(context, &control),
+              OBELISK_RT_OK);
+    EXPECT_EQ(clockCoordinatorCalls, 0u);
+    context->nativeScheduleClockIngressPending = true;
+    EXPECT_EQ(obelisk_rt_v1_scheduler_drain_periodic_aot(context, &control),
+              OBELISK_RT_OK);
+    EXPECT_EQ(clockCoordinatorCalls, 1u);
+    EXPECT_FALSE(context->nativeScheduleClockIngressPending);
+    clockCoordinatorIngress = nullptr;
+  }
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, EvalNBACutReturnsBeforeTimedForeignCallback) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
