@@ -3134,6 +3134,7 @@ void obelisk_rt_release_native_schedule_plan(
   }
   OBELISK_RT_CATCH_ALL {}
   context->nativeSchedulePlan = nullptr;
+  context->nativeScheduleExecutableFragments = false;
   context->nativeScheduleNBARoots = nullptr;
   context->nativeScheduleNBARootCount = 0;
   context->nativeScheduleNBASites = nullptr;

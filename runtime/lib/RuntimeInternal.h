@@ -2259,6 +2259,9 @@ struct obelisk_rt_context {
   std::shared_ptr<const uint8_t> errorLifetime;
   std::vector<ScheduledProcess> scheduledProcesses;
   const obelisk_rt_native_schedule_plan *nativeSchedulePlan = nullptr;
+  // Some merged fragment of the installed plan is executable. The fragment
+  // table is immutable, so installation classifies it once.
+  bool nativeScheduleExecutableFragments = false;
   std::vector<obelisk::runtime::EvalNBAQueue *> nativeEvalNBAQueues;
   bool nativeStateInitialized = false;
   bool nativeStateSharingAllowed = false;
@@ -2356,10 +2359,16 @@ struct obelisk_rt_context {
   std::unordered_set<uint64_t> unstartedActiveActors;
   std::unordered_set<uint64_t> unstartedFinalActors;
   std::unordered_map<uint64_t, SignalValueSnapshot> signalValueSnapshots;
-  std::unordered_map<SignalSubscriptionBucketKey,
-                     std::vector<SignalSubscriptionBucketEntry>,
-                     SignalSubscriptionBucketKeyHash>
-      signalSubscriptionBuckets;
+  using SignalSubscriptionBucketMap =
+      std::unordered_map<SignalSubscriptionBucketKey,
+                         std::vector<SignalSubscriptionBucketEntry>,
+                         SignalSubscriptionBucketKeyHash>;
+  SignalSubscriptionBucketMap signalSubscriptionBuckets;
+  // Released subscriptions and emptied bucket nodes, reused by the next
+  // signal wait. A process that re-arms the same wait every clock cycle then
+  // allocates nothing.
+  std::vector<std::unique_ptr<SignalSubscription>> signalSubscriptionPool;
+  std::vector<SignalSubscriptionBucketMap::node_type> signalSubscriptionNodes;
   std::array<uint64_t, 256> signalSubscriptionObjectFilter{};
   PublicationBatch publicationBatch;
   // Dynamic native subscriptions are omitted from the frozen AOT fanout.

@@ -2053,6 +2053,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       *context->nativeStateSpecializationFast = 0;
     }
     context->nativeSchedulePlan = plan;
+    context->nativeScheduleExecutableFragments =
+        std::any_of(plan->merged_fragments,
+                    plan->merged_fragments + plan->merged_fragment_count,
+                    [](const obelisk_rt_native_merged_fragment &fragment) {
+                      return fragment.execute != nullptr;
+                    });
     if (plan->specialization_fast)
       *plan->specialization_fast = 0;
     context->nativeScheduleNBARoots = nbaRoots;
@@ -2121,8 +2127,7 @@ obelisk_rt_v1_scheduler_run_clock_coordinator(obelisk_rt_context *context) {
       run = plan->run;
       coordinator = plan->timeslot_coordinator;
       mutableState = plan->mutable_state;
-      for (uint64_t index = 0; index != plan->merged_fragment_count; ++index)
-        hasDirectFragments |= plan->merged_fragments[index].execute != nullptr;
+      hasDirectFragments = context->nativeScheduleExecutableFragments;
       // The metadata-only entry consumes this ingress now. Clear before the
       // callback so reentry cannot replay it, while a new publication made
       // by the callback remains pending for the enclosing shared driver.

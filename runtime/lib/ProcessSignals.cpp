@@ -35,6 +35,10 @@ bool obelisk_rt_expand_class_watch_group(obelisk_rt_context *context,
 
 namespace {
 
+/// At most this many released subscriptions, and as many emptied bucket
+/// nodes, are kept for reuse.
+constexpr size_t kPooledSignalSubscriptions = 256;
+
 bool appendSignalSubscriptionUnlocked(
     obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     uint32_t edge, SignalSubscription::Target target, uint64_t waiterToken,
@@ -56,7 +60,18 @@ bool appendSignalSubscriptionUnlocked(
   }
   bool wide = pageCount > kMaximumIndexedSignalPages;
 
-  auto subscription = std::make_unique<SignalSubscription>();
+  std::unique_ptr<SignalSubscription> subscription;
+  if (!context->signalSubscriptionPool.empty()) {
+    subscription = std::move(context->signalSubscriptionPool.back());
+    context->signalSubscriptionPool.pop_back();
+    std::vector<SignalSubscriptionBucketSlot> slots =
+        std::move(subscription->bucketSlots);
+    slots.clear();
+    *subscription = SignalSubscription();
+    subscription->bucketSlots = std::move(slots);
+  } else {
+    subscription = std::make_unique<SignalSubscription>();
+  }
   subscription->stableID = stableID;
   subscription->bitWidth = bitWidth;
   subscription->edge = edge;
@@ -92,7 +107,18 @@ bool appendSignalSubscriptionUnlocked(
     bool bucketEntryAppended = false;
     size_t slotIndex = stored.bucketSlots.size();
     OBELISK_RT_TRY {
-      auto &bucket = context->signalSubscriptionBuckets[key];
+      auto found = context->signalSubscriptionBuckets.find(key);
+      if (found == context->signalSubscriptionBuckets.end() &&
+          !context->signalSubscriptionNodes.empty()) {
+        auto node = std::move(context->signalSubscriptionNodes.back());
+        context->signalSubscriptionNodes.pop_back();
+        node.key() = key;
+        found = context->signalSubscriptionBuckets.insert(std::move(node))
+                    .position;
+      }
+      auto &bucket = found != context->signalSubscriptionBuckets.end()
+                         ? found->second
+                         : context->signalSubscriptionBuckets[key];
       bucket.push_back({&stored, slotIndex});
       bucketEntryAppended = true;
       ++context->signalSubscriptionObjectFilter
@@ -1130,13 +1156,38 @@ void obelisk_rt_unregister_signal_wait_unlocked(
                 slot.bucketIndex;
         }
       }
-      if (bucket->second.empty())
-        context->signalSubscriptionBuckets.erase(bucket);
+      if (bucket->second.empty()) {
+        // Keep the emptied node for the next bucket when there is room; the
+        // reservation makes the push below unable to throw.
+        bool kept = false;
+        if (context->signalSubscriptionNodes.size() <
+            kPooledSignalSubscriptions) {
+          OBELISK_RT_TRY {
+            context->signalSubscriptionNodes.reserve(
+                kPooledSignalSubscriptions);
+            kept = true;
+          }
+          OBELISK_RT_CATCH_ALL {}
+        }
+        if (kept)
+          context->signalSubscriptionNodes.push_back(
+              context->signalSubscriptionBuckets.extract(bucket));
+        else
+          context->signalSubscriptionBuckets.erase(bucket);
+      }
     }
     if (context->signalDiagnosticsEnabled &&
         context->signalDiagnostics.subscriptionsCurrent != 0)
       --context->signalDiagnostics.subscriptionsCurrent;
   }
+  for (std::unique_ptr<SignalSubscription> &owned : subscriptions)
+    if (owned &&
+        context->signalSubscriptionPool.size() < kPooledSignalSubscriptions) {
+      OBELISK_RT_TRY {
+        context->signalSubscriptionPool.push_back(std::move(owned));
+      }
+      OBELISK_RT_CATCH_ALL {}
+    }
   subscriptions.clear();
 }
 

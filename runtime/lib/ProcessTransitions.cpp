@@ -1567,19 +1567,11 @@ static bool publishStaticAOTSignalTransitionUnlockedImpl(
   // Metadata-only clock plans predate executable generated fragments.  Their
   // coordinator is nevertheless the owner of external-deposit ingress, so
   // retain that routing while using the ownership marker for hybrid plans.
-  // This scan is confined to the asynchronous publication path and therefore
-  // does not add work to the generated periodic loop.
-  bool metadataOnlyClockCoordinator = false;
-  if constexpr (UseClockIngress) {
-    const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
-    metadataOnlyClockCoordinator =
-        plan->merged_fragment_count != 0 &&
-        std::none_of(plan->merged_fragments,
-                     plan->merged_fragments + plan->merged_fragment_count,
-                     [](const obelisk_rt_native_merged_fragment &fragment) {
-                       return fragment.execute != nullptr;
-                     });
-  }
+  // Installation classifies the immutable fragment table once.
+  bool metadataOnlyClockCoordinator =
+      UseClockIngress &&
+      context->nativeSchedulePlan->merged_fragment_count != 0 &&
+      !context->nativeScheduleExecutableFragments;
   // A pending generated activation is a set member, not an occurrence log
   // (LRM 4.3, 9.4.2). Repeated writes need no new static publication when its
   // ready bit is already present and no runtime observer watches this source.
