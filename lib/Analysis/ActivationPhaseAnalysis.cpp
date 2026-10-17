@@ -167,9 +167,18 @@ struct ActivationPhaseAnalysis::Shared {
           resolved = false;
           break;
         }
-        std::optional<uint64_t> root =
-            rootOf(call->getParentOfType<sim::SimFuncOp>(),
-                   *std::next(arguments.begin(), formal));
+        auto caller = call->getParentOfType<sim::SimFuncOp>();
+        Value actual = *std::next(arguments.begin(), formal);
+        // Caller-local storage is no design root: an output or inout formal's
+        // own slot, which the caller copies to the actual on return (IEEE
+        // 1800-2023 13.5.1) in a fragment of its own, or a caller's automatic
+        // variable passed by ref (13.5.2).
+        const HandleFacts &callerFacts = factsOf(caller);
+        if (auto fact = callerFacts.find(actual);
+            fact != callerFacts.end() &&
+            fact->second.resource == schedule::ComputeResourceKind::Local)
+          continue;
+        std::optional<uint64_t> root = rootOf(caller, actual);
         if (!root) {
           resolved = false;
           break;

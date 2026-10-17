@@ -256,3 +256,79 @@ module {
     // CHECK: s3 changes {1|1}
   }
 }
+
+// -----
+
+// IEEE 1800-2023 13.5.1: a task's output formal has its own storage, which the
+// caller allocates and copies to the actual when the task returns. The task's
+// write through that formal reaches no design root, so it neither widens the
+// clock's phases nor defeats the port copy proof; the copied actual changes
+// in the caller's phase.
+!bit = !simulation.logic<1>
+!ref = !simulation.ref<!bit>
+module {
+  simulation.design @local_formals {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !bit design
+    simulation.storage.decl 1 in 0 : !bit design
+    simulation.storage.decl 2 in 0 : !bit design
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.code_unit.decl 2 in 0 initial hierarchy "clock"
+    simulation.code_unit.decl 3 in 0 port_input hierarchy "copy"
+    simulation.code_unit.decl 4 in 0 initial hierarchy "caller"
+    simulation.code_unit.decl 5 in 0 task hierarchy "fill"
+    simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
+      %clk = simulation.context.storage %ctx[0] : !ref
+      %port = simulation.context.storage %ctx[1] : !ref
+      %p0 = simulation.spawn @clock(%ctx, %clk) : !simulation.context, !ref -> !simulation.process
+      %p1 = simulation.spawn @copy(%ctx, %clk, %port) : !simulation.context, !ref, !ref -> !simulation.process
+      %p2 = simulation.spawn @caller(%ctx) : !simulation.context -> !simulation.process
+      simulation.return
+    }
+    // CHECK-LABEL: phases local_formals valid=1
+    simulation.func @clock(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
+      %delay = simulation.time.constant 5
+      %one = simulation.logic.constant true, false : !bit
+      %zero = simulation.logic.constant false, false : !bit
+      cf.br ^low
+    ^low:
+      simulation.suspend.delay %delay to ^rise
+    ^rise:
+      simulation.nba.enqueue %one to %clk : (!bit, !ref) -> ()
+      simulation.suspend.delay %delay to ^fall
+    ^fall:
+      simulation.nba.enqueue %zero to %clk : (!bit, !ref) -> ()
+      cf.br ^low
+    }
+    // CHECK: @copy: ^0{1|-} ^1{1|2}
+    simulation.func @copy(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %port: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {entry_kind = 9 : i32, code_unit_id = 3 : i64} {
+      cf.br ^body
+    ^body:
+      %value = simulation.ref.load %clk : !ref -> !bit
+      simulation.ref.store %value to %port {simulation.continuous_store} : !bit, !ref
+      simulation.suspend.change %clk to ^body : !ref
+    }
+    simulation.func @caller(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 4 : i64} {
+      %delay = simulation.time.constant 3
+      %zero = simulation.logic.constant false, false : !bit
+      %actual = simulation.context.storage %ctx[2] : !ref
+      simulation.suspend.delay %delay to ^call
+    ^call:
+      %formal = simulation.ref.alloc %zero : !bit -> !ref
+      simulation.task.call @fill(%ctx, %formal) arguments 2 to ^after : !simulation.context, !ref
+    ^after:
+      %returned = simulation.ref.load %formal : !ref -> !bit
+      simulation.ref.store %returned to %actual : !bit, !ref
+      simulation.return
+    }
+    // CHECK: @fill: ^0{-|1}
+    simulation.func private @fill(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %out: !ref {simulation.capture_kind = 1 : i32}) attributes {entry_kind = 12 : i32, code_unit_id = 5 : i64} {
+      %one = simulation.logic.constant true, false : !bit
+      simulation.ref.store %one to %out : !bit, !ref
+      simulation.return
+    }
+    // CHECK: s0 changes {-|2}
+    // CHECK: s1 changes {-|2}
+    // CHECK: s2 changes {-|1}
+  }
+}
