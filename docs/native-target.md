@@ -413,6 +413,19 @@ joins A and C on a path A -> B -> C, B must join too; otherwise that contraction
 introduces a new scheduling cycle. Newly absorbed members contribute their own
 observer obligations until both closures stabilize. The complete merged cohort
 still needs its publication order, observer certificate, and executable budget.
+Each closed cohort then grows over the acyclic activations weakly connected to
+it. Under IEEE 1800-2023 4.3 an update event is a change in state, so another
+evaluation of an admitted activation with unchanged inputs creates none, and
+4.4.2.2 and 4.7 let the Active region run each woken activation after its
+producers. Admission decides a grown cohort exactly as it decides a closed
+one; growth only picks owners likely to pass it. A joining owner has the
+certificate a data-dependence order needs: only side-effect-free combinational
+processes observe its writes. An owner that wakes on an edge-triggered root
+stays out, because a clock would wake the whole cohort on both edges. So do
+the descendants of every owner that stays out and, when that owner feeds a
+cohort, its ancestors. Two cohorts can still meet around such an owner; the
+closure then absorbs it like any other owner between members. A rejected
+grown cohort falls back to the closed cohorts it contains.
 Physical accesses
 still constrain executable scheduling. Fused memory operations retain the existing
 typed source-owner attributes, so scheduling preserves each original process's

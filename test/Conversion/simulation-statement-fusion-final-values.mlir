@@ -1,9 +1,10 @@
 // RUN: obelisk-opt %s --split-input-file '--test-obelisk-activation-regions=functions=overwrite reaching-values=true inputs=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=INPUT
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
+// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{grow-acyclic=false},obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
 // A transient old-state publication is transparent only when all final outputs
 // are independent of it AND every output's observer belongs to the transitive
 // transition-insensitive closure (IEEE 1800-2023 4.3). Ordinary fusion admission
-// still includes intermediate dependencies; @overwrite remains a separate actor.
+// still includes intermediate dependencies; @overwrite remains a separate actor
+// (growth is off, so it is not absorbed as an acyclic neighbor).
 // CHECK-LABEL: simulation.design @final_overwrite
 // CHECK: simulation.spawn @__obelisk_region_kernel_0_0
 // CHECK: simulation.spawn @overwrite

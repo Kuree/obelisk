@@ -1,5 +1,6 @@
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
+// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{grow-acyclic=false},obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
 
+// Growth is off: these observers stay outside to test the closure proof.
 // IEEE 1800-2023 4.3: an exclusively owned conditional hold may remain an
 // outside observer when a path-sensitive proof establishes idempotence under
 // unchanged inputs. Keep its original state and activation protocol. Old-state

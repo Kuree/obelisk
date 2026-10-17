@@ -210,81 +210,253 @@ public:
               {found->second, {*root, effect.getLow(), effect.getWidth()}});
         }
     }
-    llvm::IntEqClasses cohorts(candidates.size());
-    SmallVector<unsigned> pending;
-    DenseSet<unsigned> included;
-    auto include = [&](unsigned owner) {
-      if (included.insert(owner).second)
-        pending.push_back(owner);
-    };
-    for (const auto &component : components) {
-      if (component.size() < 2)
-        continue;
-      ++componentsFound;
-      for (unsigned owner : component) {
-        cohorts.join(component.front(), owner);
-        include(owner);
+    using Cohorts = llvm::MapVector<unsigned, SmallVector<unsigned>>;
+    // Each seed is a set of owners that must share one transaction.
+    auto closeCohorts = [&](ArrayRef<SmallVector<unsigned>> seeds) {
+      llvm::IntEqClasses cohorts(candidates.size());
+      SmallVector<unsigned> pending;
+      DenseSet<unsigned> included;
+      auto include = [&](unsigned owner) {
+        if (included.insert(owner).second)
+          pending.push_back(owner);
+      };
+      for (const auto &seed : seeds)
+        for (unsigned owner : seed) {
+          cohorts.join(seed.front(), owner);
+          include(owner);
+        }
+      size_t cursor = 0;
+      while (true) {
+        for (; cursor < pending.size(); ++cursor) {
+          unsigned owner = pending[cursor];
+          for (const auto &write :
+               activations[owner]->getMemory().getRepeatedWrites())
+            for (const auto &[consumer, watch] : watchers[write.root])
+              if (write.low < watch.low + watch.width &&
+                  watch.low < write.low + write.width) {
+                cohorts.join(owner, consumer);
+                include(consumer);
+              }
+        }
+        // Observer closure can join nonadjacent components: A and C belong to
+        // one cohort, while A -> B -> C still leaves B outside. Contracting
+        // that cohort would introduce a kernel -> B -> kernel cycle. Close SCCs
+        // of the quotient graph, then include the new members' observers too.
+        SmallVector<unsigned> quotientOwners;
+        DenseMap<unsigned, SmallVector<unsigned>> quotientEdges;
+        for (unsigned owner : owners)
+          quotientOwners.push_back(cohorts.findLeader(owner));
+        llvm::sort(quotientOwners);
+        quotientOwners.erase(
+            std::unique(quotientOwners.begin(), quotientOwners.end()),
+            quotientOwners.end());
+        for (const auto &[owner, targets] : adjacency) {
+          unsigned from = cohorts.findLeader(owner);
+          for (unsigned target : targets) {
+            unsigned to = cohorts.findLeader(target);
+            if (from != to)
+              quotientEdges[from].push_back(to);
+          }
+        }
+        for (auto &[owner, targets] : quotientEdges) {
+          llvm::sort(targets);
+          targets.erase(std::unique(targets.begin(), targets.end()),
+                        targets.end());
+        }
+        bool merged = false;
+        for (const auto &component :
+             analysis::computeStronglyConnectedComponents<unsigned>(
+                 quotientOwners, quotientEdges)) {
+          if (component.size() < 2)
+            continue;
+          merged = true;
+          for (unsigned leader : component) {
+            cohorts.join(component.front(), leader);
+            // Every nonsingleton already had all members in the worklist.
+            // Newly absorbed singleton components still need observer closure.
+            include(leader);
+          }
+        }
+        if (!merged)
+          break;
       }
-    }
-    size_t cursor = 0;
-    while (true) {
-      for (; cursor < pending.size(); ++cursor) {
-        unsigned owner = pending[cursor];
-        for (const auto &write :
-             activations[owner]->getMemory().getRepeatedWrites())
-          for (const auto &[consumer, watch] : watchers[write.root])
-            if (write.low < watch.low + watch.width &&
-                watch.low < write.low + write.width) {
-              cohorts.join(owner, consumer);
-              include(consumer);
-            }
-      }
-      // Observer closure can join nonadjacent components: A and C belong to
-      // one cohort, while A -> B -> C still leaves B outside. Contracting that
-      // cohort would introduce a kernel -> B -> kernel cycle. Close SCCs of
-      // the quotient graph, then include the new members' observers too.
-      SmallVector<unsigned> quotientOwners;
-      DenseMap<unsigned, SmallVector<unsigned>> quotientEdges;
+      Cohorts closed;
       for (unsigned owner : owners)
-        quotientOwners.push_back(cohorts.findLeader(owner));
-      llvm::sort(quotientOwners);
-      quotientOwners.erase(
-          std::unique(quotientOwners.begin(), quotientOwners.end()),
-          quotientOwners.end());
-      for (const auto &[owner, targets] : adjacency) {
-        unsigned from = cohorts.findLeader(owner);
-        for (unsigned target : targets) {
-          unsigned to = cohorts.findLeader(target);
-          if (from != to)
-            quotientEdges[from].push_back(to);
-        }
+        if (included.contains(owner))
+          closed[cohorts.findLeader(owner)].push_back(owner);
+      return closed;
+    };
+    SmallVector<SmallVector<unsigned>> cyclic;
+    for (const auto &component : components)
+      if (component.size() > 1) {
+        ++componentsFound;
+        cyclic.emplace_back(component.begin(), component.end());
       }
-      for (auto &[owner, targets] : quotientEdges) {
-        llvm::sort(targets);
-        targets.erase(std::unique(targets.begin(), targets.end()),
-                      targets.end());
-      }
-      bool merged = false;
-      for (const auto &component :
-           analysis::computeStronglyConnectedComponents<unsigned>(
-               quotientOwners, quotientEdges)) {
-        if (component.size() < 2)
+    Cohorts closedComponents = closeCohorts(cyclic);
+    // IEEE 1800-2023 4.3: an update event is a change in state, so another
+    // evaluation of an activation that copies its retained state back
+    // unchanged (the admission proof above) creates none when its inputs are
+    // unchanged. 4.4.2.2, 4.7: the Active region evaluates the processes an
+    // update wakes in any order, so running each activation after its
+    // producers is a reference execution (4.5). A cohort may therefore absorb
+    // the acyclic activations connected to it and run them once per wake in
+    // data order. Admission below still decides every grown cohort exactly as
+    // it decides a closed one. Growth only picks members likely to pass it:
+    // owners whose writes nothing but combinational processes observe, since
+    // a data-dependence order needs that certificate for every member. An
+    // owner that wakes on an edge-triggered root, typically a clock, would
+    // wake the whole cohort on both edges, so it stays out as a cost choice.
+    // A path cohort -> X -> cohort through such an owner X would make the
+    // closure absorb X, so the owners on such paths stay out as well.
+    Cohorts grownComponents = closedComponents;
+    if (growAcyclic) {
+      llvm::BitVector seeded(candidates.size());
+      for (const auto &[leader, component] : closedComponents)
+        for (unsigned owner : component)
+          seeded.set(owner);
+      DenseMap<uint64_t, SmallVector<Range>> edgeWatched;
+      for (Attribute raw : graph.getNodes())
+        if (auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(raw))
+          for (auto effect : fragment.getEffects()
+                                 .getAsRange<schedule::ComputeEffectAttr>()) {
+            auto trigger = effect.getTrigger();
+            if (effect.getEffect() != schedule::ComputeEffectKind::Watch ||
+                (trigger != schedule::ComputeTriggerKind::Posedge &&
+                 trigger != schedule::ComputeTriggerKind::Negedge &&
+                 trigger != schedule::ComputeTriggerKind::Both) ||
+                effect.getTarget() != schedule::ComputeTargetKind::Descriptor)
+              continue;
+            if (auto root = analysis::ActivationMemoryAnalysis::getRoot(
+                    effect.getResource(), effect.getDescriptor()))
+              edgeWatched[*root].push_back(
+                  {*root, effect.getLow(), effect.getWidth()});
+          }
+      llvm::BitVector blocked(candidates.size());
+      for (const auto &[root, ranges] : edgeWatched) {
+        auto found = watchers.find(root);
+        if (found == watchers.end())
           continue;
-        merged = true;
-        for (unsigned leader : component) {
-          cohorts.join(component.front(), leader);
-          // Every nonsingleton already had all members in the worklist.
-          // Newly absorbed singleton components still need observer closure.
-          include(leader);
+        for (const auto &entry : found->second) {
+          const Range &watch = entry.second;
+          if (llvm::any_of(ranges, [&](const Range &edge) {
+                return !edge.width || (watch.low < edge.low + edge.width &&
+                                       edge.low < watch.low + watch.width);
+              }))
+            blocked.set(entry.first);
         }
       }
-      if (!merged)
-        break;
+      blocked.reset(seeded);
+      unsigned clockWakes = blocked.count();
+      for (unsigned owner : owners)
+        if (!blocked.test(owner) && !seeded.test(owner) &&
+            !eligibility.canReorder({candidates[owner]}))
+          blocked.set(owner);
+      DenseMap<unsigned, SmallVector<unsigned>> predecessors;
+      for (const auto &[owner, targets] : adjacency)
+        for (unsigned target : targets)
+          predecessors[target].push_back(owner);
+      // Descendants of a blocked owner stay out; a blocked owner that feeds a
+      // seed keeps its ancestors out as well. Paths need not continue through
+      // a seed: each seed cohort is closed, so no blocked owner lies on a
+      // path from a seed cohort back to itself. Two seed cohorts can still
+      // meet around a blocked owner. The closure then absorbs it, and the
+      // grown cohort falls back if admission rejects it.
+      auto reach = [&](llvm::BitVector start,
+                       const DenseMap<unsigned, SmallVector<unsigned>> &edges,
+                       bool throughSeeds) {
+        SmallVector<unsigned> work(start.set_bits_begin(),
+                                   start.set_bits_end());
+        while (!work.empty()) {
+          unsigned owner = work.pop_back_val();
+          auto found = edges.find(owner);
+          if (found == edges.end() || (!throughSeeds && seeded.test(owner)))
+            continue;
+          for (unsigned next : found->second)
+            if (!start.test(next)) {
+              start.set(next);
+              work.push_back(next);
+            }
+        }
+        return start;
+      };
+      llvm::BitVector excluded = reach(blocked, adjacency, false);
+      llvm::BitVector feedsSeed = reach(seeded, predecessors, true);
+      feedsSeed &= blocked;
+      excluded |= reach(feedsSeed, predecessors, false);
+      excluded.reset(seeded);
+      if (trace)
+        llvm::errs() << "obelisk statement cohort growth: clock-wakes="
+                     << clockWakes
+                     << " observed=" << blocked.count() - clockWakes
+                     << " excluded=" << excluded.count() << '\n';
+      // Owners connected to a cohort join it. So do unconnected ones that the
+      // same edge-triggered procedure wakes: its activation updates them all
+      // in one pass, and they form a cohort of their own without a seed.
+      // Owners that no edge-triggered procedure wakes join nothing else;
+      // joining would rerun them on every unrelated wake.
+      DenseMap<StringAttr, unsigned> clockedWriters;
+      DenseMap<uint64_t, SmallVector<StringAttr>> writers;
+      for (Attribute raw : graph.getNodes()) {
+        auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(raw);
+        if (!fragment)
+          continue;
+        StringAttr owner = fragment.getFunction().getAttr();
+        auto function = symbols.lookup<sim::SimFuncOp>(owner);
+        bool always = function && !indices.contains(function) &&
+                      (function.getEntryKind() == sim::EntryKind::Always ||
+                       function.getEntryKind() == sim::EntryKind::AlwaysFF);
+        for (auto effect :
+             fragment.getEffects().getAsRange<schedule::ComputeEffectAttr>()) {
+          auto kind = effect.getEffect();
+          auto trigger = effect.getTrigger();
+          if (always && kind == schedule::ComputeEffectKind::Watch &&
+              (trigger == schedule::ComputeTriggerKind::Posedge ||
+               trigger == schedule::ComputeTriggerKind::Negedge ||
+               trigger == schedule::ComputeTriggerKind::Both))
+            clockedWriters.try_emplace(owner, 0);
+          if ((kind == schedule::ComputeEffectKind::Write ||
+               kind == schedule::ComputeEffectKind::NBA ||
+               kind == schedule::ComputeEffectKind::Drive) &&
+              effect.getTarget() == schedule::ComputeTargetKind::Descriptor)
+            if (auto root = analysis::ActivationMemoryAnalysis::getRoot(
+                    effect.getResource(), effect.getDescriptor()))
+              writers[*root].push_back(owner);
+        }
+      }
+      unsigned writerCount = 0;
+      for (auto &[owner, id] : clockedWriters)
+        id = candidates.size() + writerCount++;
+      llvm::IntEqClasses islands(candidates.size() + writerCount);
+      for (const auto &[owner, targets] : adjacency)
+        for (unsigned target : targets)
+          if (!excluded.test(owner) && !excluded.test(target))
+            islands.join(owner, target);
+      for (const auto &[root, list] : watchers) {
+        auto found = writers.find(root);
+        if (found == writers.end())
+          continue;
+        for (const auto &entry : list)
+          if (!excluded.test(entry.first))
+            for (StringAttr writer : found->second)
+              if (auto clocked = clockedWriters.find(writer);
+                  clocked != clockedWriters.end())
+                islands.join(entry.first, clocked->second);
+      }
+      DenseSet<unsigned> clocked;
+      for (const auto &[writer, id] : clockedWriters)
+        clocked.insert(islands.findLeader(id));
+      llvm::MapVector<unsigned, SmallVector<unsigned>> grown;
+      for (unsigned owner : owners)
+        if (!excluded.test(owner))
+          grown[islands.findLeader(owner)].push_back(owner);
+      SmallVector<SmallVector<unsigned>> seeds;
+      for (auto &[leader, island] : grown)
+        if (llvm::any_of(island,
+                         [&](unsigned owner) { return seeded.test(owner); }) ||
+            (island.size() > 1 && clocked.contains(leader)))
+          seeds.push_back(std::move(island));
+      grownComponents = closeCohorts(seeds);
     }
-    llvm::MapVector<unsigned, SmallVector<unsigned>> closedComponents;
-    for (unsigned owner : owners)
-      if (included.contains(owner))
-        closedComponents[cohorts.findLeader(owner)].push_back(owner);
     auto module = design->getParentOfType<ModuleOp>();
     auto limit = schedule::get<schedule::Field::MaxInlineOps>(module);
     uint64_t budget = limit ? limit.getUInt() : 5000;
@@ -294,7 +466,7 @@ public:
         statementLimit ? statementLimit.getUInt() : 262144;
     SmallVector<Attribute> fusions;
     unsigned dataflowCount = 0;
-    for (const auto &[leader, component] : closedComponents) {
+    auto plan = [&](ArrayRef<unsigned> component) {
       SmallVector<sim::SimFuncOp> members;
       SmallVector<int64_t> memberFragments;
       SmallVector<const analysis::ActivationRegionAnalysis *> memberActivations;
@@ -314,9 +486,10 @@ public:
         reason = ComponentRejection::MemberBudget;
       else if (!eligibility.canInterleave(members, &observerReason))
         reason = ComponentRejection::Observer;
-      else if (llvm::any_of(members, [&](auto member) {
-                 return requiresReordering.contains(member);
-               }) ||
+      else if (llvm::any_of(members,
+                            [&](auto member) {
+                              return requiresReordering.contains(member);
+                            }) ||
                !analysis::getActivationRegionOrder(
                    memberActivations, explain ? &cycle : nullptr)) {
         // Statement order is cyclic. Without each process's source order
@@ -420,7 +593,7 @@ public:
               }
           }
         }
-        continue;
+        return false;
       }
       ++plans;
       if (dataflow) {
@@ -438,6 +611,22 @@ public:
           design.getContext(), fusions.size(),
           DenseI64ArrayAttr::get(design.getContext(), memberFragments), true,
           dataflow));
+      return true;
+    };
+    for (const auto &[leader, component] : grownComponents) {
+      size_t closed = 0;
+      for (const auto &[original, members] : closedComponents)
+        if (llvm::is_contained(component, members.front()))
+          closed += members.size();
+      if (closed != component.size() && trace)
+        llvm::errs() << "obelisk statement cohort grown: members="
+                     << component.size() << " from=" << closed << '\n';
+      if (plan(component) || closed == component.size())
+        continue;
+      // Growth is only a cost choice. Keep the cohorts it would replace.
+      for (const auto &[original, members] : closedComponents)
+        if (llvm::is_contained(component, members.front()))
+          plan(members);
     }
     if (!fusions.empty())
       schedule::set<schedule::metadata::staticBodyFusion>(

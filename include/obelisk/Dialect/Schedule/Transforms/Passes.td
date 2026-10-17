@@ -151,13 +151,20 @@ def PlanCombinationalStatementsPass
     complete, exclusive, finite combinational activations. The materializer
     rechecks the proof and preserves every process's statement order. Actual
     feedback and unsupported effects retain their existing scheduler.
+
+    Each cohort then grows over the acyclic activations connected to it whose
+    writes only combinational processes observe and which do not wake on an
+    edge-triggered root, so one wake runs that logic once in data order. A
+    rejected grown cohort falls back to the cohorts it contains.
   }];
   let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect",
                            "mlir::arith::ArithDialect", "mlir::cf::ControlFlowDialect"];
   let options = [Option<"maxMembers", "max-members", "unsigned", "0",
                         "Maximum activations in one statement DAG (0: unlimited)">,
                  Option<"explain", "explain", "bool", "false",
-                        "Report rejected activation and component proofs">];
+                        "Report rejected activation and component proofs">,
+                 Option<"growAcyclic", "grow-acyclic", "bool", "true",
+                        "Grow each cohort over its connected acyclic activations">];
 }
 
 def ObeliskSimMaterializeComputeFusionPass
