@@ -127,6 +127,10 @@ StateDomainFact transferStateDomain(
 /// an aggregate with a four-state member. Handles name storage and carry none.
 bool hasUnknownPlane(mlir::Type type);
 
+/// Approximate native instructions of the unknown-plane expansion of `op`,
+/// which a two-state execution of it no longer performs.
+unsigned getUnknownPlaneWork(mlir::Operation *op);
+
 /// Whether a dynamic selection has a constant index selecting only bits or
 /// elements inside its input.
 bool isConstantInRangeSelection(mlir::Operation *op);

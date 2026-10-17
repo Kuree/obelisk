@@ -250,6 +250,8 @@ def NativeGuardedSpecializationBody : ScheduleField<"NativeGuardedSpecialization
 def NativeKnownRead : ScheduleField<"NativeKnownRead", "schedule.native.known_read", "::mlir::UnitAttr">;
 // A function containing two-state copies of known-state versioned regions.
 def NativeKnownVersioned : ScheduleField<"NativeKnownVersioned", "schedule.native.known_versioned", "::mlir::UnitAttr">;
+// An activation whose entry selects a copy with value-only gated reads.
+def NativeKnownActivation : ScheduleField<"NativeKnownActivation", "schedule.native.known_activation", "::mlir::UnitAttr">;
 def ObserverCaptureBridge : ScheduleField<"ObserverCaptureBridge", "schedule.observer_capture_bridge", "::mlir::UnitAttr">;
 def ConcurrentEosCoordinator : ScheduleField<"ConcurrentEosCoordinator", "schedule.concurrent_eos_coordinator", "::mlir::UnitAttr">;
 def PrimitiveName : ScheduleField<"PrimitiveName", "schedule.primitive_name", "::mlir::StringAttr">;

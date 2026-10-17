@@ -465,6 +465,12 @@ std::optional<SmallVector<uint64_t>> getFixedBitStreamPlan(Type type) {
   return getFixedBitStreamPlanImpl(type, false, false);
 }
 
+bool hasFixedBitValue(Type type) {
+  return isa<IntegerType>(type) || getPackedWidth(type) ||
+         (isa<UnpackedArrayType, UnpackedStructType>(type) &&
+          getFixedBitStreamPlan(type));
+}
+
 std::optional<SmallVector<uint64_t>> getFixedBitStreamImportPlan(Type type) {
   return getFixedBitStreamPlanImpl(type, true, false);
 }

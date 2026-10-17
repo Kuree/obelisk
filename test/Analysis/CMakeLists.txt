@@ -9,6 +9,7 @@ add_mlir_library(ObeliskAnalysisTestPasses
   CoverageSchemaTestPass.cpp
   ManagedClassLayoutAnalysisTestPass.cpp
   LocalStorageAnalysisTestPass.cpp
+  LocalUnknownAnalysisTestPass.cpp
   NativeAOTAnalysisTestPass.cpp
   NativeStateLayoutAnalysisTestPass.cpp
   RandomProgramTestPass.cpp

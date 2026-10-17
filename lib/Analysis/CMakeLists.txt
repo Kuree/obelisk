@@ -18,6 +18,7 @@ add_mlir_library(ObeliskSimulationAnalysis
   HandleDataflowAnalysis.cpp
   LogicBitAnalysis.cpp
   LocalStorageAnalysis.cpp
+  LocalUnknownAnalysis.cpp
   ManagedClassLayoutAnalysis.cpp
   ManagedCollectionAnalysis.cpp
   NativeAOTAnalysis.cpp

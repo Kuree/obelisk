@@ -24,6 +24,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../../../Conversion/SimulationToSchedule/NativePipeline.h"
+#include "KnownCasts.h"
 #include "mlir/Analysis/CFGLoopInfo.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -61,20 +62,7 @@ using analysis::KnownVersioningAnalysis;
 constexpr int32_t likelyWeight = (1 << 20) - 1;
 constexpr int32_t unlikelyWeight = 1;
 
-/// The LRM two-state conversion, exact for a known value (IEEE 1800-2023
-/// 6.11.2 maps only X/Z bits to 0).
-Value castKnown(OpBuilder &builder, Location loc, Value value) {
-  Type type = value.getType();
-  if (auto logic = dyn_cast<sim::LogicType>(type)) {
-    Value bits = sim::SimLogicToBitsOp::create(
-        builder, loc, builder.getIntegerType(logic.getWidth()), value);
-    return sim::SimLogicFromBitsOp::create(builder, loc, logic, bits);
-  }
-  Type scalar = sim::getPackedScalarType(type);
-  Value flat = sim::SimPackedFlattenOp::create(builder, loc, scalar, value);
-  return sim::SimPackedUnflattenOp::create(builder, loc, type,
-                                           castKnown(builder, loc, flat));
-}
+using detail::castKnown;
 
 Value conjoin(OpBuilder &builder, Location loc, Value lhs, Value rhs) {
   return lhs ? arith::AndIOp::create(builder, loc, lhs, rhs).getResult() : rhs;
@@ -538,8 +526,11 @@ public:
     // block structure its frame and fragments describe. Path predicates run
     // only to classify an activation. A source with a two-state variant runs
     // only while its inputs hold X/Z; its variant carries the steady state and
-    // is versioned instead.
+    // is versioned instead. An activation whose entry already selects a copy
+    // with value-only gated reads runs its four-state body only while a gated
+    // input holds X/Z.
     if (function.isExternal() ||
+        schedule::has<schedule::Field::NativeKnownActivation>(function) ||
         function.getEntryKind() != sim::EntryKind::Function ||
         schedule::has<schedule::Field::EvalPathKnownPredicate>(function) ||
         schedule::has<schedule::metadata::evalTwoStateVariant>(function))

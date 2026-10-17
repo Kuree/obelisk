@@ -18,7 +18,6 @@
 #include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/SCCIterator.h"
 #include "llvm/ADT/SetVector.h"
-#include "llvm/ADT/TypeSwitch.h"
 
 using namespace mlir;
 namespace obelisk::analysis {
@@ -179,50 +178,6 @@ private:
 };
 
 //===----------------------------------------------------------------------===//
-// Cost model
-//===----------------------------------------------------------------------===//
-
-/// Approximate instructions of the unknown-plane expansion of `op` in
-/// SimulationToStandard, which a two-state copy no longer executes.
-unsigned unknownPlaneWork(Operation *op) {
-  if (auto binary = dyn_cast<sim::SimLogicBinaryOp>(op)) {
-    switch (binary.getKind()) {
-    case sim::BinaryKind::And:
-    case sim::BinaryKind::Or:
-      return 9; // known-zero/known-one dominance on both operands
-    case sim::BinaryKind::Xor:
-    case sim::BinaryKind::Xnor:
-      return 3;
-    default:
-      return 5; // any-unknown test and X selection
-    }
-  }
-  if (auto compare = dyn_cast<sim::SimLogicCompareOp>(op))
-    return compare.getKind() == sim::CompareKind::CaseEq ||
-                   compare.getKind() == sim::CompareKind::CaseNe
-               ? 2
-               : 5;
-  if (auto shift = dyn_cast<sim::SimLogicShiftOp>(op))
-    return isa_and_nonnull<arith::ConstantOp>(shift.getAmount().getDefiningOp())
-               ? 1
-               : 5;
-  return llvm::TypeSwitch<Operation *, unsigned>(op)
-      .Case<sim::SimLogicMuxOp>([](auto) { return 8; })
-      .Case<sim::SimLogicLogicalOp, sim::SimLogicPowerOp>(
-          [](auto) { return 5; })
-      .Case<sim::SimLogicReductionOp>([](auto) { return 4; })
-      .Case<sim::SimLogicIsTrueOp, sim::SimLogicDynExtractOp,
-            sim::SimLogicDynInsertOp, sim::SimArrayDynExtractOp,
-            sim::SimArrayDynInsertOp>([](auto) { return 3; })
-      .Case<sim::SimLogicUnaryOp>([](auto) { return 2; })
-      .Case<sim::SimLogicConstantOp, sim::SimLogicFromBitsOp,
-            sim::SimLogicToBitsOp, sim::SimPackedFlattenOp,
-            sim::SimPackedUnflattenOp, sim::SimRefLoadOp, sim::SimNetReadOp,
-            sim::SimRefStoreOp>([](auto) { return 0; })
-      .Default([](Operation *) { return 1; });
-}
-
-//===----------------------------------------------------------------------===//
 // Region membership and operation admission
 //===----------------------------------------------------------------------===//
 
@@ -343,7 +298,7 @@ public:
       }
     }
     if (improves(op))
-      region.benefit += unknownPlaneWork(op);
+      region.benefit += getUnknownPlaneWork(op);
     return {};
   }
 

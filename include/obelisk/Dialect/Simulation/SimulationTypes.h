@@ -76,6 +76,10 @@ std::optional<uint64_t> getArrayElementStorageStride(::mlir::Type type);
 std::optional<::llvm::SmallVector<uint64_t>>
 getFixedBitStreamPlan(::mlir::Type type);
 
+/// Whether values of `type` have a fixed native bit image: a packed value, or
+/// an unpacked array or struct with a fixed bit-stream plan.
+bool hasFixedBitValue(::mlir::Type type);
+
 /// Build the inverse fixed-target plan. Copy records retain whether each
 /// destination leaf is two- or four-state so final X/Z coercion is exact.
 std::optional<::llvm::SmallVector<uint64_t>>

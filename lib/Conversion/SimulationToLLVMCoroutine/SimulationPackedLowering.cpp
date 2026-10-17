@@ -1211,7 +1211,8 @@ LogicalResult lowerPackedSimulationOperations(
     target.addLegalDialect<runtime::ObeliskRuntimeDialect>();
     target.addLegalOp<sim::SimContextRuntimeOp, sim::SimStatusCheckOp>();
     target.addLegalDialect<schedule::ScheduleDialect>();
-    target.addIllegalOp<schedule::NativeKnownValueOp>();
+    target.addIllegalOp<schedule::NativeKnownValueOp,
+                        schedule::NativeKnownBitsOp>();
     target.addDynamicallyLegalOp<sim::SimFuncOp>([&](sim::SimFuncOp function) {
       return c.isSignatureLegal(function.getFunctionType()) &&
              c.isLegal(&function.getBody());

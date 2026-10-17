@@ -38,8 +38,10 @@ void buildSimulationToLLVMCoroutinePipeline(mlir::OpPassManager &manager,
   if (nativeWords)
     manager.addPass(createOptimizeNativeWordsPass());
   manager.addPass(createLowerNativeWordRegionsPass());
-  // Two-state copies of four-state regions consume the final eval bodies and
-  // their native word regions; bytecode stays canonical.
+  // Two-state copies consume the final eval bodies and their native word
+  // regions; bytecode stays canonical. Whole activations are versioned first;
+  // region versioning leaves those activations alone.
+  manager.addPass(createVersionKnownActivationsPass());
   manager.addPass(createVersionKnownRegionsPass());
   manager.addPass(createPrepareNativeTransferKernelsPass());
   manager.addPass(createAnnotateCompactNativeNBAPass());

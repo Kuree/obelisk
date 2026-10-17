@@ -218,11 +218,33 @@ TransferActivationOp::verifySymbolUses(SymbolTableCollection &symbols) {
   return success();
 }
 LogicalResult NativeKnownValueOp::verify() {
-  Type type = getInput().getType();
-  if (!isa<IntegerType>(type) && !sim::getPackedWidth(type) &&
-      (!isa<sim::UnpackedArrayType, sim::UnpackedStructType>(type) ||
-       !sim::getFixedBitStreamPlan(type)))
+  if (!sim::hasFixedBitValue(getInput().getType()))
     return emitOpError("requires a fixed native bit value");
+  return success();
+}
+LogicalResult NativeKnownBitsOp::verify() {
+  if (getReferences().empty() ||
+      getRanges().size() != getReferences().size())
+    return emitOpError("requires ranges for each of one or more references");
+  for (auto [reference, attribute] :
+       llvm::zip_equal(getReferences(), getRanges())) {
+    ArrayRef<int64_t> ranges = cast<DenseI64ArrayAttr>(attribute).asArrayRef();
+    std::optional<uint64_t> span = sim::getProvenanceSpan(
+        cast<sim::RefType>(reference.getType()).getElementType());
+    if (!span)
+      return emitOpError("requires storage with a fixed bit span");
+    if (ranges.empty() || ranges.size() % 2)
+      return emitOpError("requires (offset, width) pairs");
+    uint64_t end = 0;
+    for (size_t index = 0; index != ranges.size(); index += 2) {
+      int64_t offset = ranges[index], width = ranges[index + 1];
+      if (offset < 0 || width <= 0 || uint64_t(offset) < end ||
+          uint64_t(width) > *span || uint64_t(offset) > *span - width)
+        return emitOpError(
+            "requires sorted, disjoint ranges inside the storage");
+      end = uint64_t(offset) + uint64_t(width);
+    }
+  }
   return success();
 }
 namespace {

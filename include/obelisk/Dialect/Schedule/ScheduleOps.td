@@ -172,6 +172,25 @@ def NativeKnownValueOp : ScheduleNativeOp<"known.value", [Pure]> {
   let hasVerifier = 1;
   let hasCanonicalizer = 1;
 }
+def NativeKnownBitsOp : ScheduleNativeOp<"known.bits"> {
+  let summary = "test that selected bits of canonical storage hold no X or Z";
+  let description = [{
+    True when no selected bit of any reference holds X or Z. `ranges` holds,
+    for each reference, its (offset, width) pairs relative to the referenced
+    storage, sorted and disjoint. Only unknown planes are read, in place
+    where the storage has a fixed direct location and through the runtime
+    otherwise. A location the runtime cannot resolve reads as X, so the
+    predicate never claims knownness it cannot observe.
+  }];
+  let arguments = (ins
+      Arg<Variadic<SimRefType>, "", [MemRead<SimStorageResource>]>:$references,
+      TypedArrayAttrBase<DenseI64ArrayAttr, "ranges per reference">:$ranges);
+  let results = (outs I1:$known);
+  let assemblyFormat = [{
+    $references $ranges attr-dict `:` qualified(type($references))
+  }];
+  let hasVerifier = 1;
+}
 def NativeTransitionOp
     : ScheduleNativeOp<
           "transition",

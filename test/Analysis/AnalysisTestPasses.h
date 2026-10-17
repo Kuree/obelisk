@@ -15,6 +15,7 @@ void registerCombinationalDependencyAnalysisTestPass();
 void registerCoverageSchemaTestPass();
 void registerManagedClassLayoutAnalysisTestPass();
 void registerLocalStorageAnalysisTestPass();
+void registerLocalUnknownAnalysisTestPass();
 void registerNativeAOTAnalysisTestPass();
 void registerNativeStateLayoutAnalysisTestPass();
 void registerRandomProgramTestPass();

@@ -400,6 +400,40 @@ def LowerNativeGCCollectionsPass
                            "mlir::cf::ControlFlowDialect"];
 }
 
+def VersionKnownActivationsPass
+    : Pass<"schedule-version-known-activations", "mlir::ModuleOp"> {
+  let summary = "Run activations on value planes while their gated reads are known";
+  let description = [{
+    Cuts each nonsuspending native activation body into segments entered only
+    at their first operation and gives each profitable segment a copy, entered
+    after one check at the segment's entry finds known the bits of its gated
+    reads, the private slots and the live-in values the copy relies on. In the
+    copy a gated read loads only its value plane; every other read and every
+    store keeps both planes, so the copy performs the same effects with the
+    same values (IEEE 1800-2023 4.3, 6.3.1, 11.4). A failed check runs the
+    original four-state segment. Bits the previous segment's copy left known
+    are tested only after its original ran. With `checked-reads`, a read the
+    check cannot cover is tested where the copy loads it, and on X/Z the copy
+    continues in the original right after the same read, so no effect is
+    repeated or skipped. LocalUnknownAnalysis chooses the reads.
+  }];
+  let options = [
+    Option<"minimumBenefit", "minimum-benefit", "uint64_t", "64",
+           "Smallest estimated unknown-plane work worth a copy">,
+    Option<"segmentSize", "segment-size", "uint64_t", "256",
+           "Operations after which a segment ends at the next cut point; 0 "
+           "versions the whole body as one segment">,
+    Option<"variants", "variants", "bool", "true",
+           "Also version guarded two-state variants">,
+    Option<"checkedReads", "checked-reads", "bool", "false",
+           "Test reads the entry check cannot cover where they load">
+  ];
+  let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect",
+                           "obelisk::schedule::ScheduleDialect",
+                           "mlir::arith::ArithDialect",
+                           "mlir::cf::ControlFlowDialect"];
+}
+
 def VersionKnownRegionsPass
     : Pass<"schedule-version-known-regions", "mlir::ModuleOp"> {
   let summary = "Run loops and straight-line regions on value planes when known";

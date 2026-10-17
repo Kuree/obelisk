@@ -17,6 +17,9 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Transforms/DialectConversion.h"
 
+#include <limits>
+#include <map>
+
 using namespace mlir;
 
 namespace obelisk::detail {
@@ -318,6 +321,112 @@ public:
                                                planes[1], zero);
     return success();
   }
+};
+
+/// Test the selected bits of canonical unknown planes, one aligned word at a
+/// time. A root with a fixed direct location is read in place; any other
+/// reference reads its current unknown plane through the runtime, where an
+/// unresolved location reads as X.
+class KnownBitsConversion final
+    : public OpConversionPattern<schedule::NativeKnownBitsOp> {
+public:
+  KnownBitsConversion(const TypeConverter &converter, MLIRContext *context,
+                      uint64_t stateBitCount,
+                      const NativeStateLayout *directLayout)
+      : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
+        directLayout(directLayout) {}
+
+  LogicalResult
+  matchAndRewrite(schedule::NativeKnownBitsOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (llvm::any_of(adaptor.getReferences(),
+                     [](ValueRange handles) { return handles.size() != 1; }))
+      return failure();
+    Location location = op.getLoc();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i8 = rewriter.getI8Type();
+    Type i64 = rewriter.getI64Type();
+    using Words = std::map<uint64_t, uint64_t>;
+    // Masks of the plane words that `ranges`, shifted by `offset`, touch.
+    auto addRanges = [](Words &words, uint64_t offset,
+                        ArrayRef<int64_t> ranges) {
+      for (size_t index = 0; index != ranges.size(); index += 2) {
+        uint64_t low = offset + uint64_t(ranges[index]);
+        uint64_t high = low + uint64_t(ranges[index + 1]);
+        for (uint64_t word = low / 64; word * 64 < high; ++word) {
+          uint64_t first = std::max(low, word * 64) - word * 64;
+          uint64_t last = std::min(high, word * 64 + 64) - word * 64;
+          words[word] |= last - first == 64
+                             ? ~uint64_t{0}
+                             : ((uint64_t{1} << (last - first)) - 1) << first;
+        }
+      }
+    };
+    Value unknown = llvmConstant(rewriter, location, i64, 0);
+    // OR the masked words of a plane of `planeBytes` bytes into `unknown`.
+    auto testWords = [&](Value plane, uint64_t planeBytes, const Words &words) {
+      for (auto [word, mask] : words) {
+        uint64_t byte = word * 8;
+        Value bits;
+        if (byte + 8 <= planeBytes) {
+          bits = LLVM::LoadOp::create(rewriter, location, i64,
+                                      byteGEP(rewriter, location, plane, byte),
+                                      1);
+        } else {
+          // The plane's final bytes need not fill a word.
+          bits = llvmConstant(rewriter, location, i64, 0);
+          for (uint64_t offset = 0; byte + offset < planeBytes; ++offset) {
+            Value part = LLVM::LoadOp::create(
+                rewriter, location, i8,
+                byteGEP(rewriter, location, plane, byte + offset), 1);
+            part = LLVM::ZExtOp::create(rewriter, location, i64, part);
+            part = LLVM::ShlOp::create(
+                rewriter, location, part,
+                llvmConstant(rewriter, location, i64, 8 * offset));
+            bits = LLVM::OrOp::create(rewriter, location, bits, part);
+          }
+        }
+        if (mask != ~uint64_t{0})
+          bits = LLVM::AndOp::create(
+              rewriter, location, bits,
+              llvmConstant(rewriter, location, i64, mask));
+        unknown = LLVM::OrOp::create(rewriter, location, unknown, bits);
+      }
+    };
+    Words direct;
+    for (auto [handles, attribute] :
+         llvm::zip_equal(adaptor.getReferences(), op.getRanges())) {
+      ArrayRef<int64_t> ranges = cast<DenseI64ArrayAttr>(attribute).asArrayRef();
+      uint64_t end = uint64_t(ranges[ranges.size() - 2]) + uint64_t(ranges.back());
+      std::optional<DirectStaticStateRange> range;
+      if (end <= std::numeric_limits<unsigned>::max())
+        range = resolveDirectStaticStateRange(handles.front(), end,
+                                              directLayout);
+      if (range && !range->guarded) {
+        addRanges(direct, range->offset, ranges);
+        continue;
+      }
+      Value plane = loadBulkStatePlane(
+          rewriter, location, handles.front(), end, "__obelisk_state_unknown",
+          /*unknownFallback=*/true, stateBitCount, directLayout,
+          /*assumeClean=*/false);
+      Words words;
+      addRanges(words, 0, ranges);
+      testWords(plane, (end + 7) / 8, words);
+    }
+    if (!direct.empty())
+      testWords(LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                          "__obelisk_state_unknown"),
+                (stateBitCount + 7) / 8, direct);
+    rewriter.replaceOpWithNewOp<LLVM::ICmpOp>(
+        op, LLVM::ICmpPredicate::eq, unknown,
+        llvmConstant(rewriter, location, i64, 0));
+    return success();
+  }
+
+private:
+  uint64_t stateBitCount;
+  const NativeStateLayout *directLayout;
 };
 
 class RefLoadConversion final : public OpConversionPattern<sim::SimRefLoadOp> {
@@ -1075,6 +1184,8 @@ void populateStateReadWriteToLLVMConversionPatterns(
     const DenseMap<Operation *, NativeStateAccessInfo> &stateAccesses,
     const LocalStorageLowering *locals) {
   patterns.add<KnownValueConversion>(converter, patterns.getContext());
+  patterns.add<KnownBitsConversion>(converter, patterns.getContext(),
+                                    stateBitCount, directLayout);
   patterns.add<BulkRefCopyConversion>(converter, patterns.getContext(),
                                       stateBitCount, directLayout,
                                       experimentalTwoState);
