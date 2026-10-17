@@ -12,8 +12,10 @@
 #include "mlir/Interfaces/Utils/InferIntRangeCommon.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/Hashing.h"
 
 #include <climits>
+#include <memory>
 
 using namespace mlir;
 namespace obelisk::analysis {
@@ -25,60 +27,105 @@ namespace {
 // nested loops and phi nodes. Reference bindings are root-relative offsets;
 // identity and type bounds remain the responsibility of the sparse analysis.
 using Environment = DenseMap<Value, APInt>;
+
+/// One environment of the union. Environments are immutable and shared by
+/// every program point a transfer leaves them unchanged at. The signature
+/// sets one bit per binding, so a subset's bits are a subset of its
+/// superset's: most failing subsumption checks need no lookup.
+struct Path {
+  std::shared_ptr<const Environment> bindings;
+  uint64_t signature = 0;
+  /// When the lattice holding this copy received it; see `unseen`.
+  uint64_t sequence = 0;
+
+  explicit Path(Environment environment)
+      : bindings(std::make_shared<const Environment>(std::move(environment))) {
+    for (const auto &[value, constant] : *bindings)
+      signature |= bit(value, constant);
+  }
+  const Environment &operator*() const { return *bindings; }
+  const Environment *operator->() const { return bindings.get(); }
+  static uint64_t bit(Value value, const APInt &constant) {
+    return uint64_t{1} << (llvm::hash_combine(value.getAsOpaquePointer(),
+                                              llvm::hash_value(constant)) &
+                           63);
+  }
+};
+
+/// Whether `a` denotes every execution `b` does: `b` has all of its bindings.
+bool subsumes(const Path &a, const Path &b) {
+  if (a.bindings == b.bindings)
+    return true;
+  if (a->size() > b->size() || (a.signature & ~b.signature))
+    return false;
+  return llvm::all_of(*a, [&](const auto &entry) {
+    auto found = b->find(entry.first);
+    return found != b->end() && found->second == entry.second;
+  });
+}
+
+/// The bindings of `common` that `path` also has.
+Environment intersect(const Environment &common, const Environment &path) {
+  Environment result;
+  for (const auto &entry : common) {
+    auto found = path.find(entry.first);
+    if (found != path.end() && found->second == entry.second)
+      result.insert(entry);
+  }
+  return result;
+}
+
 class FootprintLattice final : public dataflow::AbstractDenseLattice {
 public:
   using AbstractDenseLattice::AbstractDenseLattice;
-  SmallVector<Environment, 1> paths;
+  SmallVector<Path, 1> paths;
 
-  ChangeResult merge(const Environment &incoming) {
-    auto subsumes = [](const Environment &a, const Environment &b) {
-      return llvm::all_of(a, [&](const auto &entry) {
-        auto found = b.find(entry.first);
-        return found != b.end() && found->second == entry.second;
-      });
-    };
+  /// The paths of `source` whose transfers this lattice has not received.
+  /// A lattice only appends, erases, or (widened) renews its paths, so these
+  /// are a suffix. A transfer this lattice received stays subsumed here, also
+  /// once it widens, so transferring an earlier path again changes nothing.
+  ArrayRef<Path> unseen(const FootprintLattice &source) {
+    uint64_t &seen = received[&source];
+    const Path *first = llvm::find_if(
+        source.paths, [&](const Path &path) { return path.sequence > seen; });
+    if (!source.paths.empty())
+      seen = source.paths.back().sequence;
+    return ArrayRef<Path>(first, source.paths.end());
+  }
+
+  ChangeResult merge(const Path &incoming) {
     if (widened) {
-      auto &common = paths.front();
-      SmallVector<Value> remove;
-      for (const auto &entry : common) {
-        auto found = incoming.find(entry.first);
-        if (found == incoming.end() || found->second != entry.second)
-          remove.push_back(entry.first);
-      }
-      for (Value value : remove)
-        common.erase(value);
-      return remove.empty() ? ChangeResult::NoChange : ChangeResult::Change;
+      Environment common = intersect(*paths.front(), *incoming);
+      if (common.size() == paths.front()->size())
+        return ChangeResult::NoChange;
+      paths.front() = Path(std::move(common));
+      paths.front().sequence = ++sequence;
+      return ChangeResult::Change;
     }
     if (llvm::any_of(
-            paths, [&](const auto &path) { return subsumes(path, incoming); }))
+            paths, [&](const Path &path) { return subsumes(path, incoming); }))
       return ChangeResult::NoChange;
     llvm::erase_if(paths,
-                   [&](const auto &path) { return subsumes(incoming, path); });
+                   [&](const Path &path) { return subsumes(incoming, path); });
     paths.push_back(incoming);
+    paths.back().sequence = ++sequence;
     // Bound the disjunctive domain, including unbounded/wrapping loops. After
     // widening, retain only bindings common to every path; later joins can
     // only remove them. No iteration cap is used to certify a partial result.
     if (paths.size() > 256) {
-      Environment common = paths.front();
-      for (const auto &path : llvm::drop_begin(paths)) {
-        SmallVector<Value> remove;
-        for (const auto &entry : common) {
-          auto found = path.find(entry.first);
-          if (found == path.end() || found->second != entry.second)
-            remove.push_back(entry.first);
-        }
-        for (Value value : remove)
-          common.erase(value);
-      }
+      Environment common = *paths.front();
+      for (const Path &path : llvm::drop_begin(paths))
+        common = intersect(common, *path);
       paths.clear();
-      paths.push_back(std::move(common));
+      paths.push_back(Path(std::move(common)));
+      paths.back().sequence = ++sequence;
       widened = true;
     }
     return ChangeResult::Change;
   }
   ChangeResult join(const AbstractDenseLattice &other) override {
     ChangeResult changed = ChangeResult::NoChange;
-    for (const auto &path : static_cast<const FootprintLattice &>(other).paths)
+    for (const Path &path : static_cast<const FootprintLattice &>(other).paths)
       changed |= merge(path);
     return changed;
   }
@@ -86,6 +133,8 @@ public:
 
 private:
   bool widened = false;
+  uint64_t sequence = 0;
+  DenseMap<const FootprintLattice *, uint64_t> received;
 };
 
 class FootprintDataflow final
@@ -136,6 +185,31 @@ public:
           llvm::append_range(pending, op->getOperands());
       }
     }
+    // A binding is live until its last use in the block unless it is live
+    // out; it enters at its definition or, for a live-in value or block
+    // argument, at the block entry. So the bindings that die after an
+    // operation are among its operands and results, plus the arguments of
+    // its block at the first operation.
+    for (Block &block : function.getBody())
+      for (Operation &op : block) {
+        if (op.hasTrait<OpTrait::IsTerminator>())
+          continue;
+        SmallVector<Value, 2> &values = dyingAfter[&op];
+        auto consider = [&](Value value) {
+          if (relevant.contains(value) && !llvm::is_contained(values, value) &&
+              liveness.isDeadAfter(value, &op))
+            values.push_back(value);
+        };
+        if (&op == &block.front())
+          for (BlockArgument argument : block.getArguments())
+            consider(argument);
+        for (Value value : op.getOperands())
+          consider(value);
+        for (Value value : op.getResults())
+          consider(value);
+        if (values.empty())
+          dyingAfter.erase(&op);
+      }
   }
 
   std::optional<APInt> get(Value value, const Environment &path) const {
@@ -162,8 +236,26 @@ public:
 
   LogicalResult visitOperation(Operation *op, const FootprintLattice &before,
                                FootprintLattice *after) override {
-    for (const auto &path : before.paths) {
-      Environment next = path;
+    // Discard dead bindings to avoid correlating unrelated loop lifetimes.
+    // Edge transfer still needs the terminator's condition and phi operands.
+    ArrayRef<Value> dying;
+    if (!op->hasTrait<OpTrait::IsTerminator>())
+      if (auto found = dyingAfter.find(op); found != dyingAfter.end())
+        dying = found->second;
+    bool binds = llvm::any_of(op->getResults(), [&](Value value) {
+      return relevant.contains(value);
+    });
+    for (const Path &path : after->unseen(before)) {
+      if (!binds && llvm::none_of(op->getResults(),
+                                  [&](Value value) {
+                                    return path->contains(value);
+                                  }) &&
+          llvm::none_of(dying,
+                        [&](Value value) { return path->contains(value); })) {
+        propagateIfChanged(after, after->merge(path));
+        continue;
+      }
+      Environment next = *path;
       for (Value result : op->getResults())
         next.erase(result);
       auto put = [&](Value value, const APInt &constant) {
@@ -171,15 +263,13 @@ public:
           next.insert_or_assign(value, constant);
       };
       if (auto interface = dyn_cast<InferIntRangeInterface>(op);
-          interface && llvm::any_of(op->getResults(), [&](Value value) {
-            return relevant.contains(value);
-          })) {
+          interface && binds) {
         // An unknown logic operand may be X, so it cannot be modeled as an
         // arbitrary integer of the right width for a logic result.
         SmallVector<ConstantIntRanges> operands;
         bool unknownLogic = false;
         for (Value value : op->getOperands()) {
-          auto constant = get(value, path);
+          auto constant = get(value, *path);
           unknownLogic |= !constant && isa<sim::LogicType>(value.getType());
           unsigned width =
               ConstantIntRanges::getStorageBitwidth(value.getType());
@@ -198,23 +288,15 @@ public:
                  relevant.contains(op->getResult(0))) {
         Value result = op->getResult(0);
         if (isa<sim::RefType>(result.getType())) {
-          if (auto offset = projectReference(op, path))
+          if (auto offset = projectReference(op, *path))
             put(result, APInt(64, *offset));
-        } else if (auto constant = evaluateLogic(op, path)) {
+        } else if (auto constant = evaluateLogic(op, *path)) {
           put(result, *constant);
         }
       }
-      // Discard dead bindings to avoid correlating unrelated loop lifetimes.
-      // Edge transfer still needs the terminator's condition and phi operands.
-      if (!op->hasTrait<OpTrait::IsTerminator>()) {
-        SmallVector<Value> dead;
-        for (const auto &entry : next)
-          if (liveness.isDeadAfter(entry.first, op))
-            dead.push_back(entry.first);
-        for (Value value : dead)
-          next.erase(value);
-      }
-      propagateIfChanged(after, after->merge(next));
+      for (Value value : dying)
+        next.erase(value);
+      propagateIfChanged(after, after->merge(Path(std::move(next))));
     }
     return success();
   }
@@ -225,29 +307,39 @@ public:
     Operation *terminator = predecessor->getTerminator();
     auto branch = dyn_cast<BranchOpInterface>(terminator);
     auto conditional = dyn_cast<cf::CondBranchOp>(terminator);
-    for (const auto &path : before.paths)
+    const auto &liveIn = liveness.getLiveIn(block);
+    for (const Path &path : after->unseen(before))
       for (unsigned edge = 0; edge < terminator->getNumSuccessors(); ++edge) {
         if (terminator->getSuccessor(edge) != block)
           continue;
         if (conditional)
-          if (auto condition = get(conditional.getCondition(), path))
+          if (auto condition = get(conditional.getCondition(), *path))
             if (edge != (condition->isZero() ? 1u : 0u))
               continue;
-        Environment next;
-        for (const auto &entry : path)
-          if (liveness.getLiveIn(block).contains(entry.first))
-            next.insert(entry);
         // Parallel phi assignment reads the predecessor environment. Handle
         // both edges to the same successor separately, including phi swaps.
+        SmallVector<std::pair<Value, APInt>> phis;
         if (branch) {
           auto operands = branch.getSuccessorOperands(edge);
           for (BlockArgument argument : block->getArguments())
             if (relevant.contains(argument) &&
                 argument.getArgNumber() >= operands.getProducedOperandCount())
-              if (auto value = get(operands[argument.getArgNumber()], path))
-                next.insert_or_assign(argument, *value);
+              if (auto value = get(operands[argument.getArgNumber()], *path))
+                phis.emplace_back(argument, *value);
         }
-        propagateIfChanged(after, after->merge(next));
+        if (phis.empty() && llvm::all_of(*path, [&](const auto &entry) {
+              return liveIn.contains(entry.first);
+            })) {
+          propagateIfChanged(after, after->merge(path));
+          continue;
+        }
+        Environment next;
+        for (const auto &entry : *path)
+          if (liveIn.contains(entry.first))
+            next.insert(entry);
+        for (auto &[argument, value] : phis)
+          next.insert_or_assign(argument, value);
+        propagateIfChanged(after, after->merge(Path(std::move(next))));
       }
   }
   void visitCallControlFlowTransfer(CallOpInterface call,
@@ -260,7 +352,7 @@ public:
 
 private:
   void setToEntryState(FootprintLattice *state) override {
-    propagateIfChanged(state, state->merge(Environment{}));
+    propagateIfChanged(state, state->merge(Path(Environment{})));
   }
 
   std::optional<uint64_t> projectReference(Operation *op,
@@ -481,6 +573,8 @@ private:
   const HandleDataflowResult &handles;
   Liveness liveness;
   DenseSet<Value> relevant;
+  /// Relevant values that are dead after each non-terminator operation.
+  DenseMap<Operation *, SmallVector<Value, 2>> dyingAfter;
 };
 } // namespace
 
@@ -530,7 +624,7 @@ AccessFootprintAnalysis::AccessFootprintAnalysis(
     Footprint ranges;
     bool known = true;
     for (const auto &path : state->paths) {
-      auto low = analysis->get(reference, path);
+      auto low = analysis->get(reference, *path);
       if (!low || low->getZExtValue() > root.rootWidth ||
           width > root.rootWidth - low->getZExtValue()) {
         known = false;

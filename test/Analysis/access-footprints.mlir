@@ -374,5 +374,79 @@ module {
       simulation.return
     }
 // CHECK: index_cast: read conservative
+// Independent choices used together after their last join keep every
+// combination apart. 256 paths stay exact; a join that would hold more
+// widens to the bindings all paths share, leaving the selector unknown.
+    simulation.code_unit.decl 23 in 0 function hierarchy "independent_choices_256"
+    simulation.func @independent_choices_256(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %c0: i1 {simulation.capture_kind = 2 : i32}, %c1: i1 {simulation.capture_kind = 2 : i32}, %c2: i1 {simulation.capture_kind = 2 : i32}, %c3: i1 {simulation.capture_kind = 2 : i32}, %c4: i1 {simulation.capture_kind = 2 : i32}, %c5: i1 {simulation.capture_kind = 2 : i32}, %c6: i1 {simulation.capture_kind = 2 : i32}, %c7: i1 {simulation.capture_kind = 2 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 23 : i64} {
+      %root = simulation.context.storage %ctx[1] : !simulation.ref<!row>
+      %zero = arith.constant 0 : i32
+      %one = arith.constant 1 : i32
+      cf.cond_br %c0, ^choice0(%zero : i32), ^choice0(%one : i32)
+    ^choice0(%b0: i32):
+      cf.cond_br %c1, ^choice1(%zero : i32), ^choice1(%one : i32)
+    ^choice1(%b1: i32):
+      cf.cond_br %c2, ^choice2(%zero : i32), ^choice2(%one : i32)
+    ^choice2(%b2: i32):
+      cf.cond_br %c3, ^choice3(%zero : i32), ^choice3(%one : i32)
+    ^choice3(%b3: i32):
+      cf.cond_br %c4, ^choice4(%zero : i32), ^choice4(%one : i32)
+    ^choice4(%b4: i32):
+      cf.cond_br %c5, ^choice5(%zero : i32), ^choice5(%one : i32)
+    ^choice5(%b5: i32):
+      cf.cond_br %c6, ^choice6(%zero : i32), ^choice6(%one : i32)
+    ^choice6(%b6: i32):
+      cf.cond_br %c7, ^choice7(%zero : i32), ^choice7(%one : i32)
+    ^choice7(%b7: i32):
+      %x1 = arith.xori %b0, %b1 : i32
+      %x2 = arith.xori %x1, %b2 : i32
+      %x3 = arith.xori %x2, %b3 : i32
+      %x4 = arith.xori %x3, %b4 : i32
+      %x5 = arith.xori %x4, %b5 : i32
+      %x6 = arith.xori %x5, %b6 : i32
+      %x7 = arith.xori %x6, %b7 : i32
+      %element = simulation.ref.array_element %root[%x7] : (!simulation.ref<!row>, i32) -> !simulation.ref<!simulation.logic<3>>
+      %value = simulation.ref.load %element {test.footprint = "read"} : !simulation.ref<!simulation.logic<3>> -> !simulation.logic<3>
+      simulation.return
+    }
+// CHECK: independent_choices_256: read [0,6)
+    simulation.code_unit.decl 24 in 0 function hierarchy "independent_choices_512"
+    simulation.func @independent_choices_512(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %c0: i1 {simulation.capture_kind = 2 : i32}, %c1: i1 {simulation.capture_kind = 2 : i32}, %c2: i1 {simulation.capture_kind = 2 : i32}, %c3: i1 {simulation.capture_kind = 2 : i32}, %c4: i1 {simulation.capture_kind = 2 : i32}, %c5: i1 {simulation.capture_kind = 2 : i32}, %c6: i1 {simulation.capture_kind = 2 : i32}, %c7: i1 {simulation.capture_kind = 2 : i32}, %c8: i1 {simulation.capture_kind = 2 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 24 : i64} {
+      %root = simulation.context.storage %ctx[1] : !simulation.ref<!row>
+      %zero = arith.constant 0 : i32
+      %one = arith.constant 1 : i32
+      cf.cond_br %c0, ^choice0(%zero : i32), ^choice0(%one : i32)
+    ^choice0(%b0: i32):
+      cf.cond_br %c1, ^choice1(%zero : i32), ^choice1(%one : i32)
+    ^choice1(%b1: i32):
+      cf.cond_br %c2, ^choice2(%zero : i32), ^choice2(%one : i32)
+    ^choice2(%b2: i32):
+      cf.cond_br %c3, ^choice3(%zero : i32), ^choice3(%one : i32)
+    ^choice3(%b3: i32):
+      cf.cond_br %c4, ^choice4(%zero : i32), ^choice4(%one : i32)
+    ^choice4(%b4: i32):
+      cf.cond_br %c5, ^choice5(%zero : i32), ^choice5(%one : i32)
+    ^choice5(%b5: i32):
+      cf.cond_br %c6, ^choice6(%zero : i32), ^choice6(%one : i32)
+    ^choice6(%b6: i32):
+      cf.cond_br %c7, ^choice7(%zero : i32), ^choice7(%one : i32)
+    ^choice7(%b7: i32):
+      cf.cond_br %c8, ^choice8(%zero : i32), ^choice8(%one : i32)
+    ^choice8(%b8: i32):
+      %x1 = arith.xori %b0, %b1 : i32
+      %x2 = arith.xori %x1, %b2 : i32
+      %x3 = arith.xori %x2, %b3 : i32
+      %x4 = arith.xori %x3, %b4 : i32
+      %x5 = arith.xori %x4, %b5 : i32
+      %x6 = arith.xori %x5, %b6 : i32
+      %x7 = arith.xori %x6, %b7 : i32
+      %x8 = arith.xori %x7, %b8 : i32
+      %element = simulation.ref.array_element %root[%x8] : (!simulation.ref<!row>, i32) -> !simulation.ref<!simulation.logic<3>>
+      %value = simulation.ref.load %element {test.footprint = "read"} : !simulation.ref<!simulation.logic<3>> -> !simulation.logic<3>
+      simulation.return
+    }
+// CHECK: independent_choices_512: read conservative
   }
 }
