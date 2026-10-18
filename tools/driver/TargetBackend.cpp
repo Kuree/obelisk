@@ -42,6 +42,7 @@
 #include "mlir/Target/LLVMIR/Export.h"
 
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
@@ -367,6 +368,42 @@ planNativeModuleSplit(llvm::Module &module, const NativePartitionPlan &plan) {
     assignRange(0, nativeUnitCount, 0, nativeGroupCount);
   if (nativeUnitCount != units.size())
     assignRange(nativeUnitCount, units.size(), nativeGroupCount, groupCount);
+  // A direct-O3 outlier is outside the ThinLTO index, so nothing can be
+  // imported into it: every call it makes to a small helper defined in another
+  // group stays an out-of-line call with full argument marshalling. Keep such
+  // helpers in the group of the outlier that calls them most; the helper's
+  // other callers still reach it through the linker.
+  if (nativeUnitCount != 0 && nativeUnitCount != units.size()) {
+    llvm::MapVector<const llvm::GlobalValue *, std::pair<unsigned, uint64_t>>
+        affinity;
+    for (unsigned index = 0; index != nativeUnitCount; ++index) {
+      const auto *caller = dyn_cast<llvm::Function>(units[index].value);
+      if (!caller)
+        continue;
+      unsigned group = assignments.lookup(caller);
+      llvm::MapVector<const llvm::Function *, uint64_t> callCounts;
+      for (const llvm::Instruction &instruction :
+           llvm::instructions(*caller)) {
+        const auto *call = dyn_cast<llvm::CallBase>(&instruction);
+        const llvm::Function *callee =
+            call ? call->getCalledFunction() : nullptr;
+        if (callee && callee != caller && !callee->isDeclaration() &&
+            callee->getInstructionCount() <= 256)
+          ++callCounts[callee];
+      }
+      for (const auto &[callee, count] : callCounts) {
+        auto [entry, inserted] = affinity.insert({callee, {group, count}});
+        if (!inserted && count > entry->second.second)
+          entry->second = {group, count};
+      }
+    }
+    for (const auto &[callee, choice] : affinity) {
+      auto found = assignments.find(callee);
+      if (found != assignments.end() &&
+          !nativeObjectGroups.contains(found->second))
+        found->second = choice.first;
+    }
+  }
 
   // Physical balancing can cut any semantic owner boundary. Cross-object
   // definitions therefore cannot retain local linkage. Give every local
