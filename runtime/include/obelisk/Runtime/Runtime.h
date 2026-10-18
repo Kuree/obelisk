@@ -4359,6 +4359,46 @@ obelisk_rt_status obelisk_rt_v1_native_state_initialize(
     uint64_t bit_count, const obelisk_rt_native_state_fill_v1 *fills,
     uint64_t fill_count);
 
+// One storage root summarized by a bit of the generated unknown summary.
+// Whenever the root's summary bit is clear, bits [bit_offset, bit_offset +
+// bit_width) of the generated unknown plane match the root's pattern: the
+// `pattern_count` absolute (offset, width) ranges starting at pair
+// `first_pattern` hold X/Z, and every other bit holds none.
+typedef struct obelisk_rt_native_unknown_root_v1 {
+  uint64_t bit_offset;
+  uint64_t bit_width;
+  uint32_t first_pattern;
+  uint32_t pattern_count;
+} obelisk_rt_native_unknown_root_v1;
+
+// Bind the generated unknown summary after initialization: one bit per root,
+// `(root_count + 63) / 64` words. Generated stores set a root's bit before
+// any later test when they write X/Z outside its pattern or a known bit
+// inside it, and every runtime writer of the generated unknown plane does the
+// same, so a clear bit lets generated code use the pattern as the root's
+// unknown plane. The runtime sets every bit here; refresh clears them.
+// `patterns` holds (offset, width) pairs.
+obelisk_rt_status obelisk_rt_v1_native_state_bind_unknown_summary(
+    obelisk_rt_context *context, uint8_t *unknown, uint64_t bit_count,
+    uint64_t *summary, const obelisk_rt_native_unknown_root_v1 *roots,
+    uint64_t root_count, const uint64_t *patterns, uint64_t pattern_count);
+// Rescan the dirty roots selected by `gate`, (word, mask) pairs of summary
+// words, clearing the bits of roots whose unknown planes match their
+// patterns. Returns nonzero when no selected bit remains set. `backoff`, when
+// not null, is the gate's state in generated memory: the low 32 bits count
+// failed tests generated code answers without calling, the high 32 bits the
+// current delay. A failed refresh doubles the delay up to a bound and waits
+// that many tests; a successful one clears both.
+uint32_t obelisk_rt_v1_native_state_refresh_unknown_summary(
+    obelisk_rt_context *context, const uint64_t *gate, uint64_t word_count,
+    uint64_t *backoff);
+// Set the summary bits of every root overlapping bits
+// [bit_offset, bit_offset + bit_width) of the generated unknown plane, which
+// a write may have made differ from their patterns.
+void obelisk_rt_v1_native_state_mark_unknown(obelisk_rt_context *context,
+                                             uint64_t bit_offset,
+                                             uint64_t bit_width);
+
 // Share generated storage before any static roots/processes are registered.
 // Both planes must be 8-byte aligned, contain ceil(bit_count/64) limbs, and
 // outlive the context. The compiler must exclude source-order observation

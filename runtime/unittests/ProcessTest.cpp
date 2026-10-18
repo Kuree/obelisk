@@ -10116,6 +10116,145 @@ TEST(Scheduler, CanonicalNBAKeepsBoundNativeStateMirrorCoherent) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, UnknownSummaryClearsCleanRootsAndReportsRuntimeWrites) {
+  // A clear summary bit promises that the root's unknown plane matches its
+  // pattern: X/Z exactly in the pattern's bits. Refresh clears bits only
+  // after scanning; runtime writes that break the match set them before
+  // generated code runs again.
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 192;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 64),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 2, 64, 8),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 3, 128, 64),
+            OBELISK_RT_OK);
+  std::array<uint64_t, 4> value{}, unknown{};
+  unknown[2] = uint64_t{0xff} << 32; // root 3 bits [160, 168) hold X
+  auto *v = reinterpret_cast<uint8_t *>(value.data());
+  auto *u = reinterpret_cast<uint8_t *>(unknown.data());
+  ASSERT_EQ(obelisk_rt_v1_native_state_sync(context, v, u, 192), OBELISK_RT_OK);
+  // Summary bit 0 is root 3, whose pattern holds X/Z in bits [160, 168);
+  // bit 1 is root 1 and bit 2 is root 2.
+  const obelisk_rt_native_unknown_root_v1 roots[] = {
+      {128, 64, 0, 1}, {0, 64, 0, 0}, {64, 8, 0, 0}};
+  const uint64_t patterns[] = {160, 8};
+  const obelisk_rt_native_unknown_root_v1 overlapping[] = {{0, 64, 0, 0},
+                                                           {32, 8, 0, 0}};
+  uint64_t summary = 0;
+  EXPECT_EQ(obelisk_rt_v1_native_state_bind_unknown_summary(
+                context, u, 192, &summary, overlapping, 2, nullptr, 0),
+            OBELISK_RT_INVALID_ARGUMENT);
+  ASSERT_EQ(obelisk_rt_v1_native_state_bind_unknown_summary(
+                context, u, 192, &summary, roots, 3, patterns, 1),
+            OBELISK_RT_OK);
+  EXPECT_EQ(summary, 0b111u);
+  EXPECT_EQ(obelisk_rt_v1_native_state_bind_unknown_summary(
+                context, u, 192, &summary, roots, 3, patterns, 1),
+            OBELISK_RT_INVALID_LIFECYCLE);
+  const uint64_t all[] = {0, 0b111};
+  EXPECT_EQ(obelisk_rt_v1_native_state_refresh_unknown_summary(context, all, 1,
+                                                               nullptr),
+            1u);
+  EXPECT_EQ(summary, 0u);
+
+  // X/Z outside the pattern keeps root 3 dirty. Each failed refresh doubles
+  // the gate's delay, the number of tests generated code fails before it
+  // calls again, up to a bound; a successful one clears it.
+  obelisk_rt_v1_native_state_mark_unknown(context, 130, 1);
+  EXPECT_EQ(summary, 0b001u);
+  unknown[2] |= 4;
+  const uint64_t third[] = {0, 0b001};
+  const auto &state = *context->nativeUnknownSummary;
+  uint64_t backoff = 0;
+  auto refresh = [&] {
+    return obelisk_rt_v1_native_state_refresh_unknown_summary(context, third, 1,
+                                                              &backoff);
+  };
+  EXPECT_EQ(refresh(), 0u);
+  EXPECT_EQ(state.rescans, 4u);
+  EXPECT_EQ(backoff, uint64_t{1} << 32 | 1);
+  EXPECT_EQ(refresh(), 0u);
+  EXPECT_EQ(state.rescans, 5u);
+  EXPECT_EQ(backoff, uint64_t{3} << 32 | 3);
+  unknown[2] &= ~uint64_t{4};
+  EXPECT_EQ(refresh(), 1u);
+  EXPECT_EQ(backoff, 0u);
+  EXPECT_EQ(summary, 0u);
+  // A known bit inside the pattern breaks the match as well.
+  unknown[2] &= ~(uint64_t{1} << 33);
+  obelisk_rt_v1_native_state_mark_unknown(context, 161, 1);
+  for (unsigned attempt = 0; attempt != 12; ++attempt)
+    EXPECT_EQ(refresh(), 0u);
+  EXPECT_EQ(backoff, uint64_t{1024} << 32 | 1024);
+  unknown[2] |= uint64_t{1} << 33;
+  EXPECT_EQ(refresh(), 1u);
+
+  // A runtime NBA of X/Z marks its root; a known one does not.
+  uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
+  uint8_t nextValue = 0x5a, nextUnknown = 0;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_nba(
+                context,
+                reinterpret_cast<uint8_t *>(context->stateValue.data()),
+                reinterpret_cast<uint8_t *>(context->stateUnknown.data()), 192,
+                root, 8, 0, &nextValue, &nextUnknown),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(value[0] & 0xff, 0x5au);
+  EXPECT_EQ(summary, 0u);
+  nextUnknown = 0x10;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_nba(
+                context,
+                reinterpret_cast<uint8_t *>(context->stateValue.data()),
+                reinterpret_cast<uint8_t *>(context->stateUnknown.data()), 192,
+                root, 8, 0, &nextValue, &nextUnknown),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(unknown[0] & 0xff, 0x10u);
+  EXPECT_EQ(summary, 0b010u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(SchedulerDeathTest, UnknownSummaryVerificationRejectsUnreportedWrites) {
+  // With verification, a root whose summary bit is clear while its plane
+  // holds X/Z (a writer that skipped its report) stops the simulation.
+  ASSERT_EQ(setenv("OBELISK_RT_VERIFY_UNKNOWN_SUMMARY", "1", 1), 0);
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 64;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 64),
+            OBELISK_RT_OK);
+  uint64_t value = 0, unknown = 0, summary = 0;
+  auto *u = reinterpret_cast<uint8_t *>(&unknown);
+  ASSERT_EQ(obelisk_rt_v1_native_state_sync(
+                context, reinterpret_cast<uint8_t *>(&value), u, 64),
+            OBELISK_RT_OK);
+  const obelisk_rt_native_unknown_root_v1 roots[] = {{0, 64, 0, 0}};
+  ASSERT_EQ(obelisk_rt_v1_native_state_bind_unknown_summary(
+                context, u, 64, &summary, roots, 1, nullptr, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(unsetenv("OBELISK_RT_VERIFY_UNKNOWN_SUMMARY"), 0);
+  const uint64_t gate[] = {0, 1};
+  auto refresh = [&] {
+    return obelisk_rt_v1_native_state_refresh_unknown_summary(context, gate, 1,
+                                                              nullptr);
+  };
+  EXPECT_EQ(refresh(), 1u);
+  unknown = 2;
+  EXPECT_DEATH(refresh(), "unknown summary reports root 0 .* matching its "
+                          "pattern while it differs");
+  obelisk_rt_v1_native_state_mark_unknown(context, 1, 1);
+  EXPECT_EQ(refresh(), 0u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, ProceduralPathsUseNativeDestinationBeforeCanonicalBinding) {
   for (auto [oldValue, oldUnknown, nextValue] :
        {std::tuple<uint8_t, uint8_t, uint8_t>{1, 0, 0}, {0, 1, 0}, {1, 1, 1}}) {

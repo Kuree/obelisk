@@ -1129,6 +1129,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_execute(
           instance->scratch_offset + instance->scratch_size,
           instance->continuation, outAction);
     }
+    // The interpreter writes shared planes in place without reporting its
+    // footprint to the generated unknown summary.
+    if (context && !(instance->descriptor->flags &
+                     OBELISK_RT_PROCESS_BYTECODE_READ_ONLY)) {
+      ContextMutexLock lock(context);
+      markNativeUnknownAllUnlocked(context);
+    }
   }
 
   if (installedActiveProcess) {
@@ -3573,6 +3580,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         return OBELISK_RT_OK;
       if (context->signalDiagnosticsEnabled)
         ++context->signalDiagnostics.schedulerIterations;
+      verifyNativeUnknownSummaryUnlocked(context);
       if (context->schedulerStatus != OBELISK_RT_OK)
         return context->schedulerStatus;
       if (context->schedulerPreponedTime != context->schedulerTime) {
@@ -4968,6 +4976,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               };
               apply(update.valuePlane, false, newValue);
               apply(update.unknownPlane, true, newUnknown);
+              if (!automatic)
+                markNativeUnknownBitsUnlocked(context, planeBit, 1,
+                                              newUnknown ? 1 : 0);
               if (canonical && !storeNativeScheduleStateUnlocked(
                                    context, planeBit, 1, newValue ? 1 : 0,
                                    newUnknown ? 1 : 0)) {

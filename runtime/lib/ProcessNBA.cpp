@@ -2877,6 +2877,17 @@ __attribute__((target("avx2"))) bool commitStaticNBA256AVX2(
 #endif
 
 #if defined(__x86_64__) || defined(_M_X64)
+// The vector commits below write the generated planes directly.
+static void markGeneratedNBA256UnknownUnlocked(
+    const obelisk_rt_context *context,
+    const obelisk_rt_generated_nba_accumulator_256 &generated,
+    uint64_t planeBit) {
+  for (unsigned word = 0; word != 4; ++word)
+    markNativeUnknownBitsUnlocked(context, planeBit + 64 * word, 64,
+                                  generated.unknown[word],
+                                  generated.write_mask[word]);
+}
+
 static bool
 validBoundNativeStateRangeUnlocked(const obelisk_rt_context *context,
                                    uint64_t bitOffset, uint64_t bitWidth) {
@@ -2974,6 +2985,8 @@ obelisk_rt_status tryCommitGeneratedNBA256Unlocked(obelisk_rt_context *context,
   if (context->nextSchedulerSequence == 0)
     return OBELISK_RT_OUT_OF_RESOURCES;
   ++context->nextSchedulerSequence;
+  markGeneratedNBA256UnknownUnlocked(context, *generated,
+                                     staticState->bitOffset);
   bool rootChanged = commitStaticNBA256AVX2(
       generated->value, generated->unknown, generated->write_mask, nullptr,
       nullptr, nullptr, staticState->bitOffset, plan->state_bit_count,
@@ -3445,6 +3458,7 @@ obelisk_rt_status tryCommitGeneratedNBA256BatchUnlocked(
         *root.generated_accumulator;
     totalStages += context->nativeScheduleGeneratedNBAStageCounts[index];
     uint64_t offset = context->nativeScheduleGeneratedNBAOffsets[index];
+    markGeneratedNBA256UnknownUnlocked(context, generated, offset);
     if ((offset & 7) == 0)
       changed |= commitGeneratedNBA256ByteAlignedAVX2(
           generated, plan->state_value, plan->state_unknown, offset / 8);
@@ -3855,6 +3869,7 @@ extern "C" uint32_t obelisk_rt_v1_static_nba_batch_guard(
 extern "C" void obelisk_rt_v1_static_nba_batch_knownness(
     obelisk_rt_context *context, uint64_t offset, uint64_t width,
     uint64_t oldUnknown, uint64_t newUnknown) {
+  markNativeUnknownBitsUnlocked(context, offset, width, newUnknown);
   publishNativeKnownnessChangeUnlocked(context->nativeSchedulePlan, offset,
                                        width, oldUnknown, newUnknown);
 }

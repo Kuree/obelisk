@@ -970,6 +970,21 @@ ABI_FUNCTION(obelisk_rt_v1_native_state_initialize,
                                    uint64_t,
                                    const obelisk_rt_native_state_fill_v1 *,
                                    uint64_t));
+ABI_SIZE_ALIGN(obelisk_rt_native_unknown_root_v1, 24, 8);
+ABI_OFFSET(obelisk_rt_native_unknown_root_v1, bit_offset, 0);
+ABI_OFFSET(obelisk_rt_native_unknown_root_v1, bit_width, 8);
+ABI_OFFSET(obelisk_rt_native_unknown_root_v1, first_pattern, 16);
+ABI_OFFSET(obelisk_rt_native_unknown_root_v1, pattern_count, 20);
+ABI_FUNCTION(obelisk_rt_v1_native_state_bind_unknown_summary,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint8_t *, uint64_t,
+                                   uint64_t *,
+                                   const obelisk_rt_native_unknown_root_v1 *,
+                                   uint64_t, const uint64_t *, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_native_state_refresh_unknown_summary,
+             uint32_t (*)(obelisk_rt_context *, const uint64_t *, uint64_t,
+                          uint64_t *));
+ABI_FUNCTION(obelisk_rt_v1_native_state_mark_unknown,
+             void (*)(obelisk_rt_context *, uint64_t, uint64_t));
 
 ABI_FUNCTION(obelisk_rt_v1_context_create,
              obelisk_rt_status (*)(obelisk_rt_context **));

@@ -314,6 +314,7 @@ extern "C" void obelisk_rt_v1_native_promotion_recheck_ranges(
 }
 
 void invalidateNativeTwoStatePromotionUnlocked(obelisk_rt_context *context) {
+  markNativeUnknownAllUnlocked(context);
   const obelisk_rt_native_schedule_plan *plan =
       context ? context->nativeSchedulePlan : nullptr;
   if (plan && plan->promotion_invalidate)
@@ -323,6 +324,7 @@ void invalidateNativeTwoStatePromotionUnlocked(obelisk_rt_context *context) {
 void invalidateNativeTwoStatePromotionRangeUnlocked(obelisk_rt_context *context,
                                                     uint64_t bitOffset,
                                                     uint64_t bitWidth) {
+  markNativeUnknownRangeUnlocked(context, bitOffset, bitWidth);
   const auto *plan = context ? context->nativeSchedulePlan : nullptr;
   if (!plan || bitWidth == 0)
     return;
@@ -1029,6 +1031,9 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
   }
   if (tier == OBELISK_RT_TIER_BYTECODE) {
     ContextMutexLock lock(context);
+    // Tier 3 writes shared planes in place without reporting its footprint.
+    if (!(selected->descriptor->flags & OBELISK_RT_PROCESS_BYTECODE_READ_ONLY))
+      markNativeUnknownAllUnlocked(context);
     const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
     if ((!plan || (plan->state_bit_count != 0 &&
                    !exportNativeStatePlanesUnlocked(context, plan->state_value,
@@ -3259,6 +3264,8 @@ static void disturbNativeScheduleUnlocked(obelisk_rt_context *context,
 }
 
 void obelisk_rt_aot_external_write_unlocked(obelisk_rt_context *context) {
+  // The write's footprint is unknown: any root may now hold X/Z.
+  markNativeUnknownAllUnlocked(context);
   invalidateNativeStaticSpecializationFastUnlocked(context);
   if (!context || !context->nativeSchedulePlan ||
       context->nativeScheduleDeoptimized)
@@ -3278,6 +3285,7 @@ void obelisk_rt_aot_external_write_range_unlocked(obelisk_rt_context *context,
                                                   bool persistent) {
   if (!context || bitWidth == 0)
     return;
+  markNativeUnknownRangeUnlocked(context, bitOffset, bitWidth);
   invalidateNativeStaticSpecializationFastUnlocked(context);
   __int128 dirtyEnd = static_cast<__int128>(bitOffset) + bitWidth;
   for (const auto &[id, state] : context->nativeStaticStates)
@@ -3297,6 +3305,7 @@ void obelisk_rt_aot_external_write_handle_unlocked(obelisk_rt_context *context,
                                                    bool persistent) {
   if (!context || bitWidth == 0)
     return;
+  markNativeUnknownRangeUnlocked(context, bitOffset, bitWidth);
   invalidateNativeStaticSpecializationFastUnlocked(context);
   if (!context->nativeStaticStateRangesValid) {
     obelisk_rt_aot_external_write_range_unlocked(context, bitOffset, bitWidth,

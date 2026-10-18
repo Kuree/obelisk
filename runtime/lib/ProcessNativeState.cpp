@@ -147,6 +147,265 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_initialize(
   return OBELISK_RT_OK;
 }
 
+//===----------------------------------------------------------------------===//
+// Generated unknown summary
+//===----------------------------------------------------------------------===//
+
+namespace {
+
+// A gate whose roots keep differing from their patterns calls the runtime
+// again after at most this many failed tests.
+constexpr uint32_t maximumUnknownRescanDelay = 1024;
+
+uint64_t lowBits(uint64_t width) {
+  return width >= 64 ? UINT64_MAX : (uint64_t{1} << width) - 1;
+}
+
+/// The bits of `root`'s pattern among the `width` (at most 64) plane bits at
+/// `bit`, scanning its ranges from `*cursor`, which advances past ranges that
+/// end before `bit`.
+uint64_t patternBits(const NativeUnknownSummary &summary,
+                     const obelisk_rt_native_unknown_root_v1 &entry,
+                     uint64_t bit, uint64_t width, uint32_t *cursor) {
+  const uint64_t *ranges = &summary.patterns[2 * entry.first_pattern];
+  uint32_t index = cursor ? *cursor : 0;
+  while (index != entry.pattern_count &&
+         ranges[2 * index] + ranges[2 * index + 1] <= bit)
+    ++index;
+  if (cursor)
+    *cursor = index;
+  uint64_t mask = 0;
+  for (; index != entry.pattern_count && ranges[2 * index] < bit + width;
+       ++index) {
+    uint64_t begin = std::max(ranges[2 * index], bit);
+    uint64_t end =
+        std::min(ranges[2 * index] + ranges[2 * index + 1], bit + width);
+    mask |= lowBits(end - begin) << (begin - bit);
+  }
+  return mask;
+}
+
+/// Whether `root`'s unknown plane matches its pattern.
+bool unknownRootClean(const NativeUnknownSummary &summary, uint32_t root) {
+  const obelisk_rt_native_unknown_root_v1 &entry = summary.roots[root];
+  uint64_t end = entry.bit_offset + entry.bit_width;
+  uint32_t cursor = 0;
+  for (uint64_t bit = entry.bit_offset; bit < end;) {
+    uint64_t count = std::min<uint64_t>(64, end - bit);
+    if ((loadPackedBytes(summary.plane, bit, count) ^
+         patternBits(summary, entry, bit, count, &cursor)) &
+        lowBits(count))
+      return false;
+    bit += count;
+  }
+  return true;
+}
+
+/// The roots overlapping plane bits [bitOffset, bitOffset + bitWidth).
+template <typename Callback>
+void forEachUnknownRoot(const NativeUnknownSummary &summary, uint64_t bitOffset,
+                        uint64_t bitWidth, Callback callback) {
+  uint64_t end =
+      bitOffset > UINT64_MAX - bitWidth ? UINT64_MAX : bitOffset + bitWidth;
+  const auto &roots = summary.roots;
+  auto first = std::partition_point(
+      summary.byOffset.begin(), summary.byOffset.end(), [&](uint32_t root) {
+        return roots[root].bit_offset + roots[root].bit_width <= bitOffset;
+      });
+  for (auto it = first;
+       it != summary.byOffset.end() && roots[*it].bit_offset < end; ++it)
+    callback(*it);
+}
+
+void markUnknownRoot(NativeUnknownSummary &summary, uint32_t root) {
+  uint64_t &word = summary.generated[root / 64];
+  uint64_t bit = uint64_t{1} << (root % 64);
+  summary.markedRoots += (word & bit) == 0;
+  word |= bit;
+}
+
+} // namespace
+
+/// With OBELISK_RT_VERIFY_UNKNOWN_SUMMARY, check that every root whose bit is
+/// clear matches its pattern, so a writer that skipped its report fails at
+/// the next check instead of letting generated code read a stale pattern.
+void verifyNativeUnknownSummaryUnlocked(const obelisk_rt_context *context) {
+  NativeUnknownSummary *summary =
+      context ? context->nativeUnknownSummary.get() : nullptr;
+  if (!summary || !summary->verify)
+    return;
+  for (uint32_t root = 0; root != summary->roots.size(); ++root)
+    if (!(summary->generated[root / 64] & (uint64_t{1} << (root % 64))) &&
+        !unknownRootClean(*summary, root)) {
+      std::fprintf(
+          stderr,
+          "obelisk: unknown summary reports root %u (state bits "
+          "%llu+%llu) matching its pattern while it differs\n",
+          root,
+          static_cast<unsigned long long>(summary->roots[root].bit_offset),
+          static_cast<unsigned long long>(summary->roots[root].bit_width));
+      std::abort();
+    }
+}
+
+void markNativeUnknownRangeUnlocked(const obelisk_rt_context *context,
+                                    uint64_t bitOffset, uint64_t bitWidth) {
+  NativeUnknownSummary *summary =
+      context ? context->nativeUnknownSummary.get() : nullptr;
+  if (!summary || bitWidth == 0)
+    return;
+  forEachUnknownRoot(*summary, bitOffset, bitWidth,
+                     [&](uint32_t root) { markUnknownRoot(*summary, root); });
+}
+
+void markNativeUnknownBitsUnlocked(const obelisk_rt_context *context,
+                                   uint64_t bitOffset, uint64_t bitWidth,
+                                   uint64_t unknown, uint64_t written) {
+  NativeUnknownSummary *summary =
+      context ? context->nativeUnknownSummary.get() : nullptr;
+  if (!summary || bitWidth == 0)
+    return;
+  bitWidth = std::min<uint64_t>(bitWidth, 64);
+  forEachUnknownRoot(*summary, bitOffset, bitWidth, [&](uint32_t root) {
+    const obelisk_rt_native_unknown_root_v1 &entry = summary->roots[root];
+    // The written bits inside this root, relative to `bitOffset`.
+    uint64_t begin = std::max(entry.bit_offset, bitOffset);
+    uint64_t end =
+        std::min(entry.bit_offset + entry.bit_width, bitOffset + bitWidth);
+    uint64_t inside = lowBits(end - begin) << (begin - bitOffset) & written;
+    uint64_t pattern =
+        entry.pattern_count
+            ? patternBits(*summary, entry, bitOffset, bitWidth, nullptr)
+            : 0;
+    if ((unknown ^ pattern) & inside)
+      markUnknownRoot(*summary, root);
+  });
+}
+
+void markNativeUnknownAllUnlocked(const obelisk_rt_context *context) {
+  NativeUnknownSummary *summary =
+      context ? context->nativeUnknownSummary.get() : nullptr;
+  if (!summary)
+    return;
+  ++summary->markedAll;
+  for (uint64_t root = 0; root < summary->roots.size(); root += 64)
+    summary->generated[root / 64] = lowBits(summary->roots.size() - root);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_native_state_bind_unknown_summary(
+    obelisk_rt_context *context, uint8_t *unknown, uint64_t bitCount,
+    uint64_t *summary, const obelisk_rt_native_unknown_root_v1 *roots,
+    uint64_t rootCount, const uint64_t *patterns, uint64_t patternCount) {
+  if (!context || !unknown || !summary || (rootCount && !roots) ||
+      (patternCount && !patterns) || rootCount > UINT32_MAX ||
+      patternCount > UINT32_MAX)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  OBELISK_RT_TRY {
+    ContextMutexLock lock(context);
+    if (context->nativeUnknownSummary)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    auto bound = std::make_unique<NativeUnknownSummary>();
+    bound->generated = summary;
+    bound->plane = unknown;
+    bound->planeBits = bitCount;
+    bound->roots.assign(roots, roots + rootCount);
+    bound->patterns.assign(patterns, patterns + 2 * patternCount);
+    // Each root lies inside the plane; its pattern ranges are sorted,
+    // disjoint and inside it.
+    for (const obelisk_rt_native_unknown_root_v1 &root : bound->roots) {
+      if (!root.bit_width || root.bit_offset > bitCount ||
+          root.bit_width > bitCount - root.bit_offset ||
+          root.first_pattern > patternCount ||
+          root.pattern_count > patternCount - root.first_pattern)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      uint64_t position = root.bit_offset;
+      for (uint32_t index = 0; index != root.pattern_count; ++index) {
+        const uint64_t *range = &patterns[2 * (root.first_pattern + index)];
+        if (!range[1] || range[0] < position ||
+            range[0] > root.bit_offset + root.bit_width ||
+            range[1] > root.bit_offset + root.bit_width - range[0])
+          return OBELISK_RT_INVALID_ARGUMENT;
+        position = range[0] + range[1];
+      }
+    }
+    bound->byOffset.resize(rootCount);
+    for (uint32_t root = 0; root != rootCount; ++root)
+      bound->byOffset[root] = root;
+    std::sort(bound->byOffset.begin(), bound->byOffset.end(),
+              [&](uint32_t lhs, uint32_t rhs) {
+                return roots[lhs].bit_offset < roots[rhs].bit_offset;
+              });
+    for (size_t index = 1; index < bound->byOffset.size(); ++index) {
+      const auto &previous = roots[bound->byOffset[index - 1]];
+      if (previous.bit_offset + previous.bit_width >
+          roots[bound->byOffset[index]].bit_offset)
+        return OBELISK_RT_INVALID_ARGUMENT;
+    }
+    const char *verify = std::getenv("OBELISK_RT_VERIFY_UNKNOWN_SUMMARY");
+    bound->verify = verify && *verify && std::strcmp(verify, "0") != 0;
+    context->nativeUnknownSummary = std::move(bound);
+    // Initialization may have stored X/Z anywhere (IEEE 1800-2023 6.8).
+    markNativeUnknownAllUnlocked(context);
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+}
+
+extern "C" uint32_t obelisk_rt_v1_native_state_refresh_unknown_summary(
+    obelisk_rt_context *context, const uint64_t *gate, uint64_t wordCount,
+    uint64_t *backoff) {
+  if (!context || (wordCount && !gate))
+    return 0;
+  OBELISK_RT_TRY {
+    ContextMutexLock lock(context);
+    NativeUnknownSummary *summary = context->nativeUnknownSummary.get();
+    if (!summary)
+      return 0;
+    verifyNativeUnknownSummaryUnlocked(context);
+    ++summary->refreshes;
+    uint64_t summaryWords = (summary->roots.size() + 63) / 64;
+    bool clean = true;
+    for (uint64_t index = 0; index != wordCount; ++index) {
+      uint64_t word = gate[2 * index], mask = gate[2 * index + 1];
+      if (word >= summaryWords)
+        return 0;
+      uint64_t dirty = summary->generated[word] & mask;
+      while (dirty) {
+        unsigned bit = static_cast<unsigned>(__builtin_ctzll(dirty));
+        dirty &= dirty - 1;
+        uint32_t root = static_cast<uint32_t>(word * 64 + bit);
+        if (root >= summary->roots.size())
+          return 0;
+        ++summary->rescans;
+        if (unknownRootClean(*summary, root)) {
+          summary->generated[word] &= ~(uint64_t{1} << bit);
+          ++summary->cleared;
+        } else {
+          clean = false;
+        }
+      }
+    }
+    if (backoff) {
+      uint64_t delay = clean ? 0
+                             : std::min<uint64_t>(2 * (*backoff >> 32) + 1,
+                                                  maximumUnknownRescanDelay);
+      *backoff = delay << 32 | delay;
+    }
+    return clean;
+  }
+  OBELISK_RT_CATCH_ALL { return 0; }
+}
+
+extern "C" void
+obelisk_rt_v1_native_state_mark_unknown(obelisk_rt_context *context,
+                                        uint64_t bitOffset, uint64_t bitWidth) {
+  if (!context)
+    return;
+  ContextMutexLock lock(context);
+  markNativeUnknownRangeUnlocked(context, bitOffset, bitWidth);
+}
+
 bool validNativeStatePlanesUnlocked(const obelisk_rt_context *context,
                                     const uint8_t *value,
                                     const uint8_t *unknown, uint64_t bitCount) {
@@ -229,6 +488,7 @@ bool exportNativeStatePlanesUnlocked(const obelisk_rt_context *context,
     return false;
   if (context->stateValue.shared())
     return true;
+  markNativeUnknownAllUnlocked(context);
   size_t byteCount = static_cast<size_t>((bitCount + 7) / 8);
 #if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) ||  \
     defined(_WIN32)
@@ -279,6 +539,7 @@ bool reconcileNativeRootToPlanesUnlocked(
     storePackedBytes(plan->state_value, absolute, width,
                      loadPackedBits(context->stateValue, absolute, width));
     storePackedBytes(plan->state_unknown, absolute, width, newUnknown);
+    markNativeUnknownBitsUnlocked(context, absolute, width, newUnknown);
     // Notify only actual canonical changes, before any dependent execution.
     // IEEE 1800-2023 6.8/9.4.2: recovery is a real X/Z-to-known transition;
     // it must also make a cached failed proof eligible for rechecking.
@@ -348,6 +609,7 @@ void obelisk_rt_sync_native_state_range_unlocked(obelisk_rt_context *context,
     storePackedBytes(context->nativeStateValue, bit, count,
                      loadPackedBits(context->stateValue, bit, count));
     storePackedBytes(context->nativeStateUnknown, bit, count, newUnknown);
+    markNativeUnknownBitsUnlocked(context, bit, count, newUnknown);
     bit += count;
   }
 }
@@ -402,6 +664,7 @@ bool storeNativeScheduleStateUnlocked(obelisk_rt_context *context,
       storePackedBytes(context->nativeStateUnknown, bitOffset, bitWidth,
                        unknown);
   }
+  markNativeUnknownBitsUnlocked(context, bitOffset, bitWidth, unknown);
   return true;
 }
 
@@ -810,6 +1073,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_release_override(
                     : context->stateUnknown[limb] & ~mask;
           setByteBit(globalValue, destination, nextV);
           setByteBit(globalUnknown, destination, nextU);
+          markNativeUnknownBitsUnlocked(context, destination, 1, nextU);
           changed |= oldV != nextV || oldU != nextU;
         }
         setByteBit(publishedValue.data(), bit, nextV);
@@ -1122,8 +1386,11 @@ static obelisk_rt_status nativeStateStorePlane(
     // still belongs to the caller after the complete value/unknown write.
     auto publishKnownness = [&](uint64_t destination, uint64_t width,
                                 uint64_t next) {
+      if (!unknownPlane)
+        return;
+      markNativeUnknownBitsUnlocked(context, destination, width, next);
       const auto *plan = context->nativeSchedulePlan;
-      if (unknownPlane && plan && plan->state_unknown == globalPlane)
+      if (plan && plan->state_unknown == globalPlane)
         publishNativeKnownnessChangeUnlocked(
             plan, destination, width,
             loadPackedBytes(globalPlane, destination, width), next);

@@ -129,6 +129,19 @@ void invalidateNativeTwoStatePromotionRangeUnlocked(obelisk_rt_context *context,
 void publishNativeKnownnessChangeUnlocked(
     const obelisk_rt_native_schedule_plan *plan, uint64_t bitOffset,
     uint64_t bitWidth, uint64_t oldUnknown, uint64_t newUnknown);
+// The generated unknown summary: every runtime write into the generated
+// unknown plane reports the roots it may have made differ from their
+// patterns before generated code runs again. `Range` marks every root it
+// overlaps; `Bits` marks only the roots whose pattern differs from `unknown`
+// (bit 0 at `bitOffset`, at most 64 bits) in a `written` bit.
+void markNativeUnknownRangeUnlocked(const obelisk_rt_context *context,
+                                    uint64_t bitOffset, uint64_t bitWidth);
+void markNativeUnknownBitsUnlocked(const obelisk_rt_context *context,
+                                   uint64_t bitOffset, uint64_t bitWidth,
+                                   uint64_t unknown,
+                                   uint64_t written = UINT64_MAX);
+void markNativeUnknownAllUnlocked(const obelisk_rt_context *context);
+void verifyNativeUnknownSummaryUnlocked(const obelisk_rt_context *context);
 void refreshNativeStaticSpecializationFastUnlocked(obelisk_rt_context *context);
 bool storeNativeScheduleStateUnlocked(
     obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth,

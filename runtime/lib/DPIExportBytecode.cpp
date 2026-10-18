@@ -1,8 +1,23 @@
 //===- DPIExportBytecode.cpp - Bytecode DPI export entry ----------------===//
 
+#include "ProcessContext.h"
+#include "ProcessShared.h"
 #include "RuntimeInternal.h"
 
 #include <limits>
+
+namespace {
+// An exported function runs in the interpreter, which writes shared planes in
+// place without reporting its footprint to the generated unknown summary.
+obelisk_rt_status reportExportWrites(obelisk_rt_context *context,
+                                     obelisk_rt_status status) {
+  if (context) {
+    ContextMutexLock lock(context);
+    markNativeUnknownAllUnlocked(context);
+  }
+  return status;
+}
+} // namespace
 
 extern "C" OBELISK_RT_FEATURE_TEXT void
 obelisk_rt_v1_dpi_export_bytecode_link_anchor() {}
@@ -14,8 +29,9 @@ obelisk_rt_execute_dpi_export_bytecode(
     obelisk_rt_context *context, const obelisk_rt_import_input_v1 *inputs,
     uint32_t inputCount, obelisk_rt_import_output_v1 *outputs,
     uint32_t outputCount) noexcept {
-  return obelisk_rt_execute_design_export(
-      execution, descriptor, context, inputs, inputCount, outputs, outputCount);
+  return reportExportWrites(context, obelisk_rt_execute_design_export(
+                                         execution, descriptor, context, inputs,
+                                         inputCount, outputs, outputCount));
 }
 
 extern "C" OBELISK_RT_FEATURE_TEXT obelisk_rt_status
@@ -59,7 +75,9 @@ obelisk_rt_v1_dpi_export_task_bytecode_run(
        (OBELISK_RT_EXPORT_TASK | OBELISK_RT_EXPORT_HAS_BYTECODE)) !=
           (OBELISK_RT_EXPORT_TASK | OBELISK_RT_EXPORT_HAS_BYTECODE))
     return OBELISK_RT_INVALID_HANDLE;
-  return obelisk_rt_execute_design_export_task(
-      execution, *descriptor, context, inputs, inputCount, outputs, outputCount,
-      directions, aggregatePlans, aggregatePlanWords);
+  return reportExportWrites(context,
+                            obelisk_rt_execute_design_export_task(
+                                execution, *descriptor, context, inputs,
+                                inputCount, outputs, outputCount, directions,
+                                aggregatePlans, aggregatePlanWords));
 }

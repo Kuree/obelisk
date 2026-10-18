@@ -351,6 +351,23 @@ void obelisk_rt_report_signal_diagnostics_unlocked(
           context->signalDiagnostics.periodicClocksHighWater),
       static_cast<unsigned long long>(
           context->signalDiagnostics.periodicSlotDrains));
+  if (const NativeUnknownSummary *summary =
+          context->nativeUnknownSummary.get()) {
+    uint64_t dirty = 0;
+    for (uint64_t root = 0; root != summary->roots.size(); ++root)
+      dirty += (summary->generated[root / 64] >> (root % 64)) & 1;
+    std::fprintf(
+        stderr,
+        "obelisk-unknown-summary roots=%llu dirty=%llu refreshes=%llu "
+        "rescans=%llu cleared=%llu marked_all=%llu marked_roots=%llu\n",
+        static_cast<unsigned long long>(summary->roots.size()),
+        static_cast<unsigned long long>(dirty),
+        static_cast<unsigned long long>(summary->refreshes),
+        static_cast<unsigned long long>(summary->rescans),
+        static_cast<unsigned long long>(summary->cleared),
+        static_cast<unsigned long long>(summary->markedAll),
+        static_cast<unsigned long long>(summary->markedRoots));
+  }
   for (unsigned slot = 0; slot != 64; ++slot)
     if (context->signalDiagnostics.aotActorExecutions[slot] != 0)
       std::fprintf(stderr, "obelisk-aot-actor slot=%u executions=%llu\n", slot,

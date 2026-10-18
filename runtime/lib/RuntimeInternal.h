@@ -828,6 +828,24 @@ struct NativeStaticStateRange {
   uint32_t id = 0;
 };
 
+// The generated per-root unknown summary
+// (obelisk_rt_v1_native_state_bind_unknown_summary), which generated code
+// tests directly. With OBELISK_RT_VERIFY_UNKNOWN_SUMMARY set, scheduler steps
+// and refreshes check the root of every clear bit against its pattern.
+struct NativeUnknownSummary {
+  uint64_t *generated = nullptr;
+  const uint8_t *plane = nullptr;
+  uint64_t planeBits = 0;
+  std::vector<obelisk_rt_native_unknown_root_v1> roots;
+  std::vector<uint64_t> patterns;
+  // Root indices sorted by bit offset; roots are disjoint.
+  std::vector<uint32_t> byOffset;
+  bool verify = false;
+  // Reported with OBELISK_RT_SIGNAL_DIAGNOSTICS.
+  uint64_t refreshes = 0, rescans = 0, cleared = 0, markedAll = 0,
+           markedRoots = 0;
+};
+
 // Static transitions merged while one statement executes as one event; see
 // obelisk_rt_v1_scheduler_publication_batch_begin. The window covers
 // kWindowBits root-relative bits from windowLow plus one word of overhang.
@@ -2268,6 +2286,7 @@ struct obelisk_rt_context {
   uint8_t *nativeStateValue = nullptr;
   uint8_t *nativeStateUnknown = nullptr;
   uint64_t nativeStateBitCount = 0;
+  std::unique_ptr<NativeUnknownSummary> nativeUnknownSummary;
   // Addressing permission for native fragments in either scheduler.
   // This does not authorize static fanout, NBA elision, or two-state execution.
   uint32_t *nativeStateSpecializationFast = nullptr;
