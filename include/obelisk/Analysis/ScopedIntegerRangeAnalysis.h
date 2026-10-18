@@ -2,6 +2,8 @@
 //-*-===//
 #ifndef OBELISK_ANALYSIS_SCOPEDINTEGERRANGEANALYSIS_H
 #define OBELISK_ANALYSIS_SCOPEDINTEGERRANGEANALYSIS_H
+#include "obelisk/Analysis/PersistentIntMap.h"
+
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Interfaces/InferIntRangeInterface.h"
 #include "llvm/ADT/DenseMap.h"
@@ -15,18 +17,28 @@ class ScalarEvolutionAnalysis;
 class ScopedRangeLattice final : public mlir::dataflow::AbstractDenseLattice {
 public:
   using AbstractDenseLattice::AbstractDenseLattice;
-  using Ranges = llvm::DenseMap<mlir::Value, mlir::ConstantIntRanges>;
+  /// Ranges keyed by the value's opaque pointer (`keyOf`), in a persistent
+  /// map: a transfer copies one path and a join costs only what two states
+  /// do not share, where a fused activation holds thousands of facts at
+  /// every point.
+  using Ranges = PersistentIntMap<mlir::ConstantIntRanges>;
+  static uint64_t keyOf(mlir::Value value) {
+    return reinterpret_cast<uint64_t>(value.getAsOpaquePointer());
+  }
+  static mlir::Value valueOf(uint64_t key) {
+    return mlir::Value::getFromOpaquePointer(
+        reinterpret_cast<const void *>(key));
+  }
   bool reachable = false;
-  const Ranges &getRanges() const;
-  mlir::ChangeResult merge(Ranges incoming);
+  const Ranges &getRanges() const { return ranges; }
+  mlir::ChangeResult merge(const Ranges &incoming);
   mlir::ChangeResult join(const AbstractDenseLattice &rhs) override;
   void print(llvm::raw_ostream &os) const override;
 
 private:
-  mlir::ChangeResult mergeSnapshot(std::shared_ptr<const Ranges> incoming);
   // Identity transfers share immutable facts, not lattice anchors. Each
   // program point must retain its own widening history and dependencies.
-  std::shared_ptr<const Ranges> ranges;
+  Ranges ranges;
   unsigned expansions = 0;
 };
 /// Dense path-sensitive ranges complement the sparse integer-range analysis.
@@ -65,7 +77,7 @@ private:
   /// states only hold relevant values, so this slice of liveness suffices.
   llvm::DenseSet<std::pair<mlir::Block *, mlir::Value>> liveIns;
   std::unique_ptr<ScalarEvolutionAnalysis> evolution;
-  ScopedRangeLattice::Ranges inductionBounds;
+  llvm::DenseMap<mlir::Value, mlir::ConstantIntRanges> inductionBounds;
   // Exact edge certificates are scoped to this header's continuation edge.
   llvm::DenseMap<mlir::Operation *,
                  std::pair<mlir::Value, mlir::ConstantIntRanges>>

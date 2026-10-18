@@ -1,6 +1,7 @@
 //===- LowerConditionalReferenceAccesses.cpp - Reference choices --------===//
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
@@ -55,25 +56,55 @@ public:
     // statement, not at reference selection. Keep intervening stores in
     // place, and execute exactly one access; the other handle can be invalid.
     // Keep address alternatives separate until reference lowering selects
-    // their native representations. CFG block merging would immediately
-    // recreate a mixed reference phi from two identical access blocks.
-    auto conditional =
-        scf::IfOp::create(rewriter, access.getLoc(), access->getResultTypes(),
-                          select.getCondition(),
-                          /*withElseRegion=*/true);
+    // their native representations: the arms are plain CFG blocks, which
+    // later CFG cleanups leave apart (no identical-block merging) so they
+    // never fold back into one access through a mixed reference phi. Only an
+    // access inside a single-block region keeps a structured choice.
+    Location loc = access.getLoc();
     auto emitAccess = [&](Block *block, Value reference) {
       rewriter.setInsertionPointToStart(block);
       IRMapping mapping;
       mapping.map(select.getResult(), reference);
       for (Operation *view : llvm::reverse(views))
         rewriter.clone(*view, mapping);
-      auto *copy = rewriter.clone(*access, mapping);
-      if constexpr (std::is_same_v<AccessOp, sim::SimRefLoadOp>)
-        scf::YieldOp::create(rewriter, access.getLoc(), copy->getResults());
+      return rewriter.clone(*access, mapping);
     };
-    emitAccess(&conditional.getThenRegion().front(), select.getTrueValue());
-    emitAccess(&conditional.getElseRegion().front(), select.getFalseValue());
-    rewriter.replaceOp(access, conditional.getResults());
+    Block *head = access->getBlock();
+    if (head->getParentOp()->hasTrait<OpTrait::SingleBlock>()) {
+      auto conditional = scf::IfOp::create(
+          rewriter, loc, access->getResultTypes(), select.getCondition(),
+          /*withElseRegion=*/true);
+      auto emitArm = [&](Block *block, Value reference) {
+        Operation *copy = emitAccess(block, reference);
+        if constexpr (std::is_same_v<AccessOp, sim::SimRefLoadOp>)
+          scf::YieldOp::create(rewriter, loc, copy->getResults());
+      };
+      emitArm(&conditional.getThenRegion().front(), select.getTrueValue());
+      emitArm(&conditional.getElseRegion().front(), select.getFalseValue());
+      rewriter.replaceOp(access, conditional.getResults());
+      return success();
+    }
+    Block *join = rewriter.splitBlock(head, access->getIterator());
+    Region *region = head->getParent();
+    Block *thenBlock = rewriter.createBlock(region, join->getIterator());
+    Block *elseBlock = rewriter.createBlock(region, join->getIterator());
+    SmallVector<Value> results;
+    for (Type type : access->getResultTypes())
+      results.push_back(join->addArgument(type, loc));
+    for (auto [block, reference] :
+         {std::pair(thenBlock, select.getTrueValue()),
+          std::pair(elseBlock, select.getFalseValue())}) {
+      Operation *copy = emitAccess(block, reference);
+      rewriter.setInsertionPointToEnd(block);
+      cf::BranchOp::create(rewriter, loc, join, copy->getResults());
+    }
+    rewriter.setInsertionPointToEnd(head);
+    cf::CondBranchOp::create(rewriter, loc, select.getCondition(), thenBlock,
+                             ValueRange(), elseBlock, ValueRange());
+    if constexpr (std::is_same_v<AccessOp, sim::SimRefLoadOp>)
+      rewriter.replaceOp(access, results);
+    else
+      rewriter.eraseOp(access);
     return success();
   }
 };

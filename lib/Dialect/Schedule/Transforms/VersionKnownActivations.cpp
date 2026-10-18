@@ -44,16 +44,13 @@
 #include "obelisk/Dialect/Simulation/SimulationTypes.h"
 
 #include "mlir/Analysis/CFGLoopInfo.h"
-#include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/PassManager.h"
-#include "mlir/Transforms/DialectConversion.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/GenericIteratedDominanceFrontier.h"
@@ -972,13 +969,10 @@ public:
       VersionKnownActivationsFunctionPass)
   VersionKnownActivationsFunctionPass(
       std::shared_ptr<const DesignInputs> inputs, uint64_t minimumBenefit,
-      uint64_t segmentSize, bool variants, bool checkedReads,
-      bool lowerStructuredControlFlow, bool diagnostics)
+      uint64_t segmentSize, bool variants, bool checkedReads, bool diagnostics)
       : inputs(std::move(inputs)), minimumBenefit(minimumBenefit),
         segmentSize(segmentSize), variants(variants),
-        checkedReads(checkedReads),
-        lowerStructuredControlFlow(lowerStructuredControlFlow),
-        diagnostics(diagnostics) {}
+        checkedReads(checkedReads), diagnostics(diagnostics) {}
   StringRef getArgument() const final {
     return "schedule-version-known-activations-function";
   }
@@ -1007,25 +1001,6 @@ public:
             })
             .wasInterrupted())
       return markAllAnalysesPreserved();
-    // Structured control flow keeps a copy from continuing in the original
-    // at a read inside it and hides dead paths from the versioned CFG; the
-    // option makes the activation a plain CFG from here.
-    if (lowerStructuredControlFlow &&
-        function
-            .walk([](Operation *op) {
-              return isa<scf::SCFDialect>(op->getDialect())
-                         ? WalkResult::interrupt()
-                         : WalkResult::advance();
-            })
-            .wasInterrupted()) {
-      ConversionTarget target(getContext());
-      target.addIllegalDialect<scf::SCFDialect>();
-      target.markUnknownOpDynamicallyLegal([](Operation *) { return true; });
-      RewritePatternSet patterns(&getContext());
-      populateSCFToControlFlowConversionPatterns(patterns);
-      if (failed(applyPartialConversion(function, target, std::move(patterns))))
-        return signalPassFailure();
-    }
     Segments segments = cut(function, segmentSize);
     analysis::HandleDataflowResult handles = inputs->handles.analyze(function);
     auto provenKnown = [&](Operation *read) {
@@ -1094,7 +1069,6 @@ private:
   uint64_t segmentSize;
   bool variants;
   bool checkedReads;
-  bool lowerStructuredControlFlow;
   bool diagnostics;
 };
 
@@ -1118,7 +1092,7 @@ public:
       designs.addNestedPass<sim::SimFuncOp>(
           std::make_unique<VersionKnownActivationsFunctionPass>(
               inputs, minimumBenefit, segmentSize, variants, checkedReads,
-              lowerStructuredControlFlow, diagnostics));
+              diagnostics));
       if (failed(runPipeline(designs, design)))
         return signalPassFailure();
     }

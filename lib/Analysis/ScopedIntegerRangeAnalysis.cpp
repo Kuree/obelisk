@@ -34,49 +34,39 @@ static arith::CmpIPredicate swapComparison(arith::CmpIPredicate predicate) {
     return predicate;
   }
 }
-const ScopedRangeLattice::Ranges &ScopedRangeLattice::getRanges() const {
-  static const Ranges empty;
-  return ranges ? *ranges : empty;
-}
-ChangeResult ScopedRangeLattice::merge(Ranges incoming) {
-  return mergeSnapshot(std::make_shared<const Ranges>(std::move(incoming)));
-}
-ChangeResult
-ScopedRangeLattice::mergeSnapshot(std::shared_ptr<const Ranges> incoming) {
+ChangeResult ScopedRangeLattice::merge(const Ranges &incoming) {
   if (!reachable) {
     reachable = true;
-    ranges = std::move(incoming);
+    ranges = incoming;
     return ChangeResult::Change;
   }
-  if (ranges == incoming)
+  if (ranges.sameAs(incoming))
     return ChangeResult::NoChange;
-  // Most joins are identity transfers. Copy only when this program point's
-  // facts actually change; published snapshots are never modified in place.
-  std::shared_ptr<Ranges> updated;
-  for (const auto &entry : getRanges()) {
-    auto found = incoming->find(entry.first);
-    bool remove = found == incoming->end();
-    auto next = remove ? entry.second : entry.second.rangeUnion(found->second);
-    if (!remove && next == entry.second)
-      continue;
-    // Widen only expanding joins. Independently proved induction caps remain
-    // available through getRange, including after a loop-carried range widens.
-    if (!updated)
-      updated = std::make_shared<Ranges>(getRanges());
-    if (remove || expansions >= 8)
-      updated->erase(entry.first);
-    else
-      updated->find(entry.first)->second = next;
-  }
-  if (!updated)
+  // Most joins are identity transfers; the structural merge returns the
+  // same tree when nothing changes. A fact absent from `incoming` is
+  // dropped; one that keeps expanding is widened away after a few joins,
+  // while independently proved induction caps remain available through
+  // getRange.
+  bool widen = expansions >= 8;
+  bool changed = ranges.intersectWith(
+      incoming,
+      [&](const ConstantIntRanges &mine,
+          const ConstantIntRanges &theirs) -> std::optional<ConstantIntRanges> {
+        ConstantIntRanges next = mine.rangeUnion(theirs);
+        if (next == mine)
+          return mine;
+        if (widen)
+          return std::nullopt;
+        return next;
+      });
+  if (!changed)
     return ChangeResult::NoChange;
-  ranges = std::move(updated);
   ++expansions;
   return ChangeResult::Change;
 }
 ChangeResult ScopedRangeLattice::join(const AbstractDenseLattice &rhs) {
   const auto &other = static_cast<const ScopedRangeLattice &>(rhs);
-  return other.reachable ? mergeSnapshot(other.ranges) : ChangeResult::NoChange;
+  return other.reachable ? merge(other.ranges) : ChangeResult::NoChange;
 }
 void ScopedRangeLattice::print(raw_ostream &os) const {
   os << getRanges().size();
@@ -184,8 +174,8 @@ ScopedIntegerRangeAnalysis::getRange(Value value,
   if (matchPattern(value, m_ConstantInt(&constant)))
     return ConstantIntRanges::constant(constant);
   auto cap = inductionBounds.find(value);
-  const auto &ranges = state.getRanges();
-  auto scoped = ranges.find(value);
+  const ConstantIntRanges *scoped =
+      state.getRanges().find(ScopedRangeLattice::keyOf(value));
   std::optional<ConstantIntRanges> result;
   if (auto argument = dyn_cast<BlockArgument>(value))
     if (auto function =
@@ -199,8 +189,8 @@ ScopedIntegerRangeAnalysis::getRange(Value value,
     result = result ? result->intersection(*range) : *range;
   if (cap != inductionBounds.end())
     result = result ? result->intersection(cap->second) : cap->second;
-  if (scoped != ranges.end())
-    result = result ? result->intersection(scoped->second) : scoped->second;
+  if (scoped)
+    result = result ? result->intersection(*scoped) : *scoped;
   if (auto symbolic = evolution->getRange(value))
     result = result ? result->intersection(*symbolic) : *symbolic;
   if (result)
@@ -219,7 +209,8 @@ bool ScopedIntegerRangeAnalysis::proveBounds(Value value,
     // Only facts available at this access may constrain an SMT expression.
     // A definition in another branch may alias a shared integer while its
     // path-specific range is inapplicable here.
-    if (input == value || state.getRanges().contains(input))
+    if (input == value ||
+        state.getRanges().contains(ScopedRangeLattice::keyOf(input)))
       return getRange(input, state);
     if (auto argument = dyn_cast<BlockArgument>(input);
         argument && argument.getOwner()->isEntryBlock())
@@ -246,7 +237,7 @@ ScopedIntegerRangeAnalysis::visitOperation(Operation *op,
   }
   auto next = before.getRanges();
   for (Value value : op->getResults())
-    next.erase(value);
+    next.erase(ScopedRangeLattice::keyOf(value));
   if (auto interface = dyn_cast<InferIntRangeInterface>(op)) {
     // A logic range certifies that the value has no X or Z bits. A logic
     // operand without that certificate may be X, so no logic result of an
@@ -267,12 +258,12 @@ ScopedIntegerRangeAnalysis::visitOperation(Operation *op,
         inputs, [&](Value value, const ConstantIntRanges &range) {
           if (relevant.contains(value) &&
               !(uncertifiedLogic && isa<sim::LogicType>(value.getType())))
-            next.insert_or_assign(value, range);
+            next.insert(ScopedRangeLattice::keyOf(value), range);
         });
   } else if (op->getNumResults() == 1 && relevant.contains(op->getResult(0))) {
     Value result = op->getResult(0);
     auto put = [&](const ConstantIntRanges &range) {
-      next.insert_or_assign(result, range);
+      next.insert(ScopedRangeLattice::keyOf(result), range);
     };
     if (auto from = dyn_cast<sim::SimLogicFromBitsOp>(op)) {
       if (auto input = getRange(from.getInput(), before))
@@ -420,7 +411,7 @@ void ScopedIntegerRangeAnalysis::visitBlockTransfer(
             auto refined = range->intersection(*edgeRange);
             if (refined.umin().ule(refined.umax()) &&
                 refined.smin().sle(refined.smax()))
-              next.insert_or_assign(value, refined);
+              next.insert(ScopedRangeLattice::keyOf(value), refined);
           }
         }
       }
@@ -429,7 +420,8 @@ void ScopedIntegerRangeAnalysis::visitBlockTransfer(
     auto bound = bodyBounds.find(branch);
     if (bound != bodyBounds.end() && branch.getTrueDest() == block &&
         branch.getFalseDest() != block)
-      next.insert_or_assign(bound->second.first, bound->second.second);
+      next.insert(ScopedRangeLattice::keyOf(bound->second.first),
+                  bound->second.second);
   }
   auto interface = dyn_cast<BranchOpInterface>(terminator);
   ScopedRangeLattice edge(getProgramPointAfter(terminator));
@@ -438,9 +430,9 @@ void ScopedIntegerRangeAnalysis::visitBlockTransfer(
   // phi inputs before assigning any successor arguments (including swaps).
   for (Operation &op : *block)
     for (Value result : op.getResults())
-      next.erase(result);
+      next.erase(ScopedRangeLattice::keyOf(result));
   for (BlockArgument arg : block->getArguments()) {
-    next.erase(arg);
+    next.erase(ScopedRangeLattice::keyOf(arg));
     if (!interface || !relevant.contains(arg))
       continue;
     std::optional<ConstantIntRanges> incoming;
@@ -463,7 +455,7 @@ void ScopedIntegerRangeAnalysis::visitBlockTransfer(
       incoming = incoming ? incoming->rangeUnion(*range) : *range;
     }
     if (incoming)
-      next.insert_or_assign(arg, *incoming);
+      next.insert(ScopedRangeLattice::keyOf(arg), *incoming);
   }
   // A fused activation can contain thousands of independent selector loops.
   // Keeping every preceding loop's SSA facts in each immutable block state
@@ -471,12 +463,16 @@ void ScopedIntegerRangeAnalysis::visitBlockTransfer(
   // values live into this block and its freshly mapped arguments can be
   // queried here. Map all predecessor operands first: parallel phi copies
   // may consume values that are dead on entry to the successor.
-  for (const auto &entry : llvm::make_early_inc_range(next)) {
-    auto argument = dyn_cast<BlockArgument>(entry.first);
+  SmallVector<uint64_t> dead;
+  next.forEach([&](uint64_t key, const ConstantIntRanges &) {
+    Value value = ScopedRangeLattice::valueOf(key);
+    auto argument = dyn_cast<BlockArgument>(value);
     if (!(argument && argument.getOwner() == block) &&
-        !liveIns.contains({block, entry.first}))
-      next.erase(entry.first);
-  }
-  propagateIfChanged(after, after->merge(std::move(next)));
+        !liveIns.contains({block, value}))
+      dead.push_back(key);
+  });
+  for (uint64_t key : dead)
+    next.erase(key);
+  propagateIfChanged(after, after->merge(next));
 }
 } // namespace obelisk::analysis

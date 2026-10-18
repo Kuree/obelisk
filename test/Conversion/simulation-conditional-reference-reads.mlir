@@ -17,13 +17,14 @@ module {
     // CHECK: %[[LOCAL:.*]] = simulation.ref.alloc
     // CHECK-NOT: arith.select
     // CHECK: simulation.ref.store %{{.*}} to %[[LOCAL]]
-    // CHECK-NEXT: %[[RESULT:.*]] = scf.if %{{.*}} -> (i8) {
+    // CHECK-NEXT: cf.cond_br %{{.*}}, ^[[THEN:bb[0-9]+]], ^[[ELSE:bb[0-9]+]]
+    // CHECK-NEXT: ^[[THEN]]:
     // CHECK-NEXT: %[[A:.*]] = simulation.ref.load %[[LOCAL]] {test.keep}
-    // CHECK-NEXT: scf.yield %[[A]] : i8
-    // CHECK-NEXT: } else {
+    // CHECK-NEXT: cf.br ^[[JOIN:bb[0-9]+]](%[[A]] : i8)
+    // CHECK-NEXT: ^[[ELSE]]:
     // CHECK-NEXT: %[[B:.*]] = simulation.ref.load %{{.*}} {test.keep}
-    // CHECK-NEXT: scf.yield %[[B]] : i8
-    // CHECK-NEXT: }
+    // CHECK-NEXT: cf.br ^[[JOIN]](%[[B]] : i8)
+    // CHECK-NEXT: ^[[JOIN]](%[[RESULT:.*]]: i8):
     // CHECK-NEXT: simulation.ref.store %[[RESULT]] to
     // PRIVATE: local allocation
     // PRIVATE-NOT: runtime
@@ -49,13 +50,13 @@ module {
     // index. Out-of-range and X/Z index behavior belongs to the selected load.
     // CHECK-LABEL: simulation.func @projected
     // CHECK-NOT: arith.select
-    // CHECK: scf.if
+    // CHECK: cf.cond_br
     // CHECK: simulation.ref.array_element
     // CHECK-NEXT: %{{.*}} = simulation.ref.load
-    // CHECK-NEXT: scf.yield
+    // CHECK-NEXT: cf.br
     // CHECK: simulation.ref.array_element
     // CHECK-NEXT: %{{.*}} = simulation.ref.load
-    // CHECK-NEXT: scf.yield
+    // CHECK-NEXT: cf.br
     simulation.func @projected(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %choose: i1 {simulation.capture_kind = 2 : i32}, %index: !simulation.logic<8> {simulation.capture_kind = 2 : i32}) attributes {entry_kind = 8 : i32, code_unit_id = 2 : i64} {
       %global = simulation.context.storage %ctx[2] : !simulation.ref<!simulation.unpacked_array<0 : 1 x i8>>
       %output = simulation.context.storage %ctx[1] : !simulation.ref<i8>
@@ -72,10 +73,15 @@ module {
     // Writes execute only in the selected arm, preserving their value snapshot.
     // CHECK-LABEL: simulation.func @write_selection
     // CHECK-NOT: arith.select
-    // CHECK: scf.if
+    // CHECK: cf.cond_br %{{.*}}, ^[[THEN:bb[0-9]+]], ^[[ELSE:bb[0-9]+]]
+    // CHECK-NEXT: ^[[THEN]]:
     // CHECK-NEXT: simulation.ref.store
-    // CHECK: } else {
+    // CHECK-NEXT: cf.br ^[[JOIN:bb[0-9]+]]
+    // CHECK-NEXT: ^[[ELSE]]:
     // CHECK-NEXT: simulation.ref.store
+    // CHECK-NEXT: cf.br ^[[JOIN]]
+    // CHECK-NEXT: ^[[JOIN]]:
+    // CHECK-NEXT: simulation.return
     simulation.func @write_selection(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %choose: i1 {simulation.capture_kind = 2 : i32}) attributes {entry_kind = 8 : i32, code_unit_id = 3 : i64} {
       %global = simulation.context.storage %ctx[0] : !simulation.ref<i8>
       %zero = arith.constant 0 : i8
@@ -86,7 +92,8 @@ module {
     }
 
     simulation.code_unit.decl 4 in 0 function hierarchy "structured"
-    // Nested structured regions retain their single-block contract.
+    // Nested structured regions retain their single-block contract: an access
+    // inside one keeps a structured choice.
     // CHECK-LABEL: simulation.func @structured
     // CHECK: scf.if
     // CHECK-NOT: arith.select
@@ -110,9 +117,9 @@ module {
     // inner read, and remove both unused reference selections.
     // CHECK-LABEL: simulation.func @nested_selection
     // CHECK-NOT: arith.select
-    // CHECK: scf.if
-    // CHECK-NEXT: %{{.*}} = scf.if
-    // CHECK-NEXT: %{{.*}} = simulation.ref.load
+    // CHECK: cf.cond_br
+    // CHECK: cf.cond_br
+    // CHECK: %{{.*}} = simulation.ref.load
     // CHECK: simulation.return
     simulation.func @nested_selection(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %a: i1 {simulation.capture_kind = 2 : i32}, %b: i1 {simulation.capture_kind = 2 : i32}) attributes {entry_kind = 8 : i32, code_unit_id = 5 : i64} {
       %global = simulation.context.storage %ctx[0] : !simulation.ref<i8>

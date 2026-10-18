@@ -206,18 +206,21 @@ def SpecializeReferenceJoinsPass
 def LowerConditionalReferenceAccessesPass
     : Pass<"schedule-lower-conditional-reference-accesses",
            "obelisk::sim::SimFuncOp"> {
-  let summary = "Lower selected reference accesses to conditional regions";
+  let summary = "Lower selected reference accesses to conditional branches";
   let description = [{
     Access the selected reference at the original statement, preserving source
     snapshots and effects between reference selection and use. Pure reference
-    views are rebuilt in the selected branch. This removes mixed local and
-    canonical reference families from generated native kernels without
-    speculative loads or runtime handoff.
+    views are rebuilt in the selected arm, a plain CFG block that later CFG
+    cleanups keep apart from the other arm; an access inside a single-block
+    region keeps a structured choice. This removes mixed local and canonical
+    reference families from generated native kernels without speculative
+    loads or runtime handoff.
   }];
   let options = [Option<"nativeBodiesOnly", "native-bodies-only", "bool",
                         "false", "Only rewrite borrowed native evaluator bodies">];
   let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect",
                            "mlir::arith::ArithDialect",
+                           "mlir::cf::ControlFlowDialect",
                            "mlir::scf::SCFDialect"];
 }
 
@@ -429,12 +432,7 @@ def VersionKnownActivationsPass
     Option<"variants", "variants", "bool", "true",
            "Also version guarded two-state variants">,
     Option<"checkedReads", "checked-reads", "bool", "false",
-           "Test reads the entry check cannot cover where they load">,
-    Option<"lowerStructuredControlFlow", "lower-structured-control-flow",
-           "bool", "false",
-           "Lower scf operations of a versioned body to cf first, so copies "
-           "can continue in the original inside them and dead X/Z merges "
-           "drop out of the CFG (slower to compile)">
+           "Test reads the entry check cannot cover where they load">
   ];
   let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect",
                            "obelisk::schedule::ScheduleDialect",

@@ -145,46 +145,67 @@ public:
                     ArrayRef<std::pair<Operation *, Value>> accesses)
       : DenseForwardDataFlowAnalysis(solver), handles(handles),
         liveness(function) {
-    SmallVector<Value> pending;
-    for (auto [access, reference] : accesses)
-      pending.push_back(reference);
-    function.walk([&](cf::CondBranchOp branch) {
-      pending.push_back(branch.getCondition());
-    });
-    // Build a backward SSA slice only. The MLIR solver handles cycles and
-    // predecessor propagation; this walk never evaluates a predecessor.
-    while (!pending.empty()) {
-      Value value = pending.pop_back_val();
-      auto width = sim::getPackedWidth(value.getType());
-      if (!isa<sim::RefType>(value.getType()) &&
-          (!isa<IntegerType, sim::LogicType>(value.getType()) || !width ||
-           *width > 128))
-        continue;
-      if (!relevant.insert(value).second)
-        continue;
-      if (auto argument = dyn_cast<BlockArgument>(value)) {
-        for (Block *pred : argument.getOwner()->getPredecessors())
-          if (auto branch = dyn_cast<BranchOpInterface>(pred->getTerminator()))
-            for (unsigned i = 0; i < pred->getNumSuccessors(); ++i)
-              if (pred->getSuccessor(i) == argument.getOwner()) {
-                auto operands = branch.getSuccessorOperands(i);
-                if (argument.getArgNumber() >=
-                    operands.getProducedOperandCount())
-                  pending.push_back(operands[argument.getArgNumber()]);
-              }
-      } else if (Operation *op = value.getDefiningOp()) {
-        if (isa<InferIntRangeInterface, sim::SimLogicFromBitsOp,
-                sim::SimLogicToBitsOp, sim::SimLogicIsTrueOp,
-                sim::SimLogicCompareOp, sim::SimLogicResizeOp,
-                sim::SimLogicBinaryOp, sim::SimLogicExtractOp,
-                sim::SimLogicUnaryOp, sim::SimLogicReductionOp,
-                sim::SimLogicConcatOp, sim::SimLogicReplicateOp,
-                sim::SimLogicMuxOp, sim::SimLogicShiftOp,
-                sim::SimRefArrayElementOp, sim::SimRefSubelementOp,
-                sim::SimRefExtractOp, sim::SimRefDynExtractOp>(op))
-          llvm::append_range(pending, op->getOperands());
+    // Build backward SSA slices only. The MLIR solver handles cycles and
+    // predecessor propagation; this walk never evaluates a predecessor. It
+    // collects the slice of `root` into `into`, stopping at values already
+    // relevant, and reports whether it reached one.
+    auto slice = [&](Value root, DenseSet<Value> &into) {
+      bool reached = false;
+      SmallVector<Value> pending{root};
+      while (!pending.empty()) {
+        Value value = pending.pop_back_val();
+        auto width = sim::getPackedWidth(value.getType());
+        if (!isa<sim::RefType>(value.getType()) &&
+            (!isa<IntegerType, sim::LogicType>(value.getType()) || !width ||
+             *width > 128))
+          continue;
+        if (relevant.contains(value)) {
+          reached = true;
+          continue;
+        }
+        if (!into.insert(value).second)
+          continue;
+        if (auto argument = dyn_cast<BlockArgument>(value)) {
+          for (Block *pred : argument.getOwner()->getPredecessors())
+            if (auto branch =
+                    dyn_cast<BranchOpInterface>(pred->getTerminator()))
+              for (unsigned i = 0; i < pred->getNumSuccessors(); ++i)
+                if (pred->getSuccessor(i) == argument.getOwner()) {
+                  auto operands = branch.getSuccessorOperands(i);
+                  if (argument.getArgNumber() >=
+                      operands.getProducedOperandCount())
+                    pending.push_back(operands[argument.getArgNumber()]);
+                }
+        } else if (Operation *op = value.getDefiningOp()) {
+          if (isa<InferIntRangeInterface, sim::SimLogicFromBitsOp,
+                  sim::SimLogicToBitsOp, sim::SimLogicIsTrueOp,
+                  sim::SimLogicCompareOp, sim::SimLogicResizeOp,
+                  sim::SimLogicBinaryOp, sim::SimLogicExtractOp,
+                  sim::SimLogicUnaryOp, sim::SimLogicReductionOp,
+                  sim::SimLogicConcatOp, sim::SimLogicReplicateOp,
+                  sim::SimLogicMuxOp, sim::SimLogicShiftOp,
+                  sim::SimRefArrayElementOp, sim::SimRefSubelementOp,
+                  sim::SimRefExtractOp, sim::SimRefDynExtractOp>(op))
+            llvm::append_range(pending, op->getOperands());
+        }
       }
+      return reached;
+    };
+    for (auto [access, reference] : accesses) {
+      DenseSet<Value> own;
+      slice(reference, own);
+      relevant.insert(own.begin(), own.end());
     }
+    // A branch condition only prunes edges where a path binds it to a
+    // constant, which needs its slice to share values with the selectors'.
+    // An unrelated condition, such as the choice between two addresses,
+    // would only add bindings that split paths without ever deciding an
+    // edge.
+    function.walk([&](cf::CondBranchOp branch) {
+      DenseSet<Value> own;
+      if (slice(branch.getCondition(), own))
+        relevant.insert(own.begin(), own.end());
+    });
     // A binding is live until its last use in the block unless it is live
     // out; it enters at its definition or, for a live-in value or block
     // argument, at the block entry. So the bindings that die after an

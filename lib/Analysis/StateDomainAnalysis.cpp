@@ -1217,6 +1217,9 @@ computeValueFacts(const ValueFactProgram &program,
   // Solve boundary facts serially with a deterministic function worklist.
   // Local facts are retained between visits, so each fact only moves upward
   // through the finite lattice even across recursive call/spawn cycles.
+  // Callees come first: a caller visited after its callees' result
+  // boundaries have settled is usually propagated once, where index order
+  // would propagate a large kernel again for every callee it has.
   std::deque<unsigned> worklist;
   SmallVector<bool> queued(functions.size(), false);
   auto enqueue = [&](unsigned function) {
@@ -1225,8 +1228,36 @@ computeValueFacts(const ValueFactProgram &program,
     queued[function] = true;
     worklist.push_back(function);
   };
-  for (unsigned function = 0; function != functions.size(); ++function)
-    enqueue(function);
+  {
+    enum : uint8_t { New, Active, Done };
+    SmallVector<uint8_t> state(functions.size(), New);
+    SmallVector<std::pair<unsigned, unsigned>> stack;
+    for (unsigned root = 0; root != functions.size(); ++root) {
+      if (state[root] != New)
+        continue;
+      state[root] = Active;
+      stack.push_back({root, 0});
+      while (!stack.empty()) {
+        unsigned function = stack.back().first;
+        unsigned &next = stack.back().second;
+        const auto &invocations = summaries[function].invocations;
+        std::optional<unsigned> descend;
+        while (next < invocations.size() && !descend) {
+          std::optional<unsigned> callee = invocations[next++].callee;
+          if (callee && state[*callee] == New)
+            descend = callee;
+        }
+        if (descend) {
+          state[*descend] = Active;
+          stack.push_back({*descend, 0});
+          continue;
+        }
+        state[function] = Done;
+        enqueue(function);
+        stack.pop_back();
+      }
+    }
+  }
 
   while (!worklist.empty()) {
     unsigned function = worklist.front();
