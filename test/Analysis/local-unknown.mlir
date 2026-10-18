@@ -1,10 +1,12 @@
 // RUN: obelisk-opt %s --split-input-file --test-obelisk-local-unknown -o /dev/null 2>&1 | FileCheck %s
 // RUN: obelisk-opt %s --split-input-file --test-obelisk-local-unknown=checks=true -o /dev/null 2>&1 | FileCheck %s --check-prefix=CHECKS
 
-// A read computed on is gated: the entry check covers its bits. A read that
-// only moves into a store keeps its unknown plane, and so does a dynamically
-// indexed memory element (IEEE 1800-2023 7.4.6) and function-private storage.
-// The check covers only the gated bits of a root.
+// Every read of a fixed storage root is gated, also one that only moves into
+// a store: the entry check covers its whole root. A memory element whose
+// index may select past the array keeps its unknown plane (IEEE 1800-2023
+// 7.4.5), and so does function-private storage. A store of a known value
+// writes only its value plane; one of a value computed from the element
+// keeps both.
 
 !c = !simulation.context
 !l8 = !simulation.logic<8>
@@ -32,41 +34,42 @@ module {
       %wide = simulation.context.storage %ctx[5] : !r16
       %x = simulation.ref.load %a {test.read = "computed"} : !r8 -> !l8
       %sum = simulation.logic.binary add %x, %x : !l8
-      simulation.ref.store %sum to %b : !l8, !r8
+      simulation.ref.store %sum to %b {test.store = "sum"} : !l8, !r8
       %y = simulation.ref.load %m {test.read = "moved"} : !r8 -> !l8
-      simulation.ref.store %y to %d : !l8, !r8
+      simulation.ref.store %y to %d {test.store = "moved"} : !l8, !r8
       %slot = simulation.ref.array_element %mem[%x] : (!simulation.ref<!memory>, !l8) -> !r8
       %e = simulation.ref.load %slot {test.read = "element"} : !r8 -> !l8
       %t = simulation.logic.binary xor %e, %sum : !l8
-      simulation.ref.store %t to %d : !l8, !r8
+      simulation.ref.store %t to %d {test.store = "element"} : !l8, !r8
       %high = simulation.ref.extract %wide from 8 : !r16 -> !r8
       %h = simulation.ref.load %high {test.read = "slice"} : !r8 -> !l8
       %p = simulation.ref.alloc %h : !l8 -> !r8
       %q = simulation.ref.load %p {test.read = "private"} : !r8 -> !l8
       %u = simulation.logic.binary or %q, %h : !l8
-      simulation.ref.store %u to %b : !l8, !r8
+      simulation.ref.store %u to %b {test.store = "private"} : !l8, !r8
       simulation.return
     }
   }
 }
 
-// CHECK-LABEL: local-unknown @classes benefit={{[0-9]+}} gate-words=2
-// CHECK-NEXT: gate 0: [0,8)
-// CHECK-NEXT: gate 5: [8,16)
+// CHECK-LABEL: local-unknown @classes benefit={{[0-9]+}} gate: 0 1 2 3 5
 // CHECK-NEXT: read computed: gated
-// CHECK-NEXT: read moved: moved
+// CHECK-NEXT: read moved: gated
 // CHECK-NEXT: read element: dynamic
 // CHECK-NEXT: read slice: gated
 // CHECK-NEXT: read private: local
+// CHECK-NEXT: store sum: known
+// CHECK-NEXT: store moved: known
+// CHECK-NEXT: store element: four-state
+// CHECK-NEXT: store private: known
 
 // -----
 
-// Writes are attributed per path. A read before the activation stores X/Z
-// into its root sees entry state; a read the X/Z store may precede does not.
-// A store of a value known under the check (here derived from gated reads)
-// leaves later reads gated, and their bits need no check: every path stored
-// them. The division may yield X for a zero divisor
-// (IEEE 1800-2023 11.4.2), so its store counts as an X/Z write.
+// Writes are attributed per path. A store of a value known under the check
+// (a gated read or a value derived from gated reads) leaves later reads of
+// its root gated. The division may yield X for a zero divisor (IEEE
+// 1800-2023 11.4.2), so its store keeps both planes and a later read of its
+// root may observe X/Z, as may a store derived from that read.
 
 !c = !simulation.context
 !l8 = !simulation.logic<8>
@@ -91,33 +94,35 @@ module {
       cf.cond_br %c, ^write, ^join
     ^write:
       %w = simulation.ref.load %src {test.read = "moved"} : !r8 -> !l8
-      simulation.ref.store %w to %q : !l8, !r8
+      simulation.ref.store %w to %q {test.store = "moved"} : !l8, !r8
       %ratio = simulation.logic.binary udiv %before, %v : !l8
-      simulation.ref.store %ratio to %out : !l8, !r8
+      simulation.ref.store %ratio to %out {test.store = "quotient"} : !l8, !r8
       cf.br ^join
     ^join:
       %after = simulation.ref.load %q {test.read = "after"} : !r8 -> !l8
       %sum = simulation.logic.binary add %before, %v : !l8
-      simulation.ref.store %sum to %k : !l8, !r8
+      simulation.ref.store %sum to %k {test.store = "sum"} : !l8, !r8
       %known = simulation.ref.load %k {test.read = "known"} : !r8 -> !l8
       %o = simulation.ref.load %out {test.read = "quotient"} : !r8 -> !l8
       %s = simulation.logic.binary add %after, %known : !l8
       %s2 = simulation.logic.binary add %s, %o : !l8
-      simulation.ref.store %s2 to %k : !l8, !r8
+      simulation.ref.store %s2 to %k {test.store = "from-quotient"} : !l8, !r8
       simulation.return
     }
   }
 }
 
-// CHECK-LABEL: local-unknown @paths
-// CHECK-NEXT: gate 0: [0,8)
-// CHECK-NEXT: gate 1: [0,8)
+// CHECK-LABEL: local-unknown @paths benefit={{[0-9]+}} gate: 0 1 2
 // CHECK-NEXT: read before: gated
 // CHECK-NEXT: read source: gated
-// CHECK-NEXT: read moved: moved
-// CHECK-NEXT: read after: written
+// CHECK-NEXT: read moved: gated
+// CHECK-NEXT: read after: gated
 // CHECK-NEXT: read known: gated
 // CHECK-NEXT: read quotient: written
+// CHECK-NEXT: store moved: known
+// CHECK-NEXT: store quotient: four-state
+// CHECK-NEXT: store sum: known
+// CHECK-NEXT: store from-quotient: four-state
 
 // -----
 
@@ -157,30 +162,31 @@ module {
       %t = simulation.context.storage %ctx[2] : !r8
       %x = simulation.ref.load %a {test.read = "first"} : !r8 -> !l8
       %y = simulation.call @square(%ctx, %x) : (!c, !l8) -> !l8
-      simulation.ref.store %y to %t : !l8, !r8
+      simulation.ref.store %y to %t {test.store = "square"} : !l8, !r8
       %s = simulation.ref.load %t {test.read = "stored"} : !r8 -> !l8
       %w = simulation.logic.binary add %s, %x : !l8
       simulation.call @writer(%ctx, %w) : (!c, !l8) -> ()
       %z = simulation.ref.load %a {test.read = "after"} : !r8 -> !l8
       %u = simulation.logic.binary add %z, %z : !l8
-      simulation.ref.store %u to %b : !l8, !r8
+      simulation.ref.store %u to %b {test.store = "after"} : !l8, !r8
       simulation.return
     }
   }
 }
 
-// CHECK-LABEL: local-unknown @calls
-// CHECK-NEXT: gate 0: [0,8)
+// CHECK-LABEL: local-unknown @calls benefit={{[0-9]+}} gate: 0 2
 // CHECK-NEXT: read first: gated
 // CHECK-NEXT: read stored: gated
 // CHECK-NEXT: read after: written
+// CHECK-NEXT: store square: known
+// CHECK-NEXT: store after: four-state
 
 // -----
 
 // A read the check cannot cover is tested where it loads when enough
 // unknown-plane work depends on it. The copy treats a checked read as known,
-// so a store derived from it leaves later reads of its root gated; a read
-// with little dependent work stays an island.
+// so a store derived from it is known and leaves later reads of its root
+// gated; a read with little dependent work keeps its unknown plane.
 
 !c = !simulation.context
 !l8 = !simulation.logic<8>
@@ -207,7 +213,7 @@ module {
       %s2 = simulation.logic.binary mul %s1, %s1 : !l8
       %s3 = simulation.logic.binary xor %s2, %e : !l8
       %s4 = simulation.logic.binary sub %s3, %x : !l8
-      simulation.ref.store %s4 to %b : !l8, !r8
+      simulation.ref.store %s4 to %b {test.store = "element"} : !l8, !r8
       %y = simulation.ref.load %b {test.read = "stored"} : !r8 -> !l8
       %f = simulation.ref.load %slot {test.read = "small"} : !r8 -> !l8
       %u = simulation.logic.binary add %y, %f : !l8
@@ -217,25 +223,27 @@ module {
   }
 }
 
-// CHECK-LABEL: local-unknown @checked
-// CHECK: read index: gated
+// CHECK-LABEL: local-unknown @checked benefit={{[0-9]+}} gate: 0
+// CHECK-NEXT: read index: gated
 // CHECK-NEXT: read element: dynamic
 // CHECK-NEXT: read stored: written
 // CHECK-NEXT: read small: dynamic
+// CHECK-NEXT: store element: four-state
 
-// CHECKS-LABEL: local-unknown @checked
-// CHECKS-NEXT: gate 0: [0,8)
+// CHECKS-LABEL: local-unknown @checked benefit={{[0-9]+}} gate: 0 1
 // CHECKS-NEXT: read index: gated
 // CHECKS-NEXT: read element: checked
 // CHECKS-NEXT: read stored: gated
 // CHECKS-NEXT: read small: dynamic
+// CHECKS-NEXT: store element: known
 
 // -----
 
-// A dynamic packed selection reads X whenever it is invalid, whatever its
-// root holds (IEEE 1800-2023 7.4.6, 11.5.1). It is gated over its hull only
-// when it is valid for every known value of its index and the copy proves
-// that index known; otherwise it stays an island.
+// A dynamic selection reads X whenever it is invalid, whatever its root
+// holds (IEEE 1800-2023 7.4.5, 11.5.1). It is gated over its hull only when
+// it is valid for every known value of its index and the copy proves that
+// index known; otherwise it keeps its unknown plane. A three-bit index is
+// signed, so it may select past an eight-element memory.
 
 !c = !simulation.context
 !l3 = !simulation.logic<3>
@@ -289,10 +297,7 @@ module {
   }
 }
 
-// CHECK-LABEL: local-unknown @selections
-// CHECK-NEXT: gate 0: [0,16)
-// CHECK-NEXT: gate 3: [0,3)
-// CHECK-NEXT: gate 4: [0,8)
+// CHECK-LABEL: local-unknown @selections benefit={{[0-9]+}} gate: 0 3 4
 // CHECK-NEXT: read index: gated
 // CHECK-NEXT: read valid: gated
 // CHECK-NEXT: read wide-index: gated

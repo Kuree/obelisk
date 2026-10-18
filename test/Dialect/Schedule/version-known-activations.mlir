@@ -1,11 +1,11 @@
 // RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(schedule-version-known-activations{minimum-benefit=1 checked-reads=true})' | FileCheck %s
 // RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(schedule-version-known-activations{minimum-benefit=1 segment-size=10})' | FileCheck %s --check-prefix=SEGMENTS
 
-// One check of exactly the gated bits selects a copy of the activation. The
-// copy reads the gated location's value plane only; the moved read and the
-// memory element keep both planes, and every store is unchanged. The original
-// blocks keep their positions, and the entry's operations move behind the
-// check.
+// One check of the roots the activation reads selects a copy of it. The copy
+// reads those roots' value planes only. The memory element, whose index may
+// select past the array, keeps both planes, and so does every store that may
+// follow the store derived from it. The original blocks keep their
+// positions, and the entry's operations move behind the check.
 
 !c = !simulation.context
 !l8 = !simulation.logic<8>
@@ -24,8 +24,9 @@ module attributes {native.optimization_level = 3 : i32} {
     // CHECK-LABEL: simulation.func @activation
     // CHECK-SAME: schedule.native.known_activation
     // CHECK-SAME: schedule.native.known_versioned
-    // CHECK-NEXT: %[[ROOT:.*]] = simulation.context.storage %arg0[0]
-    // CHECK-NEXT: %[[OK:.*]] = schedule.known.bits %[[ROOT]] [array<i64: 8, 8>] :
+    // CHECK-NEXT: %[[WIDE:.*]] = simulation.context.storage %arg0[0]
+    // CHECK-NEXT: %[[M:.*]] = simulation.context.storage %arg0[1]
+    // CHECK-NEXT: %[[OK:.*]] = schedule.known.roots %[[WIDE]], %[[M]] :
     // CHECK-NEXT: cf.cond_br %[[OK]] weights([1048575, 1]), ^[[COPY:bb[0-9]+]], ^[[BODY:bb[0-9]+]]
     // CHECK: ^bb1:
     // CHECK-NEXT: simulation.logic.binary mul
@@ -34,10 +35,12 @@ module attributes {native.optimization_level = 3 : i32} {
     // CHECK: %[[X:.*]] = simulation.ref.load %{{.*}} : !simulation.ref<!simulation.logic<8>> -> !simulation.logic<8>
     // CHECK-NEXT: simulation.logic.is_true %[[X]]
     // CHECK: ^[[COPY]]:
-    // CHECK-NOT: known_read
+    // CHECK-NOT: known_
     // CHECK: %[[K:.*]] = simulation.ref.load %{{.*}} {schedule.native.known_read}
     // CHECK-NEXT: simulation.logic.is_true %[[K]]
-    // CHECK-NOT: known_read
+    // CHECK: %[[Y:.*]] = simulation.ref.load %{{.*}} {schedule.native.known_read}
+    // CHECK-NEXT: simulation.ref.store %[[Y]] to %{{.*}} : !simulation.logic<8>
+    // CHECK-NOT: known_
     // CHECK: }
     simulation.func @activation(%ctx: !c {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64} {
@@ -66,7 +69,8 @@ module attributes {native.optimization_level = 3 : i32} {
 
 // -----
 
-// An activation whose reads are all islands has nothing to check.
+// An activation that saves less than its check costs keeps only its
+// original.
 
 !c = !simulation.context
 !l8 = !simulation.logic<8>
@@ -79,7 +83,7 @@ module attributes {native.optimization_level = 3 : i32} {
     simulation.code_unit.decl 1 in 0 function hierarchy "top.f"
     // CHECK-LABEL: simulation.func @islands
     // CHECK-NOT: schedule.native.known_versioned
-    // CHECK-NOT: schedule.known.bits
+    // CHECK-NOT: schedule.known.roots
     // CHECK: simulation.return
     simulation.func @islands(%ctx: !c {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64} {
@@ -96,9 +100,10 @@ module attributes {native.optimization_level = 3 : i32} {
 
 // The copy tests the memory element where it loads and, on X/Z, continues
 // in the original right after the same read, carrying the values the
-// original defined before it as block arguments. The private allocation both
-// copies use moves to the entry, keeping a store of its initializer, and the
-// output reference is recomputed after the merge.
+// original defined before it as block arguments. Its store of the result is
+// known. The private allocation both copies use moves to the entry, keeping
+// a store of its initializer, and the output reference is recomputed after
+// the merge.
 
 !c = !simulation.context
 !l8 = !simulation.logic<8>
@@ -114,7 +119,7 @@ module attributes {native.optimization_level = 3 : i32} {
     // CHECK-LABEL: simulation.func @transfer
     // CHECK-NEXT: %[[DEFAULT:.*]] = simulation.logic.constant 0 : i8, -1 : i8
     // CHECK-NEXT: %[[TMP:.*]] = simulation.ref.alloc %[[DEFAULT]]
-    // CHECK: schedule.known.bits
+    // CHECK: schedule.known.roots
     // CHECK-NEXT: cf.cond_br %{{.*}}, ^[[COPY:bb[0-9]+]], ^[[BODY:bb[0-9]+]]
     // CHECK: ^[[BODY]]:
     // CHECK: %[[P:.*]] = simulation.logic.binary mul
@@ -130,6 +135,7 @@ module attributes {native.optimization_level = 3 : i32} {
     // CHECK-NEXT: %[[BITS:.*]] = simulation.logic.to_bits %[[E2]]
     // CHECK-NEXT: %[[KNOWN:.*]] = simulation.logic.from_bits %[[BITS]]
     // CHECK-NEXT: simulation.logic.binary add %[[KNOWN]], %[[P2]]
+    // CHECK: simulation.ref.store %{{.*}} to %{{.*}} {schedule.native.known_store}
     // CHECK: ^[[REST]](%[[MP:.*]]: !simulation.logic<8>, %[[ME:.*]]: !simulation.logic<8>):
     // CHECK-NEXT: simulation.logic.binary add %[[ME]], %[[MP]]
     // CHECK: %[[OUT:.*]] = simulation.context.storage %arg0[1]
@@ -161,9 +167,109 @@ module attributes {native.optimization_level = 3 : i32} {
 
 // -----
 
+// A memory element selected by an index that is valid whenever it is known
+// is gated, and a known value stored to that element writes only its value
+// plane: an invalid index writes nothing (IEEE 1800-2023 7.4.5). Once the
+// activation may have stored X/Z into a root, a later store to it keeps both
+// planes, and so does the possibly X/Z quotient (11.4.2).
+
+!c = !simulation.context
+!l3 = !simulation.logic<3>
+!l4 = !simulation.logic<4>
+!l8 = !simulation.logic<8>
+!r3 = !simulation.ref<!l3>
+!r8 = !simulation.ref<!l8>
+!memory = !simulation.unpacked_array<0 : 7 x !l8>
+module attributes {native.optimization_level = 3 : i32} {
+  simulation.design @stores {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !l3 design
+    simulation.storage.decl 1 in 0 : !memory design
+    simulation.storage.decl 2 in 0 : !l8 design
+    simulation.code_unit.decl 1 in 0 function hierarchy "top.f"
+    // CHECK-LABEL: simulation.func @stores
+    // CHECK: %[[OK:.*]] = schedule.known.roots %{{.*}}, %{{.*}} : !simulation.ref<!simulation.logic<3>>, !simulation.ref<!simulation.unpacked_array<0 : 7 x !simulation.logic<8>>>{{$}}
+    // CHECK-NEXT: cf.cond_br %[[OK]] weights([1048575, 1]), ^[[COPY:bb[0-9]+]], ^
+    // CHECK: ^[[COPY]]:
+    // CHECK: simulation.ref.load %{{.*}} {schedule.native.known_read} : !simulation.ref<!simulation.logic<3>>
+    // CHECK: simulation.ref.load %{{.*}} {schedule.native.known_read} : !simulation.ref<!simulation.logic<8>>
+    // CHECK: simulation.ref.store %{{.*}} to %{{.*}} {schedule.native.known_store}
+    // CHECK-NEXT: simulation.logic.binary udiv
+    // CHECK-NEXT: simulation.ref.store %{{.*}} to %{{.*}} : !simulation.logic<8>
+    // CHECK-NEXT: simulation.ref.store %{{.*}} to %{{.*}} : !simulation.logic<8>
+    simulation.func @stores(%ctx: !c {simulation.capture_kind = 0 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64} {
+      %i = simulation.context.storage %ctx[0] : !r3
+      %mem = simulation.context.storage %ctx[1] : !simulation.ref<!memory>
+      %out = simulation.context.storage %ctx[2] : !r8
+      %short = simulation.ref.load %i : !r3 -> !l3
+      %index = simulation.logic.resize %short signed = false : !l3 -> !l4
+      %slot = simulation.ref.array_element %mem[%index] :
+          (!simulation.ref<!memory>, !l4) -> !r8
+      %e = simulation.ref.load %slot : !r8 -> !l8
+      %p1 = simulation.logic.binary mul %e, %e : !l8
+      %p2 = simulation.logic.binary add %p1, %e : !l8
+      %p3 = simulation.logic.binary mul %p2, %p1 : !l8
+      simulation.ref.store %p3 to %slot : !l8, !r8
+      %r = simulation.logic.binary udiv %p3, %e : !l8
+      simulation.ref.store %r to %out : !l8, !r8
+      simulation.ref.store %p2 to %out : !l8, !r8
+      simulation.return
+    }
+  }
+}
+
+// -----
+
+// A root's steady pattern (`simulation.steady_unknown`, here a[7:4]) holds
+// X/Z when the check passes. A read of the root before any write is
+// value-only and loads the pattern as a constant X. A store reaching pattern
+// bits keeps both planes even with a known value, and a later read keeps
+// both too: the store may have made pattern bits known.
+
+!c = !simulation.context
+!l8 = !simulation.logic<8>
+!r8 = !simulation.ref<!l8>
+module attributes {native.optimization_level = 3 : i32} {
+  simulation.design @steady {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !l8 design {simulation.steady_unknown = array<i64: 4, 4>}
+    simulation.storage.decl 1 in 0 : !l8 design
+    simulation.storage.decl 2 in 0 : !l8 design
+    simulation.code_unit.decl 1 in 0 function hierarchy "top.f"
+    // CHECK-LABEL: simulation.func @steady
+    // CHECK: %[[OK:.*]] = schedule.known.roots
+    // CHECK-NEXT: cf.cond_br %[[OK]] weights([1048575, 1]), ^[[COPY:bb[0-9]+]], ^
+    // CHECK: ^[[COPY]]:
+    // CHECK: simulation.ref.load %{{.*}} {schedule.native.known_read}
+    // CHECK-NEXT: simulation.ref.load %{{.*}} {schedule.native.known_read}
+    // CHECK: simulation.ref.store %{{.*}} to %{{.*}} : !simulation.logic<8>, !simulation.ref<!simulation.logic<8>>{{$}}
+    // CHECK-NEXT: simulation.ref.load %{{.*}} : !simulation.ref<!simulation.logic<8>> -> !simulation.logic<8>{{$}}
+    simulation.func @steady(%ctx: !c {simulation.capture_kind = 0 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64} {
+      %a = simulation.context.storage %ctx[0] : !r8
+      %in = simulation.context.storage %ctx[1] : !r8
+      %out = simulation.context.storage %ctx[2] : !r8
+      %old = simulation.ref.load %a : !r8 -> !l8
+      %x = simulation.ref.load %in : !r8 -> !l8
+      %p1 = simulation.logic.binary mul %x, %x : !l8
+      %p2 = simulation.logic.binary add %p1, %x : !l8
+      %p3 = simulation.logic.binary mul %p2, %p1 : !l8
+      simulation.ref.store %p3 to %a : !l8, !r8
+      %new = simulation.ref.load %a : !r8 -> !l8
+      %sum = simulation.logic.binary add %new, %old : !l8
+      simulation.ref.store %sum to %out : !l8, !r8
+      simulation.return
+    }
+  }
+}
+
+// -----
+
 // Either copy of the first segment may have filled the private slot, so the
-// second segment's check tests it before the copy relies on it. The root the
-// slot's value overwrites needs no check of its own.
+// second segment's check tests it before the copy relies on it. The copy
+// stores the slot's value to a root as a known store, so the check tests that
+// root with the ones the segment reads.
 !c = !simulation.context
 !l8 = !simulation.logic<8>
 !l16 = !simulation.logic<16>
@@ -178,14 +284,14 @@ module attributes {native.optimization_level = 3 : i32} {
     simulation.storage.decl 3 in 0 : !l16 design
     simulation.code_unit.decl 1 in 0 function hierarchy "top.f"
     // SEGMENTS-LABEL: simulation.func @slots
-    // SEGMENTS: %[[BITS:.*]] = schedule.known.bits %{{.*}} [array<i64: 0, 16>] : !simulation.ref<!simulation.logic<16>>{{$}}
+    // SEGMENTS: %[[ROOTS:.*]] = schedule.known.roots %{{.*}}, %{{.*}}, %{{.*}} : !simulation.ref<!simulation.logic<8>>, !simulation.ref<!simulation.logic<8>>, !simulation.ref<!simulation.logic<16>>{{$}}
     // SEGMENTS-NEXT: %[[SLOT:.*]] = simulation.ref.load %[[TMP:.*]] :
     // SEGMENTS-NEXT: %[[FILLED:.*]] = schedule.known.value %[[SLOT]]
-    // SEGMENTS-NEXT: %[[OK:.*]] = arith.andi %[[BITS]], %[[FILLED]]
+    // SEGMENTS-NEXT: %[[OK:.*]] = arith.andi %[[ROOTS]], %[[FILLED]]
     // SEGMENTS-NEXT: cf.cond_br %[[OK]] weights([1048575, 1]), ^[[COPY:bb[0-9]+]], ^
     // SEGMENTS: ^[[COPY]]:
     // SEGMENTS-NEXT: %[[Q:.*]] = simulation.ref.load %[[TMP]] :
-    // SEGMENTS-NEXT: simulation.ref.store %[[Q]] to %[[B:.*]] :
+    // SEGMENTS-NEXT: simulation.ref.store %[[Q]] to %[[B:.*]] {schedule.native.known_store}
     // SEGMENTS-NEXT: simulation.ref.load %[[B]] {schedule.native.known_read}
     // SEGMENTS-NEXT: simulation.ref.load %{{.*}} {schedule.native.known_read}
     simulation.func @slots(%ctx: !c {simulation.capture_kind = 0 : i32})
@@ -219,71 +325,11 @@ module attributes {native.optimization_level = 3 : i32} {
 
 // -----
 
-// The first segment's copy leaves the root it checked known, since nothing
-// stores X/Z to it. After that copy ran, the second segment's check tests
-// only the new root; after the original ran it tests both.
-
-!c = !simulation.context
-!l8 = !simulation.logic<8>
-!l16 = !simulation.logic<16>
-!r8 = !simulation.ref<!l8>
-!r16 = !simulation.ref<!l16>
-module attributes {native.optimization_level = 3 : i32} {
-  simulation.design @inherit {
-    simulation.scope.decl 0
-    simulation.storage.decl 0 in 0 : !l8 design
-    simulation.storage.decl 1 in 0 : !l8 design
-    simulation.storage.decl 2 in 0 : !l16 design
-    simulation.storage.decl 3 in 0 : !l16 design
-    simulation.code_unit.decl 1 in 0 function hierarchy "top.f"
-    // SEGMENTS-LABEL: simulation.func @inherit
-    // SEGMENTS: %[[FALSE:.*]] = arith.constant false
-    // SEGMENTS-NEXT: cf.br ^[[NEXT:bb[0-9]+]](%[[FALSE]] : i1)
-    // SEGMENTS: ^[[NEXT]](%[[RAN:.*]]: i1):
-    // SEGMENTS: %[[FRESH:.*]] = schedule.known.bits %{{.*}} [array<i64: 0, 16>] : !simulation.ref<!simulation.logic<16>>{{$}}
-    // SEGMENTS-NEXT: cf.cond_br %[[RAN]] weights([1048575, 1]), ^[[DECIDE:bb[0-9]+]](%[[FRESH]] : i1), ^[[INHERIT:bb[0-9]+]]
-    // SEGMENTS: %[[TRUE:.*]] = arith.constant true
-    // SEGMENTS-NEXT: cf.br ^[[NEXT]](%[[TRUE]] : i1)
-    // SEGMENTS: ^[[INHERIT]]:
-    // SEGMENTS-NEXT: %[[A:.*]] = simulation.context.storage %arg0[0]
-    // SEGMENTS-NEXT: %[[OLD:.*]] = schedule.known.bits %[[A]] [array<i64: 0, 8>]
-    // SEGMENTS-NEXT: %[[BOTH:.*]] = arith.andi %[[FRESH]], %[[OLD]]
-    // SEGMENTS-NEXT: cf.br ^[[DECIDE]](%[[BOTH]] : i1)
-    // SEGMENTS: ^[[DECIDE]](%[[OK:.*]]: i1):
-    // SEGMENTS-NEXT: cf.cond_br %[[OK]] weights([1048575, 1]), ^
-    simulation.func @inherit(%ctx: !c {simulation.capture_kind = 0 : i32})
-        attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64} {
-      %a = simulation.context.storage %ctx[0] : !r8
-      %b = simulation.context.storage %ctx[1] : !r8
-      %c = simulation.context.storage %ctx[2] : !r16
-      %d = simulation.context.storage %ctx[3] : !r16
-      %x = simulation.ref.load %a : !r8 -> !l8
-      %p1 = simulation.logic.binary mul %x, %x : !l8
-      %p2 = simulation.logic.binary add %p1, %x : !l8
-      %p3 = simulation.logic.binary mul %p2, %p1 : !l8
-      %p4 = simulation.logic.binary sub %p3, %x : !l8
-      simulation.ref.store %p4 to %b : !l8, !r8
-      %y = simulation.ref.load %a : !r8 -> !l8
-      %z = simulation.ref.load %c : !r16 -> !l16
-      %yw = simulation.logic.resize %y signed = false : !l8 -> !l16
-      %v = simulation.logic.binary mul %z, %yw : !l16
-      %w = simulation.logic.binary add %v, %z : !l16
-      %s = simulation.logic.binary mul %w, %yw : !l16
-      %t = simulation.logic.binary sub %s, %v : !l16
-      %o = simulation.logic.binary add %t, %w : !l16
-      simulation.ref.store %o to %d : !l16, !r16
-      simulation.return
-    }
-  }
-}
-
-// -----
-
 // A value from the previous segment comes from whichever copy ran there. The
 // second segment's check tests the values only the copy proves known: the
-// gated read and the product computed from it. The memory element is an
-// island in both copies, so the check leaves it alone and both copies keep
-// its unknown plane.
+// gated read and the product computed from it. The memory element's index
+// may select past the array, so the check leaves the element alone and both
+// copies keep its unknown plane.
 
 !c = !simulation.context
 !l8 = !simulation.logic<8>
@@ -298,10 +344,10 @@ module attributes {native.optimization_level = 3 : i32} {
     simulation.storage.decl 3 in 0 : !l8 design
     simulation.code_unit.decl 1 in 0 function hierarchy "top.f"
     // SEGMENTS-LABEL: simulation.func @crossing
-    // SEGMENTS: ^[[NEXT:bb[0-9]+]](%[[X:[0-9]+]]: !simulation.logic<8>, %[[E:[0-9]+]]: !simulation.logic<8>, %[[P:[0-9]+]]: !simulation.logic<8>, %{{[0-9]+}}: i1):
-    // SEGMENTS: %[[BITS:.*]] = schedule.known.bits
+    // SEGMENTS: ^[[NEXT:bb[0-9]+]](%[[X:[0-9]+]]: !simulation.logic<8>, %[[E:[0-9]+]]: !simulation.logic<8>, %[[P:[0-9]+]]: !simulation.logic<8>):
+    // SEGMENTS: %[[ROOTS:.*]] = schedule.known.roots
     // SEGMENTS-NEXT: %[[KP:.*]] = schedule.known.value %[[P]]
-    // SEGMENTS-NEXT: %[[BOTH:.*]] = arith.andi %[[BITS]], %[[KP]]
+    // SEGMENTS-NEXT: %[[BOTH:.*]] = arith.andi %[[ROOTS]], %[[KP]]
     // SEGMENTS-NEXT: %[[KX:.*]] = schedule.known.value %[[X]]
     // SEGMENTS-NEXT: %[[OK:.*]] = arith.andi %[[BOTH]], %[[KX]]
     // SEGMENTS-NEXT: cf.cond_br %[[OK]] weights([1048575, 1]), ^[[COPY:bb[0-9]+]], ^
@@ -354,7 +400,7 @@ module attributes {native.optimization_level = 3 : i32} {
     simulation.code_unit.decl 1 in 0 function hierarchy "top.f"
     // SEGMENTS-LABEL: simulation.func @untestable
     // SEGMENTS-SAME: schedule.native.known_versioned
-    // SEGMENTS: schedule.known.bits %{{.*}}, %{{.*}} [array<i64: 0, 8>, array<i64: 0, 8>]
+    // SEGMENTS: schedule.known.roots %{{.*}}, %{{.*}} :
     // SEGMENTS-NOT: schedule.known.
     simulation.func @untestable(%ctx: !c {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64} {
@@ -377,65 +423,6 @@ module attributes {native.optimization_level = 3 : i32} {
       %q3 = simulation.logic.binary mul %q2, %q1 : !l8
       %q4 = simulation.logic.binary sub %q3, %y : !l8
       simulation.ref.store %q4 to %d : !l8, !r8
-      simulation.return
-    }
-  }
-}
-
-// -----
-
-// The block that never executes also enters the second segment, so the
-// first segment's copies merge in a dedicated exit. That exit forwards
-// whether the copy ran to the second segment's check, which tests the
-// inherited root only after the original ran; the other edge passes false.
-
-!c = !simulation.context
-!l8 = !simulation.logic<8>
-!l16 = !simulation.logic<16>
-!r8 = !simulation.ref<!l8>
-!r16 = !simulation.ref<!l16>
-module attributes {native.optimization_level = 3 : i32} {
-  simulation.design @dedicated {
-    simulation.scope.decl 0
-    simulation.storage.decl 0 in 0 : !l8 design
-    simulation.storage.decl 1 in 0 : !l8 design
-    simulation.storage.decl 2 in 0 : !l16 design
-    simulation.storage.decl 3 in 0 : !l16 design
-    simulation.code_unit.decl 1 in 0 function hierarchy "top.f"
-    // SEGMENTS-LABEL: simulation.func @dedicated
-    // SEGMENTS: ^bb1:  // no predecessors
-    // SEGMENTS-NEXT: %[[FALSE:.*]] = arith.constant false
-    // SEGMENTS-NEXT: cf.br ^[[NEXT:bb[0-9]+]](%[[FALSE]] : i1)
-    // SEGMENTS-NEXT: ^[[NEXT]](%[[RAN:.*]]: i1):
-    // SEGMENTS: %[[FRESH:.*]] = schedule.known.bits %{{.*}} [array<i64: 0, 16>]
-    // SEGMENTS-NEXT: cf.cond_br %[[RAN]] weights([1048575, 1]), ^{{bb[0-9]+}}(%[[FRESH]] : i1), ^
-    // SEGMENTS: ^{{bb[0-9]+}}(%[[COPY:.*]]: i1):
-    // SEGMENTS: cf.br ^[[NEXT]](%[[COPY]] : i1)
-    simulation.func @dedicated(%ctx: !c {simulation.capture_kind = 0 : i32})
-        attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64} {
-      %a = simulation.context.storage %ctx[0] : !r8
-      %b = simulation.context.storage %ctx[1] : !r8
-      %c = simulation.context.storage %ctx[2] : !r16
-      %d = simulation.context.storage %ctx[3] : !r16
-      %x = simulation.ref.load %a : !r8 -> !l8
-      %p1 = simulation.logic.binary mul %x, %x : !l8
-      %p2 = simulation.logic.binary add %p1, %x : !l8
-      %p3 = simulation.logic.binary mul %p2, %p1 : !l8
-      %p4 = simulation.logic.binary sub %p3, %x : !l8
-      simulation.ref.store %p4 to %b : !l8, !r8
-      cf.br ^next
-    ^dead:
-      cf.br ^next
-    ^next:
-      %y = simulation.ref.load %a : !r8 -> !l8
-      %z = simulation.ref.load %c : !r16 -> !l16
-      %yw = simulation.logic.resize %y signed = false : !l8 -> !l16
-      %v = simulation.logic.binary mul %z, %yw : !l16
-      %w = simulation.logic.binary add %v, %z : !l16
-      %s = simulation.logic.binary mul %w, %yw : !l16
-      %t = simulation.logic.binary sub %s, %v : !l16
-      %o = simulation.logic.binary add %t, %w : !l16
-      simulation.ref.store %o to %d : !l16, !r16
       simulation.return
     }
   }

@@ -172,22 +172,22 @@ def NativeKnownValueOp : ScheduleNativeOp<"known.value", [Pure]> {
   let hasVerifier = 1;
   let hasCanonicalizer = 1;
 }
-def NativeKnownBitsOp : ScheduleNativeOp<"known.bits"> {
-  let summary = "test that selected bits of canonical storage hold no X or Z";
+def NativeKnownRootsOp : ScheduleNativeOp<"known.roots"> {
+  let summary = "test that whole storage roots hold no X or Z";
   let description = [{
-    True when no selected bit of any reference holds X or Z. `ranges` holds,
-    for each reference, its (offset, width) pairs relative to the referenced
-    storage, sorted and disjoint. Only unknown planes are read, in place
-    where the storage has a fixed direct location and through the runtime
-    otherwise. A location the runtime cannot resolve reads as X, so the
-    predicate never claims knownness it cannot observe.
+    True when every referenced storage root holds X or Z exactly in the bits
+    of its steady pattern (`simulation.steady_unknown`, none without one) and
+    nowhere else. Each reference addresses a whole root. Generated code tests
+    one summary bit per root, which every writer that may make the root differ
+    from its pattern sets and the runtime clears after comparing the root's
+    unknown plane with the pattern, so the predicate never claims a root the
+    summary does not track.
   }];
   let arguments = (ins
-      Arg<Variadic<SimRefType>, "", [MemRead<SimStorageResource>]>:$references,
-      TypedArrayAttrBase<DenseI64ArrayAttr, "ranges per reference">:$ranges);
+      Arg<Variadic<SimRefType>, "", [MemRead<SimStorageResource>]>:$references);
   let results = (outs I1:$known);
   let assemblyFormat = [{
-    $references $ranges attr-dict `:` qualified(type($references))
+    $references attr-dict `:` qualified(type($references))
   }];
   let hasVerifier = 1;
 }

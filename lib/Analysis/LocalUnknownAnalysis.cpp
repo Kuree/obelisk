@@ -29,129 +29,8 @@ namespace {
 
 using ReadKind = LocalUnknownAnalysis::ReadKind;
 
-/// Dynamic packed selections are gated over their whole hull up to this
-/// width; a wider hull stays an island.
-constexpr uint64_t maximumGatedHullBits = 4096;
 /// A segment's entry check tests private slots up to this width.
 constexpr uint64_t maximumCheckedSlotBits = 256;
-
-//===----------------------------------------------------------------------===//
-// Uses: how each SSA value is consumed
-//===----------------------------------------------------------------------===//
-
-/// Unused < Moved < Computed. A moved value reaches only stores, NBAs,
-/// displays and operations that rearrange its bits.
-enum class Use : uint8_t { Unused, Moved, Computed };
-
-class UseValue {
-public:
-  UseValue() = default;
-  explicit UseValue(Use use) : use(use) {}
-  static UseValue meet(const UseValue &lhs, const UseValue &rhs) {
-    return UseValue(std::max(lhs.use, rhs.use));
-  }
-  static UseValue join(const UseValue &lhs, const UseValue &rhs) {
-    return meet(lhs, rhs);
-  }
-  bool operator==(const UseValue &other) const { return use == other.use; }
-  void print(raw_ostream &os) const {
-    os << (use == Use::Unused  ? "unused"
-           : use == Use::Moved ? "moved"
-                               : "computed");
-  }
-  Use get() const { return use; }
-
-private:
-  Use use = Use::Unused;
-};
-
-class UseLattice final : public dataflow::Lattice<UseValue> {
-public:
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(UseLattice)
-  using Lattice::Lattice;
-};
-
-/// The operands of `op` whose bits reach its results unchanged, possibly
-/// rearranged, and whose X/Z bits therefore only move.
-bool isMovedOperand(Operation *op, unsigned index) {
-  return llvm::TypeSwitch<Operation *, bool>(op)
-      .Case<sim::SimPackedFlattenOp, sim::SimPackedUnflattenOp,
-            sim::SimLogicResizeOp, sim::SimLogicExtractOp,
-            sim::SimLogicConcatOp, sim::SimLogicReplicateOp,
-            sim::SimLogicInsertOp, sim::SimAggregateExtractOp,
-            sim::SimAggregateInsertOp, sim::SimAggregateConstructOp,
-            sim::SimAggregateSplatOp>([](auto) { return true; })
-      .Case<sim::SimLogicDynExtractOp>([&](auto extract) {
-        return op->getOperand(index) == extract.getInput();
-      })
-      .Case<sim::SimArrayDynExtractOp>([&](auto extract) {
-        return op->getOperand(index) == extract.getInput();
-      })
-      .Case<sim::SimLogicDynInsertOp>([&](auto insert) {
-        return op->getOperand(index) == insert.getInput() ||
-               op->getOperand(index) == insert.getReplacement();
-      })
-      .Case<sim::SimArrayDynInsertOp>([&](auto insert) {
-        return op->getOperand(index) == insert.getInput() ||
-               op->getOperand(index) == insert.getReplacement();
-      })
-      .Case<SelectLikeOpInterface>([&](auto select) {
-        return op->getOperand(index) == select.getTrueValue() ||
-               op->getOperand(index) == select.getFalseValue();
-      })
-      .Default([](Operation *) { return false; });
-}
-
-/// The operands `op` consumes as a whole value without computing on it: the
-/// value a store or NBA writes and the items a display formats.
-bool isSunkOperand(Operation *op, unsigned index) {
-  Value operand = op->getOperand(index);
-  return llvm::TypeSwitch<Operation *, bool>(op)
-      .Case<sim::SimRefStoreOp>(
-          [&](auto store) { return operand == store.getValue(); })
-      .Case<sim::SimNBAEnqueueOp>(
-          [&](auto nba) { return operand == nba.getValue(); })
-      .Case<sim::SimNetWriteOp>(
-          [&](auto write) { return operand == write.getValue(); })
-      .Case<sim::SimDisplayOp>(
-          [&](auto display) { return llvm::is_contained(display.getItems(),
-                                                       operand); })
-      .Default([](Operation *) { return false; });
-}
-
-class UseAnalysis final
-    : public dataflow::SparseBackwardDataFlowAnalysis<UseLattice> {
-public:
-  using SparseBackwardDataFlowAnalysis::SparseBackwardDataFlowAnalysis;
-
-  LogicalResult visitOperation(Operation *op, ArrayRef<UseLattice *> operands,
-                               ArrayRef<const UseLattice *> results) override {
-    UseValue resultUse;
-    for (const UseLattice *result : results)
-      resultUse = UseValue::meet(resultUse, result->getValue());
-    for (auto [index, operand] : llvm::enumerate(operands)) {
-      UseValue use(Use::Computed);
-      if (isSunkOperand(op, index))
-        use = UseValue(Use::Moved);
-      else if (isMovedOperand(op, index))
-        use = resultUse;
-      propagateIfChanged(operand, operand->meet(use));
-    }
-    return success();
-  }
-  void visitBranchOperand(OpOperand &operand) override {
-    UseLattice *lattice = getLatticeElement(operand.get());
-    propagateIfChanged(lattice, lattice->meet(UseValue(Use::Computed)));
-  }
-  void visitCallOperand(OpOperand &operand) override {
-    visitBranchOperand(operand);
-  }
-  void visitNonControlFlowArguments(RegionSuccessor &,
-                                    ArrayRef<BlockArgument>) override {}
-  void setToExitState(UseLattice *lattice) override {
-    propagateIfChanged(lattice, lattice->meet(UseValue(Use::Computed)));
-  }
-};
 
 //===----------------------------------------------------------------------===//
 // State domains with and without the entry check
@@ -482,13 +361,29 @@ struct Inputs {
          const LocalUnknownAnalysis::Options &options)
       : handles(handles.facts), certificates(handles.certificates),
         locals(locals), segmentation(options.segmentation),
-        callees(options.callees), summary(options.summary) {}
+        callees(options.callees), summary(options.summary),
+        staysUnknown(options.staysUnknown) {}
   const HandleFacts &handles;
   const DenseMap<Value, HandleCertificate> &certificates;
   const LocalStorageAnalysis &locals;
   const LocalUnknownAnalysis::Segmentation *segmentation;
   const LocalUnknownAnalysis::CalleeSummaries *callees;
   bool summary;
+  llvm::function_ref<bool(uint64_t, uint64_t, uint64_t)> staysUnknown;
+
+  /// Whether a write through `reference` may reach bits that a gated read
+  /// loads as the constant X of `simulation.steady_unknown`.
+  bool mayWriteSteady(Value reference) const {
+    auto fact = handles.find(reference);
+    if (!staysUnknown || fact == handles.end() || !fact->second.descriptor ||
+        fact->second.resource != schedule::ComputeResourceKind::Storage)
+      return false;
+    // A dynamic selection's fact is its hull.
+    uint64_t width =
+        fact->second.width ? fact->second.width : fact->second.rootWidth;
+    return width && staysUnknown(*fact->second.descriptor, fact->second.low,
+                                 fact->second.low + width);
+  }
 
   /// Whether `value` reaches `user` from another segment. Arguments of a
   /// block a segment starts at come from the previous segment.
@@ -531,6 +426,8 @@ struct Inputs {
   /// The selectors each gated dynamic selection is valid for once they are
   /// known (HandleCertificate::knownSelectors).
   DenseMap<Operation *, SmallVector<Value, 2>> selectors;
+  /// Gated reads of steady pattern bits: four-state in the copy as well.
+  DenseSet<Operation *> steady;
 
   /// Every bit of a private allocation.
   Interval wholeSlot(sim::SimRefAllocOp allocation) {
@@ -722,7 +619,8 @@ private:
       if (site == inputs.sites.end() ||
           (site->second.kind != ReadKind::Gated &&
            site->second.kind != ReadKind::Local) ||
-          (inputs.summary && site->second.kind == ReadKind::Gated))
+          (inputs.summary && site->second.kind == ReadKind::Gated) ||
+          inputs.steady.contains(op))
         return StateDomain::MayFourState;
       // A dynamic selection reads its gated hull only while it is valid:
       // whenever its selectors are known (IEEE 1800-2023 7.4.6, 11.5.1).
@@ -781,13 +679,16 @@ public:
         (void)next.setAll();
         return;
       }
+      // A write of steady-unknown bits may make them known, so a gated read
+      // after it cannot load them as the pattern's constant X.
       StateDomain domain = StateDomain::MayFourState;
       if (value) {
         if (!hasUnknownPlane(value.getType()))
           return;
-        domain = getOrCreateFor<GatedLattice>(getProgramPointAfter(op), value)
-                     ->getValue()
-                     .get();
+        if (!inputs.mayWriteSteady(reference))
+          domain = getOrCreateFor<GatedLattice>(getProgramPointAfter(op), value)
+                       ->getValue()
+                       .get();
       }
       if (domain == StateDomain::MayFourState)
         next.add(interval.root, interval.low, interval.high);
@@ -835,29 +736,6 @@ private:
 
   Inputs &inputs;
 };
-
-/// Whether `reference` selects an unpacked array element by a run-time index.
-bool selectsDynamicElement(Value reference) {
-  while (Operation *producer = reference.getDefiningOp()) {
-    if (auto element = dyn_cast<sim::SimRefArrayElementOp>(producer)) {
-      if (!matchPattern(element.getIndex(), m_Constant()) &&
-          isa<sim::UnpackedArrayType>(
-              cast<sim::RefType>(element.getInput().getType())
-                  .getElementType()))
-        return true;
-      reference = element.getInput();
-    } else if (auto field = dyn_cast<sim::SimRefSubelementOp>(producer)) {
-      reference = field.getInput();
-    } else if (auto slice = dyn_cast<sim::SimRefExtractOp>(producer)) {
-      reference = slice.getInput();
-    } else if (auto slice = dyn_cast<sim::SimRefDynExtractOp>(producer)) {
-      reference = slice.getInput();
-    } else {
-      break;
-    }
-  }
-  return false;
-}
 
 /// Approximate unknown-plane work that depends on `value` within its
 /// function: the operations its four-state uses reach through results and
@@ -915,8 +793,6 @@ StringRef LocalUnknownAnalysis::stringify(ReadKind kind) {
     return "unresolved";
   case ReadKind::Dynamic:
     return "dynamic";
-  case ReadKind::Moved:
-    return "moved";
   case ReadKind::Written:
     return "written";
   case ReadKind::Checked:
@@ -939,36 +815,21 @@ LocalUnknownAnalysis::LocalUnknownAnalysis(sim::SimFuncOp function,
     return;
   // The solvers follow region-based control flow through its interface.
   bool nested = false;
+  SmallVector<sim::SimRefStoreOp> stores;
   function.walk([&](Operation *op) {
     if (op != function.getOperation() && op->getNumRegions() &&
         !isa<RegionBranchOpInterface>(op))
       nested = true;
     if (isa<sim::SimRefLoadOp, sim::SimNetReadOp>(op))
       reads.push_back(op);
+    if (auto store = dyn_cast<sim::SimRefStoreOp>(op))
+      stores.push_back(store);
   });
   if (nested) {
     failure = "nested region";
     for (Operation *read : reads)
       kinds[read] = ReadKind::Unresolved;
     return;
-  }
-
-  // How values are used does not depend on the entry check.
-  DenseSet<Value> computed;
-  {
-    SymbolTableCollection symbols;
-    DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
-    solver.load<dataflow::DeadCodeAnalysis>();
-    solver.load<dataflow::SparseConstantPropagation>();
-    solver.load<UseAnalysis>(symbols);
-    if (failed(solver.initializeAndRun(function))) {
-      failure = "use analysis failed";
-      return;
-    }
-    for (Operation *read : reads)
-      if (auto *use = solver.lookupState<UseLattice>(read->getResult(0));
-          use && use->getValue().get() == Use::Computed)
-        computed.insert(read->getResult(0));
   }
 
   LocalStorageAnalysis locals(function);
@@ -987,29 +848,30 @@ LocalUnknownAnalysis::LocalUnknownAnalysis(sim::SimFuncOp function,
       site.root = slot->root;
       site.low = slot->low;
       site.high = slot->high;
-    }
-    else if (!isa<sim::SimRefLoadOp>(read) || fact == handles.facts.end() ||
-             !fact->second.descriptor ||
-             fact->second.resource != schedule::ComputeResourceKind::Storage)
+    } else if (!isa<sim::SimRefLoadOp>(read) || fact == handles.facts.end() ||
+               !fact->second.descriptor ||
+               fact->second.resource != schedule::ComputeResourceKind::Storage)
       site.kind = ReadKind::Unresolved;
-    else if (selectsDynamicElement(reference))
-      site.kind = ReadKind::Dynamic;
     else {
       uint64_t width =
           fact->second.width ? fact->second.width : fact->second.rootWidth;
       // A dynamic selection is gated over its hull, and only where it is
-      // valid for every known value of its selectors.
+      // valid for every known value of its selectors (IEEE 1800-2023 7.4.5,
+      // 11.5.1).
       auto certificate = handles.certificates.find(reference);
+      bool steady =
+          options.staysUnknown &&
+          options.staysUnknown(*fact->second.descriptor, fact->second.low,
+                               fact->second.low + width);
       if (width == 0)
         site.kind = ReadKind::Unresolved;
       else if (fact->second.dynamic &&
-               (width > maximumGatedHullBits ||
-                certificate == handles.certificates.end() ||
-                !certificate->second.inBoundsIfKnown))
+               (certificate == handles.certificates.end() ||
+                !certificate->second.inBoundsIfKnown || steady))
         site.kind = ReadKind::Dynamic;
-      else if (!computed.contains(result))
-        site.kind = ReadKind::Moved;
       else {
+        if (steady)
+          inputs.steady.insert(read);
         site.kind = ReadKind::Gated;
         site.root = inputs.rootIndex(fact->second.resource,
                                      *fact->second.descriptor);
@@ -1094,13 +956,29 @@ LocalUnknownAnalysis::LocalUnknownAnalysis(sim::SimFuncOp function,
            domainOf(solver.lookupState<GatedLattice>(value)) ==
                StateDomain::TwoState;
   };
-  SmallVector<DenseMap<unsigned, SmallVector<Range, 2>>> gated(count);
+  // The writes `op` observes; without a solved state, assume private slots
+  // hold entry contents and storage was neither written nor overwritten.
+  auto observedBefore = [&](Operation *op) -> std::optional<WrittenLattice> {
+    const auto *before =
+        solver.lookupState<WrittenLattice>(solver.getProgramPointBefore(op));
+    if (!before)
+      return std::nullopt;
+    return observedWrites(*before, op, inputs);
+  };
+  SmallVector<llvm::SetVector<uint64_t>> gated(count);
   for (Operation *read : reads) {
     ReadSite site = inputs.sites.lookup(read);
     ReadKind kind = site.kind;
-    if (!isExecutable(solver, read->getBlock()))
+    if (!isExecutable(solver, read->getBlock())) {
       kind = ReadKind::Dead;
-    else if (kind == ReadKind::Gated && !knownInGatedCopy(read->getResult(0)))
+    } else if (kind == ReadKind::Gated && inputs.steady.contains(read)) {
+      // Its value is four-state anyway; it stays value-only unless an X/Z
+      // write of the segment, or any write of its pattern bits, may reach
+      // it.
+      std::optional<WrittenLattice> observed = observedBefore(read);
+      if (!observed || observed->mayWrite(site.root, site.low, site.high))
+        kind = ReadKind::Written;
+    } else if (kind == ReadKind::Gated && !knownInGatedCopy(read->getResult(0)))
       kind = llvm::all_of(inputs.selectors.lookup(read), knownInGatedCopy)
                  ? ReadKind::Written
                  : ReadKind::Dynamic;
@@ -1109,13 +987,7 @@ LocalUnknownAnalysis::LocalUnknownAnalysis(sim::SimFuncOp function,
       ++segments[segmentOf(read)].checks;
     if (kind != ReadKind::Local && kind != ReadKind::Gated)
       continue;
-    // The writes the read observes; without a solved state, assume the
-    // slot holds entry contents and the storage was not overwritten.
-    const auto *before =
-        solver.lookupState<WrittenLattice>(solver.getProgramPointBefore(read));
-    std::optional<WrittenLattice> observed;
-    if (before)
-      observed.emplace(observedWrites(*before, read, inputs));
+    std::optional<WrittenLattice> observed = observedBefore(read);
     // A known private read whose bits may come from before its segment
     // needs the slot tested at the segment's entry.
     if (kind == ReadKind::Local) {
@@ -1131,8 +1003,39 @@ LocalUnknownAnalysis::LocalUnknownAnalysis(sim::SimFuncOp function,
     // Bits every path of the segment stored before the read need no check.
     if (observed && observed->overwrites(site.root, site.low, site.high))
       continue;
-    gated[segment][site.root].push_back({site.low, site.high - site.low});
+    gated[segment].insert(descriptors.lookup(site.root));
   }
+
+  // A known store writes only the value plane of a tested root whose bits no
+  // X/Z write of the segment may have reached: they stay zero. A write with
+  // an invalid index writes nothing (7.4.5), so a dynamic one qualifies too.
+  // Steady-unknown bits hold X/Z at the check, so a store reaching them
+  // keeps both planes.
+  if (!options.summary)
+    for (sim::SimRefStoreOp store : stores) {
+      Value reference = store.getReference();
+      auto fact = handles.facts.find(reference);
+      if (!isExecutable(solver, store->getBlock()) ||
+          !hasUnknownPlane(
+              cast<sim::RefType>(reference.getType()).getElementType()) ||
+          !knownInGatedCopy(store.getValue()) ||
+          inputs.resolveSlot(reference) || inputs.mayWriteSteady(reference) ||
+          fact == handles.facts.end() || !fact->second.descriptor ||
+          fact->second.resource != schedule::ComputeResourceKind::Storage)
+        continue;
+      uint64_t width =
+          fact->second.width ? fact->second.width : fact->second.rootWidth;
+      unsigned root =
+          inputs.rootIndex(fact->second.resource, *fact->second.descriptor);
+      std::optional<WrittenLattice> observed = observedBefore(store);
+      if (width == 0 || !observed ||
+          observed->mayWrite(root, fact->second.low, fact->second.low + width))
+        continue;
+      knownStores.insert(store);
+      Segment &segment = segments[segmentOf(store)];
+      segment.benefit += 1 + width / 64;
+      gated[segmentOf(store)].insert(*fact->second.descriptor);
+    }
 
   // Each operation with a four-state operand or result that the copy makes
   // two-state stops computing its unknown plane.
@@ -1175,77 +1078,10 @@ LocalUnknownAnalysis::LocalUnknownAnalysis(sim::SimFuncOp function,
       }
   });
 
-  // Merge per-root ranges into sorted gate roots; returns the tested words,
-  // counting each range from its first word.
-  auto toGate = [&](ArrayRef<Interval> list, SmallVectorImpl<GateRoot> &gate) {
-    uint64_t words = 0;
-    for (const Interval &interval : list) {
-      if (gate.empty() || gate.back().descriptor != descriptors.lookup(
-                                                         interval.root))
-        gate.push_back({descriptors.lookup(interval.root), {}});
-      gate.back().ranges.push_back(
-          {interval.low, interval.high - interval.low});
-      words += (interval.low % 64 + interval.high - interval.low + 63) / 64;
-    }
-    llvm::sort(gate, [](const GateRoot &a, const GateRoot &b) {
-      return a.descriptor < b.descriptor;
-    });
-    return words;
-  };
-  auto toIntervals = [&](const auto &roots) {
-    Intervals list;
-    for (auto &[root, ranges] : roots)
-      for (Range range : ranges)
-        list.push_back({root, range.low, range.low + range.width});
-    llvm::sort(list, [](const Interval &a, const Interval &b) {
-      return std::tie(a.root, a.low) < std::tie(b.root, b.low);
-    });
-    return unite(list, {});
-  };
   for (auto [segment, roots] : llvm::enumerate(gated)) {
-    Segment &result = segments[segment];
-    result.gateWords = toGate(toIntervals(roots), result.gate);
-    result.fresh = result.gate;
-    result.freshWords = result.gateWords;
-  }
-
-  // A segment's copy ends with its checked bits and the bits every path
-  // stored still known, unless an X/Z write may have reached them. When that
-  // copy ran, the next segment's check need not test those bits again.
-  if (!segmentation || count < 2)
-    return;
-  SmallVector<Operation *> beginOf(count);
-  for (Operation *begin : segmentation->begins)
-    beginOf[segmentation->segments.lookup(begin)] = begin;
-  for (unsigned next = 1; next < count; ++next) {
-    // The writes up to the cut, before the next segment's check observes
-    // them.
-    const auto *end = beginOf[next]
-                          ? solver.lookupState<WrittenLattice>(
-                                solver.getProgramPointBefore(beginOf[next]))
-                          : nullptr;
-    if (!end || !end->isReachable() || end->isAllStorage() ||
-        gated[next].empty())
-      continue;
-    Intervals known = unite(toIntervals(gated[next - 1]),
-                            Intervals(end->getOverwritten().begin(),
-                                      end->getOverwritten().end()));
-    auto knownList = std::make_shared<const Intervals>(std::move(known));
-    for (const Interval &written : end->getWritten())
-      if (!isSlotRoot(written.root))
-        subtract(knownList, written.root, written.low, written.high);
-    auto inherited =
-        std::make_shared<const Intervals>(toIntervals(gated[next]));
-    (void)intersectInto(inherited, knownList);
-    if (!inherited || inherited->empty())
-      continue;
-    auto fresh = std::make_shared<const Intervals>(toIntervals(gated[next]));
-    for (const Interval &interval : *inherited)
-      subtract(fresh, interval.root, interval.low, interval.high);
-    Segment &result = segments[next];
-    (void)toGate(*inherited, result.inherited);
-    result.fresh.clear();
-    result.freshWords = toGate(*fresh, result.fresh);
+    SmallVector<uint64_t, 0> &gate = segments[segment].gate;
+    gate.assign(roots.begin(), roots.end());
+    llvm::sort(gate);
   }
 }
 

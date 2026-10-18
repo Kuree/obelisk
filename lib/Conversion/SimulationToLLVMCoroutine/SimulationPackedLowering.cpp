@@ -1062,7 +1062,8 @@ LogicalResult lowerPackedSimulationOperations(
     populateStateReadWriteToLLVMConversionPatterns(
         patterns, c, stateLayout.bitCount,
         enableDirectStaticState ? &selectedLayout : nullptr,
-        experimentalTwoState, stateAccesses, locals);
+        experimentalTwoState, stateAccesses, locals, &stateLayout);
+    populateKnownRootsToLLVMConversionPatterns(patterns, c, stateLayout);
     populateOverrideToLLVMConversionPatterns(patterns, c, stateLayout.bitCount,
                                              dataLayout);
     populateManagedToLLVMConversionPatterns(
@@ -1212,7 +1213,7 @@ LogicalResult lowerPackedSimulationOperations(
     target.addLegalOp<sim::SimContextRuntimeOp, sim::SimStatusCheckOp>();
     target.addLegalDialect<schedule::ScheduleDialect>();
     target.addIllegalOp<schedule::NativeKnownValueOp,
-                        schedule::NativeKnownBitsOp>();
+                        schedule::NativeKnownRootsOp>();
     target.addDynamicallyLegalOp<sim::SimFuncOp>([&](sim::SimFuncOp function) {
       return c.isSignatureLegal(function.getFunctionType()) &&
              c.isLegal(&function.getBody());

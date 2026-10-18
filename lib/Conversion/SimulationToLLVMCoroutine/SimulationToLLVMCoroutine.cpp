@@ -298,7 +298,12 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
               // The helper cannot allocate, execute actors, access canonical
               // state, advance time, or re-enter the scheduler.
               *callee == "obelisk_rt_v1_native_promotion_invalidate_ranges" ||
-              *callee == "obelisk_rt_v1_native_promotion_recheck_ranges")
+              *callee == "obelisk_rt_v1_native_promotion_recheck_ranges" ||
+              // The unknown summary's rescan reads the generated unknown
+              // plane and clears summary bits; marking only sets them.
+              // Neither executes actors, publishes, or re-enters scheduling.
+              *callee == "obelisk_rt_v1_native_state_refresh_unknown_summary" ||
+              *callee == "obelisk_rt_v1_native_state_mark_unknown")
             return WalkResult::advance();
           // LRM 4.6(a), 9.4.2: the hybrid calendar's bounded publication
           // bridge preserves the source actor identity and delivers waits
@@ -1542,6 +1547,9 @@ LogicalResult NativePipelineAnalysis::prepareFragments(
   });
   for (sim::SimObserverBindOp binding : deadObserverBindings)
     binding.erase();
+  // Activation versioning added its known.roots gates after the state layout
+  // was planned; number their roots before the gates lower.
+  detail::assignUnknownSummary(module, *stateLayout);
 
   // Packed lowering may replace generated region functions and intentionally
   // drops planning-only attributes. Snapshot typed body-fusion identities
@@ -4017,9 +4025,15 @@ public:
     }
     markTiming("observer and DPI thunk materialization");
     if (failed(detail::prepareNativeProofPublicationInputs(
+            module, getAnalysisManager())) ||
+        failed(detail::prepareNativeUnknownSummaryPublication(
             module, getAnalysisManager())))
       return signalPassFailure();
+    // Unknown summary reports read the dynamic write ranges that proof
+    // publication consumes.
     OpPassManager publications(ModuleOp::getOperationName());
+    publications.nest<LLVM::LLVMFuncOp>().addPass(
+        detail::createPublishNativeUnknownSummaryPass());
     publications.nest<LLVM::LLVMFuncOp>().addPass(
         detail::createPublishNativeFunctionProofsPass());
     if (failed(runPipeline(publications, module))) {

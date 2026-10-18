@@ -529,6 +529,28 @@ LogicalResult makeSchedulerMain(ModuleOp module,
                          "obelisk_rt_v1_scheduler_fail",
                          ValueRange{runtimeContext, status});
   }
+  if (!stateLayout.unknownSummaryRoots.empty()) {
+    auto address = [&](StringRef name) -> Value {
+      return LLVM::AddressOfOp::create(builder, location, pointer, name);
+    };
+    Value status =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            "obelisk_rt_v1_native_state_bind_unknown_summary",
+            ValueRange{
+                runtimeContext, address("__obelisk_state_unknown"),
+                llvmConstant(builder, location, i64, stateLayout.bitCount),
+                address(unknownSummaryName), address(unknownSummaryRootsName),
+                llvmConstant(builder, location, i64,
+                             stateLayout.unknownSummaryRoots.size()),
+                address(unknownSummaryPatternsName),
+                llvmConstant(builder, location, i64,
+                             stateLayout.getUnknownSummaryPatternCount())})
+            .getResult();
+    LLVM::CallOp::create(builder, location, TypeRange{},
+                         "obelisk_rt_v1_scheduler_fail",
+                         ValueRange{runtimeContext, status});
+  }
   if (bindStateSpecialization) {
     Value fast = LLVM::AddressOfOp::create(
         builder, location, pointer, "__obelisk_state_specialization_fast_v1");
@@ -823,6 +845,10 @@ LogicalResult makeSchedulerMain(ModuleOp module,
     getOrDeclareLLVMFunction(module,
                              "obelisk_rt_v1_native_state_bind_continuous", i32,
                              {pointer, pointer, pointer, pointer});
+  if (!stateLayout.unknownSummaryRoots.empty())
+    getOrDeclareLLVMFunction(
+        module, "obelisk_rt_v1_native_state_bind_unknown_summary", i32,
+        {pointer, pointer, i64, pointer, pointer, i64, pointer, i64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_static_root_register", i32,
                            {pointer, pointer});
   getOrDeclareLLVMFunction(module,

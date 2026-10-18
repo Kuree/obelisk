@@ -124,7 +124,57 @@ struct NativeStateLayout : analysis::NativeStateLayoutAnalysis {
   }
   bool transitionHandlesExact = false;
   bool directContinuous = false;
+  // The roots some schedule.known.roots gate tests, by static handle ID,
+  // mapped to their bit of the generated unknown summary, or `twoStateRoot`
+  // for a root without an unknown plane. Bits follow the first test of each
+  // root, so the roots one gate tests share summary words.
+  static constexpr uint32_t twoStateRoot = UINT32_MAX;
+  llvm::DenseMap<uint32_t, uint32_t> unknownSummaryBits;
+  llvm::SmallVector<uint32_t> unknownSummaryRoots;
+  // By summary bit: the root's steady pattern as absolute (offset, width)
+  // pairs. A clear bit means the root's unknown plane holds X/Z exactly in
+  // them.
+  llvm::SmallVector<llvm::SmallVector<uint64_t, 0>> unknownSummaryPatterns;
+  // The known.roots gates, each with its rescan backoff state
+  // (schedule.native.known_gate).
+  uint32_t unknownSummaryGates = 0;
+  // By static handle ID: a root's `simulation.steady_unknown` bits, as
+  // (offset, width) pairs within the root. A value-only read of the root
+  // loads them as a constant X.
+  llvm::DenseMap<uint32_t, llvm::SmallVector<std::pair<uint64_t, uint64_t>, 2>>
+      steadyUnknown;
+  /// The unknown plane a value-only read of `width` bits at `offset` within
+  /// root `handle` observes.
+  llvm::APInt getSteadyUnknown(uint32_t handle, uint64_t offset,
+                               unsigned width) const {
+    llvm::APInt mask(width, 0);
+    auto found = steadyUnknown.find(handle);
+    if (found == steadyUnknown.end())
+      return mask;
+    for (auto [low, bits] : found->second) {
+      uint64_t begin = std::max(low, offset);
+      uint64_t end = std::min(low + bits, offset + width);
+      if (begin < end)
+        mask.setBits(begin - offset, end - offset);
+    }
+    return mask;
+  }
+  uint64_t getUnknownSummaryPatternCount() const {
+    uint64_t count = 0;
+    for (const auto &ranges : unknownSummaryPatterns)
+      count += ranges.size() / 2;
+    return count;
+  }
 };
+
+inline constexpr llvm::StringLiteral unknownSummaryName =
+    "__obelisk_state_unknown_summary_v1";
+inline constexpr llvm::StringLiteral unknownSummaryRootsName =
+    "__obelisk_state_unknown_summary_roots_v1";
+inline constexpr llvm::StringLiteral unknownSummaryPatternsName =
+    "__obelisk_state_unknown_summary_patterns_v1";
+inline constexpr llvm::StringLiteral unknownSummaryBackoffName =
+    "__obelisk_state_unknown_summary_backoff_v1";
 
 struct DirectStaticStateRange {
   uint64_t offset;
@@ -414,13 +464,17 @@ void populateReferenceLifetimeToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
 void populateSchedulerToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
+void populateKnownRootsToLLVMConversionPatterns(
+    mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
+    const NativeStateLayout &layout);
 void populateStateReadWriteToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
     uint64_t stateBitCount, const NativeStateLayout *directLayout,
     bool experimentalTwoState,
     const llvm::DenseMap<mlir::Operation *, NativeStateAccessInfo>
         &stateAccesses,
-    const LocalStorageLowering *locals = nullptr);
+    const LocalStorageLowering *locals = nullptr,
+    const NativeStateLayout *layout = nullptr);
 void annotateStaticDriverNets(mlir::ModuleOp module,
                               const NativeStateLayout &layout);
 void populateDriverToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
@@ -529,6 +583,18 @@ buildNativeStateLayout(mlir::ModuleOp module,
                        const llvm::DataLayout &dataLayout);
 void materializeNativeStatePlanes(mlir::ModuleOp module,
                                   const NativeStateLayout &layout);
+/// Number the roots the module's known.roots gates test and materialize
+/// their generated unknown summary, with the root records and ignored ranges
+/// the runtime binds. Runs once the gates are final, before their lowering.
+void assignUnknownSummary(mlir::ModuleOp module, NativeStateLayout &layout);
+void materializeUnknownSummary(mlir::ModuleOp module,
+                               const NativeStateLayout &layout);
+/// Instrument every store into the generated unknown plane of a summarized
+/// root to set the root's summary bit when it writes X or Z.
+std::unique_ptr<mlir::Pass> createPublishNativeUnknownSummaryPass();
+mlir::LogicalResult
+prepareNativeUnknownSummaryPublication(mlir::ModuleOp module,
+                                       mlir::AnalysisManager manager);
 
 } // namespace obelisk::detail
 

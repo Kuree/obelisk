@@ -18,18 +18,19 @@
 //    continues in the four-state body, where an OR with known ones and an AND
 //    with known zeros still give a known result (IEEE 1800-2023 11.4.8),
 //    while the add is all X (11.4.3);
-//  - the index holds X: the entry check fails, and reading the element at an
-//    X index yields X (7.4.6).
-// The counter increment before the tested read runs once per call. Tested
-// reads are requested explicitly; the native pipeline keeps the versioned
-// body. Without a static state layout the entry check reads the unknown
-// planes through the runtime (../Conversion/simulation-known-bits.mlir).
+//  - the index holds X: its root's unknown summary bit is set by the store of
+//    X, the entry check fails, and reading the element at an X index yields
+//    X (7.4.5).
+// The counter increment before the tested read runs once per call, and the
+// copy stores it value-only. Tested reads are requested explicitly; the
+// native pipeline keeps the versioned body.
 // CHECK: 1 1 1 1
 
 // VERSIONED-LABEL: simulation.func private @step
 // VERSIONED-SAME: schedule.native.known_activation
-// VERSIONED: schedule.known.bits
+// VERSIONED: schedule.known.roots
 // VERSIONED: schedule.native.known_read
+// VERSIONED: schedule.native.known_store
 // VERSIONED: schedule.known.value
 
 !logic8 = !simulation.logic<8>

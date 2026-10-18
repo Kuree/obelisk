@@ -1,23 +1,26 @@
 //===- LocalUnknownAnalysis.h - X/Z inside one gated activation -*- C++ -*-===//
 //
-// Classifies the canonical state reads of one activation body for a copy that
-// runs only after a check at the activation's entry finds selected canonical
-// bits known. In that copy a *gated* read loads only its value plane, because
-// its bits are known whenever it executes; every other read is an *island*
-// that keeps both planes. Stores still write both planes, so values computed
-// from islands remain exact four-state values and the copy performs the same
-// effects with the same values as the original body.
+// Classifies the canonical state accesses of one activation body for a copy
+// that runs only after a check at the activation's entry finds whole storage
+// roots known (schedule.known.roots): a tested root holds X/Z exactly in the
+// bits of its steady pattern (`simulation.steady_unknown`), none elsewhere.
+// In that copy a *gated* read loads only its value plane, and a *known* store
+// writes only its value plane: the root's unknown plane is zero at the stored
+// bits, and a known value keeps it zero. Every other read and store keeps both
+// planes, so the copy performs the same effects with the same values as the
+// original body.
 //
-// A gated read observes known bits when (1) the entry check covered them and
-// (2) no write of the activation that can precede it may have stored X/Z into
-// them. (2) is a dense forward fact over the activation's CFG; the stored
-// values come from a sparse forward state-domain fact in which gated reads
-// are known. Both are solved together, and their least fixed point is sound
-// by induction over the activation's execution order: before the first X/Z
-// write every gated read sees entry state, and a value the domain fact proves
-// known given known gated reads is known (IEEE 1800-2023 11.4 for each
-// operator, with the X/Z generators of 7.4.6, 11.4.2, 11.5.1 and 6.8 kept
-// four-state by the shared transfer).
+// A gated read observes known bits when (1) the entry check covered its root
+// and (2) no write of the activation that can precede it may have stored X/Z
+// into its bits. A known store needs the same of the bits it writes, and a
+// value known whenever the copy computes it. (2) is a dense forward fact over
+// the activation's CFG; the stored values come from a sparse forward
+// state-domain fact in which gated reads are known. Both are solved together,
+// and their least fixed point is sound by induction over the activation's
+// execution order: before the first X/Z write every gated read sees entry
+// state, and a value the domain fact proves known given known gated reads is
+// known (IEEE 1800-2023 11.4 for each operator, with the X/Z generators of
+// 7.4.5, 11.4.2, 11.5.1 and 6.8 kept four-state by the shared transfer).
 //
 // The body may be cut into segments, each checked at its own entry: a run of
 // the activation's operations that control enters only at its first
@@ -35,15 +38,15 @@
 // continues in the original body at that read, carrying its live values, so
 // nothing runs twice and only the bits the read observes are tested.
 //
-// Reads become islands when gating them would make the entry check fail in
-// steady state or cost more than it saves:
-//  - a dynamically indexed unpacked array element: a RAM-like memory whose
-//    entries need not all have been written (6.8, 7.4.6);
-//  - a dynamic packed selection that may be invalid, which reads X/Z
-//    whatever the storage holds (7.4.6, 11.5.1), or whose hull is too wide;
-//  - a read whose value only moves into stores, NBAs and displays: keeping
-//    its unknown plane costs only the copy, while gating it would make the
-//    check fail whenever the moved data holds X/Z;
+// A gated read of pattern bits loads them as the pattern's constant X, so
+// its value stays four-state. Any write of the segment that may reach
+// pattern bits before such a read keeps the read's planes: it may have made
+// them known. A store reaching pattern bits is never a known store.
+//
+// Reads keep both planes when gating them would be unsound:
+//  - a dynamic selection that may be invalid even with known selectors, or
+//    whose selectors may hold X/Z in the copy: it reads the type's default,
+//    X/Z for four-state types (7.4.5, 11.5.1);
 //  - a read an X/Z write of the activation may reach;
 //  - a read whose root is not a fixed design storage root.
 //
@@ -87,27 +90,13 @@ public:
     Local,
     /// Not a fixed design storage root.
     Unresolved,
-    /// A dynamically indexed unpacked array element, or a dynamic selection
-    /// that may be invalid in the copy or whose hull is too wide.
+    /// A dynamic selection that may be invalid in the copy (7.4.5, 11.5.1).
     Dynamic,
-    /// Only moved into stores, NBAs and displays.
-    Moved,
     /// An X/Z write of the activation may reach it.
     Written,
     /// Tested where it loads; the copy continues in the original body at
     /// this read when it holds X/Z, and treats it as known after.
     Checked,
-  };
-
-  /// Bits [low, low + width) of one storage root, relative to the root.
-  struct Range {
-    uint64_t low = 0, width = 0;
-  };
-  /// The bits the entry check covers in one root: sorted, disjoint, and not
-  /// adjacent.
-  struct GateRoot {
-    uint64_t descriptor = 0;
-    llvm::SmallVector<Range, 2> ranges;
   };
 
   /// Segments of a body: `segments` maps every operation, nested ones
@@ -120,21 +109,15 @@ public:
   };
   /// What the entry check of one segment tests, and what the copy saves.
   struct Segment {
-    llvm::SmallVector<GateRoot, 0> gate;
-    uint64_t gateWords = 0;
+    /// The storage roots the check tests, by descriptor, sorted: those of
+    /// the segment's gated reads and known stores.
+    llvm::SmallVector<uint64_t, 0> gate;
     uint64_t benefit = 0;
     /// Reads the copy tests where they load.
     unsigned checks = 0;
     /// Private allocations whose contents the entry check tests: known reads
     /// of the copy find them as the previous segment left them.
     llvm::SetVector<sim::SimRefAllocOp> slotChecks;
-    /// The part of `gate` the previous segment's copy leaves known: its
-    /// checked and overwritten bits that no X/Z write may reach. The check
-    /// skips them when that copy ran.
-    llvm::SmallVector<GateRoot, 0> inherited;
-    /// The rest of `gate`, which the check always tests, and its words.
-    llvm::SmallVector<GateRoot, 0> fresh;
-    uint64_t freshWords = 0;
     /// Four-state values from other segments that only the copy proves
     /// known: the entry check tests them.
     llvm::SetVector<mlir::Value> liveIns;
@@ -172,6 +155,12 @@ public:
     llvm::function_ref<bool(mlir::Operation *)> provenKnownRead = nullptr;
     /// Whether reads may be tested where they load.
     bool checks = false;
+    /// Whether bits [low, high) of root `descriptor` include bits of its
+    /// steady pattern (`simulation.steady_unknown`). A gated read of such
+    /// bits loads them as a constant X, so its value stays four-state; a
+    /// dynamic selection over them is not gated.
+    llvm::function_ref<bool(uint64_t, uint64_t, uint64_t)> staysUnknown =
+        nullptr;
   };
 
   /// `handles` must describe the references of `function`.
@@ -186,18 +175,17 @@ public:
   bool isGated(mlir::Operation *read) const {
     return getKind(read) == ReadKind::Gated;
   }
+  /// Whether `store` writes only its value plane in the gated copy.
+  bool isKnownStore(mlir::Operation *store) const {
+    return knownStores.contains(store);
+  }
   /// Canonical reads in walk order.
   llvm::ArrayRef<mlir::Operation *> getReads() const { return reads; }
   llvm::ArrayRef<Segment> getSegments() const { return segments; }
   /// The first segment's check and savings: the whole body's without a
   /// segmentation.
-  llvm::ArrayRef<GateRoot> getGate() const {
-    return segments.empty() ? llvm::ArrayRef<GateRoot>() : segments[0].gate;
-  }
-  /// The 64-bit words the entry check tests, counting each range from its
-  /// first word.
-  uint64_t getGateWords() const {
-    return segments.empty() ? 0 : segments[0].gateWords;
+  llvm::ArrayRef<uint64_t> getGate() const {
+    return segments.empty() ? llvm::ArrayRef<uint64_t>() : segments[0].gate;
   }
   /// Estimated unknown-plane instructions the gated copy removes, counted
   /// once per operation.
@@ -220,6 +208,7 @@ public:
 private:
   llvm::SmallVector<mlir::Operation *, 0> reads;
   llvm::DenseMap<mlir::Operation *, ReadKind> kinds;
+  llvm::DenseSet<mlir::Operation *> knownStores;
   llvm::SmallVector<Segment, 0> segments;
   llvm::DenseSet<mlir::Value> knownInCopy, knownInOriginal;
   llvm::StringRef failure;

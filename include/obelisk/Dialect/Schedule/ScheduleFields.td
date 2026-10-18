@@ -248,6 +248,11 @@ def NativeGuardedSpecializationBody : ScheduleField<"NativeGuardedSpecialization
 // A read whose location was proved known on the executing path: lowering
 // loads only its value plane.
 def NativeKnownRead : ScheduleField<"NativeKnownRead", "schedule.native.known_read", "::mlir::UnitAttr">;
+// A store of a known value whose destination unknown bits are zero: it writes
+// only the value plane.
+def NativeKnownStore : ScheduleField<"NativeKnownStore", "schedule.native.known_store", "::mlir::UnitAttr">;
+// The index of a schedule.known.roots gate's rescan backoff state.
+def NativeKnownGate : ScheduleField<"NativeKnownGate", "schedule.native.known_gate", "::mlir::IntegerAttr">;
 // A function containing two-state copies of known-state versioned regions.
 def NativeKnownVersioned : ScheduleField<"NativeKnownVersioned", "schedule.native.known_versioned", "::mlir::UnitAttr">;
 // An activation whose entry selects a copy with value-only gated reads.

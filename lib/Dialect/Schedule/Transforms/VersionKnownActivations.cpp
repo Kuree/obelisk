@@ -1,26 +1,29 @@
 //===- VersionKnownActivations.cpp - Gated two-state activation copies ----===//
 //
-// An activation whose computed-on canonical reads are known in steady state
-// runs copies in which those reads load only their value planes. The body is
-// cut into segments: runs of operations that control enters only at their
-// first operation. One check at a segment's entry tests the unknown planes of
-// exactly its gated bits, the private slots and live-in values that only the
-// copy treats as known; when it fails, the original four-state segment runs:
+// An activation whose storage roots are known in steady state runs copies in
+// which its reads of those roots load only their value planes and its stores
+// of known values write only theirs. The body is cut into segments: runs of
+// operations that control enters only at their first operation. One check at
+// a segment's entry tests the unknown summary bits of the roots the segment
+// reads or stores known, and the private slots and live-in values that only
+// the copy treats as known; when it fails, the original four-state segment
+// runs:
 //
-//   head:  %ok = known.bits ...  cond_br %ok, ^cast, ^segment
+//   head:  %ok = known.roots ...  cond_br %ok, ^cast, ^segment
 //   ^cast: live-in casts; br ^copy     ^segment: the original operations
-//   ^copy: the same operations, gated reads value-only
+//   ^copy: the same operations, gated reads and known stores value-only
 //   both -> ^exit(live-outs)
 //
 // A read the check cannot cover is tested where the copy loads it; on X/Z
 // the copy continues in the original right after the same read.
 //
-// Both copies perform the same effects with the same values: islands and
-// stores keep both planes, and every gated read observes known bits
-// (LocalUnknownAnalysis). A check observes the canonical planes after every
-// earlier write, so a failed check affects only its own segment. Original
-// blocks keep their positions, which native compute-graph fragments use to
-// name blocks; split blocks and copies go to the end of the body.
+// Both copies perform the same effects with the same values: every gated
+// read observes known bits, and every known store writes a known value over
+// unknown bits that are zero (LocalUnknownAnalysis). A check observes the
+// canonical planes after every earlier write, so a failed check affects only
+// its own segment. Original blocks keep their positions, which native
+// compute-graph fragments use to name blocks; split blocks and copies go to
+// the end of the body.
 //
 //===----------------------------------------------------------------------===//
 
@@ -70,8 +73,11 @@ struct DesignInputs {
       : handles(design),
         callees(LocalUnknownAnalysis::summarize(design, handles)) {
     for (auto storage :
-         design.getBody().front().getOps<sim::SimStorageDeclOp>())
+         design.getBody().front().getOps<sim::SimStorageDeclOp>()) {
       storageTypes[storage.getId()] = storage.getType();
+      if (auto ranges = sim::get<sim::metadata::SteadyUnknown>(storage))
+        steadyUnknown[storage.getId()] = ranges;
+    }
     // A guarded two-state variant already loads only the value planes of
     // its inductively two-state reads; those need no check.
     if (variants &&
@@ -102,9 +108,22 @@ struct DesignInputs {
            guarded.isInductivelyTwoState(fact->second.resource,
                                          *fact->second.descriptor);
   }
+  /// Whether bits [low, high) of root `descriptor` include bits of its
+  /// steady pattern.
+  bool staysUnknown(uint64_t descriptor, uint64_t low, uint64_t high) const {
+    auto ranges = steadyUnknown.lookup(descriptor);
+    if (!ranges)
+      return false;
+    for (size_t index = 0; index + 1 < size_t(ranges.size()); index += 2)
+      if (uint64_t(ranges[index]) < high &&
+          low < uint64_t(ranges[index] + ranges[index + 1]))
+        return true;
+    return false;
+  }
   analysis::HandleDataflowAnalysis handles;
   LocalUnknownAnalysis::CalleeSummaries callees;
   DenseMap<uint64_t, Type> storageTypes;
+  DenseMap<uint64_t, DenseI64ArrayAttr> steadyUnknown;
   std::optional<std::pair<StateDomainAnalysis, StateDomainAnalysis>> domains;
 };
 
@@ -250,15 +269,13 @@ public:
       }
     }
     llvm::SetVector<Block *> blocks = collectBlocks(entry, exit);
-    // Live-outs need a merge point entered only from the two copies. The
-    // next segment still begins at `following`.
-    Block *following = exit;
+    // Live-outs need a merge point entered only from the two copies.
     if (exit && llvm::any_of(exit->getPredecessors(), [&](Block *pred) {
           return !blocks.contains(pred);
         }))
       exit = dedicatedExit(exit, blocks.getArrayRef());
 
-    // The check: the gated bits, then the slots and live-ins only the copy
+    // The check: the gated roots, then the slots and live-ins only the copy
     // treats as known.
     builder.setInsertionPoint(enter);
     Value known;
@@ -268,39 +285,17 @@ public:
                     : next;
     };
     Value activation = function.getBody().front().getArgument(0);
-    auto testBits = [&](ArrayRef<LocalUnknownAnalysis::GateRoot> roots)
-        -> Value {
-      if (roots.empty())
-        return Value();
+    if (!segment.gate.empty()) {
       SmallVector<Value> references;
-      SmallVector<Attribute> ranges;
-      for (const auto &root : roots) {
-        Type type = inputs.storageTypes.lookup(root.descriptor);
+      for (uint64_t root : segment.gate)
         references.push_back(sim::SimContextStorageOp::create(
-            builder, loc, sim::RefType::get(function.getContext(), type),
-            activation, root.descriptor));
-        SmallVector<int64_t> pairs;
-        for (auto range : root.ranges) {
-          pairs.push_back(static_cast<int64_t>(range.low));
-          pairs.push_back(static_cast<int64_t>(range.width));
-        }
-        ranges.push_back(builder.getDenseI64ArrayAttr(pairs));
-      }
-      return schedule::NativeKnownBitsOp::create(builder, loc,
-                                                 builder.getI1Type(),
-                                                 references,
-                                                 builder.getArrayAttr(ranges));
-    };
-    // The bits the previous segment's copy leaves known are tested only
-    // after its original ran.
-    Value previousCopy = copyRan.lookup(head);
-    ArrayRef<LocalUnknownAnalysis::GateRoot> fresh = segment.gate, inherited;
-    if (previousCopy && !segment.inherited.empty()) {
-      fresh = segment.fresh;
-      inherited = segment.inherited;
+            builder, loc,
+            sim::RefType::get(function.getContext(),
+                              inputs.storageTypes.lookup(root)),
+            activation, root));
+      conjoin(schedule::NativeKnownRootsOp::create(
+          builder, loc, builder.getI1Type(), references));
     }
-    if (Value bits = testBits(fresh))
-      conjoin(bits);
     for (sim::SimRefAllocOp allocation : segment.slotChecks) {
       Value slot = slotOf(allocation);
       Value contents = sim::SimRefLoadOp::create(
@@ -313,29 +308,6 @@ public:
     for (Value liveIn : liveIns)
       conjoin(schedule::NativeKnownValueOp::create(
           builder, loc, builder.getI1Type(), liveIn));
-
-    //   head:     cond_br %previous_copy, ^decide(%known), ^inherit
-    //   ^inherit: br ^decide(%known && known.bits inherited)
-    Block *decide = nullptr;
-    if (!inherited.empty()) {
-      Value base = known ? known
-                         : arith::ConstantOp::create(builder, loc,
-                                                     builder.getBoolAttr(true))
-                               .getResult();
-      Block *inherit = new Block;
-      decide = new Block;
-      function.getBody().push_back(inherit);
-      function.getBody().push_back(decide);
-      known = decide->addArgument(builder.getI1Type(), loc);
-      auto skip = cf::CondBranchOp::create(builder, loc, previousCopy, decide,
-                                           ValueRange{base}, inherit,
-                                           ValueRange());
-      skip.setBranchWeights(ArrayRef<int32_t>{likelyWeight, unlikelyWeight});
-      builder.setInsertionPointToEnd(inherit);
-      Value both =
-          arith::AndIOp::create(builder, loc, base, testBits(inherited));
-      cf::BranchOp::create(builder, loc, decide, ValueRange{both});
-    }
 
     // The copy uses checked live-ins through their two-state view.
     SmallVector<Value> casts;
@@ -356,10 +328,7 @@ public:
       builder.setInsertionPointToEnd(castBlock);
       cf::BranchOp::create(builder, loc, copies.front());
     }
-    if (decide)
-      builder.setInsertionPointToEnd(decide);
-    else
-      builder.setInsertionPoint(enter);
+    builder.setInsertionPoint(enter);
     Block *copy = castBlock ? castBlock : copies.front();
     if (!known) {
       cf::BranchOp::create(builder, loc, copy);
@@ -369,25 +338,18 @@ public:
       branch.setBranchWeights(ArrayRef<int32_t>{likelyWeight, unlikelyWeight});
     }
     enter.erase();
-    markGatedReads(blocks.getArrayRef(), mapping);
+    markKnownAccesses(blocks.getArrayRef(), mapping);
     if (exit)
       mergeLiveOuts(blocks.getArrayRef(), copies, mapping, exit);
     if (!checked.empty())
       transfer(checked, mapping, head, entry, exit);
     transfers += checked.size();
-    if (!inherited.empty())
-      inheritedWords +=
-          segment.gateWords - std::min(segment.freshWords, segment.gateWords);
-    if (exit)
-      recordCopyRan(entry, exit, following);
     dominance.invalidate();
     return true;
   }
 
   /// Checked reads versioned so far.
   unsigned transfers = 0;
-  /// Gate words left to the previous segment's copy so far.
-  uint64_t inheritedWords = 0;
 
 private:
   /// The value an exit argument merges, for analysis queries.
@@ -415,41 +377,6 @@ private:
                  : bodyBlock(owner->getParentOp());
     }
     return bodyBlock(value.getDefiningOp());
-  }
-
-  /// Give `exit` an argument that holds when the copy, rather than the
-  /// original, reached it, and hand it to `next`, where the next segment
-  /// begins. A dedicated exit forwards it; other edges into `next` come from
-  /// neither copy.
-  void recordCopyRan(Block *entry, Block *exit, Block *next) {
-    llvm::SetVector<Block *> original = collectBlocks(entry, exit);
-    Location loc = exit->front().getLoc();
-    auto pass = [&](Block *target, function_ref<Value(Block *)> flagFrom) {
-      llvm::SetVector<Block *> preds(target->pred_begin(), target->pred_end());
-      for (Block *pred : preds) {
-        auto terminator = cast<BranchOpInterface>(pred->getTerminator());
-        builder.setInsertionPoint(terminator);
-        Value flag = flagFrom(pred);
-        for (unsigned index = 0; index < terminator->getNumSuccessors();
-             ++index)
-          if (terminator->getSuccessor(index) == target)
-            terminator.getSuccessorOperands(index).append(flag);
-      }
-    };
-    auto constant = [&](bool value) -> Value {
-      return arith::ConstantOp::create(builder, loc,
-                                       builder.getBoolAttr(value));
-    };
-    Value ran = exit->addArgument(builder.getI1Type(), loc);
-    pass(exit, [&](Block *pred) { return constant(!original.contains(pred)); });
-    if (next != exit) {
-      Value forwarded = next->addArgument(builder.getI1Type(), loc);
-      pass(next, [&](Block *pred) {
-        return pred == exit ? ran : constant(false);
-      });
-      ran = forwarded;
-    }
-    copyRan[next] = ran;
   }
 
   /// The blocks control reaches from `entry` before `exit`.
@@ -649,13 +576,18 @@ private:
   }
 
   /// Gated reads in the copy load only their value planes, whose unknown
-  /// plane is then a constant zero for every later operation.
-  void markGatedReads(ArrayRef<Block *> blocks, IRMapping &mapping) {
+  /// plane is then a constant zero for every later operation; known stores
+  /// write only theirs.
+  void markKnownAccesses(ArrayRef<Block *> blocks, IRMapping &mapping) {
+    UnitAttr unit = UnitAttr::get(function.getContext());
     for (Block *block : blocks)
       block->walk([&](Operation *op) {
         if (isa<sim::SimRefLoadOp>(op) && analysis.isGated(op))
-          schedule::set<schedule::Field::NativeKnownRead>(
-              mapping.lookup(op), UnitAttr::get(function.getContext()));
+          schedule::set<schedule::Field::NativeKnownRead>(mapping.lookup(op),
+                                                          unit);
+        else if (analysis.isKnownStore(op))
+          schedule::set<schedule::Field::NativeKnownStore>(mapping.lookup(op),
+                                                           unit);
       });
   }
 
@@ -989,9 +921,6 @@ private:
   DenseMap<Value, Value> merged;
   /// Allocations moved to the entry block, by their original operation.
   DenseMap<Operation *, Value> hoistedSlots;
-  /// Blocks where a segment after a versioned one begins, mapped to their
-  /// argument that holds when that copy ran.
-  DenseMap<Block *, Value> copyRan;
   /// Valid until the next rewrite.
   DominanceInfo dominance;
 };
@@ -1043,18 +972,20 @@ public:
     auto provenKnown = [&](Operation *read) {
       return inputs->provesKnown(function, handles.facts, read);
     };
+    auto staysUnknown = [&](uint64_t descriptor, uint64_t low, uint64_t high) {
+      return inputs->staysUnknown(descriptor, low, high);
+    };
     LocalUnknownAnalysis analysis(
         function, handles,
         LocalUnknownAnalysis::Options{&segments.segmentation, &inputs->callees,
-                                      false, provenKnown, checkedReads});
+                                      false, provenKnown, checkedReads,
+                                      staysUnknown});
     // A copy must save clearly more than its checks cost: about three
-    // instructions per tested word, slot or live-in and two per tested read.
-    // Words a versioned previous segment leaves known are tested only after
-    // its original ran.
-    bool previousVersioned = false;
+    // instructions per tested summary word, slot or live-in and two per
+    // tested read. A segment's roots are numbered together, so a word covers
+    // several of them.
     auto profitable = [&](const LocalUnknownAnalysis::Segment &segment) {
-      uint64_t words =
-          previousVersioned ? segment.freshWords : segment.gateWords;
+      uint64_t words = (segment.gate.size() + 7) / 8;
       uint64_t check = 3 * words + 2 * segment.checks +
                        3 * (segment.slotChecks.size() +
                             segment.liveIns.size()) +
@@ -1065,22 +996,19 @@ public:
     };
     ArrayRef<LocalUnknownAnalysis::Segment> results = analysis.getSegments();
     unsigned versioned = 0;
-    uint64_t benefit = 0, words = 0;
+    uint64_t benefit = 0, roots = 0;
     Versioner versioner(function, analysis, *inputs);
     for (auto [index, segment] : llvm::enumerate(results)) {
-      bool selected = profitable(segment);
-      previousVersioned = false;
-      if (!selected)
+      if (!profitable(segment))
         continue;
       Operation *end = index + 1 < segments.begins.size()
                            ? segments.begins[index + 1]
                            : nullptr;
       if (!versioner.version(segments.begins[index], end, segment))
         continue;
-      previousVersioned = true;
       ++versioned;
       benefit += segment.benefit;
-      words += segment.gateWords;
+      roots += segment.gate.size();
     }
     if (diagnostics && versioned) {
       std::string text;
@@ -1088,9 +1016,7 @@ public:
       os << "obelisk known activation: " << function.getSymName()
          << " segments=" << versioned << '/' << results.size()
          << " checks=" << versioner.transfers << " benefit=" << benefit
-         << " gate-words=" << words
-         << " inherited-words=" << versioner.inheritedWords
-         << '\n';
+         << " gate-roots=" << roots << '\n';
       llvm::errs() << text;
     }
     if (!versioned)

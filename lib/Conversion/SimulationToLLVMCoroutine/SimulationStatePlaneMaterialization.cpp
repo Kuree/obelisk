@@ -2,6 +2,10 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 #include "obelisk/Analysis/NativeStorageLayout.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Runtime/StableHandle.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "llvm/ADT/DenseSet.h"
@@ -196,6 +200,125 @@ void materializeNativeStatePlanes(ModuleOp module,
       LLVM::LLVMArrayType::get(builder.getI64Type(), fills.size()), true,
       LLVM::Linkage::Internal, "__obelisk_state_initializers_v1",
       DenseIntElementsAttr::get(tensor, ArrayRef<uint64_t>(fills)), 8);
+}
+
+void assignUnknownSummary(ModuleOp module, NativeStateLayout &layout) {
+  layout.unknownSummaryBits.clear();
+  layout.unknownSummaryRoots.clear();
+  layout.unknownSummaryPatterns.clear();
+  layout.unknownSummaryGates = 0;
+  layout.steadyUnknown.clear();
+  module.walk([&](sim::SimStorageDeclOp storage) {
+    auto ranges = sim::get<sim::metadata::SteadyUnknown>(storage);
+    auto handle = layout.storage.find(storage.getId());
+    obelisk_rt_stable_handle_v1 decoded{};
+    if (!ranges || handle == layout.storage.end() ||
+        !obelisk_rt_stable_handle_decode(handle->second, &decoded))
+      return;
+    auto &pattern = layout.steadyUnknown[decoded.id];
+    for (size_t index = 0; index + 1 < size_t(ranges.size()); index += 2)
+      pattern.push_back({uint64_t(ranges[index]), uint64_t(ranges[index + 1])});
+  });
+  // One summary bit per four-state root a known.roots gate tests, numbered by
+  // first test. A reference without a fixed root gets none; its gate fails.
+  // Each gate gets its own backoff state.
+  llvm::DenseMap<uint32_t, bool> fourState;
+  for (const auto &bound : layout.bounds)
+    fourState[bound.handleID] = bound.fourState;
+  Builder builder(module.getContext());
+  module.walk([&](schedule::NativeKnownRootsOp gate) {
+    schedule::set<schedule::Field::NativeKnownGate>(
+        gate, builder.getI64IntegerAttr(layout.unknownSummaryGates++));
+    for (Value reference : gate.getReferences()) {
+      auto storage = reference.getDefiningOp<sim::SimContextStorageOp>();
+      auto handle =
+          storage ? layout.storage.find(storage.getId()) : layout.storage.end();
+      obelisk_rt_stable_handle_v1 decoded{};
+      if (handle == layout.storage.end() ||
+          !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
+          decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC)
+        continue;
+      if (!fourState.lookup(decoded.id)) {
+        layout.unknownSummaryBits.try_emplace(decoded.id,
+                                              NativeStateLayout::twoStateRoot);
+        continue;
+      }
+      if (layout.unknownSummaryBits
+              .try_emplace(decoded.id, layout.unknownSummaryRoots.size())
+              .second)
+        layout.unknownSummaryRoots.push_back(decoded.id);
+    }
+  });
+  // Patterns hold absolute plane ranges, clipped to their root.
+  llvm::DenseMap<uint32_t, const NativeStateLayout::Bound *> bounds;
+  for (const auto &bound : layout.bounds)
+    bounds[bound.handleID] = &bound;
+  for (uint32_t handle : layout.unknownSummaryRoots) {
+    auto &pattern = layout.unknownSummaryPatterns.emplace_back();
+    const NativeStateLayout::Bound *bound = bounds.lookup(handle);
+    for (auto [low, width] : layout.steadyUnknown.lookup(handle))
+      if (low < bound->width)
+        llvm::append_range(
+            pattern,
+            ArrayRef<uint64_t>{bound->offset + low,
+                               std::min<uint64_t>(width, bound->width - low)});
+  }
+  materializeUnknownSummary(module, layout);
+}
+
+void materializeUnknownSummary(ModuleOp module,
+                               const NativeStateLayout &layout) {
+  if (layout.unknownSummaryRoots.empty())
+    return;
+  OpBuilder builder = OpBuilder::atBlockBegin(module.getBody());
+  Location location = module.getLoc();
+  Type i64 = builder.getI64Type();
+  auto global = [&](StringRef name, ArrayRef<uint64_t> words, bool constant) {
+    auto tensor = RankedTensorType::get({int64_t(words.size())}, i64);
+    LLVM::GlobalOp::create(builder, location,
+                           LLVM::LLVMArrayType::get(i64, words.size()),
+                           constant, LLVM::Linkage::Internal, name,
+                           DenseIntElementsAttr::get(tensor, words), 8);
+  };
+  llvm::DenseMap<uint32_t, const NativeStateLayout::Bound *> bounds;
+  for (const auto &bound : layout.bounds)
+    bounds[bound.handleID] = &bound;
+  // obelisk_rt_native_unknown_root_v1 records: offset, width and the
+  // (first, count) slice of pattern ranges, packed little-endian.
+  SmallVector<uint64_t> roots, patterns;
+  for (auto [bit, handle] : llvm::enumerate(layout.unknownSummaryRoots)) {
+    const NativeStateLayout::Bound *bound = bounds.lookup(handle);
+    ArrayRef<uint64_t> ranges;
+    if (bit < layout.unknownSummaryPatterns.size())
+      ranges = layout.unknownSummaryPatterns[bit];
+    uint64_t slice = patterns.size() / 2 | uint64_t(ranges.size() / 2) << 32;
+    llvm::append_range(roots,
+                       ArrayRef<uint64_t>{bound->offset, bound->width, slice});
+    llvm::append_range(patterns, ranges);
+  }
+  // Until the generated code first tests a root, it may hold X/Z (IEEE
+  // 1800-2023 6.8); the runtime confirms each bit when it binds the summary.
+  uint64_t count = layout.unknownSummaryRoots.size();
+  SmallVector<uint64_t> bits((count + 63) / 64, ~uint64_t{0});
+  if (count % 64)
+    bits.back() = (uint64_t{1} << (count % 64)) - 1;
+  global(unknownSummaryName, bits, false);
+  global(unknownSummaryRootsName, roots, true);
+  // A zero-length array cannot be addressed; the runtime reads none of it.
+  if (patterns.empty())
+    patterns.assign(2, 0);
+  global(unknownSummaryPatternsName, patterns, true);
+  global(unknownSummaryBackoffName,
+         SmallVector<uint64_t>(
+             std::max<uint32_t>(layout.unknownSummaryGates, 1), 0),
+         false);
+  Type pointer = LLVM::LLVMPointerType::get(module.getContext());
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_native_state_refresh_unknown_summary",
+      builder.getI32Type(), {pointer, pointer, i64, pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_native_state_mark_unknown",
+                           LLVM::LLVMVoidType::get(module.getContext()),
+                           {pointer, i64, i64});
 }
 
 } // namespace obelisk::detail

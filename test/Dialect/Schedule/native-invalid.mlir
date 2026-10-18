@@ -24,3 +24,11 @@ module {
     return
   }
 }
+
+// -----
+
+func.func @known_roots_without_roots() -> i1 {
+  // expected-error@+1 {{requires one or more storage roots}}
+  %known = "schedule.known.roots"() : () -> i1
+  return %known : i1
+}

@@ -15,8 +15,8 @@ using namespace mlir;
 
 namespace {
 
-/// Prints each function's gate and the class of every read tagged with a
-/// `test.read` name.
+/// Prints each function's gate, the class of every read tagged with a
+/// `test.read` name, and whether each store tagged `test.store` is known.
 class LocalUnknownAnalysisTestPass
     : public PassWrapper<LocalUnknownAnalysisTestPass,
                          OperationPass<ModuleOp>> {
@@ -47,21 +47,23 @@ public:
         llvm::errs() << "local-unknown @" << function.getSymName();
         if (!analysis.getFailure().empty())
           llvm::errs() << " failed: " << analysis.getFailure();
-        llvm::errs() << " benefit=" << analysis.getBenefit()
-                     << " gate-words=" << analysis.getGateWords() << '\n';
-        for (const auto &root : analysis.getGate()) {
-          llvm::errs() << "  gate " << root.descriptor << ':';
-          for (auto range : root.ranges)
-            llvm::errs() << " [" << range.low << ','
-                         << range.low + range.width << ')';
-          llvm::errs() << '\n';
-        }
+        llvm::errs() << " benefit=" << analysis.getBenefit() << " gate:";
+        for (uint64_t root : analysis.getGate())
+          llvm::errs() << ' ' << root;
+        llvm::errs() << '\n';
         for (Operation *read : analysis.getReads())
           if (auto name = read->getAttrOfType<StringAttr>("test.read"))
             llvm::errs() << "  read " << name.getValue() << ": "
                          << obelisk::analysis::LocalUnknownAnalysis::stringify(
                                 analysis.getKind(read))
                          << '\n';
+        function.walk([&](obelisk::sim::SimRefStoreOp store) {
+          if (auto name = store->getAttrOfType<StringAttr>("test.store"))
+            llvm::errs() << "  store " << name.getValue() << ": "
+                         << (analysis.isKnownStore(store) ? "known"
+                                                          : "four-state")
+                         << '\n';
+        });
       }
     }
   }

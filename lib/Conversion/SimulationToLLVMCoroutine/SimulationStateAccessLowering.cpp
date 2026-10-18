@@ -11,6 +11,7 @@
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
+#include "obelisk/Runtime/StableHandle.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -323,110 +324,147 @@ public:
   }
 };
 
-/// Test the selected bits of canonical unknown planes, one aligned word at a
-/// time. A root with a fixed direct location is read in place; any other
-/// reference reads its current unknown plane through the runtime, where an
-/// unresolved location reads as X.
-class KnownBitsConversion final
-    : public OpConversionPattern<schedule::NativeKnownBitsOp> {
+/// Test the unknown summary bits of whole storage roots, one summary word at
+/// a time. A set bit may be stale after the root became known again: the
+/// runtime then rescans the gate's dirty roots before answering. After a
+/// failed rescan the gate fails the number of tests its backoff state counts
+/// without calling. A root the summary does not track fails the test.
+///
+///   head:     %dirty = or(summary[w] & mask_w ...)
+///             cond_br %dirty == 0, ^done(true), ^refresh
+///   ^refresh: %state = backoff[g]
+///             cond_br trunc(%state) != 0, ^wait, ^call
+///   ^wait:    backoff[g] = %state - 1; br ^done(false)
+///   ^call:    br ^done(refresh_unknown_summary(ctx, pairs, &backoff[g]) != 0)
+class KnownRootsConversion final
+    : public OpConversionPattern<schedule::NativeKnownRootsOp> {
 public:
-  KnownBitsConversion(const TypeConverter &converter, MLIRContext *context,
-                      uint64_t stateBitCount,
-                      const NativeStateLayout *directLayout)
-      : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
-        directLayout(directLayout) {}
+  KnownRootsConversion(const TypeConverter &converter, MLIRContext *context,
+                       const NativeStateLayout &layout)
+      : OpConversionPattern(converter, context), layout(layout) {}
 
   LogicalResult
-  matchAndRewrite(schedule::NativeKnownBitsOp op, OneToNOpAdaptor adaptor,
+  matchAndRewrite(schedule::NativeKnownRootsOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     if (llvm::any_of(adaptor.getReferences(),
                      [](ValueRange handles) { return handles.size() != 1; }))
       return failure();
     Location location = op.getLoc();
-    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
-    Type i8 = rewriter.getI8Type();
+    Type i1 = rewriter.getI1Type();
     Type i64 = rewriter.getI64Type();
-    using Words = std::map<uint64_t, uint64_t>;
-    // Masks of the plane words that `ranges`, shifted by `offset`, touch.
-    auto addRanges = [](Words &words, uint64_t offset,
-                        ArrayRef<int64_t> ranges) {
-      for (size_t index = 0; index != ranges.size(); index += 2) {
-        uint64_t low = offset + uint64_t(ranges[index]);
-        uint64_t high = low + uint64_t(ranges[index + 1]);
-        for (uint64_t word = low / 64; word * 64 < high; ++word) {
-          uint64_t first = std::max(low, word * 64) - word * 64;
-          uint64_t last = std::min(high, word * 64 + 64) - word * 64;
-          words[word] |= last - first == 64
-                             ? ~uint64_t{0}
-                             : ((uint64_t{1} << (last - first)) - 1) << first;
-        }
-      }
-    };
-    Value unknown = llvmConstant(rewriter, location, i64, 0);
-    // OR the masked words of a plane of `planeBytes` bytes into `unknown`.
-    auto testWords = [&](Value plane, uint64_t planeBytes, const Words &words) {
-      for (auto [word, mask] : words) {
-        uint64_t byte = word * 8;
-        Value bits;
-        if (byte + 8 <= planeBytes) {
-          bits = LLVM::LoadOp::create(rewriter, location, i64,
-                                      byteGEP(rewriter, location, plane, byte),
-                                      1);
-        } else {
-          // The plane's final bytes need not fill a word.
-          bits = llvmConstant(rewriter, location, i64, 0);
-          for (uint64_t offset = 0; byte + offset < planeBytes; ++offset) {
-            Value part = LLVM::LoadOp::create(
-                rewriter, location, i8,
-                byteGEP(rewriter, location, plane, byte + offset), 1);
-            part = LLVM::ZExtOp::create(rewriter, location, i64, part);
-            part = LLVM::ShlOp::create(
-                rewriter, location, part,
-                llvmConstant(rewriter, location, i64, 8 * offset));
-            bits = LLVM::OrOp::create(rewriter, location, bits, part);
-          }
-        }
-        if (mask != ~uint64_t{0})
-          bits = LLVM::AndOp::create(
-              rewriter, location, bits,
-              llvmConstant(rewriter, location, i64, mask));
-        unknown = LLVM::OrOp::create(rewriter, location, unknown, bits);
-      }
-    };
-    Words direct;
-    for (auto [handles, attribute] :
-         llvm::zip_equal(adaptor.getReferences(), op.getRanges())) {
-      ArrayRef<int64_t> ranges = cast<DenseI64ArrayAttr>(attribute).asArrayRef();
-      uint64_t end = uint64_t(ranges[ranges.size() - 2]) + uint64_t(ranges.back());
-      std::optional<DirectStaticStateRange> range;
-      if (end <= std::numeric_limits<unsigned>::max())
-        range = resolveDirectStaticStateRange(handles.front(), end,
-                                              directLayout);
-      if (range && !range->guarded) {
-        addRanges(direct, range->offset, ranges);
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    std::map<uint64_t, uint64_t> words;
+    for (ValueRange handles : adaptor.getReferences()) {
+      std::optional<uint64_t> handle =
+          resolveCFGConstantInteger(handles.front());
+      obelisk_rt_stable_handle_v1 decoded{};
+      auto bit = layout.unknownSummaryBits.end();
+      if (handle && obelisk_rt_stable_handle_decode(*handle, &decoded) &&
+          decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
+          decoded.offset == 0)
+        bit = layout.unknownSummaryBits.find(decoded.id);
+      if (bit != layout.unknownSummaryBits.end() &&
+          bit->second == NativeStateLayout::twoStateRoot)
         continue;
+      if (bit == layout.unknownSummaryBits.end()) {
+        rewriter.replaceOpWithNewOp<arith::ConstantOp>(
+            op, i1, rewriter.getBoolAttr(false));
+        return success();
       }
-      Value plane = loadBulkStatePlane(
-          rewriter, location, handles.front(), end, "__obelisk_state_unknown",
-          /*unknownFallback=*/true, stateBitCount, directLayout,
-          /*assumeClean=*/false);
-      Words words;
-      addRanges(words, 0, ranges);
-      testWords(plane, (end + 7) / 8, words);
+      words[bit->second / 64] |= uint64_t{1} << (bit->second % 64);
     }
-    if (!direct.empty())
-      testWords(LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                          "__obelisk_state_unknown"),
-                (stateBitCount + 7) / 8, direct);
-    rewriter.replaceOpWithNewOp<LLVM::ICmpOp>(
-        op, LLVM::ICmpPredicate::eq, unknown,
-        llvmConstant(rewriter, location, i64, 0));
+    if (words.empty()) {
+      rewriter.replaceOpWithNewOp<arith::ConstantOp>(
+          op, i1, rewriter.getBoolAttr(true));
+      return success();
+    }
+    auto gate = schedule::get<schedule::Field::NativeKnownGate>(op);
+    if (!gate || gate.getValue().uge(layout.unknownSummaryGates))
+      return rewriter.notifyMatchFailure(op, "gate without backoff state");
+    Value summary = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                              unknownSummaryName);
+    Value dirty;
+    for (auto [word, mask] : words) {
+      Value bits = LLVM::LoadOp::create(
+          rewriter, location, i64,
+          byteGEP(rewriter, location, summary, 8 * word), 8);
+      bits = LLVM::AndOp::create(rewriter, location, bits,
+                                 llvmConstant(rewriter, location, i64, mask));
+      dirty =
+          dirty
+              ? LLVM::OrOp::create(rewriter, location, dirty, bits).getResult()
+              : bits;
+    }
+    Value clean =
+        LLVM::ICmpOp::create(rewriter, location, LLVM::ICmpPredicate::eq, dirty,
+                             llvmConstant(rewriter, location, i64, 0));
+
+    Block *head = rewriter.getInsertionBlock();
+    Block *done = rewriter.splitBlock(head, rewriter.getInsertionPoint());
+    BlockArgument known = done->addArgument(i1, location);
+    Block *refresh =
+        rewriter.createBlock(head->getParent(), done->getIterator());
+    Block *wait = rewriter.createBlock(head->getParent(), done->getIterator());
+    Block *call = rewriter.createBlock(head->getParent(), done->getIterator());
+    recordStaticSpecializationCFGBlocks(rewriter, head, 4);
+    rewriter.setInsertionPointToEnd(head);
+    markLikelyTrue(cf::CondBranchOp::create(
+        rewriter, location, clean, done,
+        ValueRange{arith::ConstantOp::create(rewriter, location, i1,
+                                             rewriter.getBoolAttr(true))
+                       .getResult()},
+        refresh, ValueRange{}));
+    rewriter.setInsertionPointToEnd(refresh);
+    Value backoff =
+        byteGEP(rewriter, location,
+                LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                          unknownSummaryBackoffName),
+                8 * gate.getValue().getZExtValue());
+    Value state = LLVM::LoadOp::create(rewriter, location, i64, backoff, 8);
+    Value waiting = LLVM::ICmpOp::create(
+        rewriter, location, LLVM::ICmpPredicate::ne,
+        LLVM::TruncOp::create(rewriter, location, rewriter.getI32Type(), state),
+        llvmConstant(rewriter, location, rewriter.getI32Type(), 0));
+    markLikelyTrue(cf::CondBranchOp::create(rewriter, location, waiting, wait,
+                                            ValueRange{}, call, ValueRange{}));
+    rewriter.setInsertionPointToEnd(wait);
+    LLVM::StoreOp::create(
+        rewriter, location,
+        LLVM::SubOp::create(rewriter, location, state,
+                            llvmConstant(rewriter, location, i64, 1)),
+        backoff, 8);
+    cf::BranchOp::create(
+        rewriter, location, done,
+        ValueRange{arith::ConstantOp::create(rewriter, location, i1,
+                                             rewriter.getBoolAttr(false))
+                       .getResult()});
+    rewriter.setInsertionPointToEnd(call);
+    // The (word, mask) pairs the runtime rescans; this path is cold.
+    Value pairs = entryAlloca(rewriter, location, i64, 2 * words.size(), 8);
+    unsigned index = 0;
+    for (auto [word, mask] : words)
+      for (uint64_t element : {word, mask})
+        LLVM::StoreOp::create(
+            rewriter, location, llvmConstant(rewriter, location, i64, element),
+            byteGEP(rewriter, location, pairs, 8 * index++), 8);
+    Value refreshed =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI32Type()},
+            "obelisk_rt_v1_native_state_refresh_unknown_summary",
+            ValueRange{loadCurrentRuntimeContext(rewriter, location), pairs,
+                       llvmConstant(rewriter, location, i64, words.size()),
+                       backoff})
+            .getResult();
+    Value nonzero = LLVM::ICmpOp::create(
+        rewriter, location, LLVM::ICmpPredicate::ne, refreshed,
+        llvmConstant(rewriter, location, rewriter.getI32Type(), 0));
+    cf::BranchOp::create(rewriter, location, done, ValueRange{nonzero});
+    rewriter.replaceOp(op, known);
     return success();
   }
 
 private:
-  uint64_t stateBitCount;
-  const NativeStateLayout *directLayout;
+  const NativeStateLayout &layout;
 };
 
 class RefLoadConversion final : public OpConversionPattern<sim::SimRefLoadOp> {
@@ -436,10 +474,29 @@ public:
       uint64_t stateBitCount, const NativeStateLayout *directLayout,
       bool experimentalTwoState,
       const DenseMap<Operation *, NativeStateAccessInfo> &stateAccesses,
-      const LocalStorageLowering *locals)
+      const LocalStorageLowering *locals, const NativeStateLayout *layout)
       : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
         directLayout(directLayout), experimentalTwoState(experimentalTwoState),
-        stateAccesses(stateAccesses), locals(locals) {}
+        stateAccesses(stateAccesses), locals(locals), layout(layout) {}
+
+  /// The unknown plane a value-only read observes: its root's steady pattern
+  /// (`simulation.steady_unknown`), which the root's clear summary bit
+  /// guarantees.
+  APInt knownReadUnknown(sim::SimRefLoadOp op, Value handle,
+                         unsigned width) const {
+    APInt unknown(width, 0);
+    if (!layout ||
+        !::obelisk::schedule::has<::obelisk::schedule::Field::NativeKnownRead>(
+            op))
+      return unknown;
+    std::optional<uint64_t> value = resolveCFGConstantInteger(handle);
+    obelisk_rt_stable_handle_v1 decoded{};
+    if (!value || !obelisk_rt_stable_handle_decode(*value, &decoded) ||
+        decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.offset < 0)
+      return unknown;
+    return layout->getSteadyUnknown(decoded.id, uint64_t(decoded.offset),
+                                    width);
+  }
 
   LogicalResult
   matchAndRewrite(sim::SimRefLoadOp op, OneToNOpAdaptor adaptor,
@@ -481,6 +538,16 @@ public:
               llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(),
                            (*width + 7) / 8),
               false);
+          APInt pattern =
+              knownReadUnknown(op, adaptor.getReference().front(), *width);
+          for (unsigned byte = 0; byte * 8 < *width; ++byte)
+            if (uint64_t bits = pattern.extractBitsAsZExtValue(
+                    std::min(8u, *width - byte * 8), byte * 8))
+              LLVM::StoreOp::create(
+                  rewriter, op.getLoc(),
+                  llvmConstant(rewriter, op.getLoc(), rewriter.getI8Type(),
+                               bits),
+                  byteGEP(rewriter, op.getLoc(), buffer, byte), 1);
           buffers.push_back(buffer);
         } else {
           buffers.push_back(read("__obelisk_state_unknown", true));
@@ -506,11 +573,17 @@ public:
     SmallVector<Value> converted{value};
     if (containsLogic(resultType)) {
       Value unknown =
-          twoState ? llvmConstant(rewriter, op.getLoc(), plane, 0)
-                   : loadStatePlane(
-                         rewriter, op.getLoc(), adaptor.getReference().front(),
-                         plane, "__obelisk_state_unknown", true, stateBitCount,
-                         directLayout, guardedPermission, assumeClean, access);
+          twoState
+              ? arith::ConstantOp::create(
+                    rewriter, op.getLoc(), plane,
+                    rewriter.getIntegerAttr(
+                        plane, knownReadUnknown(
+                                   op, adaptor.getReference().front(), *width)))
+                    .getResult()
+              : loadStatePlane(
+                    rewriter, op.getLoc(), adaptor.getReference().front(),
+                    plane, "__obelisk_state_unknown", true, stateBitCount,
+                    directLayout, guardedPermission, assumeClean, access);
       converted.push_back(
           maskStoragePlane(rewriter, op.getLoc(), unknown, resultType, true));
     }
@@ -525,6 +598,7 @@ private:
   bool experimentalTwoState;
   const DenseMap<Operation *, NativeStateAccessInfo> &stateAccesses;
   const LocalStorageLowering *locals;
+  const NativeStateLayout *layout;
 };
 
 class RefStoreConversion final
@@ -535,7 +609,7 @@ public:
       uint64_t stateBitCount, const NativeStateLayout *directLayout,
       bool experimentalTwoState,
       const DenseMap<Operation *, NativeStateAccessInfo> &stateAccesses,
-      const LocalStorageLowering *)
+      const LocalStorageLowering *, const NativeStateLayout *)
       : OpConversionPattern(converter, context), stateBitCount(stateBitCount),
         directLayout(directLayout), experimentalTwoState(experimentalTwoState),
         stateAccesses(stateAccesses) {
@@ -548,7 +622,11 @@ public:
     if (adaptor.getReference().size() != 1 || adaptor.getValue().empty())
       return failure();
     Type valueType = op.getValue().getType();
-    bool twoState = useTwoStateSpecialization(op, experimentalTwoState);
+    // A known store leaves the destination's zero unknown bits in place.
+    bool twoState =
+        useTwoStateSpecialization(op, experimentalTwoState) ||
+        ::obelisk::schedule::has<::obelisk::schedule::Field::NativeKnownStore>(
+            op);
     auto proof = stateAccesses.find(op);
     const NativeStateAccessInfo *access =
         proof == stateAccesses.end() ? nullptr : &proof->second;
@@ -1177,21 +1255,25 @@ public:
 
 } // namespace
 
+void populateKnownRootsToLLVMConversionPatterns(
+    RewritePatternSet &patterns, TypeConverter &converter,
+    const NativeStateLayout &layout) {
+  patterns.add<KnownRootsConversion>(converter, patterns.getContext(), layout);
+}
+
 void populateStateReadWriteToLLVMConversionPatterns(
     RewritePatternSet &patterns, TypeConverter &converter,
     uint64_t stateBitCount, const NativeStateLayout *directLayout,
     bool experimentalTwoState,
     const DenseMap<Operation *, NativeStateAccessInfo> &stateAccesses,
-    const LocalStorageLowering *locals) {
+    const LocalStorageLowering *locals, const NativeStateLayout *layout) {
   patterns.add<KnownValueConversion>(converter, patterns.getContext());
-  patterns.add<KnownBitsConversion>(converter, patterns.getContext(),
-                                    stateBitCount, directLayout);
   patterns.add<BulkRefCopyConversion>(converter, patterns.getContext(),
                                       stateBitCount, directLayout,
                                       experimentalTwoState);
   patterns.add<RefLoadConversion, RefStoreConversion>(
       converter, patterns.getContext(), stateBitCount, directLayout,
-      experimentalTwoState, stateAccesses, locals);
+      experimentalTwoState, stateAccesses, locals, layout);
   patterns.add<NetReadConversion, DriverReadConversion, NetWriteConversion>(
       converter, patterns.getContext(), stateBitCount, directLayout,
       experimentalTwoState);
