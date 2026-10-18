@@ -1072,8 +1072,55 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     }
   });
 
+  // A task with no time control runs to completion inside its caller's
+  // activation, so for the schedule its call is an ordinary call (IEEE
+  // 1800-2023 13.3). Only a task that may suspend, spawn, dispatch
+  // dynamically, or take part in process control needs the runtime's
+  // activation records. Recursion stays conservative: a cycle never settles.
+  llvm::SmallDenseSet<Operation *> nonSuspendingTasks;
+  {
+    SmallVector<sim::SimFuncOp> tasks;
+    module.walk([&](sim::SimFuncOp function) {
+      if (function.getEntryKind() == sim::EntryKind::Task &&
+          !function.isExternal())
+        tasks.push_back(function);
+    });
+    for (bool changed = true; changed;) {
+      changed = false;
+      for (sim::SimFuncOp task : tasks) {
+        if (nonSuspendingTasks.contains(task.getOperation()))
+          continue;
+        bool plain = true;
+        task.walk([&](Operation *operation) {
+          if (sim::isSuspensionOp(operation) ||
+              isa<sim::SimSpawnOp, sim::SimClassVirtualTaskCallOp,
+                  sim::SimControlEnterOp, sim::SimControlDisableOp,
+                  sim::SimProcessControlOp, sim::SimDPICallOp>(operation)) {
+            plain = false;
+          } else if (auto call = dyn_cast<sim::SimTaskCallOp>(operation)) {
+            sim::SimFuncOp callee = lookupFunction(call.getCallee());
+            plain = callee && nonSuspendingTasks.contains(callee.getOperation());
+          }
+          return plain ? WalkResult::advance() : WalkResult::interrupt();
+        });
+        if (plain) {
+          nonSuspendingTasks.insert(task.getOperation());
+          changed = true;
+        }
+      }
+    }
+  }
+  auto isNonSuspendingTaskCall = [&](Operation *operation) {
+    auto call = dyn_cast<sim::SimTaskCallOp>(operation);
+    if (!call)
+      return false;
+    sim::SimFuncOp callee = lookupFunction(call.getCallee());
+    return callee && nonSuspendingTasks.contains(callee.getOperation());
+  };
+
   module.walk([&](sim::SimFuncOp function) {
-    if (function.getEntryKind() == sim::EntryKind::Task ||
+    if ((function.getEntryKind() == sim::EntryKind::Task &&
+         !nonSuspendingTasks.contains(function.getOperation())) ||
         (function.getEntryKind() == sim::EntryKind::Fork &&
          !llvm::is_contained(staticNestedActors, function))) {
       result.reasons.emplace_back("task, await, or join control is present");
@@ -1209,6 +1256,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       requireBytecodeFragment(operation,
                               "managed wait requires dynamic runtime state");
       excludeBytecodeActor(operation);
+    } else if (isNonSuspendingTaskCall(operation)) {
+      // Completes within this activation, like a function call.
     } else if (isa<sim::SimSuspendAwaitOp, sim::SimSuspendJoinOp,
                    sim::SimSuspendChildrenOp, sim::SimTaskCallOp,
                    sim::SimClassVirtualTaskCallOp>(operation)) {
@@ -1318,6 +1367,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
         bytecodeActors.insert(function.getOperation());
         result.reasons.emplace_back(
             "initial signal waiter requires Active ordering");
+        noteReason(actorReasons[function.getOperation()],
+                   internReason("initial signal waiter requires Active ordering"));
         onlyConcurrentColdBoundaries = false;
       }
     });
@@ -1440,6 +1491,48 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
                    << byFunction.lookup(name).first
                    << " fragments=" << byFunction.lookup(name).second
                    << " at=" << name << '\n';
+    // Whole actors withheld from the plan, by source position and reason.
+    llvm::StringMap<std::pair<uint64_t, std::string>> byActor;
+    for (Attribute attribute : nodes) {
+      auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(attribute);
+      if (!fragment)
+        continue;
+      sim::SimFuncOp function =
+          lookupFunction(fragment.getFunction().getValue());
+      if (!function || result.actorSlots.contains(function.getOperation()) ||
+          function.getEntryKind() == sim::EntryKind::Function ||
+          function.getEntryKind() == sim::EntryKind::Task)
+        continue;
+      std::string where;
+      {
+        llvm::raw_string_ostream stream(where);
+        function.getLoc().print(stream);
+      }
+      auto &entry = byActor[where];
+      entry.first += std::max<uint64_t>(fragment.getCost(), 1);
+      if (entry.second.empty()) {
+        SmallVector<unsigned> indices =
+            actorReasons.lookup(function.getOperation());
+        for (unsigned index :
+             actorBlockReasons.lookup(function.getOperation()))
+          noteReason(indices, index);
+        llvm::sort(indices);
+        for (unsigned index : indices)
+          entry.second += (entry.second.empty() ? "" : "; ") +
+                          reasonNames[index];
+      }
+    }
+    ordered.clear();
+    for (const auto &entry : byActor)
+      ordered.push_back(entry.first());
+    llvm::sort(ordered, [&](StringRef lhs, StringRef rhs) {
+      return std::make_pair(byActor.lookup(rhs).first, rhs) <
+             std::make_pair(byActor.lookup(lhs).first, lhs);
+    });
+    for (StringRef name : ArrayRef<StringRef>(ordered).take_front(40))
+      llvm::errs() << "obelisk native withheld actor: cost="
+                   << byActor.lookup(name).first << " at=" << name
+                   << " reason=" << byActor.lookup(name).second << '\n';
   }
   llvm::stable_sort(attribution, [](const NativeAOTBoundaryCost &lhs,
                                     const NativeAOTBoundaryCost &rhs) {
