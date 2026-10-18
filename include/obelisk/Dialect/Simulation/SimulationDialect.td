@@ -347,6 +347,12 @@ def ObeliskSimulationDialect : Dialect {
     "::mlir::UnitAttr":$temporal_property_negation_outside_abort,
     "::mlir::IntegerAttr":$vacuous_sequence_alternatives,
 
+    // Storage declaration: the bits, as sorted (offset, width) pairs within
+    // the root, expected to hold X/Z once the design runs
+    // (SteadyUnknownAnalysis). A guess: schedule.known.roots holds only
+    // while the root's unknown plane matches it exactly.
+    "::mlir::DenseI64ArrayAttr":$steady_unknown,
+
     // Timing, specify paths, nets and UDPs (IEEE 1800-2023 28-32).
     "::mlir::UnitAttr":$continuous_store,
     // Time scaling preparation freezes onto each code unit for unit lowering;

@@ -707,13 +707,13 @@ static const llvm::StringMap<discardable::PayloadCheck> &declarations() {
       metadata::StrongWeakMonitor, metadata::SvaTransitionNormalForm,
       metadata::SynchronousPropertyAbort, metadata::TemporalPropertyNegation,
       metadata::TemporalPropertyNegationOutsideAbort,
-      metadata::VacuousSequenceAlternatives, metadata::ContinuousStore,
-      metadata::DelayQuantum, metadata::DelayScale, metadata::DelayedNet,
-      metadata::InitialDriverX, metadata::InterconnectLeafPath,
-      metadata::InterconnectLeaves, metadata::InterconnectNettype,
-      metadata::InterconnectVpiType, metadata::MosTopologyIds,
-      metadata::NegativeTimingAdjusted, metadata::NegativeTimingDelayCommit,
-      metadata::NegativeTimingDelayMonitor,
+      metadata::VacuousSequenceAlternatives, metadata::SteadyUnknown,
+      metadata::ContinuousStore, metadata::DelayQuantum, metadata::DelayScale,
+      metadata::DelayedNet, metadata::InitialDriverX,
+      metadata::InterconnectLeafPath, metadata::InterconnectLeaves,
+      metadata::InterconnectNettype, metadata::InterconnectVpiType,
+      metadata::MosTopologyIds, metadata::NegativeTimingAdjusted,
+      metadata::NegativeTimingDelayCommit, metadata::NegativeTimingDelayMonitor,
       metadata::NegativeTimingTransportActivation, metadata::PassSwitchIds,
       metadata::PropagationDelays, metadata::ResolutionFunctionPath,
       metadata::ResolutionFunctionSymbol, metadata::SkewDeadlineHelper,
@@ -864,6 +864,22 @@ static LogicalResult verifyDeclaredAttribute(Operation *operation,
   if (name == RandomizeNestedDispatchSelectionPath::getNameStr() &&
       !allOf(llvm::IsaPred<FlatSymbolRefAttr>))
     return error() << "must contain field symbols";
+  if (name == SteadyUnknown::getNameStr()) {
+    auto storage = dyn_cast<SimStorageDeclOp>(operation);
+    if (!storage)
+      return error() << "belongs on a storage declaration";
+    auto ranges = cast<DenseI64ArrayAttr>(attribute.getValue()).asArrayRef();
+    std::optional<uint64_t> span = getProvenanceSpan(storage.getType());
+    int64_t end = 0;
+    for (size_t index = 0; index + 1 < ranges.size(); index += 2)
+      if (ranges[index] < end || ranges[index + 1] <= 0 || !span ||
+          uint64_t(ranges[index] + ranges[index + 1]) > *span)
+        return error() << "must hold sorted, disjoint ranges inside the root";
+      else
+        end = ranges[index] + ranges[index + 1];
+    if (ranges.size() % 2)
+      return error() << "must hold (offset, width) pairs";
+  }
   if ((name == GCPolled::getNameStr() ||
        name == PulseRejectPercent::getNameStr() ||
        name == PulseErrorPercent::getNameStr() ||

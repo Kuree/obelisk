@@ -511,6 +511,7 @@ using TemporalPropertyNegationOutsideAbort =
     ObeliskSimulationDialect::TemporalPropertyNegationOutsideAbortAttrHelper;
 using VacuousSequenceAlternatives =
     ObeliskSimulationDialect::VacuousSequenceAlternativesAttrHelper;
+using SteadyUnknown = ObeliskSimulationDialect::SteadyUnknownAttrHelper;
 using ContinuousStore = ObeliskSimulationDialect::ContinuousStoreAttrHelper;
 using DelayQuantum = ObeliskSimulationDialect::DelayQuantumAttrHelper;
 using DelayScale = ObeliskSimulationDialect::DelayScaleAttrHelper;

@@ -57,6 +57,28 @@ def ObeliskSimMarkBoundedLoopsPass
                            "mlir::cf::ControlFlowDialect"];
 }
 
+def ObeliskSimAnnotateSteadyUnknownPass
+    : Pass<"obelisk-sim-annotate-steady-unknown", "obelisk::sim::SimDesignOp"> {
+  let summary = "Record the storage bits expected to hold X/Z in steady state";
+  let description = [{
+    Sets `simulation.steady_unknown` on each storage declaration with bits
+    that hold X/Z once the design runs (SteadyUnknownAnalysis; IEEE
+    1800-2023 6.8, Table 6-7): fields a design never assigns, and bits that
+    the repeating writes fill only with such bits or X/Z. The fact is a
+    guess the generated unknown summary validates at run time: a root whose
+    unknown plane matches it exactly lets gated copies load those bits as a
+    constant X. A writable VPI contract records nothing. Run on the
+    canonical design, before bytecode encoding freezes the processes the
+    fact covers.
+  }];
+  let options = [Option<"vpi", "vpi", "std::string", "\"full\"",
+                        "External observation/mutation contract: off, read, or full">];
+  let statistics = [Statistic<"numRoots", "roots",
+                              "Storage roots with bits that stay X/Z">,
+                    Statistic<"numBits", "bits", "Bits that stay X/Z">];
+  let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect"];
+}
+
 def ObeliskSimInsertGCPollsPass
     : Pass<"obelisk-sim-insert-gc-polls", "mlir::ModuleOp"> {
   let summary = "Place managed-heap collection polls for polled collection";

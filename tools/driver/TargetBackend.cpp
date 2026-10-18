@@ -625,6 +625,15 @@ lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
   // Both tiers share the polls that bound garbage between collections, so
   // place them before bytecode is frozen.
   manager.addPass(createObeliskSimInsertGCPollsPass());
+  // The storage bits expected to hold X/Z in steady state are inferred from
+  // the canonical design, which bytecode freezes next; native versioning
+  // loads them as a constant X while the unknown summary confirms them.
+  if (optLevel > 0) {
+    ObeliskSimAnnotateSteadyUnknownPassOptions steadyUnknown;
+    steadyUnknown.vpi = vpi.str();
+    manager.nest<obelisk::sim::SimDesignOp>().addPass(
+        createObeliskSimAnnotateSteadyUnknownPass(steadyUnknown));
+  }
   if (needsDesignEncoding) {
     // Bytecode and native lowering must observe the same suspension-safe SSA
     // shape. The coroutine pass also runs this canonicalization for native

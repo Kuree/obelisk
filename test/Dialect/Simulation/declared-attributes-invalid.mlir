@@ -139,3 +139,33 @@ func.func private @destination() attributes {
   // expected-error @+1 {{timing path destination is out of bounds}}
   selection = #simulation.timing_path_selection<inputLows = [0],
     inputWidths = [1], outputLow = 3, outputWidth = 2, outputRootWidth = 4>}
+
+// -----
+
+// expected-error @+1 {{attribute 'simulation.steady_unknown' belongs on a storage declaration}}
+func.func private @steady_on_function() attributes {
+  simulation.steady_unknown = array<i64: 0, 1>}
+
+// -----
+
+simulation.design @steady_unsorted {
+  simulation.scope.decl 0
+  // expected-error @+1 {{attribute 'simulation.steady_unknown' must hold sorted, disjoint ranges inside the root}}
+  simulation.storage.decl 0 in 0 : !simulation.logic<8> design {simulation.steady_unknown = array<i64: 4, 2, 2, 1>}
+}
+
+// -----
+
+simulation.design @steady_outside {
+  simulation.scope.decl 0
+  // expected-error @+1 {{attribute 'simulation.steady_unknown' must hold sorted, disjoint ranges inside the root}}
+  simulation.storage.decl 0 in 0 : !simulation.logic<8> design {simulation.steady_unknown = array<i64: 6, 4>}
+}
+
+// -----
+
+simulation.design @steady_odd {
+  simulation.scope.decl 0
+  // expected-error @+1 {{attribute 'simulation.steady_unknown' must hold (offset, width) pairs}}
+  simulation.storage.decl 0 in 0 : !simulation.logic<8> design {simulation.steady_unknown = array<i64: 0, 1, 4>}
+}

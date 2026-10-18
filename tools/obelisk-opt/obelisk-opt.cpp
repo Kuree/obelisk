@@ -52,6 +52,7 @@ int main(int argc, char **argv) {
   obelisk::registerManagedClassLayoutAnalysisTestPass();
   obelisk::registerLocalStorageAnalysisTestPass();
   obelisk::registerLocalUnknownAnalysisTestPass();
+  obelisk::registerSteadyUnknownAnalysisTestPass();
   obelisk::registerNativeAOTAnalysisTestPass();
   obelisk::registerNativeStateLayoutAnalysisTestPass();
   obelisk::registerRandomProgramTestPass();
