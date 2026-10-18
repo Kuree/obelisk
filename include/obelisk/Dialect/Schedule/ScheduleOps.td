@@ -273,17 +273,22 @@ def NativeReadyRegionOp : ScheduleNativeOp<"ready.region", [RecursiveMemoryEffec
     and are observation boundaries. This changes pending-set representation,
     never event history or activation eligibility (IEEE 1800-2023 4.3--4.7).
     ready.read observes the current local pending word without a flush.
-    The region has no entry arguments; exits use ready.yield. Only flat CFG
-    branches are allowed, with no suspensions or nested regions.
+    The region has no entry arguments; exits use ready.yield, whose operands
+    become the region's results, so a function that returns a value keeps
+    its CFG inside one region. Only flat CFG branches are allowed, with no
+    suspensions or nested regions.
   }];
   let regions = (region AnyRegion:$body);
-  let assemblyFormat = "$body attr-dict";
+  let results = (outs Variadic<AnyType>:$results);
+  let assemblyFormat = "$body attr-dict (`:` type($results)^)?";
   let hasVerifier = 1;
 }
 def NativeReadyYieldOp : ScheduleNativeOp<"ready.yield",
     [Terminator, HasParent<"NativeReadyRegionOp">, Pure]> {
   let summary = "materialize pending readiness and leave its region";
-  let assemblyFormat = "attr-dict";
+  let arguments = (ins Variadic<AnyType>:$operands);
+  let assemblyFormat = "($operands^ `:` type($operands))? attr-dict";
+  let hasVerifier = 1;
 }
 def NativeNBABatchOp : ScheduleNativeOp<"nba.batch", [SingleBlock,
     MemoryEffects<[MemRead, MemWrite, MemRead<SimStorageResource>,

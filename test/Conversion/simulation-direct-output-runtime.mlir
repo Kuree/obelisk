@@ -54,7 +54,9 @@
 // BARRIER-NEXT: ^[[COMMIT]]:
 // BARRIER: ^[[DONE]](%[[STATUS:.*]]: i32):
 // BARRIER-NEXT: %[[BOUNDARY:.*]] = llvm.call @__obelisk_eval_route_promotion_boundary_v1(%[[STATUS]]) : (i32) -> i32
-// BARRIER-NEXT: llvm.return %[[BOUNDARY]] : i32
+// BARRIER-NEXT: llvm.br ^[[EXIT:bb[0-9]+]](%[[BOUNDARY]] : i32)
+// BARRIER: ^[[EXIT]](%[[RESULT:.*]]: i32):
+// BARRIER-NEXT: llvm.return %[[RESULT]] : i32
 
 // With VPI a value-change callback can observe every NBA update (IEEE
 // 1800-2017 38.36.1), so the updates use the ordered queue and its count

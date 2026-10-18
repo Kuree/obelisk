@@ -191,7 +191,12 @@ getOrCreateDeclaration(Operation *anchor, runtime::RuntimeCall call,
   }
   OpBuilder::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointToStart(module.getBody());
-  return LLVM::LLVMFuncOp::create(rewriter, anchor->getLoc(), name, expected);
+  auto function =
+      LLVM::LLVMFuncOp::create(rewriter, anchor->getLoc(), name, expected);
+  if (runtime::isColdRuntimeCall(call))
+    function.setPassthroughAttr(
+        rewriter.getArrayAttr({rewriter.getStringAttr("cold")}));
+  return function;
 }
 
 static Value llvmIntegerConstant(OpBuilder &builder, Location location,

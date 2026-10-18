@@ -107,9 +107,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-LABEL: llvm.func @__obelisk_direct_fragment_2_2.__obelisk_execute(
 // CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1
 // CHECK: llvm.call @__obelisk_direct_fragment_1_1.__obelisk_execute
-// CHECK: %[[DIRECT_INVERSE:.*]] = llvm.mlir.constant(-4 : i64)
-// CHECK: %[[DIRECT_REMAINING:.*]] = llvm.and {{.*}}, %[[DIRECT_INVERSE]]
-// CHECK: llvm.store %[[DIRECT_REMAINING]],
+// The consumed owner bits travel as a pending mask inside the run body and
+// reach the ready word before the next observation point.
+// CHECK: %[[DIRECT_OWNER:.*]] = llvm.mlir.constant(3 : i64)
+// CHECK: %[[DIRECT_INVERSE:.*]] = llvm.xor %{{.*}}, %{{.*}} : i64
+// CHECK-NEXT: %[[DIRECT_REMAINING:.*]] = llvm.and {{.*}}, %[[DIRECT_INVERSE]]
+// CHECK-NEXT: %[[DIRECT_NEXT:.*]] = llvm.or %[[DIRECT_REMAINING]], %{{.*}}
+// CHECK-NEXT: llvm.store %[[DIRECT_NEXT]],
 // CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1
 // CHECK: %[[PENDING:.*]] = llvm.and %[[READY:.*]], %[[COORD_MASK:.*]]
 // CHECK: llvm.icmp "ne" %[[PENDING]], %[[ZERO:.*]]

@@ -140,7 +140,8 @@ module attributes {
 // CHECK: llvm.call @obelisk_rt_v1_gc_designate(
 // The first clock's equality test bypasses its physical update entirely.
 // CHECK: %[[DUE0:.*]] = llvm.icmp "eq" {{.*}} : i64
-// CHECK-NEXT: llvm.cond_br %[[DUE0]], ^[[TOGGLE0:bb[0-9]+]], ^[[NEXT0:bb[0-9]+]]({{.*}} : i1, i64)
+// The run body also carries its pending ready masks as block arguments.
+// CHECK-NEXT: llvm.cond_br %[[DUE0]], ^[[TOGGLE0:bb[0-9]+]], ^[[NEXT0:bb[0-9]+]]({{.*}} : i1, i64, i64, i64)
 // CHECK: ^[[TOGGLE0]]:
 // CHECK: llvm.xor {{.*}} : i8
 // CHECK: llvm.store {{.*}} : i8, !llvm.ptr
@@ -151,17 +152,17 @@ module attributes {
 // CHECK: ^[[COLLECT]]:
 // CHECK-NEXT: %[[GC:.*]] = llvm.call @obelisk_rt_v1_gc_collect_pending(
 // CHECK-NEXT: llvm.br ^[[COLLECTED]](%[[GC]] : i32)
-// CHECK: llvm.br ^[[NEXT0]]({{.*}} : i1, i64)
+// CHECK: llvm.br ^[[NEXT0]]({{.*}} : i1, i64, i64, i64)
 // The second clock preserves the first clock's ready mask when not due.
-// CHECK: ^[[NEXT0]](%[[INGRESS0:.*]]: i1, %[[READY0:.*]]: i64):
+// CHECK: ^[[NEXT0]](%[[INGRESS0:.*]]: i1, %[[READY0:.*]]: i64, %[[REMOVE0:.*]]: i64, %[[ADD0:.*]]: i64):
 // CHECK: %[[DUE1:.*]] = llvm.icmp "eq" {{.*}} : i64
-// CHECK-NEXT: llvm.cond_br %[[DUE1]], ^[[TOGGLE1:bb[0-9]+]], ^[[NEXT1:bb[0-9]+]](%[[INGRESS0]], %[[READY0]] : i1, i64)
+// CHECK-NEXT: llvm.cond_br %[[DUE1]], ^[[TOGGLE1:bb[0-9]+]], ^[[NEXT1:bb[0-9]+]](%[[INGRESS0]], %[[READY0]], %[[REMOVE0]], %[[ADD0]] : i1, i64, i64, i64)
 // CHECK: ^[[TOGGLE1]]:
 // CHECK-NOT: gc_collect_pending
 // CHECK: llvm.xor {{.*}} : i8
 // CHECK: llvm.store {{.*}} : i8, !llvm.ptr
 // CHECK: llvm.or %[[READY0]], {{.*}} : i64
-// CHECK: ^[[NEXT1]](%[[INGRESS:.*]]: i1, %[[READY:.*]]: i64):
+// CHECK: ^[[NEXT1]](%[[INGRESS:.*]]: i1, %[[READY:.*]]: i64, %{{.*}}: i64, %{{.*}}: i64):
 // Silent slots bypass the entire dispatcher, after both clock updates.
 // CHECK-NEXT: llvm.cond_br %[[INGRESS]], ^{{bb[0-9]+}}, ^{{bb[0-9]+}}
 // Only selected owners contribute to the shared promotion check.
@@ -176,6 +177,7 @@ module attributes {
 // CHECK: llvm.and %[[READY]], {{.*}} : i64
 // CHECK: llvm.cond_br {{.*}}, ^[[EXECUTE:bb[0-9]+]], ^{{bb[0-9]+}}
 // CHECK: ^[[EXECUTE]]:
+// CHECK: llvm.store
 // CHECK-NEXT: {{.*}}llvm.call @__obelisk_direct_fragment_3_9.__obelisk_execute.two_state.__obelisk_trusted
 // CHECK-NOT: llvm.call @__obelisk_eval_kernel_promotion_ready
 // CHECK: llvm.call @__obelisk_direct_fragment_4_12.__obelisk_execute.two_state.__obelisk_trusted

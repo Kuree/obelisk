@@ -9,11 +9,15 @@
 // CHECK-NEXT: %[[BIT:.*]] = llvm.mlir.constant(2 : i64)
 // CHECK-NEXT: %[[LOCAL:.*]] = llvm.and %[[BITS]], %[[BIT]] : i64
 // CHECK: %[[KNOWN:.*]] = llvm.icmp "eq" %[[LOCAL]], {{.*}} : i64
-// CHECK-NEXT: llvm.cond_br %[[KNOWN]], ^[[FAST:bb[0-9]+]], ^[[SCAN:bb[0-9]+]]
+// The run body's pending ready masks are block arguments; each arm stores
+// them before its observation point.
+// CHECK-NEXT: llvm.cond_br %[[KNOWN]], ^[[FAST:bb[0-9]+]](%{{.*}} : i64, i64), ^[[SCAN:bb[0-9]+]]
 // CHECK: ^[[SCAN]]:
 // CHECK: %[[OWNER:.*]] = llvm.mlir.constant(1 : i64)
+// CHECK: llvm.store
 // CHECK-NEXT: {{.*}}llvm.call @__obelisk_eval_kernel_promotion_ready_v1(%[[OWNER]])
-// CHECK: ^[[FAST]]:
+// CHECK: ^[[FAST]](%{{.*}}: i64, %{{.*}}: i64):
+// CHECK: llvm.store
 // CHECK-NEXT: {{.*}}llvm.call @__obelisk_direct_fragment_4_12.__obelisk_execute.two_state.__obelisk_trusted
 
 module attributes {

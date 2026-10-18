@@ -44,13 +44,50 @@ std::optional<Key> keyFor(Operation *op, SymbolTableCollection &symbols) {
   return Key{address.getGlobalName(), capacity, word};
 }
 
+// Runtime leaves that cannot inspect readiness: they neither execute an
+// actor nor enter the scheduler, so pending words may stay local across them.
+// Each formats, latches or allocates on runtime-owned storage that no ready
+// set shares (the same leaves stay transparent to pending NBA captures).
+bool readinessTransparentCall(Operation *op) {
+  auto call = dyn_cast<LLVM::CallOp>(op);
+  if (!call || !call.getCallee())
+    return false;
+  StringRef callee = *call.getCallee();
+  return callee == "obelisk_rt_v1_eval_display" ||
+         callee == "obelisk_rt_v1_scheduler_fail" ||
+         callee == "obelisk_rt_v1_eval_nba_reserve" ||
+         callee == "obelisk_rt_v1_scheduler_termination_requested" ||
+         callee == "obelisk_rt_v1_scheduler_time" ||
+         callee == "obelisk_rt_v1_coverage_point_hit" ||
+         callee == "obelisk_rt_v1_native_promotion_invalidate_ranges" ||
+         callee == "obelisk_rt_v1_native_promotion_recheck_ranges" ||
+         callee == "obelisk_rt_v1_native_state_mark_unknown" ||
+         callee == "obelisk_rt_v1_native_state_refresh_unknown_summary";
+}
+
 // Ordinary accesses to distinct LLVM globals or local allocas cannot inspect
 // the ready set. All other memory/control effects materialize it first. This
 // includes indirect aliases, atomics, callbacks, transitions and NBA actions.
 bool isBoundary(Operation *op, const std::map<Key, unsigned> &keys,
                 SymbolTableCollection &symbols) {
-  if (isa<schedule::NativeReadyYieldOp, CallOpInterface>(op))
+  if (isa<schedule::NativeReadyYieldOp>(op))
     return true;
+  if (isa<CallOpInterface>(op))
+    return !readinessTransparentCall(op);
+  // Whether an address provably lies outside every ready set: local storage
+  // or a distinct resolved global, reached through constant-shape GEPs.
+  auto disjoint = [&](Value root) {
+    while (auto gep = root.getDefiningOp<LLVM::GEPOp>())
+      root = gep.getBase();
+    if (root.getDefiningOp<LLVM::AllocaOp>())
+      return true;
+    auto address = root.getDefiningOp<LLVM::AddressOfOp>();
+    if (!address || !address.getGlobal(symbols))
+      return false;
+    return llvm::none_of(keys, [&](const auto &entry) {
+      return entry.first.global == address.getGlobalName();
+    });
+  };
   auto load = dyn_cast<LLVM::LoadOp>(op);
   auto store = dyn_cast<LLVM::StoreOp>(op);
   if (load || store) {
@@ -61,18 +98,21 @@ bool isBoundary(Operation *op, const std::map<Key, unsigned> &keys,
                    store.getOrdering() == LLVM::AtomicOrdering::not_atomic;
     if (!plain)
       return true;
-    Value root = load ? load.getAddr() : store.getAddr();
-    while (auto gep = root.getDefiningOp<LLVM::GEPOp>())
-      root = gep.getBase();
-    if (root.getDefiningOp<LLVM::AllocaOp>())
-      return false;
-    auto address = root.getDefiningOp<LLVM::AddressOfOp>();
-    if (!address || !address.getGlobal(symbols))
-      return true;
-    return llvm::any_of(keys, [&](const auto &entry) {
-      return entry.first.global == address.getGlobalName();
-    });
+    return !disjoint(load ? load.getAddr() : store.getAddr());
   }
+  if (auto set = dyn_cast<LLVM::MemsetOp>(op))
+    return set.getIsVolatile() || !disjoint(set.getDst());
+  if (auto set = dyn_cast<LLVM::MemsetInlineOp>(op))
+    return set.getIsVolatile() || !disjoint(set.getDst());
+  if (auto copy = dyn_cast<LLVM::MemcpyOp>(op))
+    return copy.getIsVolatile() || !disjoint(copy.getDst()) ||
+           !disjoint(copy.getSrc());
+  if (auto copy = dyn_cast<LLVM::MemcpyInlineOp>(op))
+    return copy.getIsVolatile() || !disjoint(copy.getDst()) ||
+           !disjoint(copy.getSrc());
+  if (auto move = dyn_cast<LLVM::MemmoveOp>(op))
+    return move.getIsVolatile() || !disjoint(move.getDst()) ||
+           !disjoint(move.getSrc());
   return !isa<LLVM::AllocaOp>(op) && !isMemoryEffectFree(op);
 }
 } // namespace
@@ -243,14 +283,18 @@ void lowerNativeReadyRegion(schedule::NativeReadyRegionOp region,
     }
   }
   // Inline the CFG only after representing every exit and observation point.
+  // Yield operands reach the continuation as its block arguments.
   Block *head = region->getBlock();
   Block *next = head->splitBlock(Block::iterator(region));
+  SmallVector<Location> resultLocations(region.getNumResults(), loc);
+  next->addArguments(region.getResultTypes(), resultLocations);
+  region.replaceAllUsesWith(next->getArguments());
   Block *first = &region.getBody().front();
   for (Block &block : region.getBody())
     if (auto yield =
             dyn_cast<schedule::NativeReadyYieldOp>(block.getTerminator())) {
       b.setInsertionPoint(yield);
-      cf::BranchOp::create(b, loc, next);
+      cf::BranchOp::create(b, loc, next, yield.getOperands());
       yield.erase();
     }
   head->getParent()->getBlocks().splice(Region::iterator(next),
@@ -266,12 +310,17 @@ void lowerNativeReadyRegion(schedule::NativeReadyRegionOp region,
     head->getOperations().splice(head->end(), first->getOperations());
     first->erase();
   }
-  if (Block *predecessor = next->getSinglePredecessor()) {
-    predecessor->getTerminator()->erase();
-    predecessor->getOperations().splice(predecessor->end(),
-                                        next->getOperations());
-    next->erase();
-  }
+  if (Block *predecessor = next->getSinglePredecessor())
+    if (auto branch = dyn_cast<cf::BranchOp>(predecessor->getTerminator())) {
+      for (auto [argument, operand] :
+           llvm::zip_equal(next->getArguments(), branch.getDestOperands()))
+        argument.replaceAllUsesWith(operand);
+      next->eraseArguments([](BlockArgument) { return true; });
+      branch.erase();
+      predecessor->getOperations().splice(predecessor->end(),
+                                          next->getOperations());
+      next->erase();
+    }
   // Expose the accumulated masks as SSA now, before group formation and its
   // code-growth accounting. Deferring this to LLVM would leave artificial
   // local memory effects that prevent otherwise eligible groups from forming.

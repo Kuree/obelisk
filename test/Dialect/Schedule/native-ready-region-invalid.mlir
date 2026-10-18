@@ -40,3 +40,14 @@ module {
     llvm.return
   }
 }
+// -----
+module {
+  llvm.func @bad() -> i32 {
+    %zero = arith.constant 0 : i64
+    %status = schedule.ready.region {
+      // expected-error @+1 {{operands must match the ready.region results}}
+      schedule.ready.yield %zero : i64
+    } : i32
+    llvm.return %status : i32
+  }
+}

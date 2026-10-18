@@ -4,6 +4,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Threading.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
@@ -33,12 +34,15 @@ using Pending = llvm::DenseMap<Key, Operation *>;
 } // namespace
 // Keep the existing straight-line rewrite, then preserve the remaining CFG as
 // one explicit readiness lifetime. Lowering handles observation/alias barriers
-// inside it rather than assuming that every operation is unobservable.
+// inside it rather than assuming that every operation is unobservable. A
+// function result is carried out of the region by its yields, so returning a
+// status does not keep a body out of the region.
 static void formReadyRegion(Operation *operation) {
   auto function = dyn_cast<FunctionOpInterface>(operation);
-  if (!function || function.getNumResults() || function.isExternal())
+  if (!function || function.isExternal())
     return;
   Region &body = function.getFunctionBody();
+  TypeRange results = function.getResultTypes();
   SmallVector<Operation *> returns;
   unsigned updates = 0;
   bool supported = true;
@@ -52,7 +56,8 @@ static void formReadyRegion(Operation *operation) {
         updates += bool(commit.getBase().getDefiningOp<LLVM::AddressOfOp>());
     }
     auto *end = block.getTerminator();
-    if (end->hasTrait<OpTrait::ReturnLike>() && !end->getNumOperands())
+    if (end->hasTrait<OpTrait::ReturnLike>() &&
+        end->getOperandTypes() == results)
       returns.push_back(end);
     else if (!isa<BranchOpInterface>(end) || !isMemoryEffectFree(end))
       supported = false;
@@ -69,12 +74,15 @@ static void formReadyRegion(Operation *operation) {
   }
   saved.front().eraseArguments([](BlockArgument) { return true; });
   OpBuilder builder(entry, entry->end());
-  auto region = NativeReadyRegionOp::create(builder, operation->getLoc());
+  auto region =
+      NativeReadyRegionOp::create(builder, operation->getLoc(), results);
   region.getBody().takeBody(saved);
-  builder.clone(*returns.front());
+  IRMapping mapping;
+  mapping.map(returns.front()->getOperands(), region.getResults());
+  builder.clone(*returns.front(), mapping);
   for (Operation *end : returns) {
     builder.setInsertionPoint(end);
-    NativeReadyYieldOp::create(builder, end->getLoc());
+    NativeReadyYieldOp::create(builder, end->getLoc(), end->getOperands());
     end->erase();
   }
 }

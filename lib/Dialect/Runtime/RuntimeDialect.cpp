@@ -72,6 +72,25 @@ std::optional<RuntimeCall> getRuntimeCall(Operation *operation) {
   return std::nullopt;
 }
 
+bool isColdRuntimeCall(RuntimeCall call) {
+  switch (call) {
+  case RuntimeCall::StatusString:
+  case RuntimeCall::LastError:
+  case RuntimeCall::Finish:
+  case RuntimeCall::ProgramExit:
+  case RuntimeCall::Stop:
+  case RuntimeCall::Fatal:
+  case RuntimeCall::Error:
+  case RuntimeCall::Display:
+  case RuntimeCall::FileError:
+    return true;
+  default:
+    // Formatting and file services may sit on a design's ordinary path (a
+    // trace written every cycle); only diagnostics and termination are cold.
+    return false;
+  }
+}
+
 static_assert(static_cast<uint32_t>(DescriptorKind::Invalid) ==
               OBELISK_RT_DESCRIPTOR_INVALID);
 static_assert(static_cast<uint32_t>(DescriptorKind::Scope) ==

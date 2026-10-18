@@ -267,6 +267,12 @@ LogicalResult NativeReadyRegionOp::verify() {
   }
   return success();
 }
+LogicalResult NativeReadyYieldOp::verify() {
+  auto region = cast<NativeReadyRegionOp>((*this)->getParentOp());
+  if (getOperandTypes() != region.getResultTypes())
+    return emitOpError("operands must match the ready.region results");
+  return success();
+}
 LogicalResult NativeNBABatchOp::verify() {
   if (getBody().empty() || getBody().front().getNumArguments())
     return emitOpError("requires one block without arguments");

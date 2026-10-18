@@ -516,9 +516,16 @@ LLVM::LLVMFuncOp getOrDeclareLLVMFunction(ModuleOp module, StringRef name,
     return existing;
   OpBuilder builder(module.getContext());
   builder.setInsertionPointToStart(module.getBody());
-  return LLVM::LLVMFuncOp::create(
+  auto function = LLVM::LLVMFuncOp::create(
       builder, module.getLoc(), name,
       LLVM::LLVMFunctionType::get(result, arguments, false));
+  // Generated code reaches queue growth only from a capacity test, so the
+  // optimizer lays that arm out of line. (The failure latch is not cold: it
+  // is called unconditionally with a status and tests it itself.)
+  if (name == "obelisk_rt_v1_eval_nba_reserve")
+    function.setPassthroughAttr(
+        builder.getArrayAttr({builder.getStringAttr("cold")}));
+  return function;
 }
 
 void copyNativePartition(Operation *source, Operation *target) {

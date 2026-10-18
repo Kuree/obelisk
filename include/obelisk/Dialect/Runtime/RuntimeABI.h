@@ -68,6 +68,12 @@ RuntimeSignature getRuntimeSignature(RuntimeCall call);
 /// Identify a typed runtime operation, or std::nullopt for another operation.
 std::optional<RuntimeCall> getRuntimeCall(mlir::Operation *operation);
 
+/// Whether a runtime call is a diagnostic or termination service: its own
+/// cost dwarfs any code placement, so generated code marks its declaration
+/// cold and the optimizer lays the paths that reach it out of line. This
+/// affects placement only, never what executes.
+bool isColdRuntimeCall(RuntimeCall call);
+
 } // namespace obelisk::runtime
 
 #endif // OBELISK_DIALECT_RUNTIME_RUNTIMEABI_H
