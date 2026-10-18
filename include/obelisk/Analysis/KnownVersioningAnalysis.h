@@ -22,6 +22,15 @@ class SimFuncOp;
 }
 
 namespace obelisk::analysis {
+class ScopedIntegerRangeAnalysis;
+class ScopedRangeLattice;
+
+/// Whether a dynamic selection (`logic.dyn_extract`, `array.extract_dynamic`)
+/// with a non-constant index is valid for every value the ranges at `state`
+/// allow its index.
+bool provesSelectionInRange(mlir::Operation *selection,
+                            const ScopedIntegerRangeAnalysis &ranges,
+                            const ScopedRangeLattice &state);
 
 /// A read of possibly four-state memory whose reference the region entry can
 /// recompute. `slice` lists, in dominance order, the pure in-region producers

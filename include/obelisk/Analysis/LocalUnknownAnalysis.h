@@ -14,13 +14,25 @@
 // and (2) no write of the activation that can precede it may have stored X/Z
 // into its bits. A known store needs the same of the bits it writes, and a
 // value known whenever the copy computes it. (2) is a dense forward fact over
-// the activation's CFG; the stored values come from a sparse forward
-// state-domain fact in which gated reads are known. Both are solved together,
-// and their least fixed point is sound by induction over the activation's
+// the activation's CFG, kept per bit in persistent range sets; the stored
+// values come from a sparse forward fact giving each value the bits that may
+// hold X/Z, in which gated reads are known. Both are solved together, and
+// their least fixed point is sound by induction over the activation's
 // execution order: before the first X/Z write every gated read sees entry
-// state, and a value the domain fact proves known given known gated reads is
-// known (IEEE 1800-2023 11.4 for each operator, with the X/Z generators of
-// 7.4.5, 11.4.2, 11.5.1 and 6.8 kept four-state by the shared transfer).
+// state, and a value the bit fact proves known given known gated reads is
+// known: moves carry their bits, bitwise operators work per bit, and an X/Z
+// operand bit makes arithmetic, relations, reductions and logical operators
+// X (IEEE 1800-2023 11.4), with the X/Z generators of 6.8, 7.4.5, 11.4.3 and
+// 11.5.1 kept four-state. A field of a partially assigned aggregate, or a
+// private slot's bits, are therefore known on their own. The lowering's own
+// tests for X/Z in a value (`x === view(x)`, 11.4.6) fold to true in the
+// copy for a known `x`, so the paths that merge X/Z are dead there.
+//
+// A call to a function whose summary records the formals it stores through
+// (`CalleeSummary::storedFormals`) adds X/Z to what those formals reference
+// only when the stored values may hold X/Z; any other write of a callee makes
+// every storage root and net unknown. Private allocations passed to such
+// calls stay private: a sibling function cannot retain a reference (13.5).
 //
 // The body may be cut into segments, each checked at its own entry: a run of
 // the activation's operations that control enters only at its first
@@ -128,11 +140,17 @@ public:
 
   /// What a caller may assume about one callee.
   struct CalleeSummary {
-    /// The callee may write design storage or a net, or has effects the
-    /// analysis does not model.
+    /// The callee may write design storage or a net other than through the
+    /// references in `storedFormals`, or has effects the analysis does not
+    /// model.
     bool writes = true;
     /// Its results are known whenever every four-state argument is.
     bool knownResults = false;
+    /// The formals whose referenced storage the callee may store to, sorted.
+    llvm::SmallVector<unsigned, 2> storedFormals;
+    /// Every such store writes a value known whenever every four-state
+    /// argument is.
+    bool knownFormalStores = false;
   };
   /// Summaries by function name.
   using CalleeSummaries = llvm::StringMap<CalleeSummary>;
@@ -200,6 +218,10 @@ public:
   bool isKnownInOriginal(mlir::Value value) const {
     return knownInOriginal.contains(value);
   }
+  /// Whether `block` never executes in the gated copy.
+  bool isDeadBlock(mlir::Block *block) const {
+    return deadBlocks.contains(block);
+  }
   /// Why no read can be gated, or empty.
   llvm::StringRef getFailure() const { return failure; }
 
@@ -211,6 +233,7 @@ private:
   llvm::DenseSet<mlir::Operation *> knownStores;
   llvm::SmallVector<Segment, 0> segments;
   llvm::DenseSet<mlir::Value> knownInCopy, knownInOriginal;
+  llvm::DenseSet<mlir::Block *> deadBlocks;
   llvm::StringRef failure;
 };
 

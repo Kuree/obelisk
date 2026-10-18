@@ -67,9 +67,10 @@ bool crossesSuspension(const llvm::SetVector<Value> &family,
 }
 /// The reference family of `allocation` if native local storage can hold it.
 /// Forwarding facts are requested only when the family crosses a branch.
-std::optional<llvm::SetVector<Value>> localFamily(
-    sim::SimRefAllocOp allocation, sim::SimFuncOp function,
-    llvm::function_ref<const SemanticValueRootAnalysis &()> forwarding) {
+std::optional<llvm::SetVector<Value>>
+localFamily(sim::SimRefAllocOp allocation, sim::SimFuncOp function,
+            llvm::function_ref<const SemanticValueRootAnalysis &()> forwarding,
+            bool passesToCalls = false) {
   Type type = allocation.getInitialValue().getType();
   auto width = sim::getProvenanceSpan(type);
   SmallVector<sim::ManagedHandleSlot> managed;
@@ -90,6 +91,8 @@ std::optional<llvm::SetVector<Value>> localFamily(
       if (auto load = dyn_cast<sim::SimRefLoadOp>(user)) {
         if (load.getReference() == reference)
           continue;
+      } else if (passesToCalls && isa<sim::SimCallOp>(user)) {
+        continue;
       } else if (auto store = dyn_cast<sim::SimRefStoreOp>(user)) {
         if (store.getReference() == reference)
           continue;
@@ -144,7 +147,8 @@ std::optional<llvm::SetVector<Value>> localFamily(
 } // namespace
 
 LocalStorageAnalysis::LocalStorageAnalysis(sim::SimFuncOp function,
-                                           Lifetime lifetime)
+                                           Lifetime lifetime,
+                                           bool passesToCalls)
     : function(function) {
   auto suspensions = invocationSuspensions(function, lifetime);
   if (!suspensions)
@@ -161,7 +165,7 @@ LocalStorageAnalysis::LocalStorageAnalysis(sim::SimFuncOp function,
   };
   ValueLiveness liveness;
   for (sim::SimRefAllocOp allocation : allocations)
-    if (auto family = localFamily(allocation, function, roots);
+    if (auto family = localFamily(allocation, function, roots, passesToCalls);
         family && !crossesSuspension(*family, *suspensions, liveness))
       for (Value reference : *family)
         references.try_emplace(reference, allocation);

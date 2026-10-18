@@ -5,6 +5,7 @@
 #include "obelisk/Analysis/HandleDataflowAnalysis.h"
 #include "obelisk/Analysis/LocalStorageAnalysis.h"
 #include "obelisk/Analysis/NativeStorageLayout.h"
+#include "obelisk/Analysis/UnknownBitGeometry.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Dialect/Simulation/SimulationTypes.h"
 
@@ -25,60 +26,17 @@ using namespace mlir;
 namespace obelisk::analysis {
 namespace {
 
-/// Values and states wider than this have no bit-precise state: all their
-/// bits may be known.
-constexpr unsigned maximumTrackedBits = 1u << 16;
+using namespace bits;
+
 /// A reference is followed through at most this many block arguments and
 /// enclosing calls to the root it addresses.
 constexpr unsigned maximumResolutionDepth = 8;
-
-/// The bit width of a packed value's scalar representation.
-std::optional<unsigned> scalarWidth(Type type) {
-  if (std::optional<unsigned> width = sim::getPackedWidth(type))
-    return width;
-  if (Type scalar = sim::getPackedScalarType(type))
-    return sim::getPackedWidth(scalar);
-  return std::nullopt;
-}
-
-/// A type itself, or the innermost element of nested unpacked arrays.
-Type packedLeaf(Type type) {
-  while (auto array = dyn_cast<sim::UnpackedArrayType>(type))
-    type = array.getElementType();
-  return type;
-}
-
-/// Nested unpacked arrays of packed leaves up to this many bits are tracked
-/// bit by bit, at their provenance offsets; larger ones, memories, share one
-/// mask for all their leaves.
-constexpr uint64_t maximumDenseArrayBits = 4096;
-
-/// Whether values and storage of `type` share one mask for all the packed
-/// leaves of its nested unpacked arrays.
-bool isElementwise(Type type) {
-  if (!isa<sim::UnpackedArrayType>(type))
-    return false;
-  std::optional<uint64_t> span = sim::getProvenanceSpan(type);
-  return !span || *span > maximumDenseArrayBits;
-}
-
-/// The width of a value's may-known mask: a packed value's scalar width, a
-/// small array's provenance span, or the packed leaf's width for a larger
-/// array, whose leaves share one mask as the leaves of a larger array root
-/// share one state.
-std::optional<unsigned> maskWidth(Type type) {
-  std::optional<unsigned> leaf = scalarWidth(packedLeaf(type));
-  if (!leaf || !isa<sim::UnpackedArrayType>(type) || isElementwise(type))
-    return leaf;
-  return static_cast<unsigned>(*sim::getProvenanceSpan(type));
-}
 
 /// The may-known bits of the default value of `type` (IEEE 1800-2023 6.8,
 /// Table 6-7; 7.4.5, Table 7-1), or of its packed leaf for a shared mask:
 /// known where it holds no X/Z.
 APInt defaultKnown(Type type, unsigned width) {
-  return ~getDefaultUnknownMask(isElementwise(type) ? packedLeaf(type) : type)
-              .zextOrTrunc(width);
+  return ~defaultUnknown(type, width);
 }
 
 /// Whether writes of `function` run once, before the design reaches steady
@@ -834,16 +792,7 @@ public:
       return put(mask);
     };
     // Subelement `index` of packed `type` when it fits `width` bits.
-    auto subelement =
-        [](Type type, uint64_t index,
-           unsigned width) -> std::optional<std::pair<unsigned, unsigned>> {
-      auto found = sim::getAggregateProvenanceSubelement(
-          type, static_cast<unsigned>(index));
-      if (!found || found->first > width ||
-          found->second > width - found->first)
-        return std::nullopt;
-      return std::pair<unsigned, unsigned>(found->first, found->second);
-    };
+    auto subelement = subelementPlacement;
     // `bits` placed at every element of packed array `type`.
     auto everyElement = [&](Type type,
                             const APInt &bits) -> std::optional<APInt> {

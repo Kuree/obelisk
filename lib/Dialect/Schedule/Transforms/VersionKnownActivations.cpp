@@ -44,13 +44,16 @@
 #include "obelisk/Dialect/Simulation/SimulationTypes.h"
 
 #include "mlir/Analysis/CFGLoopInfo.h"
+#include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/PassManager.h"
+#include "mlir/Transforms/DialectConversion.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/GenericIteratedDominanceFrontier.h"
@@ -348,8 +351,8 @@ public:
     return true;
   }
 
-  /// Checked reads versioned so far.
-  unsigned transfers = 0;
+  /// Checked reads versioned so far, and two-state views inserted.
+  unsigned transfers = 0, knownCasts = 0;
 
 private:
   /// The value an exit argument merges, for analysis queries.
@@ -577,18 +580,53 @@ private:
 
   /// Gated reads in the copy load only their value planes, whose unknown
   /// plane is then a constant zero for every later operation; known stores
-  /// write only theirs.
+  /// write only theirs. A value the analysis proves known although its
+  /// operands may hold X/Z elsewhere in their bits (a field of a partially
+  /// assigned aggregate, a bit of a private slot) takes its two-state view,
+  /// so later operations see a zero plane as well.
   void markKnownAccesses(ArrayRef<Block *> blocks, IRMapping &mapping) {
     UnitAttr unit = UnitAttr::get(function.getContext());
+    SmallVector<Operation *> casts;
     for (Block *block : blocks)
       block->walk([&](Operation *op) {
-        if (isa<sim::SimRefLoadOp>(op) && analysis.isGated(op))
+        if (isa<sim::SimRefLoadOp>(op) && analysis.isGated(op)) {
           schedule::set<schedule::Field::NativeKnownRead>(mapping.lookup(op),
                                                           unit);
-        else if (analysis.isKnownStore(op))
+          return;
+        }
+        if (analysis.isKnownStore(op)) {
           schedule::set<schedule::Field::NativeKnownStore>(mapping.lookup(op),
                                                            unit);
+          return;
+        }
+        if (op->getNumResults() != 1 || op->getNumRegions() != 0)
+          return;
+        Value result = op->getResult(0);
+        if (!hasUnknownPlane(result.getType()) ||
+            !analysis.isKnownInCopy(result) ||
+            !analysis::KnownVersioningAnalysis::isCastable(result.getType()))
+          return;
+        bool fromUnknown =
+            isa<sim::SimRefLoadOp>(op)
+                ? analysis.getKind(op) == LocalUnknownAnalysis::ReadKind::Local
+                : llvm::any_of(op->getOperands(), [&](Value operand) {
+                    return hasUnknownPlane(operand.getType()) &&
+                           !analysis.isKnownInCopy(operand);
+                  });
+        if (fromUnknown)
+          casts.push_back(op);
       });
+    knownCasts += casts.size();
+    for (Operation *op : casts) {
+      Operation *copy = mapping.lookup(op);
+      Value result = copy->getResult(0);
+      builder.setInsertionPointAfter(copy);
+      Value cast = detail::castKnown(builder, copy->getLoc(), result);
+      Operation *first = cast.getDefiningOp();
+      while (first->getOperand(0) != result)
+        first = first->getOperand(0).getDefiningOp();
+      result.replaceAllUsesExcept(cast, first);
+    }
   }
 
   /// The copy tests each checked read where it loads. On X/Z it continues
@@ -935,10 +973,12 @@ public:
   VersionKnownActivationsFunctionPass(
       std::shared_ptr<const DesignInputs> inputs, uint64_t minimumBenefit,
       uint64_t segmentSize, bool variants, bool checkedReads,
-      bool diagnostics)
+      bool lowerStructuredControlFlow, bool diagnostics)
       : inputs(std::move(inputs)), minimumBenefit(minimumBenefit),
         segmentSize(segmentSize), variants(variants),
-        checkedReads(checkedReads), diagnostics(diagnostics) {}
+        checkedReads(checkedReads),
+        lowerStructuredControlFlow(lowerStructuredControlFlow),
+        diagnostics(diagnostics) {}
   StringRef getArgument() const final {
     return "schedule-version-known-activations-function";
   }
@@ -967,6 +1007,25 @@ public:
             })
             .wasInterrupted())
       return markAllAnalysesPreserved();
+    // Structured control flow keeps a copy from continuing in the original
+    // at a read inside it and hides dead paths from the versioned CFG; the
+    // option makes the activation a plain CFG from here.
+    if (lowerStructuredControlFlow &&
+        function
+            .walk([](Operation *op) {
+              return isa<scf::SCFDialect>(op->getDialect())
+                         ? WalkResult::interrupt()
+                         : WalkResult::advance();
+            })
+            .wasInterrupted()) {
+      ConversionTarget target(getContext());
+      target.addIllegalDialect<scf::SCFDialect>();
+      target.markUnknownOpDynamicallyLegal([](Operation *) { return true; });
+      RewritePatternSet patterns(&getContext());
+      populateSCFToControlFlowConversionPatterns(patterns);
+      if (failed(applyPartialConversion(function, target, std::move(patterns))))
+        return signalPassFailure();
+    }
     Segments segments = cut(function, segmentSize);
     analysis::HandleDataflowResult handles = inputs->handles.analyze(function);
     auto provenKnown = [&](Operation *read) {
@@ -1016,7 +1075,8 @@ public:
       os << "obelisk known activation: " << function.getSymName()
          << " segments=" << versioned << '/' << results.size()
          << " checks=" << versioner.transfers << " benefit=" << benefit
-         << " gate-roots=" << roots << '\n';
+         << " gate-roots=" << roots << " casts=" << versioner.knownCasts
+         << '\n';
       llvm::errs() << text;
     }
     if (!versioned)
@@ -1034,6 +1094,7 @@ private:
   uint64_t segmentSize;
   bool variants;
   bool checkedReads;
+  bool lowerStructuredControlFlow;
   bool diagnostics;
 };
 
@@ -1057,7 +1118,7 @@ public:
       designs.addNestedPass<sim::SimFuncOp>(
           std::make_unique<VersionKnownActivationsFunctionPass>(
               inputs, minimumBenefit, segmentSize, variants, checkedReads,
-              diagnostics));
+              lowerStructuredControlFlow, diagnostics));
       if (failed(runPipeline(designs, design)))
         return signalPassFailure();
     }

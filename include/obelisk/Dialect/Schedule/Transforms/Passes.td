@@ -404,29 +404,37 @@ def VersionKnownActivationsPass
     : Pass<"schedule-version-known-activations", "mlir::ModuleOp"> {
   let summary = "Run activations on value planes while their gated reads are known";
   let description = [{
-    Cuts each nonsuspending native activation body into segments entered only
-    at their first operation and gives each profitable segment a copy, entered
-    after one check at the segment's entry finds known the bits of its gated
-    reads, the private slots and the live-in values the copy relies on. In the
-    copy a gated read loads only its value plane; every other read and every
-    store keeps both planes, so the copy performs the same effects with the
-    same values (IEEE 1800-2023 4.3, 6.3.1, 11.4). A failed check runs the
-    original four-state segment. Bits the previous segment's copy left known
-    are tested only after its original ran. With `checked-reads`, a read the
-    check cannot cover is tested where the copy loads it, and on X/Z the copy
-    continues in the original right after the same read, so no effect is
-    repeated or skipped. LocalUnknownAnalysis chooses the reads.
+    Gives each profitable nonsuspending native activation body a copy, entered
+    after one check at its entry finds the unknown summary bits clear for the
+    storage roots of its gated reads and known stores. In the copy a gated
+    read loads only its value plane, a known store writes only its value
+    plane, and a value the bit-precise analysis proves known although its
+    operands may hold X/Z elsewhere takes its two-state view; every other
+    read and store keeps both planes, so the copy performs the same effects
+    with the same values (IEEE 1800-2023 4.3, 6.3.1, 11.4). A failed check
+    runs the original four-state body. With `segment-size`, the body is cut
+    into segments entered only at their first operation, each checked at its
+    own entry together with the private slots and live-in values its copy
+    relies on. With `checked-reads`, a read the check cannot cover is tested
+    where the copy loads it, and on X/Z the copy continues in the original
+    right after the same read, so no effect is repeated or skipped.
+    LocalUnknownAnalysis chooses the reads.
   }];
   let options = [
     Option<"minimumBenefit", "minimum-benefit", "uint64_t", "64",
            "Smallest estimated unknown-plane work worth a copy">,
-    Option<"segmentSize", "segment-size", "uint64_t", "256",
+    Option<"segmentSize", "segment-size", "uint64_t", "0",
            "Operations after which a segment ends at the next cut point; 0 "
            "versions the whole body as one segment">,
     Option<"variants", "variants", "bool", "true",
            "Also version guarded two-state variants">,
     Option<"checkedReads", "checked-reads", "bool", "false",
-           "Test reads the entry check cannot cover where they load">
+           "Test reads the entry check cannot cover where they load">,
+    Option<"lowerStructuredControlFlow", "lower-structured-control-flow",
+           "bool", "false",
+           "Lower scf operations of a versioned body to cf first, so copies "
+           "can continue in the original inside them and dead X/Z merges "
+           "drop out of the CFG (slower to compile)">
   ];
   let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect",
                            "obelisk::schedule::ScheduleDialect",

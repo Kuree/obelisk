@@ -152,6 +152,8 @@ bool updateBoundary(StateDomainFact &current, StateDomainFact contribution,
 
 bool isSuspensionTerminator(Operation *op) { return sim::isSuspensionOp(op); }
 
+} // namespace
+
 std::optional<APInt> getConstantInteger(Value value) {
   Attribute attribute;
   if (matchPattern(value, m_Constant(&attribute))) {
@@ -185,6 +187,8 @@ bool isKnownNonzero(Value value) {
   std::optional<APInt> constant = getConstantInteger(value);
   return constant && !constant->isZero();
 }
+
+namespace {
 
 StateDomainFact transferOperation(
     Operation *op, const DenseMap<Value, StateDomainFact> &facts,

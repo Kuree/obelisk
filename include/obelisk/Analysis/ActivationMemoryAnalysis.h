@@ -3,6 +3,7 @@
 #define OBELISK_ANALYSIS_ACTIVATIONMEMORYANALYSIS_H
 
 #include "obelisk/Analysis/HandleDataflowAnalysis.h"
+#include "obelisk/Analysis/RangeSet.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "llvm/ADT/DenseSet.h"
 
@@ -33,13 +34,8 @@ public:
       return descriptor | netRootTag;
     return std::nullopt;
   }
-  struct Range {
-    uint64_t root, low, width;
-    bool operator==(const Range &other) const {
-      return root == other.root && low == other.low && width == other.width;
-    }
-  };
-  using Ranges = llvm::SmallVector<Range>;
+  using Range = analysis::Range;
+  using Ranges = analysis::Ranges;
   /// Values and handles of admitted immediate publications.
   static mlir::Value getStoredValue(mlir::Operation *operation) {
     if (auto store = mlir::dyn_cast<sim::SimRefStoreOp>(operation))

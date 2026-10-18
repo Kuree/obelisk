@@ -17,8 +17,12 @@ namespace obelisk::analysis {
 class LocalStorageAnalysis {
 public:
   enum class Lifetime { Invocation, Coroutine };
+  /// With `passesToCalls`, a family may also be passed to sibling function
+  /// calls, which cannot retain a reference (LRM 13.5): for clients that
+  /// model what callees write through their formals, not storage lowering.
   explicit LocalStorageAnalysis(sim::SimFuncOp function,
-                                Lifetime lifetime = Lifetime::Invocation);
+                                Lifetime lifetime = Lifetime::Invocation,
+                                bool passesToCalls = false);
   /// Classifies one allocation exactly as a fresh analysis of its function
   /// would, without classifying every other allocation. Forwarding facts are
   /// built only if its reference family crosses a branch.

@@ -15,6 +15,7 @@
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -130,6 +131,12 @@ bool hasUnknownPlane(mlir::Type type);
 /// Approximate native instructions of the unknown-plane expansion of `op`,
 /// which a two-state execution of it no longer performs.
 unsigned getUnknownPlaneWork(mlir::Operation *op);
+
+/// The value of a two-state integer constant, through `logic.from_bits`.
+std::optional<llvm::APInt> getConstantInteger(mlir::Value value);
+bool isKnownZero(mlir::Value value);
+bool isKnownAllOnes(mlir::Value value);
+bool isKnownNonzero(mlir::Value value);
 
 /// Whether a dynamic selection has a constant index selecting only bits or
 /// elements inside its input.

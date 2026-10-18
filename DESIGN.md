@@ -1127,6 +1127,27 @@ clears only overlapping kernel latches, route pointers, and NBA-root bits.
 Aggregate entry shortcuts are recomputed without clearing unrelated certificates. Dynamic
 path probes remain activation-local.
 
+Known activation copies (`schedule-version-known-activations`) give each
+nonsuspending native activation one two-state copy of its whole body, entered
+when the per-root unknown summary bits of the storage roots it reads or
+stores known are clear. The copy's reads of those roots load only their value
+planes and its known stores write only theirs. Which values the copy may
+treat as known comes from LocalUnknownAnalysis: a sparse forward fact giving
+each value the bits that may hold X/Z under the X/Z rules of IEEE 1800-2023
+11.4 (moves carry bits, bitwise operators work per bit, an X/Z operand bit
+makes arithmetic, relations and reductions X), solved together with a dense
+forward fact of the bits that X/Z stores of the activation may have reached,
+kept in persistent root-keyed range sets so every CFG edge shares them. A
+field of a partially assigned aggregate or a bit of a private slot is known
+on its own, and takes its two-state view in the copy so later operations see
+a zero plane. Calls use per-callee summaries of the formals they store
+through and whether those stores and their results are known for known
+arguments; a private slot passed to such a call stays private (13.5). The
+lowering's own X/Z tests of a value (`x === view(x)`, 11.4.6) fold to true in
+the copy for a known `x`, so its X/Z merge paths are dead there. Segments
+(`segment-size`), each with its own entry check, remain an option for designs
+whose roots are X/Z in steady state.
+
 After two-state cloning, direct canonical unknown-plane stores publish their
 actual changed bits to that index. This covers generated blocking stores and
 fixed, partial, and selected dynamic NBA commits; future payload staging does

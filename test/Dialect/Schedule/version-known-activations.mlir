@@ -291,7 +291,9 @@ module attributes {native.optimization_level = 3 : i32} {
     // SEGMENTS-NEXT: cf.cond_br %[[OK]] weights([1048575, 1]), ^[[COPY:bb[0-9]+]], ^
     // SEGMENTS: ^[[COPY]]:
     // SEGMENTS-NEXT: %[[Q:.*]] = simulation.ref.load %[[TMP]] :
-    // SEGMENTS-NEXT: simulation.ref.store %[[Q]] to %[[B:.*]] {schedule.native.known_store}
+    // SEGMENTS-NEXT: %[[QB:.*]] = simulation.logic.to_bits %[[Q]]
+    // SEGMENTS-NEXT: %[[QK:.*]] = simulation.logic.from_bits %[[QB]]
+    // SEGMENTS-NEXT: simulation.ref.store %[[QK]] to %[[B:.*]] {schedule.native.known_store}
     // SEGMENTS-NEXT: simulation.ref.load %[[B]] {schedule.native.known_read}
     // SEGMENTS-NEXT: simulation.ref.load %{{.*}} {schedule.native.known_read}
     simulation.func @slots(%ctx: !c {simulation.capture_kind = 0 : i32})
@@ -423,6 +425,190 @@ module attributes {native.optimization_level = 3 : i32} {
       %q3 = simulation.logic.binary mul %q2, %q1 : !l8
       %q4 = simulation.logic.binary sub %q3, %y : !l8
       simulation.ref.store %q4 to %d : !l8, !r8
+      simulation.return
+    }
+  }
+}
+
+// -----
+
+// A callee that stores only through its formals writes nothing else: the
+// slot it fills holds a known value when its arguments are known, so the
+// read of that slot and the store derived from it are value-only in the
+// copy. A callee that stores X/Z through a formal taints its slot, and the
+// store derived from that one keeps both planes.
+
+!c = !simulation.context
+!l8 = !simulation.logic<8>
+!r8 = !simulation.ref<!l8>
+module attributes {native.optimization_level = 3 : i32} {
+  simulation.design @callees {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !l8 design
+    simulation.storage.decl 1 in 0 : !l8 design
+    simulation.storage.decl 2 in 0 : !l8 design
+    simulation.code_unit.decl 1 in 0 function hierarchy "top.f"
+    simulation.code_unit.decl 2 in 0 function hierarchy "top.fill"
+    simulation.code_unit.decl 3 in 0 function hierarchy "top.taint"
+    simulation.func private @fill(
+        %ctx: !c {simulation.capture_kind = 0 : i32},
+        %out: !r8 {simulation.capture_kind = 1 : i32},
+        %v: !l8 {simulation.capture_kind = 2 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 2 : i64} {
+      %p = simulation.logic.binary mul %v, %v : !l8
+      simulation.ref.store %p to %out : !l8, !r8
+      simulation.return
+    }
+    simulation.func private @taint(
+        %ctx: !c {simulation.capture_kind = 0 : i32},
+        %out: !r8 {simulation.capture_kind = 1 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 3 : i64} {
+      %x = simulation.logic.constant 0 : i8, -1 : i8 : !l8
+      simulation.ref.store %x to %out : !l8, !r8
+      simulation.return
+    }
+    // CHECK-LABEL: simulation.func @caller
+    // CHECK: %[[OK:.*]] = schedule.known.roots %{{.*}}, %{{.*}} : !simulation.ref<!simulation.logic<8>>, !simulation.ref<!simulation.logic<8>>{{$}}
+    // CHECK-NEXT: cf.cond_br %[[OK]] weights([1048575, 1]), ^[[COPY:bb[0-9]+]], ^
+    // CHECK: ^[[COPY]]:
+    // CHECK: simulation.call @fill
+    // CHECK-NEXT: %[[Q:.*]] = simulation.ref.load
+    // CHECK: simulation.ref.store %{{.*}} to %{{.*}} {schedule.native.known_store}
+    // CHECK: simulation.call @taint
+    // CHECK-NEXT: %[[R:.*]] = simulation.ref.load
+    // CHECK: simulation.ref.store %{{.*}} to %{{.*}} : !simulation.logic<8>
+    // CHECK-NEXT: simulation.return
+    simulation.func @caller(%ctx: !c {simulation.capture_kind = 0 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64} {
+      %a = simulation.context.storage %ctx[0] : !r8
+      %b = simulation.context.storage %ctx[1] : !r8
+      %d = simulation.context.storage %ctx[2] : !r8
+      %x = simulation.ref.load %a : !r8 -> !l8
+      %zero = simulation.logic.constant 0 : i8, 0 : i8 : !l8
+      %tmp = simulation.ref.alloc %zero : !l8 -> !r8
+      simulation.call @fill(%ctx, %tmp, %x) : (!c, !r8, !l8) -> ()
+      %q = simulation.ref.load %tmp : !r8 -> !l8
+      %p1 = simulation.logic.binary mul %q, %q : !l8
+      %p2 = simulation.logic.binary add %p1, %q : !l8
+      %p3 = simulation.logic.binary mul %p2, %p1 : !l8
+      simulation.ref.store %p3 to %b : !l8, !r8
+      %other = simulation.ref.alloc %zero : !l8 -> !r8
+      simulation.call @taint(%ctx, %other) : (!c, !r8) -> ()
+      %r = simulation.ref.load %other : !r8 -> !l8
+      %s1 = simulation.logic.binary add %r, %p3 : !l8
+      %s2 = simulation.logic.binary mul %s1, %p2 : !l8
+      simulation.ref.store %s2 to %d : !l8, !r8
+      simulation.return
+    }
+  }
+}
+
+// -----
+
+// Knownness is tracked per bit: a struct built from its default holds X/Z
+// only in the field nothing assigns (IEEE 1800-2023 6.8, Table 6-7). The
+// field the copy assigns from a gated read is known, so the store of a
+// value derived from it is value-only after a cast to its two-state view,
+// while the store derived from the unassigned field keeps both planes.
+
+!c = !simulation.context
+!l8 = !simulation.logic<8>
+!r8 = !simulation.ref<!l8>
+!pair = !simulation.unpacked_struct<[#simulation.field<name = "a", type = !l8, ordinal = 0, packedOffset = 0>, #simulation.field<name = "b", type = !l8, ordinal = 1, packedOffset = 0>]>
+module attributes {native.optimization_level = 3 : i32} {
+  simulation.design @fields {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !l8 design
+    simulation.storage.decl 1 in 0 : !l8 design
+    simulation.storage.decl 2 in 0 : !l8 design
+    simulation.code_unit.decl 1 in 0 function hierarchy "top.f"
+    // CHECK-LABEL: simulation.func @fields
+    // CHECK: %[[OK:.*]] = schedule.known.roots %{{.*}}, %{{.*}} : !simulation.ref<!simulation.logic<8>>, !simulation.ref<!simulation.logic<8>>{{$}}
+    // CHECK-NEXT: cf.cond_br %[[OK]] weights([1048575, 1]), ^[[COPY:bb[0-9]+]], ^
+    // CHECK: ^[[COPY]]:
+    // CHECK: %[[A:.*]] = simulation.aggregate.extract %{{.*}}[0]
+    // CHECK-NEXT: %[[AB:.*]] = simulation.logic.to_bits %[[A]]
+    // CHECK-NEXT: %[[AK:.*]] = simulation.logic.from_bits %[[AB]]
+    // CHECK-NEXT: %[[B:.*]] = simulation.aggregate.extract %{{.*}}[1]
+    // CHECK-NOT: simulation.logic.to_bits
+    // CHECK: simulation.ref.store %{{.*}} to %{{.*}} {schedule.native.known_store}
+    // CHECK: simulation.ref.store %{{.*}} to %{{.*}} : !simulation.logic<8>
+    // CHECK-NEXT: simulation.return
+    simulation.func @fields(%ctx: !c {simulation.capture_kind = 0 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64} {
+      %a = simulation.context.storage %ctx[0] : !r8
+      %b = simulation.context.storage %ctx[1] : !r8
+      %d = simulation.context.storage %ctx[2] : !r8
+      %x = simulation.ref.load %a : !r8 -> !l8
+      %empty = simulation.aggregate.default : !pair
+      %pair = simulation.aggregate.insert %x into %empty[0] : (!pair, !l8) -> !pair
+      %fa = simulation.aggregate.extract %pair[0] : (!pair) -> !l8
+      %fb = simulation.aggregate.extract %pair[1] : (!pair) -> !l8
+      %p1 = simulation.logic.binary mul %fa, %fa : !l8
+      %p2 = simulation.logic.binary add %p1, %fa : !l8
+      %p3 = simulation.logic.binary mul %p2, %p1 : !l8
+      simulation.ref.store %p3 to %b : !l8, !r8
+      %q1 = simulation.logic.binary add %fb, %p3 : !l8
+      %q2 = simulation.logic.binary mul %q1, %p2 : !l8
+      simulation.ref.store %q2 to %d : !l8, !r8
+      simulation.return
+    }
+  }
+}
+
+// -----
+
+// The lowering tests a condition for X/Z with `c === view(c)` and merges X/Z
+// on the path where it holds some. In the copy the condition is known, so
+// that test folds to true and the merge path is dead: the X/Z dummy the
+// known-false path hands the join never reaches the result, whose store is
+// value-only.
+
+!c = !simulation.context
+!l1 = !simulation.logic<1>
+!l8 = !simulation.logic<8>
+!r1 = !simulation.ref<!l1>
+!r8 = !simulation.ref<!l8>
+module attributes {native.optimization_level = 3 : i32} {
+  simulation.design @merges {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !l1 design
+    simulation.storage.decl 1 in 0 : !l8 design
+    simulation.storage.decl 2 in 0 : !l8 design
+    simulation.code_unit.decl 1 in 0 function hierarchy "top.f"
+    // CHECK-LABEL: simulation.func @merges
+    // CHECK: %[[OK:.*]] = schedule.known.roots %{{.*}}, %{{.*}}, %{{.*}} : !simulation.ref<!simulation.logic<1>>, !simulation.ref<!simulation.logic<8>>, !simulation.ref<!simulation.logic<8>>{{$}}
+    // CHECK-NEXT: cf.cond_br %[[OK]] weights([1048575, 1]), ^[[COPY:bb[0-9]+]], ^
+    // CHECK: ^[[COPY]]:
+    // CHECK: simulation.ref.store %{{.*}} to %{{.*}} {schedule.native.known_store}
+    simulation.func @merges(%ctx: !c {simulation.capture_kind = 0 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64} {
+      %cond = simulation.context.storage %ctx[0] : !r1
+      %a = simulation.context.storage %ctx[1] : !r8
+      %d = simulation.context.storage %ctx[2] : !r8
+      %c = simulation.ref.load %cond : !r1 -> !l1
+      %x = simulation.ref.load %a : !r8 -> !l8
+      %bits = simulation.logic.to_bits %c : !l1 -> i1
+      %view = simulation.logic.from_bits %bits : i1 -> !l1
+      %known = simulation.logic.compare case_eq %c, %view : (!l1, !l1) -> i1
+      %true = arith.constant true
+      %false = arith.constant false
+      %unknown = arith.xori %known, %true : i1
+      %dummy = simulation.logic.constant 0 : i8, -1 : i8 : !l8
+      %p1 = simulation.logic.binary mul %x, %x : !l8
+      cf.cond_br %unknown, ^join(%dummy, %true : !l8, i1), ^plain
+    ^plain:
+      cf.br ^join(%p1, %false : !l8, i1)
+    ^join(%v: !l8, %merge: i1):
+      cf.cond_br %merge, ^merged, ^out(%v : !l8)
+    ^merged:
+      %xc = simulation.logic.constant 0 : i1, -1 : i1 : !l1
+      %m = simulation.logic.mux %xc ? %v : %p1 : (!l1, !l8, !l8) -> !l8
+      cf.br ^out(%m : !l8)
+    ^out(%r: !l8):
+      %p2 = simulation.logic.binary add %r, %p1 : !l8
+      %p3 = simulation.logic.binary mul %p2, %r : !l8
+      simulation.ref.store %p3 to %d : !l8, !r8
       simulation.return
     }
   }

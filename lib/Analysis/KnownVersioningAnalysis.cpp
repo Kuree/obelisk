@@ -32,10 +32,11 @@ bool isUnknownConstant(Value value) {
 // Function-local value domains
 //===----------------------------------------------------------------------===//
 
-/// Whether a dynamic selection with a non-constant index is valid at `state`.
-bool provesInRange(Operation *selection,
-                   const ScopedIntegerRangeAnalysis &ranges,
-                   const ScopedRangeLattice &state) {
+} // namespace
+
+bool provesSelectionInRange(Operation *selection,
+                            const ScopedIntegerRangeAnalysis &ranges,
+                            const ScopedRangeLattice &state) {
   if (!state.reachable)
     return false;
   auto within = [](std::optional<ConstantIntRanges> range, int64_t low,
@@ -60,6 +61,7 @@ bool provesInRange(Operation *selection,
   return false;
 }
 
+namespace {
 /// Whether `op` is a dynamic selection that needs a range proof.
 bool needsRangeProof(Operation *op) {
   return isa<sim::SimLogicDynExtractOp, sim::SimArrayDynExtractOp>(op) &&
@@ -81,7 +83,7 @@ public:
       return false;
     auto *state = solver.lookupState<ScopedRangeLattice>(
         solver.getProgramPointBefore(selection));
-    return state && provesInRange(selection, *ranges, *state);
+    return state && provesSelectionInRange(selection, *ranges, *state);
   }
 
 private:
@@ -144,7 +146,7 @@ public:
       if (!ranges)
         return false;
       // Revisit the selection when the ranges before it change.
-      return provesInRange(
+      return provesSelectionInRange(
           selection, *ranges,
           *getOrCreateFor<ScopedRangeLattice>(
               getProgramPointAfter(op), getProgramPointBefore(selection)));
