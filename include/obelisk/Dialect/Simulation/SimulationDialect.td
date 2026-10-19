@@ -36,6 +36,7 @@ def ObeliskSimulationDialect : Dialect {
   let useDefaultTypePrinterParser = 1;
   let usePropertiesForAttributes = 0;
   let hasConstantMaterializer = 1;
+  let hasCanonicalizer = 1;
   let hasOperationAttrVerify = 1;
   let hasRegionArgAttrVerify = 1;
   let discardableAttrs = (ins

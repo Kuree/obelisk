@@ -206,6 +206,30 @@ static bool isKnownInRangeIndex(const APInt &index, uint64_t inputWidth,
   return resultWidth <= inputWidth - low;
 }
 
+/// A wholly contained or disjoint slice can bypass a fixed integer insertion.
+/// Keep partial and out-of-bounds selections on their original operations.
+static std::optional<std::pair<Value, uint64_t>>
+getBitsInsertSlice(Value input, uint64_t low, uint64_t width) {
+  auto insert = input.getDefiningOp<SimBitsDynInsertOp>();
+  if (!insert)
+    return std::nullopt;
+  uint64_t inputWidth = insert.getType().getWidth();
+  if (low > inputWidth || width > inputWidth - low)
+    return std::nullopt;
+  auto index = getConstantIndex(insert.getLowBit());
+  uint64_t insertLow;
+  uint64_t insertWidth = insert.getReplacement().getType().getWidth();
+  if (!index || !index->value ||
+      !isKnownInRangeIndex(*index->value, inputWidth, insertWidth, insertLow))
+    return std::nullopt;
+  uint64_t high = low + width, insertHigh = insertLow + insertWidth;
+  if (high <= insertLow || low >= insertHigh)
+    return std::make_pair(insert.getInput(), low);
+  if (low >= insertLow && high <= insertHigh)
+    return std::make_pair(insert.getReplacement(), low - insertLow);
+  return std::nullopt;
+}
+
 } // namespace
 
 // Identity equality is reflexive even for null handles. Keep queries of
@@ -1026,6 +1050,13 @@ OpFoldResult SimBitsDynExtractOp::fold(FoldAdaptor adaptor) {
     return IntegerAttr::get(getResult().getType(), APInt::getZero(resultWidth));
   if (index->value->isZero() && resultWidth == getInput().getType().getWidth())
     return getInput();
+  uint64_t low;
+  if (isKnownInRangeIndex(*index->value, getInput().getType().getWidth(),
+                          resultWidth, low))
+    if (auto source = getBitsInsertSlice(getInput(), low, resultWidth);
+        source && source->second == 0 &&
+        source->first.getType() == getResult().getType())
+      return source->first;
   auto input = dyn_cast_or_null<IntegerAttr>(adaptor.getInput());
   if (!input)
     return {};
@@ -3965,6 +3996,60 @@ struct ConstantBitsDynamicExtract final
   }
 };
 
+struct SimplifyBitsExtractSource final
+    : OpRewritePattern<SimBitsDynExtractOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimBitsDynExtractOp op,
+                                PatternRewriter &rewriter) const override {
+    auto index = getConstantIndex(op.getLowBit());
+    uint64_t low;
+    if (!index || !index->value ||
+        !isKnownInRangeIndex(*index->value, op.getInput().getType().getWidth(),
+                             op.getType().getWidth(), low))
+      return failure();
+    auto source = getBitsInsertSlice(op.getInput(), low, op.getType().getWidth());
+    if (!source)
+      return failure();
+    rewriter.replaceOp(op, extractIntegerBits(rewriter, op.getLoc(),
+                                              source->first, source->second,
+                                              op.getType().getWidth()));
+    return success();
+  }
+};
+
+/// Integer packed selections also use shrui/trunci. Register this cross-dialect
+/// rule on the simulation dialect, leaving unrelated arith operations alone.
+struct ExtractBitsInsertWithTruncation final
+    : OpRewritePattern<arith::TruncIOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(arith::TruncIOp op,
+                                PatternRewriter &rewriter) const override {
+    auto resultType = dyn_cast<IntegerType>(op.getType());
+    if (!resultType ||
+        op.getOverflowFlags() != arith::IntegerOverflowFlags::none)
+      return failure();
+    Value input = op.getIn();
+    uint64_t low = 0;
+    if (auto shift = input.getDefiningOp<arith::ShRUIOp>()) {
+      auto amount = getConstantIndex(shift.getRhs());
+      if (shift.getIsExact() || !amount || !amount->value ||
+          amount->value->uge(cast<IntegerType>(input.getType()).getWidth()))
+        return failure();
+      low = amount->value->getZExtValue();
+      input = shift.getLhs();
+    }
+    auto source = getBitsInsertSlice(input, low, resultType.getWidth());
+    if (!source)
+      return failure();
+    rewriter.replaceOp(op, extractIntegerBits(rewriter, op.getLoc(),
+                                              source->first, source->second,
+                                              resultType.getWidth()));
+    return success();
+  }
+};
+
 //===----------------------------------------------------------------------===//
 // Canonical forms. Each rule picks one spelling for operations the LRM
 // defines identically, so CSE and the other patterns see a single form.
@@ -4958,8 +5043,8 @@ void SimLogicInsertOp::getCanonicalizationPatterns(RewritePatternSet &results,
 void SimBitsDynExtractOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
   results
-      .add<TwoStateIndex<SimBitsDynExtractOp, 1>, ConstantBitsDynamicExtract>(
-          context);
+      .add<TwoStateIndex<SimBitsDynExtractOp, 1>, SimplifyBitsExtractSource,
+           ConstantBitsDynamicExtract>(context);
 }
 
 void SimBitsDynInsertOp::getCanonicalizationPatterns(RewritePatternSet &results,
@@ -4997,6 +5082,11 @@ void SimDriverDynExtractOp::getCanonicalizationPatterns(
   results
       .add<ConstantDynamicExtract<SimDriverDynExtractOp, SimDriverExtractOp>>(
           context);
+}
+
+void ObeliskSimulationDialect::getCanonicalizationPatterns(
+    RewritePatternSet &results) const {
+  results.add<ExtractBitsInsertWithTruncation>(getContext());
 }
 
 } // namespace obelisk::sim

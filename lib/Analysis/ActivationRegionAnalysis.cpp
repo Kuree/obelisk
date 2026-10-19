@@ -32,6 +32,9 @@ using Ranges = ActivationMemoryAnalysis::Ranges;
 // Memory summaries are computed only after this revision is stable.
 LogicalResult canonicalizeControl(Operation *operation) {
   RewritePatternSet patterns(operation->getContext());
+  operation->getContext()
+      ->getLoadedDialect<sim::ObeliskSimulationDialect>()
+      ->getCanonicalizationPatterns(patterns);
   for (RegisteredOperationName name :
        operation->getContext()->getRegisteredOperations())
     if (name.getDialectNamespace() == "arith" ||
@@ -809,10 +812,10 @@ getActivationTemporaryRoots(sim::SimFuncOp function,
       bases[value] = *fact.descriptor;
     }
   }
-  auto reconstructible = [&](Value reference, uint64_t root,
+  auto reconstructible = [&](Value reference,
                              auto &reconstructible) -> bool {
     if (auto found = bases.find(reference); found != bases.end())
-      return found->second == root;
+      return roots.contains(found->second);
     Operation *definition = reference.getDefiningOp();
     if (!definition || !isMemoryEffectFree(definition) ||
         definition->getNumRegions())
@@ -821,24 +824,32 @@ getActivationTemporaryRoots(sim::SimFuncOp function,
     for (Value operand : definition->getOperands())
       if (isa<sim::RefType>(operand.getType())) {
         hasReference = true;
-        if (!reconstructible(operand, root, reconstructible))
+        if (!reconstructible(operand, reconstructible))
           return false;
       }
     return hasReference;
   };
-  for (const auto *accesses : {&memory.getReads(), &memory.getWrites()})
-    for (const auto &[op, ranges] : *accesses)
-      for (auto range : ranges)
-        if (roots.contains(range.root)) {
-          Value reference;
-          if (auto load = dyn_cast<sim::SimRefLoadOp>(op))
-            reference = load.getReference();
-          else if (auto store = dyn_cast<sim::SimRefStoreOp>(op))
-            reference = store.getReference();
-          if (!reference ||
-              !reconstructible(reference, range.root, reconstructible))
-            roots.erase(range.root);
-        }
+  // A selected reference can name several source-written temporaries. They
+  // can be reconstructed together only if every possible base remains a
+  // candidate. Iterate to a fixed point so rejecting one base also rejects
+  // references that select it through another candidate.
+  for (bool changed = true; changed;) {
+    changed = false;
+    for (const auto *accesses : {&memory.getReads(), &memory.getWrites()})
+      for (const auto &[op, ranges] : *accesses)
+        for (auto range : ranges)
+          if (roots.contains(range.root)) {
+            Value reference;
+            if (auto load = dyn_cast<sim::SimRefLoadOp>(op))
+              reference = load.getReference();
+            else if (auto store = dyn_cast<sim::SimRefStoreOp>(op))
+              reference = store.getReference();
+            if (!reference || !reconstructible(reference, reconstructible)) {
+              roots.erase(range.root);
+              changed = true;
+            }
+          }
+  }
   for (auto [value, root] : llvm::make_early_inc_range(bases))
     if (!roots.contains(root))
       bases.erase(value);

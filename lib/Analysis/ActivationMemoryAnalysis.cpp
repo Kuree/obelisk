@@ -1038,8 +1038,10 @@ void ActivationValueGraph::pure(Operation *op,
                         update.getResult(), child->first, child->second))
       return;
   } else if (isa<sim::SimPackedFlattenOp, sim::SimPackedUnflattenOp,
-                 sim::SimLogicFromBitsOp, sim::SimLogicToBitsOp,
-                 arith::TruncIOp>(op)) {
+                 sim::SimLogicFromBitsOp, sim::SimLogicToBitsOp>(op) ||
+             (isa<arith::TruncIOp>(op) &&
+              cast<arith::TruncIOp>(op).getOverflowFlags() ==
+                  arith::IntegerOverflowFlags::none)) {
     if (slice(op->getOperand(0), op->getResult(0), 0,
               valueSpan(op->getResult(0))))
       return;
@@ -1058,6 +1060,62 @@ void ActivationValueGraph::pure(Operation *op,
     if (insert(update.getInput(), update.getReplacement(), update.getResult(),
                update.getLowBit(), valueSpan(update.getReplacement())))
       return;
+  } else if (auto update = dyn_cast<sim::SimBitsDynInsertOp>(op)) {
+    // Fixed packed-field writes in integer storage use the dynamic operation
+    // with a constant selector. Preserve the same overwrite proof as the
+    // four-state insertion above; otherwise old output lanes become false
+    // activation inputs and can introduce spurious publication cycles.
+    auto index = knownIndex(update.getLowBit(), constants);
+    if (index && !index.getValue().isNegative() &&
+        index.getValue().getActiveBits() <= 64 &&
+        insert(update.getInput(), update.getReplacement(), update.getResult(),
+               index.getValue().getZExtValue(),
+               valueSpan(update.getReplacement())))
+      return;
+  } else if (auto extend = dyn_cast<arith::ExtUIOp>(op)) {
+    if (isa<IntegerType>(extend.getIn().getType())) {
+      uint64_t width = valueSpan(extend.getIn());
+      put(extend.getResult(),
+          {{0, width, valueNode(extend.getIn()), 0, width,
+            LaneMapping::Identity}});
+      return;
+    }
+  } else if (isa<arith::ShLIOp, arith::ShRUIOp>(op)) {
+    Value input = op->getOperand(0), result = op->getResult(0);
+    auto amount = knownIndex(op->getOperand(1), constants);
+    bool hasPoisonFlags =
+        isa<arith::ShLIOp>(op)
+            ? cast<arith::ShLIOp>(op).getOverflowFlags() !=
+                  arith::IntegerOverflowFlags::none
+            : cast<arith::ShRUIOp>(op).getIsExact();
+    // Overflow/exact promises make discarded bits observable through poison.
+    if (!hasPoisonFlags && isa<IntegerType>(input.getType()) && amount &&
+        !amount.getValue().isNegative() &&
+        amount.getValue().getActiveBits() <= 64) {
+      uint64_t width = valueSpan(input);
+      uint64_t shift = amount.getValue().getZExtValue();
+      // Oversized arith shifts are poison, not zero-filling projections.
+      // Keep their conservative fallback along with unproved selectors.
+      if (shift < width) {
+        uint64_t low = isa<arith::ShLIOp>(op) ? shift : 0;
+        uint64_t sourceLow = isa<arith::ShRUIOp>(op) ? shift : 0;
+        put(result, {{low, width - shift, valueNode(input), sourceLow,
+                      width - shift, LaneMapping::Identity}});
+        return;
+      }
+    }
+  } else if (isa<arith::AndIOp, arith::OrIOp, arith::XOrIOp>(op) &&
+             isa<IntegerType>(op->getResult(0).getType())) {
+    // Integer concatenations and packed projections lower to extension,
+    // shifts and bitwise operations. Each bitwise result lane depends only
+    // on the corresponding operand lanes, independently of their values.
+    uint64_t width = valueSpan(op->getResult(0));
+    LaneLinks links;
+    for (Value operand : op->getOperands())
+      links.push_back(
+          {0, width, valueNode(operand), 0, width, LaneMapping::Identity});
+    put(op->getResult(0), std::move(links));
+    return;
   }
   for (Value result : op->getResults()) {
     LaneLinks links;
@@ -1620,10 +1678,10 @@ private:
   bool collectCandidates(Value value, const Memory &state,
                          DenseSet<Value> &visiting,
                          SmallVectorImpl<HandleFact> &result) const {
-    auto storage = [](const std::optional<HandleFact> &fact) {
+    auto canonical = [](const std::optional<HandleFact> &fact) {
       return fact && fact->descriptor &&
-             *fact->descriptor < ActivationMemoryAnalysis::netRootTag &&
-             fact->resource == schedule::ComputeResourceKind::Storage &&
+             ActivationMemoryAnalysis::getRoot(fact->resource,
+                                               *fact->descriptor) &&
              fact->width && fact->low <= fact->rootWidth &&
              fact->width <= fact->rootWidth - fact->low;
     };
@@ -1633,7 +1691,7 @@ private:
       return true;
     };
     if (auto fact = reference(value, state)) {
-      if (storage(fact))
+      if (canonical(fact))
         return add(*fact);
       if (fact->resource == schedule::ComputeResourceKind::Local) {
         auto slot = localRoots.find(getLocalSlot(value));
@@ -1678,7 +1736,7 @@ private:
       if (incoming == argument)
         continue;
       auto found = handles.find(incoming);
-      if (found != handles.end() && storage(found->second)) {
+      if (found != handles.end() && canonical(found->second)) {
         add(found->second);
         continue;
       }
@@ -1841,8 +1899,8 @@ private:
                     : std::nullopt;
     if (!root || !fact->width || fact->low > fact->rootWidth ||
         fact->width > fact->rootWidth - fact->low) {
-      // A merged reference may select a canonical root or a private slot.
-      // Loads follow all possible reaching versions and the selector. A
+      // A merged handle may select storage, a resolved net or a private slot.
+      // Loads follow all possible reaching versions and the selector.
       // A merged store is never a definite write. Inputs mode can weakly
       // update each private candidate and expose every canonical publication;
       // a final per-lane publication proof still requires an exact target.
@@ -1853,8 +1911,10 @@ private:
       Ranges access;
       bool hasPrivateCandidate = false;
       for (const auto &candidate : possible) {
-        uint64_t root = *candidate.descriptor;
         bool local = candidate.resource == schedule::ComputeResourceKind::Local;
+        uint64_t root = local ? *candidate.descriptor
+                              : *ActivationMemoryAnalysis::getRoot(
+                                    candidate.resource, *candidate.descriptor);
         if (local) {
           hasPrivateCandidate = true;
           if (load)
