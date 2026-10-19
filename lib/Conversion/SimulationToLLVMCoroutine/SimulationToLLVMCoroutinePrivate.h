@@ -496,6 +496,15 @@ std::optional<DirectStaticStateRange>
 resolveDirectStaticStateRange(mlir::Value handle, unsigned width,
                               const NativeStateLayout *layout);
 std::optional<uint64_t> resolveCFGConstantInteger(mlir::Value value);
+// Load a finite selection of certified static handles, or return null without
+// emitting loads. A conversion caller remaps incoming CFG values; knownZero
+// suppresses plane reads after the same bounds and ownership proof succeeds.
+mlir::Value tryLoadSelectedStaticStatePlane(
+    mlir::OpBuilder &builder, mlir::Location location, mlir::Value handle,
+    mlir::IntegerType resultType, llvm::StringRef globalName,
+    const NativeStateLayout *directLayout, bool assumeClean,
+    bool knownZero = false,
+    llvm::function_ref<mlir::Value(mlir::Value)> remap = {});
 mlir::Value loadStatePlane(mlir::ConversionPatternRewriter &rewriter,
                            mlir::Location location, mlir::Value handle,
                            mlir::IntegerType resultType,

@@ -14,6 +14,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Transforms/DialectConversion.h"
 
 #include "llvm/Support/MathExtras.h"
@@ -717,6 +718,108 @@ Value storeDirectPackedPlane(OpBuilder &builder, Location location, Value input,
 
 namespace detail {
 
+Value tryLoadSelectedStaticStatePlane(
+    OpBuilder &builder, Location location, Value handle, IntegerType resultType,
+    StringRef globalName, const NativeStateLayout *directLayout,
+    bool assumeClean, bool knownZero, llvm::function_ref<Value(Value)> remap) {
+  // CFG canonicalization can merge reads into selects or block arguments of
+  // distinct handles. Every incoming leaf must be in bounds and free of
+  // runtime overlays before its read can be speculated. Keep the loads at the
+  // original read, so changes on predecessor paths are observed there.
+  auto selected = [](Value value) -> Operation * {
+    Operation *op = value.getDefiningOp();
+    return isa_and_nonnull<arith::SelectOp, LLVM::SelectOp>(op) ? op : nullptr;
+  };
+  if (selected(handle) || isa<BlockArgument>(handle)) {
+    SmallVector<std::pair<uint64_t, DirectStaticStateRange>, 4> leaves;
+    DenseSet<uint64_t> leafHandles;
+    DenseSet<Value> visited;
+    SmallVector<Value> pending{handle};
+    bool direct = true;
+    while (!pending.empty() && direct) {
+      // Predecessor operands can still reference replaced operations or block
+      // arguments until dialect conversion commits its pending rewrites.
+      Value current = pending.pop_back_val();
+      if (remap)
+        current = remap(current);
+      if (!current) {
+        direct = false;
+        break;
+      }
+      if (!visited.insert(current).second)
+        continue;
+      // Follow block arguments ourselves, including cycles and joins with
+      // distinct incoming constants.
+      auto leaf = isa<BlockArgument>(current)
+                      ? std::nullopt
+                      : resolveDirectStaticStateRange(
+                            current, resultType.getWidth(), directLayout);
+      if (leaf && (!leaf->guarded || assumeClean)) {
+        uint64_t encoded = *resolveCFGConstantInteger(current);
+        if (leafHandles.insert(encoded).second)
+          leaves.emplace_back(encoded, *leaf);
+      } else if (Operation *select = selected(current)) {
+        pending.push_back(select->getOperand(1));
+        pending.push_back(select->getOperand(2));
+      } else if (auto argument = dyn_cast<BlockArgument>(current)) {
+        Block *block = argument.getOwner();
+        if (block->hasNoPredecessors()) {
+          direct = false;
+          break;
+        }
+        for (Block *predecessor : block->getPredecessors()) {
+          Operation *terminator = predecessor->getTerminator();
+          auto branch = dyn_cast<BranchOpInterface>(terminator);
+          if (!branch) {
+            direct = false;
+            break;
+          }
+          for (unsigned successor = 0;
+               successor != terminator->getNumSuccessors(); ++successor) {
+            if (terminator->getSuccessor(successor) != block)
+              continue;
+            auto operands = branch.getSuccessorOperands(successor);
+            unsigned index = argument.getArgNumber();
+            if (index >= operands.size() || operands.isOperandProduced(index)) {
+              direct = false;
+              break;
+            }
+            pending.push_back(operands[index]);
+          }
+          if (!direct)
+            break;
+        }
+      } else {
+        direct = false;
+      }
+    }
+    if (direct && !leaves.empty()) {
+      if (knownZero)
+        return llvmConstant(builder, location, resultType, 0);
+      Value result;
+      for (const auto &[encoded, range] : leaves) {
+        Value loaded = extractDirectPackedPlane(
+            builder, location,
+            loadDirectPackedPlane(builder, location, globalName, range.offset,
+                                  resultType.getWidth(), range.containerWidth,
+                                  true, range.accessUnit),
+            resultType);
+        if (!result) {
+          result = loaded;
+          continue;
+        }
+        Value matches = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::eq, handle,
+            llvmConstant(builder, location, handle.getType(), encoded));
+        result = arith::SelectOp::create(builder, location, matches, loaded,
+                                        result);
+      }
+      return result;
+    }
+  }
+  return {};
+}
+
 Value loadStatePlane(ConversionPatternRewriter &rewriter, Location location,
                      Value handle, IntegerType resultType, StringRef globalName,
                      bool unknownFallback, uint64_t stateBitCount,
@@ -733,6 +836,11 @@ Value loadStatePlane(ConversionPatternRewriter &rewriter, Location location,
                               resultType.getWidth(), range->containerWidth,
                               true, range->accessUnit),
         resultType);
+  if (Value selected = tryLoadSelectedStaticStatePlane(
+          rewriter, location, handle, resultType, globalName, directLayout,
+          assumeClean, false,
+          [&](Value value) { return rewriter.getRemappedValue(value); }))
+    return selected;
   std::optional<DirectDynamicStateRange> dynamicRange =
       resolveDirectDynamicStateRange(handle, resultType.getWidth(),
                                      directLayout, access);

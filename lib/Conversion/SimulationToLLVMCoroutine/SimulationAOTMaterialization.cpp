@@ -2806,6 +2806,26 @@ FailureOr<bool> makeNativeEvalPlan(
                failure();
 
       Value handle = arguments[3];
+      // Incoming handles in a CFG join may only become constants after the
+      // state-access conversion has completed. Retry the same finite-handle
+      // proof here, under the generated evaluator's clean-state handover.
+      OpBuilder selectedBuilder(call);
+      if (Value selected = tryLoadSelectedStaticStatePlane(
+              selectedBuilder, call.getLoc(), handle,
+              selectedBuilder.getIntegerType(*width),
+              *unknownPlane ? "__obelisk_state_unknown"
+                            : "__obelisk_state_value",
+              &stateLayout, true, twoState && *unknownPlane)) {
+        if (call.getNumResults() != 1 || call.getResult().getType() != i32)
+          return call.emitError("unsupported native state load status ABI"),
+                 failure();
+        LLVM::StoreOp::create(selectedBuilder, call.getLoc(), selected,
+                              arguments[7], 1);
+        call.getResult().replaceAllUsesWith(
+            llvmConstant(selectedBuilder, call.getLoc(), i32, OBELISK_RT_OK));
+        call.erase();
+        continue;
+      }
       Value sourceValid;
       bool invertSourceValid = false;
       Operation *handleSelect = handle.getDefiningOp();
