@@ -270,7 +270,8 @@ planCrossPredicate(Operation *predicate, ArrayAttr targetPaths) {
       } else if (isa<ir::SVReplicationExpressionOp>(op)) {
         if (plan.operands.size() != 2)
           return std::nullopt;
-        auto spelling = simlowering::getConstantSpelling(plan.operands[0]);
+        auto spelling =
+            simlowering::getElaboratedConstantSpelling(plan.operands[0]);
         auto countType =
             simlowering::getNormalizedSemanticType(plan.operands[0]);
         auto inputType =

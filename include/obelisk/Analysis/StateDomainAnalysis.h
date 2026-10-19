@@ -111,6 +111,10 @@ constexpr uint64_t maximumGuardedRootBits = uint64_t(1) << 16;
 
 llvm::StringRef stringifyStateDomain(StateDomain domain);
 
+/// Whether optional X/Z domain inference and guarded two-state versions are
+/// enabled for the containing module. Explicit integer types remain integers.
+bool isTwoStateSpecializationEnabled(mlir::Operation *operation);
+
 /// The IEEE 1800-2023 value-domain transfer of one non-call operation, shared
 /// by the whole-design solve and by function-local clients. `operandFact`
 /// supplies the current fact of a logic operand. Loads and net reads are
@@ -203,6 +207,7 @@ public:
   }
 
 private:
+  StateDomainAnalysis() = default;
   static mlir::FailureOr<StateDomainAnalysis>
   computeInductiveOnly(const ValueFactProgram &program);
   explicit StateDomainAnalysis(

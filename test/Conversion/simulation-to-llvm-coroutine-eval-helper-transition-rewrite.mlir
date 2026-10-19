@@ -3,6 +3,7 @@
 // RUN: FileCheck %s < %t
 // RUN: FileCheck %s --check-prefix=NO-PURE-CLONE < %t
 // RUN: FileCheck %s --check-prefix=NO-UNSAFE-TWO-STATE < %t
+// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{native.disable_two_state_specialization}"' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=FOUR --implicit-check-not='__obelisk_two_state' --implicit-check-not='schedule.eval.local_promotion_ranges' --implicit-check-not='schedule.eval.discardable_store'
 
 // This preplanned body has no NBA operation, so its shared helper transition
 // is independent of the inert static-NBA metadata. The one conversion pass
@@ -159,3 +160,28 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // An X-valued net write is not known-state preserving and must never get a
 // two-state route, even though its helper is otherwise runtime-free.
 // NO-UNSAFE-TWO-STATE-NOT: @unknown_net_eval.__obelisk_two_state
+
+// Forced four-state eval still isolates its publication helpers from shared
+// canonical definitions. It creates no promotion ranges or two-state variants.
+// FOUR-LABEL: llvm.func @update.__obelisk_eval_body_0(
+// FOUR: llvm.call @touch_clock.__obelisk_eval_private_0
+// FOUR: llvm.call @touch_net.__obelisk_eval_private_0
+// FOUR: llvm.call @touch_driver.__obelisk_eval_private_0
+// FOUR-LABEL: llvm.func @touch_clock(
+// FOUR: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// FOUR-LABEL: llvm.func @touch_net(
+// FOUR: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// FOUR-LABEL: llvm.func @touch_driver(
+// FOUR: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// FOUR-LABEL: llvm.func @touch_clock.__obelisk_eval_private_0(
+// FOUR: llvm.call @pure_leaf
+// FOUR-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// FOUR-NOT: llvm.store
+// FOUR: llvm.return
+// FOUR-LABEL: llvm.func @touch_net.__obelisk_eval_private_0(
+// FOUR-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// FOUR: llvm.return
+// FOUR-LABEL: llvm.func @touch_driver.__obelisk_eval_private_0(
+// FOUR-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// FOUR: llvm.return
+// FOUR-LABEL: llvm.func @__obelisk_eval_dispatch_v1

@@ -90,7 +90,9 @@ LogicalResult ABIAttr::verify(function_ref<InFlightDiagnostic()> emitError,
   case ABIKind::Bit:
     return require(1, false);
   case ABIKind::Logic:
-    return require(1, true);
+    // svLogic carries either state kind: two-state data arrives with no X/Z.
+    return width == 1 ? success()
+                      : emitError() << "DPI ABI category requires width 1";
   case ABIKind::Byte:
     return require(8, false);
   case ABIKind::ShortInt:
@@ -104,10 +106,9 @@ LogicalResult ABIAttr::verify(function_ref<InFlightDiagnostic()> emitError,
                ? emitError() << "bit-vector DPI ABI category must be two-state"
                : success();
   case ABIKind::LogicVector:
-    return !fourState
-               ? emitError()
-                     << "logic-vector DPI ABI category must be four-state"
-               : success();
+    // C still receives svLogicVecVal when simulator storage is two-state;
+    // marshalling supplies zero bval words and projects incoming X/Z to zero.
+    return success();
   case ABIKind::String:
   case ABIKind::Chandle:
     if (isSigned)
@@ -162,9 +163,8 @@ LogicalResult OpenArrayABIAttr::verify(
     return emitError() << "recursive DPI open-array shape is incomplete";
   if (storage != 2 && !shapePlan.empty())
     return emitError() << "non-recursive DPI open-array has a shape plan";
-  if (elementKind != ABIKind::UnpackedAggregate &&
-      ((elementKind == ABIKind::Logic || elementKind == ABIKind::LogicVector) !=
-       fourState))
+  if (fourState && elementKind != ABIKind::UnpackedAggregate &&
+      elementKind != ABIKind::Logic && elementKind != ABIKind::LogicVector)
     return emitError() << "DPI open-array element state kind is inconsistent";
   if (elementCSize == 0 || elementCAlignment == 0 ||
       (elementCAlignment & (elementCAlignment - 1)) != 0)

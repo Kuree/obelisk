@@ -21,6 +21,8 @@ namespace obelisk::bytecode {
 /// components; one unproven member keeps the entire component four-state.
 FailureOr<llvm::DenseSet<Value>>
 planTwoStateRegisters(sim::SimDesignOp design) {
+  if (!isTwoStateSpecializationEnabled(design))
+    return llvm::DenseSet<Value>{};
   FailureOr<StateDomainAnalysis> analysis =
       StateDomainAnalysis::compute(design, /*proveInductiveRoots=*/false);
   if (failed(analysis))

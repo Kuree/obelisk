@@ -6,6 +6,7 @@
 #include "obelisk/Analysis/BoundedLoopAnalysis.h"
 #include "obelisk/Analysis/IntegerRangeIPO.h"
 #include "obelisk/Analysis/ScopedIntegerRangeAnalysis.h"
+#include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Conversion/Passes.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -71,7 +72,8 @@ public:
       auto *state = solver.lookupState<analysis::ScopedRangeLattice>(point);
       if (!state || !state->reachable)
         return;
-      if (isa<sim::LogicType>(value.getType()) && ranges->excludesXZ(value))
+      if (isTwoStateSpecializationEnabled(function) &&
+          isa<sim::LogicType>(value.getType()) && ranges->excludesXZ(value))
         if (auto result = dyn_cast<OpResult>(value);
             result && result.getOwner()->getNumResults() == 1)
           sim::set<sim::metadata::KnownLogicResult>(

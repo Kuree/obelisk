@@ -282,6 +282,17 @@ when any bit is a known one, while zero and values containing only X/Z bits are
 false. `logic.to_bits` is the conversion boundary and maps every X/Z bit to
 zero.
 
+The frontend's explicit `--two-state` mode changes this contract at import:
+executable integral types are two-state, X/Z data bits project to zero, and
+uninitialized integral storage starts at zero. Slang elaboration still uses
+source-language types. Cached elaboration constants are retained separately
+for structural bounds/counts so executable expressions can be recomputed in
+their new domain. Wildcard patterns retain their masks. DPI preserves its
+declared C layout and zeros outgoing X/Z fields, projecting foreign X/Z data
+on entry. `--no-two-state-specialization` instead preserves source types and
+disables optional domain solves, narrowing and guarded versions across both
+backends; explicitly two-state language types remain two-state.
+
 Dynamic packed selections accept either signless builtin-integer or `logic`
 indices. Declared-range normalization uses arithmetic in the index's original
 state domain, so an unknown index remains unknown. Logic reads with an unknown

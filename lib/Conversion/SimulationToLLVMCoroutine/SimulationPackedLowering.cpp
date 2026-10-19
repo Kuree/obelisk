@@ -294,7 +294,8 @@ LogicalResult lowerPackedSimulationOperations(
   DenseSet<Value> nativeTwoStateValues;
   DenseSet<Operation *> nativeTwoStateOperations;
   module.walk([&](Operation *operation) {
-    if (sim::has<sim::metadata::KnownLogicResult>(operation) &&
+    if (isTwoStateSpecializationEnabled(module) &&
+        sim::has<sim::metadata::KnownLogicResult>(operation) &&
         operation->getNumResults() == 1 &&
         isa<sim::LogicType>(operation->getResult(0).getType()))
       nativeTwoStateValues.insert(operation->getResult(0));

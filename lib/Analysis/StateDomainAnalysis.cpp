@@ -310,7 +310,16 @@ bool isConstantInRangeSelection(Operation *op) {
   return false;
 }
 
+bool isTwoStateSpecializationEnabled(Operation *operation) {
+  auto module = dyn_cast<ModuleOp>(operation);
+  if (!module)
+    module = operation->getParentOfType<ModuleOp>();
+  return !module || !native::has<native::DisableTwoStateSpecialization>(module);
+}
+
 FailureOr<uint64_t> getNativeStateDomainFunctionLimit(Operation *module) {
+  if (!isTwoStateSpecializationEnabled(module))
+    return uint64_t{0};
   if (auto limit = native::get<native::MaxStateDomainFunctions>(module)) {
     if (limit.getInt() < 0)
       return module->emitError(
@@ -1362,6 +1371,8 @@ StateDomainFact getValueFact(const DenseMap<Value, StateDomainFact> &facts,
 FailureOr<StateDomainAnalysis>
 StateDomainAnalysis::compute(sim::SimDesignOp design,
                              bool proveInductiveRoots) {
+  if (!isTwoStateSpecializationEnabled(design))
+    return StateDomainAnalysis();
   if (design.getBody().empty()) {
     design.emitOpError("cannot analyze a design with no body");
     return failure();
@@ -1391,6 +1402,8 @@ StateDomainAnalysis::compute(sim::SimDesignOp design,
 
 FailureOr<StateDomainAnalysis>
 StateDomainAnalysis::computeInductiveOnly(sim::SimDesignOp design) {
+  if (!isTwoStateSpecializationEnabled(design))
+    return StateDomainAnalysis();
   if (design.getBody().empty()) {
     design.emitOpError("cannot analyze a design with no body");
     return failure();
@@ -1674,6 +1687,8 @@ StateDomainAnalysis::computeInductiveOnly(const ValueFactProgram &program) {
 
 FailureOr<StateDomainAnalysis>
 StateDomainAnalysis::computeAssumingKnownState(sim::SimDesignOp design) {
+  if (!isTwoStateSpecializationEnabled(design))
+    return StateDomainAnalysis();
   if (design.getBody().empty()) {
     design.emitOpError("cannot analyze a design with no body");
     return failure();
@@ -1704,6 +1719,8 @@ StateDomainAnalysis::computeAssumingKnownState(sim::SimDesignOp design) {
 FailureOr<std::pair<StateDomainAnalysis, StateDomainAnalysis>>
 StateDomainAnalysis::computeForSpecialization(sim::SimDesignOp design,
                                               bool proveInductiveRoots) {
+  if (!isTwoStateSpecializationEnabled(design))
+    return std::make_pair(StateDomainAnalysis(), StateDomainAnalysis());
   if (design.getBody().empty()) {
     design.emitOpError("cannot analyze a design with no body");
     return failure();

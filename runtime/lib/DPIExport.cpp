@@ -196,7 +196,7 @@ extern "C" OBELISK_RT_FEATURE_TEXT void
 obelisk_rt_v1_dpi_export_unpack_vector(const void *source, void *value,
                                        void *unknown, uint32_t width,
                                        uint32_t fourState) {
-  if (!source || !value || width == 0 || (fourState != 0 && !unknown))
+  if (!source || !value || width == 0)
     return;
   const auto *sourceBytes = static_cast<const uint8_t *>(source);
   auto *valueBytes = static_cast<uint8_t *>(value);
@@ -213,9 +213,11 @@ obelisk_rt_v1_dpi_export_unpack_vector(const void *source, void *value,
       aval &= mask;
       bval &= mask;
     }
-    uint32_t internal = aval ^ bval;
+    // The C representation is independent of the simulator storage domain.
+    // A null unknown plane requests projection into two-state data.
+    uint32_t internal = unknown ? aval ^ bval : aval & ~bval;
     std::memcpy(valueBytes + word * 4, &internal, sizeof(internal));
-    if (fourState)
+    if (fourState && unknown)
       std::memcpy(unknownBytes + word * 4, &bval, sizeof(bval));
   }
 }
@@ -224,7 +226,7 @@ extern "C" OBELISK_RT_FEATURE_TEXT void
 obelisk_rt_v1_dpi_export_pack_vector(void *destination, const void *value,
                                      const void *unknown, uint32_t width,
                                      uint32_t fourState) {
-  if (!destination || !value || width == 0 || (fourState != 0 && !unknown))
+  if (!destination || !value || width == 0)
     return;
   auto *destinationBytes = static_cast<uint8_t *>(destination);
   const auto *valueBytes = static_cast<const uint8_t *>(value);
@@ -234,7 +236,7 @@ obelisk_rt_v1_dpi_export_pack_vector(void *destination, const void *value,
   for (uint64_t word = 0; word != words; ++word) {
     uint32_t internal = 0, bval = 0;
     std::memcpy(&internal, valueBytes + word * 4, sizeof(internal));
-    if (fourState)
+    if (fourState && unknown)
       std::memcpy(&bval, unknownBytes + word * 4, sizeof(bval));
     uint32_t aval = internal ^ bval;
     if (word + 1 == words && width % 32 != 0) {

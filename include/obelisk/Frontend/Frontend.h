@@ -59,6 +59,11 @@ struct FrontendOptions {
   std::vector<std::string> slangArgs;
 
   bool singleUnit = false;
+  /// Import executable integral values in the two-state domain. Elaboration
+  /// still uses the source language's types; X/Z data bits become zero when
+  /// entering the executable model, whose uninitialized integral storage is
+  /// zero. This is a semantic mode, not a speculative two-state optimization.
+  bool twoState = false;
   bool librariesInheritMacros = false;
   bool allowUseBeforeDeclare = false;
   bool ignoreUnknownModules = false;

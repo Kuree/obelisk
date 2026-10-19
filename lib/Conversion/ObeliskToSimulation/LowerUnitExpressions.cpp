@@ -424,7 +424,7 @@ UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
     if (auto integer = dyn_cast<IntegerType>(scalarType))
       value = arith::ConstantOp::create(
           builder, getSemanticLocation(op), integer,
-          builder.getIntegerAttr(integer, parsed->value));
+          builder.getIntegerAttr(integer, parsed->value & ~parsed->unknown));
     else {
       auto planeType = builder.getIntegerType(*width);
       value = sim::SimLogicConstantOp::create(
@@ -745,7 +745,7 @@ FailureOr<Value> UnitLowering::lowerLiteral(Operation *op) {
   if (auto integer = dyn_cast<IntegerType>(scalarType))
     value = arith::ConstantOp::create(
         builder, location, integer,
-        builder.getIntegerAttr(integer, parsed->value));
+        builder.getIntegerAttr(integer, parsed->value & ~parsed->unknown));
   else {
     auto planeType = IntegerType::get(op->getContext(), *width);
     value = sim::SimLogicConstantOp::create(
@@ -2384,11 +2384,8 @@ FailureOr<Value> UnitLowering::lowerReplication(Operation *op) {
                                           *string, *count64)
         .getResult();
   }
-  if (!isIntegerConstant(children.front())) {
-    unsupported(op) << " (nonconstant replication count)";
-    return failure();
-  }
-  std::optional<StringRef> spelling = getConstantSpelling(children.front());
+  std::optional<StringRef> spelling =
+      getElaboratedConstantSpelling(children.front());
   if (!spelling) {
     unsupported(op) << " (nonconstant replication count)";
     return failure();
@@ -4273,7 +4270,7 @@ FailureOr<int64_t> UnitLowering::declaredIndexOrdinal(Type aggregate,
         << "assignment-pattern index key requires an array target";
     return failure();
   }
-  std::optional<StringRef> spelling = getConstantSpelling(key);
+  std::optional<StringRef> spelling = getElaboratedConstantSpelling(key);
   FailureOr<Type> keyType = getNormalizedSemanticType(key);
   std::optional<unsigned> width =
       succeeded(keyType) ? sim::getPackedWidth(*keyType) : std::nullopt;
@@ -4410,7 +4407,7 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
       for (uint64_t setter = 0; setter != indexCount; ++setter) {
         Operation *key = children[setter * 2];
         Operation *value = children[setter * 2 + 1];
-        std::optional<StringRef> spelling = getConstantSpelling(key);
+        std::optional<StringRef> spelling = getElaboratedConstantSpelling(key);
         FailureOr<Type> keyType = getNormalizedSemanticType(key);
         std::optional<unsigned> width =
             succeeded(keyType) ? sim::getPackedWidth(*keyType) : std::nullopt;
@@ -4477,7 +4474,8 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
           }
       }
     } else if (isa<semantic::SVReplicatedAssignmentPatternExpressionOp>(op)) {
-      if (children.size() < 2 || !getConstantSpelling(children.front())) {
+      if (children.size() < 2 ||
+          !getElaboratedConstantSpelling(children.front())) {
         emitError(location)
             << "replicated assignment pattern requires a constant count";
         return failure();
@@ -4486,9 +4484,10 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
       std::optional<unsigned> countWidth =
           succeeded(countType) ? sim::getPackedWidth(*countType) : std::nullopt;
       FailureOr<ParsedConstant> count =
-          countWidth ? parseSVInteger(*getConstantSpelling(children.front()),
-                                      *countWidth, location)
-                     : FailureOr<ParsedConstant>(failure());
+          countWidth
+              ? parseSVInteger(*getElaboratedConstantSpelling(children.front()),
+                               *countWidth, location)
+              : FailureOr<ParsedConstant>(failure());
       if (failed(count) || !count->unknown.isZero() ||
           count->value.getActiveBits() > 64) {
         emitError(location) << "invalid replicated assignment-pattern count";
@@ -4883,7 +4882,8 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
     return constructElements(elements);
   }
   if (isa<semantic::SVReplicatedAssignmentPatternExpressionOp>(op)) {
-    if (children.size() < 2 || !getConstantSpelling(children.front())) {
+    if (children.size() < 2 ||
+        !getElaboratedConstantSpelling(children.front())) {
       emitError(location)
           << "replicated assignment pattern requires a constant count";
       return failure();
@@ -4892,9 +4892,10 @@ FailureOr<Value> UnitLowering::lowerAssignmentPattern(Operation *op) {
     std::optional<unsigned> countWidth =
         succeeded(countType) ? sim::getPackedWidth(*countType) : std::nullopt;
     FailureOr<ParsedConstant> count =
-        countWidth ? parseSVInteger(*getConstantSpelling(children.front()),
-                                    *countWidth, location)
-                   : FailureOr<ParsedConstant>(failure());
+        countWidth
+            ? parseSVInteger(*getElaboratedConstantSpelling(children.front()),
+                             *countWidth, location)
+            : FailureOr<ParsedConstant>(failure());
     if (failed(count) || !count->unknown.isZero() ||
         count->value.getActiveBits() > 64) {
       emitError(location) << "invalid replicated assignment-pattern count";
@@ -5149,13 +5150,19 @@ UnitLowering::lowerPackedSelectionAddress(Operation *op, Type sourceValueType,
                                 : value.zextOrTrunc(constantOffsetWidth);
   };
 
-  bool literalIndex = isIntegerConstant(children[1]);
+  bool fixedBounds =
+      !element && selectionKind == semantic::SVRangeSelectionKind::Simple;
+  auto indexSpelling = [&](Operation *index) {
+    return fixedBounds ? getElaboratedConstantSpelling(index)
+                       : getConstantSpelling(index);
+  };
+  bool literalIndex = indexSpelling(children[1]).has_value();
   if (literalIndex) {
     FailureOr<Type> firstIndexType = getNormalizedSemanticType(children[1]);
     if (failed(firstIndexType))
       return failure();
     FailureOr<ParsedConstant> first =
-        parseSVInteger(*getConstantSpelling(children[1]), 64, location);
+        parseSVInteger(*indexSpelling(children[1]), 64, location);
     if (failed(first))
       return failure();
     std::optional<APInt> knownLow;
@@ -5164,12 +5171,12 @@ UnitLowering::lowerPackedSelectionAddress(Operation *op, Type sourceValueType,
           sourceOffset(extendLiteral(*first, children[1], *firstIndexType));
     if (knownLow && !element) {
       if (selectionKind == semantic::SVRangeSelectionKind::Simple) {
-        if (!isIntegerConstant(children[2])) {
+        if (!indexSpelling(children[2])) {
           unsupported(op) << " (mixed constant and dynamic selection bounds)";
           return failure();
         }
         FailureOr<ParsedConstant> second =
-            parseSVInteger(*getConstantSpelling(children[2]), 64, location);
+            parseSVInteger(*indexSpelling(children[2]), 64, location);
         if (failed(second))
           return failure();
         if (second->unknown.isZero()) {
@@ -5940,7 +5947,8 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
   // out-of-range, or nonconstant unpacked index does not identify one stable
   // descriptor window.
   if (netAggregateSelect && isa<sim::UnpackedArrayType>(sourceValueType)) {
-    std::optional<StringRef> spelling = getConstantSpelling(children[1]);
+    std::optional<StringRef> spelling =
+        getElaboratedConstantSpelling(children[1]);
     if (!spelling) {
       emitError(location)
           << "an addressable fixed net-array selection requires a constant "

@@ -172,7 +172,10 @@ LogicalResult VPITypeSemanticsAttr::verify(
     IntegerAttr bitstreamWidth, IntegerAttr tagBits, IntegerAttr queueBound,
     BoolAttr wildcardIndex, DenseI64ArrayAttr childOrdinals,
     DenseI64ArrayAttr childPackedOffsets, DenseI64ArrayAttr childRandTypes,
-    ArrayAttr typedefAliases) {
+    ArrayAttr typedefAliases, BoolAttr projected) {
+  if (projected && projected.getValue() && !isFourState)
+    return emitError()
+           << "only a four-state VPI semantic type can be projected";
   if (!range || (range.size() != 0 && range.size() != 2))
     return emitError() << "VPI semantic type range must be empty or contain "
                           "one left/right pair";
@@ -923,6 +926,12 @@ LogicalResult UdpAttr::verify(function_ref<InFlightDiagnostic()> emitError,
 LogicalResult
 verifyVPITypeSemantics(llvm::function_ref<InFlightDiagnostic()> emitError,
                        Type executableType, VPITypeSemanticsAttr semantics) {
+  // A projected declaration keeps its four-state identity for reflection
+  // while --two-state backs it with integer storage.
+  auto fourState = [](VPITypeSemanticsAttr semantic) {
+    return semantic.getIsFourState() &&
+           !(semantic.getProjected() && semantic.getProjected().getValue());
+  };
   auto rangeWidth = [](DenseI64ArrayAttr range) -> std::optional<uint64_t> {
     if (!range || range.size() != 2)
       return std::nullopt;
@@ -961,8 +970,7 @@ verifyVPITypeSemantics(llvm::function_ref<InFlightDiagnostic()> emitError,
     std::optional<unsigned> executableWidth = getPackedWidth(type);
     if (!width || !executableWidth || *width != *executableWidth)
       return false;
-    return semantic.getIsFourState() ? isa<LogicType>(type)
-                                     : isa<IntegerType>(type);
+    return fourState(semantic) ? isa<LogicType>(type) : isa<IntegerType>(type);
   };
 
   std::function<bool(Type, VPITypeSemanticsAttr)> matches =
@@ -995,7 +1003,7 @@ verifyVPITypeSemantics(llvm::function_ref<InFlightDiagnostic()> emitError,
       return sourceWidth && executableWidth &&
              isa<IntegerType, LogicType>(type) &&
              *sourceWidth == *executableWidth &&
-             base.getIsFourState() == isa<LogicType>(type);
+             fourState(base) == isa<LogicType>(type);
     }
     case VPITypeKind::ShortReal:
       return type.isF32();
@@ -1096,10 +1104,9 @@ verifyVPITypeSemantics(llvm::function_ref<InFlightDiagnostic()> emitError,
       // shape to its scalar lookup domain.
       if (!keyMatches && getPackedWidth(value.getKeyType())) {
         std::optional<uint64_t> sourceWidth = semanticPackedWidth(key);
-        keyMatches =
-            sourceWidth &&
-            *sourceWidth == *getPackedWidth(value.getKeyType()) &&
-            (key.getIsFourState() == isa<LogicType>(value.getKeyType()));
+        keyMatches = sourceWidth &&
+                     *sourceWidth == *getPackedWidth(value.getKeyType()) &&
+                     (fourState(key) == isa<LogicType>(value.getKeyType()));
       }
       return keyMatches && matches(value.getElementType(), element);
     }

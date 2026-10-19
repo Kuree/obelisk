@@ -11,7 +11,7 @@ module {
       obelisk.sv.symbol.instance_body @s4.top attributes {hierarchical_name = "top", name = "top", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
         obelisk.sv.symbol.variable @s5.clk attributes {hierarchical_name = "top.clk", lifetime = 1 : i32, name = "clk", node_id = 5 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
         obelisk.sv.symbol.variable @s6.q attributes {hierarchical_name = "top.q", lifetime = 1 : i32, name = "q", node_id = 6 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
-        obelisk.sv.symbol.variable @s7.n attributes {hierarchical_name = "top.n", lifetime = 1 : i32, name = "n", node_id = 7 : i64, semantic_type = !obelisk.integral<96, true, false, 95 : 0, logic>} {}
+        obelisk.sv.symbol.variable @s7.n attributes {hierarchical_name = "top.n", lifetime = 1 : i32, name = "n", node_id = 7 : i64, semantic_type = !obelisk.integral<96, true, false, 95 : 0, bit>} {}
         obelisk.sv.symbol.clocking_block @s8.cb attributes {hierarchical_name = "top.cb", is_default = true, is_global = false, name = "cb", node_id = 8 : i64} {
           obelisk.sv.symbol.clock_var @s9.q attributes {direction = 1 : i32, has_input_delay = false, has_output_delay = false, hierarchical_name = "top.cb.q", input_edge = 0 : i32, lifetime = 1 : i32, name = "q", node_id = 9 : i64, output_edge = 0 : i32, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {}
         }
@@ -44,7 +44,7 @@ module {
               }
               obelisk.sv.statement.timed attributes {node_id = 25 : i64} {
                 obelisk.sv.timing.cycle_delay attributes {clocking_event_edge = 2 : i32, clocking_event_path = "top.clk", clocking_event_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, node_id = 26 : i64} {
-                  obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 27 : i64, referenced_path = "top.n", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.n, semantic_type = !obelisk.integral<96, true, false, 95 : 0, logic>} {}
+                  obelisk.sv.expression.named_value attributes {is_signed = true, node_id = 27 : i64, referenced_path = "top.n", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.n, semantic_type = !obelisk.integral<96, true, false, 95 : 0, bit>} {}
                 }
                 obelisk.sv.statement.empty attributes {node_id = 28 : i64} {}
               }

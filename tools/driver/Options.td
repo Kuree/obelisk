@@ -74,6 +74,11 @@ def target_EQ : Joined<["--"], "target=">, Group<Output_Group>,
 def threads_EQ : Joined<["--"], "threads=">, Group<Compilation_Group>,
   MetaVarName<"<count>">,
   HelpText<"Set generated simulator worker-lane count">;
+def two_state : Flag<["--"], "two-state">, Group<Compilation_Group>,
+  HelpText<"Use two-state integral computation and storage (X/Z and initial values become zero)">;
+def no_two_state_specialization : Flag<["--"], "no-two-state-specialization">,
+  Group<Compilation_Group>,
+  HelpText<"Disable inferred two-state analysis, narrowing, and guarded specialization">;
 def compile_threads_EQ : Joined<["--"], "compile-threads=">,
   Group<Compilation_Group>, MetaVarName<"<count>">,
   HelpText<"Set MLIR, LLD, and LTO code-generation thread count">;

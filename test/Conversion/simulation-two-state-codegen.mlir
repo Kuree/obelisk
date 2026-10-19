@@ -6,6 +6,7 @@
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | \
 // RUN:   FileCheck %s --check-prefix=BYTECODE
 // RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{native.optimization_level = 3 : i32, native.max_state_domain_functions = 0 : i64}"' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=BUDGET
+// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{native.disable_two_state_specialization}"' --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=NO-NARROWING
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -144,6 +145,11 @@ module attributes {
 // BYTECODE-SAME: runtime.bytecode_two_state_logic_registers = 0 : i32
 // BYTECODE-LABEL: simulation.func @root
 // BYTECODE-SAME: runtime.bytecode_two_state_logic_registers = 3 : i32
+
+// NO-NARROWING-LABEL: simulation.func private @add_known
+// NO-NARROWING-SAME: runtime.bytecode_two_state_logic_registers = 0 : i32
+// NO-NARROWING-LABEL: simulation.func @root
+// NO-NARROWING-SAME: runtime.bytecode_two_state_logic_registers = 0 : i32
 
 // Function-owned IPO/SCEV facts remain available when the optional whole-
 // design state-domain analysis is skipped by its compile-time budget.

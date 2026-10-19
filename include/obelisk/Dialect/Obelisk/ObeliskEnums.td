@@ -832,13 +832,14 @@ def ObeliskSVIntegral_LongInt
 def ObeliskSVIntegral_Byte : I32EnumAttrCase<"Byte", 7, "byte">;
 def ObeliskSVIntegral_Integer
     : I32EnumAttrCase<"Integer", 8, "integer">;
+def ObeliskSVIntegral_Time : I32EnumAttrCase<"Time", 9, "time">;
 def ObeliskSVIntegralFlavor : I32EnumAttr<"SVIntegralFlavor",
     "declared SystemVerilog integral spelling", [
   ObeliskSVIntegral_Generic, ObeliskSVIntegral_Bit,
   ObeliskSVIntegral_Logic, ObeliskSVIntegral_Reg,
   ObeliskSVIntegral_ShortInt, ObeliskSVIntegral_Int,
   ObeliskSVIntegral_LongInt, ObeliskSVIntegral_Byte,
-  ObeliskSVIntegral_Integer
+  ObeliskSVIntegral_Integer, ObeliskSVIntegral_Time
 ]> {
   let cppNamespace = "::obelisk::ir";
 }

@@ -1017,6 +1017,7 @@ static obelisk::frontend::FrontendOptions buildFrontendOptions(
       args.getAllArgValues(OPT_suppress_warnings_EQ);
 
   options.singleUnit = args.hasArg(OPT_single_unit);
+  options.twoState = args.hasArg(OPT_two_state);
   options.librariesInheritMacros = args.hasArg(OPT_libraries_inherit_macros);
   options.allowUseBeforeDeclare = args.hasArg(OPT_allow_use_before_declare);
   options.ignoreUnknownModules = args.hasArg(OPT_ignore_unknown_modules);
@@ -1377,6 +1378,11 @@ static int executeCompilation(
   if (failed(importedModule))
     return 1;
   OwningOpRef<ModuleOp> module = std::move(*importedModule);
+  if (frontendOptions.twoState)
+    obelisk::native::mark<obelisk::native::TwoState>(*module);
+  if (args.hasArg(OPT_no_two_state_specialization))
+    obelisk::native::mark<obelisk::native::DisableTwoStateSpecialization>(
+        *module);
 
   if (pulseRejectPercent || pulseErrorPercent) {
     obelisk::sim::set<obelisk::sim::metadata::PulseRejectPercent>(

@@ -290,6 +290,34 @@ getNetInitializerExpressions(::mlir::Operation *op);
 std::optional<::mlir::StringRef>
 getConstantSpelling(::mlir::Operation *operation);
 
+/// Source-language constant needed for elaboration-only counts and bounds.
+/// In two-state mode this may differ from evaluating the expression at runtime.
+///
+/// The accessor a client uses decides its --two-state semantics. A structural
+/// quantity (bound, count, key, ordinal, history depth, topology index) takes
+/// this elaborated spelling: it is fixed at elaboration and X/Z in it is an
+/// error. An executable value (condition, label, operand, delay, data) uses
+/// getConstantSpelling, which omits Slang's four-state fold under --two-state
+/// so the expression is folded again in its runtime domain.
+std::optional<::mlir::StringRef>
+getElaboratedConstantSpelling(::mlir::Operation *operation);
+
+/// Copy a parameter, enum value or specparam symbol's executable constant and
+/// any retained two-state pattern onto an expression that references it.
+void copyConstantSymbolValue(::mlir::Operation *reference,
+                             ::mlir::Operation *symbol);
+
+/// Original X/Z pattern retained when a literal was projected to two-state.
+std::optional<::mlir::StringRef>
+getTwoStatePatternSpelling(::mlir::Operation *operation);
+
+/// Lower a retained wildcard pattern to an integer mask comparison. Returns
+/// no value when ordinary expression lowering should handle the comparison.
+::mlir::FailureOr<std::optional<::mlir::Value>>
+lowerTwoStatePatternComparison(::mlir::OpBuilder &builder, ::mlir::Value value,
+                               ::mlir::Operation *pattern,
+                               sim::CompareKind kind);
+
 /// Self-determined width of an unsized based literal whose most significant
 /// four-state bit is unknown, or nothing for any other node. IEEE 1800-2017
 /// 5.7.1 fills that bit through every wider containing expression instead of

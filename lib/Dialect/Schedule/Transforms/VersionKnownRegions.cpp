@@ -620,6 +620,8 @@ class VersionKnownRegionsPass final
 public:
   void runOnOperation() override {
     ModuleOp module = getOperation();
+    if (!isTwoStateSpecializationEnabled(module))
+      return markAllAnalysesPreserved();
     auto level = native::get<native::OptimizationLevel>(module);
     if (!level || level.getInt() < 1)
       return markAllAnalysesPreserved();

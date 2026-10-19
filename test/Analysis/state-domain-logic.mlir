@@ -2,6 +2,12 @@
 // RUN: obelisk-opt %s -o /dev/null --mlir-disable-threading --pass-pipeline='builtin.module(test-obelisk-sim-state-domain)' 2> %t.single
 // RUN: diff %t.threaded %t.single
 // RUN: FileCheck %s < %t.threaded
+// RUN: obelisk-opt %s '-test-obelisk-set-module-attributes=attrs="{native.disable_two_state_specialization}"' --test-obelisk-sim-state-domain -o /dev/null 2>&1 | FileCheck %s --check-prefix=DISABLED
+// RUN: obelisk-opt %s '-test-obelisk-set-module-attributes=attrs="{native.disable_two_state_specialization}"' --test-obelisk-sim-state-domain=shared -o /dev/null 2>&1 | FileCheck %s --check-prefix=DISABLED
+
+// DISABLED: state-domain @logic_rules
+// DISABLED: bb0.op5.result0: may-four-state (unresolved)
+// DISABLED: bb0.op14.result0: may-four-state (unresolved)
 
 module {
   simulation.design @logic_rules {

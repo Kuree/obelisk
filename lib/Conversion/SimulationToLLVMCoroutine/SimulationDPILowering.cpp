@@ -488,7 +488,10 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
           (abi[index].direction != 0 ? OBELISK_RT_DPI_OPEN_ARRAY_WRITABLE : 0) |
           (cLayout ? OBELISK_RT_DPI_OPEN_ARRAY_C_LAYOUT : 0) |
           (packed ? OBELISK_RT_DPI_OPEN_ARRAY_PACKED : 0) |
-          (layout.getFourState() ? OBELISK_RT_DPI_OPEN_ARRAY_FOUR_STATE : 0);
+          (layout.getElementKind() == dpi::ABIKind::Logic ||
+                   layout.getElementKind() == dpi::ABIKind::LogicVector
+               ? OBELISK_RT_DPI_OPEN_ARRAY_FOUR_STATE
+               : 0);
       Value flagValue = c32(flags);
       if (dynamic) {
         Value empty =

@@ -2716,7 +2716,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
           ArrayAttr::get(context, children), ArrayAttr::get(context, {}),
           BoolAttr{}, BoolAttr{}, IntegerAttr{}, IntegerAttr{}, IntegerAttr{},
           IntegerAttr{}, IntegerAttr{}, BoolAttr{}, DenseI64ArrayAttr{},
-          DenseI64ArrayAttr{}, DenseI64ArrayAttr{}, ArrayAttr{});
+          DenseI64ArrayAttr{}, DenseI64ArrayAttr{}, ArrayAttr{}, BoolAttr{});
     };
     sim::VPITypeSemanticsAttr current =
         make(namedEvent || namedEventArray ? sim::VPITypeKind::Event
@@ -2779,7 +2779,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
           semantic.getTagBits(), semantic.getQueueBound(),
           semantic.getWildcardIndex(), semantic.getChildOrdinals(),
           semantic.getChildPackedOffsets(), semantic.getChildRandTypes(),
-          remaining);
+          remaining, semantic.getProjected());
     }
     if (auto nettype = dyn_cast<sim::SimVPINettypeDeclOp>(identity))
       return nettype.getTargetType();
@@ -3056,7 +3056,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       uint32_t kindAndFlags =
           static_cast<uint32_t>(FrozenValueKind::Packed) |
           (frozen.getIsSigned() ? frozenValueSigned : 0) |
-          (containsLogic(frozen.getType()) ? frozenValueFourState : 0);
+          (anchor.getVpiTypeAttr().getIsFourState() ? frozenValueFourState : 0);
       SmallVector<uint8_t> payload;
       payload.reserve(static_cast<size_t>(planeBytes * 2));
       appendPlane(payload, value, planeBytes);

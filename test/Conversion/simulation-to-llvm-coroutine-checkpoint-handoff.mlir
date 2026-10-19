@@ -4,10 +4,24 @@
 // RUN: FileCheck %s < %t.mlir
 // RUN: FileCheck %s --check-prefix=OUTLINE < %t.mlir
 // RUN: obelisk-translate --mlir-to-llvmir %t.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' -S | FileCheck %s --check-prefix=LLVM
+// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{native.disable_two_state_specialization}"' | obelisk-opt --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=FOUR --implicit-check-not='__obelisk_two_state' --implicit-check-not='__obelisk_path_known' --implicit-check-not='__obelisk_eval_path_dispatch_v1_' --implicit-check-not='schedule.eval.local_promotion_ranges'
 
 // A checkpoint-capable owner stays in the generated Tier-1/Tier-2 closure on
 // its known path.  The unsupported display leaf is fractured into a cold
 // Tier-3 callback and queued only after the generated coordinator returns.
+// Without state specialization, the complete canonical activation executes at
+// a checkpoint instead. Its preceding NBA staging must remain before display.
+// FOUR-LABEL: llvm.func @guarded.__obelisk_table_body(
+// FOUR: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_0
+// FOUR: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// FOUR: llvm.call @obelisk_rt_v1_display
+// FOUR-LABEL: llvm.func @__obelisk_direct_fragment_{{.*}}.__obelisk_execute.checkpoint(
+// FOUR: llvm.call @obelisk_rt_v1_scheduler_execute_aot_actor
+// FOUR: llvm.return
+// FOUR-LABEL: llvm.func @__obelisk_direct_fragment_{{.*}}.__obelisk_execute(
+// FOUR-NOT: llvm.call
+// FOUR: llvm.mlir.addressof @__obelisk_eval_checkpoint_callback_v1
+// FOUR: llvm.return
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",

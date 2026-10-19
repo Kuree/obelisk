@@ -1,8 +1,10 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{native.disable_two_state_specialization}"' | obelisk-opt --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --implicit-check-not='__obelisk_two_state' --implicit-check-not='schedule.eval.local_promotion_ranges'
 
 // Net snapshots with ordinary formats do not carry net handles into the
 // direct output ABI. Literal v and escaped %%v are not strength queries.
 // Real strength queries and user-file channels retain the runtime ABI.
+// Disabling state specialization must preserve this domain-independent split.
 // CHECK-LABEL: llvm.func @safe.__obelisk_eval_body
 // CHECK-NOT: llvm.call @obelisk_rt_v1_display(
 // CHECK: llvm.call @obelisk_rt_v1_eval_display(

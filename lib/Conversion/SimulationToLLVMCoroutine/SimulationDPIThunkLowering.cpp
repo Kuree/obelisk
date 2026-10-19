@@ -265,7 +265,7 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
     Value value64 = LLVM::LoadOp::create(
         builder, location, i64, planePointer(inputs, inputIndex, false), 8);
     Value value = castIntegerWidth(builder, location, value64, scalar);
-    if (entryABI.category != 1)
+    if (entryABI.category != 1 || !entryABI.fourState)
       return value;
     Value unknown64 = LLVM::LoadOp::create(
         builder, location, i64, planePointer(inputs, inputIndex, true), 8);
@@ -317,7 +317,7 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
     Value buffer = entryAlloca(builder, location, element, words, 4);
     Value valuePlane =
         initialize ? planePointer(inputs, inputIndex, false) : null;
-    Value unknownPlane = initialize && entryABI.category == 7
+    Value unknownPlane = initialize && entryABI.fourState
                              ? planePointer(inputs, inputIndex, true)
                              : null;
     for (uint64_t word = 0; word != words; ++word) {
@@ -328,8 +328,9 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
                               byteGEP(builder, location, buffer, word * 4), 4);
         continue;
       }
-      Value unknown = initialize ? readWord(unknownPlane, word)
-                                 : llvmConstant(builder, location, i32, 0);
+      Value unknown = initialize && entryABI.fourState
+                          ? readWord(unknownPlane, word)
+                          : llvmConstant(builder, location, i32, 0);
       Value aval = arith::XOrIOp::create(builder, location, value, unknown);
       LLVM::StoreOp::create(builder, location, aval,
                             byteGEP(builder, location, buffer, word * 8), 4);
@@ -525,12 +526,17 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
       Value shifted = arith::ShRUIOp::create(builder, location, result, one);
       Value bval = arith::AndIOp::create(builder, location, shifted, one);
       Value internal = arith::XOrIOp::create(builder, location, aval, bval);
+      if (!resultABI.fourState)
+        internal = arith::AndIOp::create(
+            builder, location, aval,
+            arith::XOrIOp::create(builder, location, bval, one));
       LLVM::StoreOp::create(builder, location,
                             castIntegerWidth(builder, location, internal, i64),
                             outputValue, 8);
-      LLVM::StoreOp::create(builder, location,
-                            castIntegerWidth(builder, location, bval, i64),
-                            planePointer(outputs, 0, true), 8);
+      if (resultABI.fourState)
+        LLVM::StoreOp::create(builder, location,
+                              castIntegerWidth(builder, location, bval, i64),
+                              planePointer(outputs, 0, true), 8);
     } else if (isDPIReal(resultABI.category)) {
       LLVM::StoreOp::create(builder, location, result, outputValue,
                             resultABI.width / 8);
@@ -576,12 +582,17 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
         Value shifted = arith::ShRUIOp::create(builder, location, value, one);
         Value bval = arith::AndIOp::create(builder, location, shifted, one);
         Value internal = arith::XOrIOp::create(builder, location, aval, bval);
+        if (!writeback.abi.fourState)
+          internal = arith::AndIOp::create(
+              builder, location, aval,
+              arith::XOrIOp::create(builder, location, bval, one));
         LLVM::StoreOp::create(
             builder, location,
             castIntegerWidth(builder, location, internal, i64), outputValue, 8);
-        LLVM::StoreOp::create(
-            builder, location, castIntegerWidth(builder, location, bval, i64),
-            planePointer(outputs, writeback.outputIndex, true), 8);
+        if (writeback.abi.fourState)
+          LLVM::StoreOp::create(
+              builder, location, castIntegerWidth(builder, location, bval, i64),
+              planePointer(outputs, writeback.outputIndex, true), 8);
       } else if (isDPIReal(writeback.abi.category)) {
         LLVM::StoreOp::create(builder, location, value, outputValue,
                               writeback.abi.width / 8);
@@ -594,7 +605,7 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
     }
     uint64_t words = (uint64_t{writeback.abi.width} + 31) / 32;
     Value outputUnknown =
-        writeback.abi.category == 7
+        writeback.abi.fourState
             ? planePointer(outputs, writeback.outputIndex, true)
             : null;
     for (uint64_t word = 0; word != words; ++word) {
@@ -611,9 +622,16 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
       Value bval = LLVM::LoadOp::create(
           builder, location, i32,
           byteGEP(builder, location, writeback.buffer, word * 8 + 4), 4);
-      writeWord(outputValue, word,
-                arith::XOrIOp::create(builder, location, aval, bval));
-      writeWord(outputUnknown, word, bval);
+      if (writeback.abi.fourState) {
+        writeWord(outputValue, word,
+                  arith::XOrIOp::create(builder, location, aval, bval));
+        writeWord(outputUnknown, word, bval);
+      } else {
+        Value known = arith::XOrIOp::create(
+            builder, location, bval, llvmConstant(builder, location, i32, -1));
+        writeWord(outputValue, word,
+                  arith::AndIOp::create(builder, location, aval, known));
+      }
     }
   }
 

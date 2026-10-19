@@ -247,7 +247,9 @@ static_assert(haveSameEncoding(slangir::RandMode::None, ir::SVRandMode::None) &&
 static_assert(haveSameEncoding(slangir::IntegralFlavor::Generic,
                                ir::SVIntegralFlavor::Generic) &&
               haveSameEncoding(slangir::IntegralFlavor::Integer,
-                               ir::SVIntegralFlavor::Integer));
+                               ir::SVIntegralFlavor::Integer) &&
+              haveSameEncoding(slangir::IntegralFlavor::Time,
+                               ir::SVIntegralFlavor::Time));
 static_assert(haveSameEncoding(slangir::NetKind::Unknown,
                                ir::SVNetKind::Unknown) &&
               haveSameEncoding(slangir::NetKind::UserDefined,

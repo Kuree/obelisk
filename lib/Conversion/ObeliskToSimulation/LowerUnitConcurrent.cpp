@@ -913,8 +913,8 @@ static bool areEquivalentDirectClockAddresses(Operation *left,
     for (auto [lhs, rhs] :
          llvm::zip_equal(ArrayRef<Operation *>(lhsChildren).drop_front(),
                          ArrayRef<Operation *>(rhsChildren).drop_front())) {
-      std::optional<StringRef> lhsConstant = getConstantSpelling(lhs);
-      std::optional<StringRef> rhsConstant = getConstantSpelling(rhs);
+      std::optional<StringRef> lhsConstant = getElaboratedConstantSpelling(lhs);
+      std::optional<StringRef> rhsConstant = getElaboratedConstantSpelling(rhs);
       if (!lhsConstant || !rhsConstant || *lhsConstant != *rhsConstant)
         return false;
     }

@@ -86,7 +86,7 @@ bool validCanonicalTransfer(uint64_t planeSize, uint64_t totalWidth,
       elementCount * elementSize != dataSize)
     return false;
   bool categoryFourState = category == 1 || category == 7;
-  return categoryFourState == (fourState != 0);
+  return !fourState || categoryFourState;
 }
 
 const obelisk_rt_dpi_open_array_v1 *descriptor(svOpenArrayHandle handle) {
@@ -358,7 +358,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_open_array_unpack(
     if (elementCategory == 0 || elementCategory == 1) {
       bool a = current[0] & 1;
       bool b = (current[0] >> 1) & 1;
-      setBit(values, destinationBase, a != b);
+      setBit(values, destinationBase, fourState ? a != b : a && !b);
       if (fourState)
         setBit(unknowns, destinationBase, b);
       continue;
@@ -373,8 +373,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_open_array_unpack(
     for (uint64_t word = 0; word != words; ++word) {
       uint32_t aval = 0;
       uint32_t bval = 0;
-      std::memcpy(&aval, current + word * (fourState ? 8 : 4), sizeof(aval));
-      if (fourState)
+      std::memcpy(&aval, current + word * (elementCategory == 7 ? 8 : 4),
+                  sizeof(aval));
+      if (elementCategory == 7)
         std::memcpy(&bval, current + word * 8 + 4, sizeof(bval));
       uint32_t count = static_cast<uint32_t>(
           std::min<uint64_t>(32, elementBitWidth - word * 32));
@@ -382,7 +383,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_open_array_unpack(
         uint64_t destination = destinationBase + word * 32 + bit;
         bool b = (bval >> bit) & 1;
         bool a = (aval >> bit) & 1;
-        setBit(values, destination, a != b);
+        setBit(values, destination, fourState ? a != b : a && !b);
         if (fourState)
           setBit(unknowns, destination, b);
       }
@@ -689,7 +690,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_open_array_prepare_recursive(
     flags |= OBELISK_RT_DPI_OPEN_ARRAY_WRITABLE;
   if (elementCategory <= 7)
     flags |= OBELISK_RT_DPI_OPEN_ARRAY_PACKED;
-  if (elementFourState)
+  if (elementCategory == 1 || elementCategory == 7)
     flags |= OBELISK_RT_DPI_OPEN_ARRAY_FOUR_STATE;
   if (elementCount == 0)
     flags |= OBELISK_RT_DPI_OPEN_ARRAY_EMPTY;

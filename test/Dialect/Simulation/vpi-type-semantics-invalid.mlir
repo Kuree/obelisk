@@ -1,5 +1,45 @@
 // RUN: obelisk-opt %s --split-input-file --verify-diagnostics -o /dev/null
 
+// Only a projected declaration permits integer backing. Declared four-state
+// reflection cannot describe integer storage on its own.
+module {
+  // expected-error @+1 {{does not normalize to executable type 'i1'}}
+  simulation.storage.decl 0 in 0 : i1 design {
+    vpi_type = #simulation.vpi_type<kind = logic, isSigned = false,
+      isFourState = true, range = [0, 0], children = [], childNames = []>
+  }
+}
+
+// -----
+
+module {
+  simulation.storage.decl 0 in 0 : i1 design {
+    vpi_type = #simulation.vpi_type<kind = logic, isSigned = false,
+      isFourState = true, range = [0, 0], children = [], childNames = [],
+      projected = true>
+  }
+  // Width checking still applies to projected storage.
+  // expected-error @+1 {{does not normalize to executable type 'i8'}}
+  simulation.storage.decl 1 in 0 : i8 design {
+    vpi_type = #simulation.vpi_type<kind = logic, isSigned = false,
+      isFourState = true, range = [0, 0], children = [], childNames = [],
+      projected = true>
+  }
+}
+
+// -----
+
+module {
+  // expected-error @+2 {{only a four-state VPI semantic type can be projected}}
+  simulation.storage.decl 0 in 0 : i1 design {
+    vpi_type = #simulation.vpi_type<kind = bit, isSigned = false,
+      isFourState = false, range = [0, 0], children = [], childNames = [],
+      projected = true>
+  }
+}
+
+// -----
+
 module attributes {
   test.mailbox = #simulation.vpi_type<kind = mailbox, isSigned = false,
     isFourState = false, range = [],

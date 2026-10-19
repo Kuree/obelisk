@@ -165,6 +165,22 @@ std::string formatConstant(const slang::ConstantValue &value) {
   return value.toString(slang::SVInt::MAX_BITS, /*exactUnknowns=*/true);
 }
 
+std::string formatDataConstant(const slang::ConstantValue &value,
+                               bool twoState) {
+  if (!twoState)
+    return formatConstant(value);
+  slang::ConstantValue projected = value;
+  auto project = [&](auto &&self, slang::ConstantValue &item) -> void {
+    if (item.isInteger())
+      item.integer().flattenUnknowns();
+    else if (item.isUnpacked())
+      for (auto &element : item.elements())
+        self(self, element);
+  };
+  project(project, projected);
+  return formatConstant(projected);
+}
+
 /// Whether every value of `type` is a fixed bit pattern: integral, real, or
 /// a fixed unpacked array or unpacked struct of those.
 bool isPlainDataType(const slang::ast::Type &type) {
@@ -790,8 +806,8 @@ public:
       std::function<SymbolRefAttr(const slang::ast::Symbol &)>;
 
   SlangTypeConverter(MLIRContext *context,
-                     SymbolReferenceBuilder buildSymbolReference)
-      : context(context),
+                     SymbolReferenceBuilder buildSymbolReference, bool twoState)
+      : context(context), twoState(twoState),
         buildSymbolReference(std::move(buildSymbolReference)) {}
 
   Type convert(const slang::ast::Type &sourceType) {
@@ -807,20 +823,24 @@ public:
     case SK::PredefinedIntegerType: {
       const auto &integer = type.as<slang::ast::PredefinedIntegerType>();
       if (integer.integerKind == slang::ast::PredefinedIntegerType::Time) {
-        result = slangir::TimeType::get(context);
+        result = twoState ? Type(slangir::IntegralType::get(
+                                context, 64, false, false, 63, 0,
+                                slangir::IntegralFlavor::Time))
+                          : Type(slangir::TimeType::get(context));
         break;
       }
       auto range = type.getFixedRange();
       result = slangir::IntegralType::get(
-          context, type.getBitWidth(), type.isSigned(), type.isFourState(),
-          range.left, range.right, convertEnum(integer.integerKind));
+          context, type.getBitWidth(), type.isSigned(),
+          !twoState && type.isFourState(), range.left, range.right,
+          convertEnum(integer.integerKind));
       break;
     }
     case SK::ScalarType: {
       auto range = type.getFixedRange();
       result = slangir::IntegralType::get(
-          context, type.getBitWidth(), type.isSigned(), type.isFourState(),
-          range.left, range.right,
+          context, type.getBitWidth(), type.isSigned(),
+          !twoState && type.isFourState(), range.left, range.right,
           convertEnum(type.as<slang::ast::ScalarType>().scalarKind));
       break;
     }
@@ -850,8 +870,8 @@ public:
       SmallVector<Attribute> names;
       for (const slang::ast::EnumValueSymbol &value :
            enumeration.membersOfType<slang::ast::EnumValueSymbol>()) {
-        values.push_back(
-            StringAttr::get(context, formatConstant(value.getValue())));
+        values.push_back(StringAttr::get(
+            context, formatDataConstant(value.getValue(), twoState)));
         names.push_back(StringAttr::get(context, value.name));
       }
       enumDomains.push_back(DictionaryAttr::get(
@@ -939,7 +959,7 @@ public:
       if (isPacked) {
         bitWidth = type.getBitWidth();
         isSigned = type.isSigned();
-        isFourState = type.isFourState();
+        isFourState = !twoState && type.isFourState();
         selectableWidth = bitWidth;
         bitstreamWidth = bitWidth;
       }
@@ -986,7 +1006,8 @@ public:
             if (slang::ConstantValue value = initializer->eval(evalContext))
               entries.push_back(NamedAttribute(
                   StringAttr::get(context, "initializer"),
-                  StringAttr::get(context, formatConstant(value))));
+                  StringAttr::get(context,
+                                  formatDataConstant(value, twoState))));
           }
         fields.push_back(DictionaryAttr::get(context, entries));
       }
@@ -1079,6 +1100,7 @@ public:
 
 private:
   MLIRContext *context;
+  bool twoState;
   SymbolReferenceBuilder buildSymbolReference;
   llvm::DenseMap<const slang::ast::Type *, Type> cache;
   SmallVector<Attribute> enumDomains;
@@ -1097,14 +1119,16 @@ public:
   SlangASTImporter(ModuleOp module, const slang::SourceManager &sourceManager,
                    const slang::ast::Compilation &compilation,
                    const slang::analysis::AnalysisManager &analysisManager,
-                   const SDFAnnotationDatabase &sdfAnnotations)
+                   const SDFAnnotationDatabase &sdfAnnotations, bool twoState)
       : builder(module.getContext()), sourceManager(sourceManager),
         compilation(compilation), analysisManager(analysisManager),
-        sdfAnnotations(sdfAnnotations),
-        typeConverter(module.getContext(),
-                      [this](const slang::ast::Symbol &symbol) {
-                        return getSemanticSymbolReference(symbol);
-                      }) {
+        sdfAnnotations(sdfAnnotations), twoState(twoState),
+        typeConverter(
+            module.getContext(),
+            [this](const slang::ast::Symbol &symbol) {
+              return getSemanticSymbolReference(symbol);
+            },
+            twoState) {
     builder.setInsertionPointToStart(module.getBody());
   }
 
@@ -3536,7 +3560,10 @@ private:
                   !carriesOwnLiteralValue) {
       if (const slang::ConstantValue *folded = node.getConstant();
           folded && folded->isInteger())
-        attrs.set(foldedConstantAttrName,
+        // Slang evaluated this using the source four-state semantics. Keep
+        // it for elaboration-only bounds/counts, but let executable expressions
+        // be folded again after their operands enter the two-state domain.
+        attrs.set(twoState ? "elaborated_constant" : foldedConstantAttrName,
                   builder.getStringAttr(formatConstant(*folded)));
     }
 
@@ -3592,8 +3619,18 @@ private:
                   std::same_as<T, slang::ast::ParameterSymbol> ||
                   std::same_as<T, slang::ast::EnumValueSymbol> ||
                   std::same_as<T, slang::ast::SpecparamSymbol>) {
-      SET_OP_ATTR(ConstantValue,
-                  builder.getStringAttr(formatConstant(node.getValue())));
+      SET_OP_ATTR(ConstantValue, builder.getStringAttr(formatDataConstant(
+                                     node.getValue(), twoState)));
+      if (twoState) {
+        // Wildcard comparisons consume a pattern, not a runtime X/Z value.
+        // Preserve the source spelling of literals and of the constant
+        // symbols that references resolve to while projecting executable
+        // data.
+        slang::ConstantValue source = node.getValue();
+        if (source.isInteger() && source.integer().hasUnknown())
+          attrs.set("two_state_pattern",
+                    builder.getStringAttr(formatConstant(source)));
+      }
     } else if constexpr (std::same_as<T, slang::ast::RealLiteral>) {
       SET_OP_ATTR(ConstantValue,
                   builder.getStringAttr(formatReal(node.getValue())));
@@ -3940,8 +3977,8 @@ private:
           for (const slang::ast::EnumValueSymbol &value :
                receiverType.as<slang::ast::EnumType>()
                    .membersOfType<slang::ast::EnumValueSymbol>()) {
-            values.push_back(
-                builder.getStringAttr(formatConstant(value.getValue())));
+            values.push_back(builder.getStringAttr(
+                formatDataConstant(value.getValue(), twoState)));
             names.push_back(builder.getStringAttr(value.name));
           }
           SET_OP_ATTR(EnumMethodValues, builder.getArrayAttr(values));
@@ -3991,8 +4028,8 @@ private:
           for (const slang::ast::EnumValueSymbol &value :
                destinationType.as<slang::ast::EnumType>()
                    .membersOfType<slang::ast::EnumValueSymbol>())
-            values.push_back(
-                builder.getStringAttr(formatConstant(value.getValue())));
+            values.push_back(builder.getStringAttr(
+                formatDataConstant(value.getValue(), twoState)));
           SET_OP_ATTR(DynamicCastEnumValues, builder.getArrayAttr(values));
         }
       }
@@ -4016,8 +4053,8 @@ private:
                type.getCanonicalType()
                    .as<slang::ast::EnumType>()
                    .membersOfType<slang::ast::EnumValueSymbol>())
-            values.push_back(
-                builder.getStringAttr(formatConstant(value.getValue())));
+            values.push_back(builder.getStringAttr(
+                formatDataConstant(value.getValue(), twoState)));
           return builder.getArrayAttr(values);
         };
         const slang::ast::Type *memory =
@@ -6295,6 +6332,7 @@ private:
   const slang::ast::Compilation &compilation;
   const slang::analysis::AnalysisManager &analysisManager;
   const SDFAnnotationDatabase &sdfAnnotations;
+  bool twoState;
   SlangTypeConverter typeConverter;
   llvm::DenseMap<const slang::ast::Type *, ArrayAttr> arrayQueryDimensionCache;
   llvm::DenseMap<const slang::ast::Type *, ArrayAttr> vpiTypedefLayerCache;
@@ -6551,7 +6589,8 @@ importSystemVerilog(ArrayRef<std::string> inputFilenames, MLIRContext &context,
     cov::set<cov::SourceFiles>((*module), ArrayAttr::get(&context, attributes));
   }
   SlangASTImporter importer(*module, driver.sourceManager, *compilation,
-                            *analysisManager, *sdfAnnotations);
+                            *analysisManager, *sdfAnnotations,
+                            options.twoState);
   // Definitions are kept in Compilation's deterministic definition map and
   // are not children of RootSymbol. Import them explicitly so modules,
   // interfaces, programs, and primitives remain represented even when they

@@ -3,6 +3,8 @@
 // IEEE 1800-2017 10.9.1 and 10.9.2: a member or index key claims its own
 // element and `default:` covers the rest. An index key is written in the
 // array's declared range, so `[3:0]` puts index 2 at element ordinal 1.
+// Constant-expression keys remain structural constants when --two-state
+// retains their source value in elaborated_constant instead of folded_constant.
 
 module {
   obelisk.sv.symbol.definition @s0.assignment_pattern_keys attributes {definition_kind = 0 : i32, hierarchical_name = "assignment_pattern_keys", name = "assignment_pattern_keys", node_id = 0 : i64} {
@@ -36,7 +38,9 @@ module {
                   obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 18 : i64, referenced_path = "assignment_pattern_keys.indexed", referenced_symbol = @s1.$root::@s3.assignment_pattern_keys::@s4.assignment_pattern_keys::@s6.indexed, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
                   }
                   obelisk.sv.expression.structured_assignment_pattern attributes {has_default_setter = true, index_setter_count = 2 : i64, is_signed = false, member_setter_count = 0 : i64, member_setter_ordinals = array<i64>, node_id = 19 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>, type_setter_count = 0 : i64} {
-                    obelisk.sv.expression.integer_literal attributes {constant_value = "2", is_declared_unsized = true, is_signed = true, node_id = 20 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                    obelisk.sv.expression.binary_op attributes {operator_kind = 0 : i32, elaborated_constant = "2", is_signed = true, node_id = 20 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+                      obelisk.sv.expression.integer_literal attributes {constant_value = "1", is_signed = true, node_id = 27 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {}
+                      obelisk.sv.expression.integer_literal attributes {constant_value = "1", is_signed = true, node_id = 28 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {}
                     }
                     obelisk.sv.expression.conversion attributes {folded_constant = "1'b1", is_signed = false, node_id = 21 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                       obelisk.sv.expression.integer_literal attributes {constant_value = "1'b1", is_signed = false, node_id = 22 : i64, semantic_type = !obelisk.ranged_packed_array<0 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {

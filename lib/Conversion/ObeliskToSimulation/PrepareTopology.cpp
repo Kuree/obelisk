@@ -2359,7 +2359,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         current.getSelectableWidth(), current.getBitstreamWidth(),
         current.getTagBits(), current.getQueueBound(),
         current.getWildcardIndex(), current.getChildOrdinals(),
-        current.getChildPackedOffsets(), current.getChildRandTypes(), aliases);
+        current.getChildPackedOffsets(), current.getChildRandTypes(), aliases,
+        current.getProjected());
   };
   uint64_t nextNettypeId = 0;
   for (semantic::SVNetTypeOp nettype : sourceNettypes) {

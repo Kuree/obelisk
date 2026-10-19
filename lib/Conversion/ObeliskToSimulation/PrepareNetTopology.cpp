@@ -304,7 +304,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     auto literalValue = [&](Operation *node) -> std::optional<int64_t> {
       // Elaboration folds generate-time index arithmetic such as `chain[i+1]`,
       // so a folded spelling names the driven bits as exactly as a literal.
-      std::optional<StringRef> spelling = getConstantSpelling(node);
+      std::optional<StringRef> spelling = getElaboratedConstantSpelling(node);
       if (!spelling)
         if (auto reference =
                 node->getAttrOfType<SymbolRefAttr>("referenced_symbol"))

@@ -20,6 +20,51 @@ obelisk -c design.sv -o design.o # writes an ELF object
 obelisk -emit-llvm design.sv     # writes textual LLVM IR to stdout
 ```
 
+Integral state semantics can be selected independently of optimization level
+and execution tier:
+
+| Driver flags | Integral execution |
+| --- | --- |
+| Default | Source two/four-state types, with inferred narrowing and guarded two-state versions |
+| `--two-state` | Frontend imports integral computation and storage as two-state, including arrays, records, enum bases and `time` |
+| `--no-two-state-specialization` | Source types with two-state inference, bytecode register narrowing, and native activation/region/eval two-state versions disabled |
+
+`--two-state` maps X/Z data bits and uninitialized integral storage to zero.
+Runtime expressions are optimized again in that domain, rather than using
+Slang's cached four-state expression results. Elaboration (parameters,
+generate decisions, widths and constant bounds) still follows the source
+language. Constant wildcard patterns in `casez`, `casex`, `inside` and `==?`
+retain their wildcard masks, whether written as literals or through
+parameters. A `casez` item bit written as `x` is not a do-not-care (IEEE
+1800-2023 12.5.1), and no two-state value equals it, so such an item never
+matches. Invalid selections and division by zero use the existing two-state
+zero result; shifts and signed division retain their defined width and
+overflow behavior.
+
+This opt-in execution policy differs from IEEE 1800-2023 11.3.4, which evaluates
+four-state expressions before converting their results to two-state values.
+Default mode and `--no-two-state-specialization` retain those source semantics.
+
+DPI C declarations and layouts are unchanged. Scalar `svLogic`, packed
+`svLogicVecVal`, aggregate and open-array arguments retain their declared C
+representation. In two-state mode, outgoing X/Z fields are zero, and incoming
+X/Z bits become zero before reaching simulator state. The same rule applies
+to exported functions. Canonical runtime state and generated NBA storage use
+value-only layouts in two-state mode; the DPI boundary materializes zeros in
+the C ABI X/Z fields. Integer computation needs no speculative readiness
+checks or duplicate arithmetic bodies.
+
+The specialization-disable flag leaves explicit SystemVerilog two-state types
+(such as `bit`) intact and keeps ordinary constant folding and other
+optimizations enabled. Both flags may be combined to disable optional domain
+inference on a frontend two-state model.
+
+For comparison with Verilator, use `obelisk -O3 --two-state` and Verilator's
+`-O3 -CFLAGS -O3 --x-assign 0 --x-initial 0`, with matching timing, tracing and
+foreign-interface settings. Use initialized/reset workloads and compare
+outputs before timing: X-dependent case equality, tri-state resolution and
+out-of-range accesses need not match Verilator's behavior.
+
 Native executables accept `--native-scheduler=auto|generic|aot|eval`. `auto` is
 the default hybrid mode: it emits a versioned static schedule for every
 proven-unique actor and uses embedded bytecode only for continuation fragments

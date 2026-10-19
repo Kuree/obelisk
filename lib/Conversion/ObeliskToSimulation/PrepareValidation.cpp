@@ -161,7 +161,8 @@ bool isSignedCoverageExpression(Operation *expression) {
 FailureOr<llvm::APInt> parseCoverageWithEndpoint(Operation *endpoint,
                                                  unsigned pointWidth,
                                                  bool pointIsSigned) {
-  std::optional<StringRef> effectiveSpelling = getConstantSpelling(endpoint);
+  std::optional<StringRef> effectiveSpelling =
+      getElaboratedConstantSpelling(endpoint);
   if (!effectiveSpelling) {
     endpoint->emitError(
         "coverage bin with range endpoints must be compiler-folded constants");
@@ -181,7 +182,8 @@ FailureOr<llvm::APInt> parseCoverageWithEndpoint(Operation *endpoint,
   FailureOr<Type> sourceType = getNormalizedSemanticType(source);
   std::optional<unsigned> sourceWidth =
       succeeded(sourceType) ? sim::getPackedWidth(*sourceType) : std::nullopt;
-  std::optional<StringRef> sourceSpelling = getConstantSpelling(source);
+  std::optional<StringRef> sourceSpelling =
+      getElaboratedConstantSpelling(source);
   if (!sourceWidth || !*sourceWidth || !sourceSpelling) {
     endpoint->emitError(
         "coverage bin with range endpoints must have a known integral value");

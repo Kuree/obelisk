@@ -1374,7 +1374,8 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     uint64_t depth = 1;
     if (historyName == "$past" && !globalPastFunction && children.size() >= 2 &&
         !isa<semantic::SVEmptyArgumentExpressionOp>(children[1])) {
-      std::optional<StringRef> spelling = getConstantSpelling(children[1]);
+      std::optional<StringRef> spelling =
+          getElaboratedConstantSpelling(children[1]);
       if (!spelling) {
         emitError(getSemanticLocation(children[1]))
             << "$past history depth must be a constant positive integer";

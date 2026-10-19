@@ -210,7 +210,7 @@ Value loadCScalar(OpBuilder &builder, Location location, Value address,
 void zeroCVector(OpBuilder &builder, Location location, Value address,
                  const DPIOperandABI &abi) {
   uint64_t words = (uint64_t{abi.width} + 31) / 32;
-  uint64_t bytes = words * (abi.fourState ? 8 : 4);
+  uint64_t bytes = words * (abi.category == 7 ? 8 : 4);
   LLVM::MemsetOp::create(
       builder, location, address,
       llvmConstant(builder, location, builder.getI8Type(), 0),
@@ -507,9 +507,10 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
             builder, location, TypeRange{},
             SymbolRefAttr::get(context,
                                "obelisk_rt_v1_dpi_export_unpack_vector"),
-            ValueRange{argument, planes.first, planes.second,
-                       llvmConstant(builder, location, i32, abi.width),
-                       llvmConstant(builder, location, i32, abi.fourState)});
+            ValueRange{
+                argument, planes.first, planes.second,
+                llvmConstant(builder, location, i32, abi.width),
+                llvmConstant(builder, location, i32, abi.category == 7)});
       } else {
         Value value = abi.direction == static_cast<uint32_t>(
                                            dpi::ArgumentDirection::Input)
@@ -525,10 +526,19 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
           Value bval = arith::AndIOp::create(
               builder, location,
               arith::ShRUIOp::create(builder, location, value, one), one);
-          storeInteger(planes.first,
-                       arith::XOrIOp::create(builder, location, aval, bval),
-                       abi);
-          storeInteger(planes.second, bval, abi);
+          if (abi.fourState) {
+            storeInteger(planes.first,
+                         arith::XOrIOp::create(builder, location, aval, bval),
+                         abi);
+            storeInteger(planes.second, bval, abi);
+          } else {
+            storeInteger(
+                planes.first,
+                arith::AndIOp::create(
+                    builder, location, aval,
+                    arith::XOrIOp::create(builder, location, bval, one)),
+                abi);
+          }
         } else {
           storeInteger(planes.first, value, abi);
         }
@@ -638,7 +648,7 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
           ValueRange{target, outputPlanes[outputIndex].first,
                      outputPlanes[outputIndex].second,
                      llvmConstant(builder, location, i32, abi.width),
-                     llvmConstant(builder, location, i32, abi.fourState)});
+                     llvmConstant(builder, location, i32, abi.category == 7)});
       return;
     }
     if (isString(abi)) {
@@ -669,7 +679,7 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
     }
     Type scalar = cScalarType(context, abi);
     Value scalarValue = castIntegerWidth(builder, location, value, scalar);
-    if (abi.category == 1) {
+    if (abi.category == 1 && abi.fourState) {
       Value unknown =
           LLVM::LoadOp::create(builder, location, planeType(context, abi),
                                outputPlanes[outputIndex].second, 8);

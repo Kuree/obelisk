@@ -1142,6 +1142,17 @@ UnitLowering::lowerCaseLabel(Value selector, Type selectorType,
       logicKind = sim::CompareKind::CaseZEq;
     else if (condition == semantic::SVCaseCondition::WildcardXOrZ)
       logicKind = sim::CompareKind::CaseXZEq;
+    if (selectorScalar && isa<IntegerType>(selectorScalar)) {
+      auto scalar = toPackedScalar(selector, location);
+      if (failed(scalar))
+        return failure();
+      auto pattern =
+          lowerTwoStatePatternComparison(builder, *scalar, label, logicKind);
+      if (failed(pattern))
+        return failure();
+      if (*pattern)
+        return **pattern;
+    }
     return compareValue(*candidate, logicKind, arith::CmpIPredicate::eq);
   }
 
@@ -1191,6 +1202,17 @@ UnitLowering::lowerCaseLabel(Value selector, Type selectorType,
       result = result ? combineLogic(result, *below) : *below;
     }
   } else {
+    if (selectorScalar && isa<IntegerType>(selectorScalar)) {
+      auto scalar = toPackedScalar(selector, location);
+      if (failed(scalar))
+        return failure();
+      auto pattern = lowerTwoStatePatternComparison(builder, *scalar, label,
+                                                    sim::CompareKind::WildEq);
+      if (failed(pattern))
+        return failure();
+      if (*pattern)
+        return **pattern;
+    }
     FailureOr<Value> candidate = lowerExpression(label);
     if (failed(candidate))
       return failure();

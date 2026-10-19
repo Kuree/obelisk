@@ -327,6 +327,34 @@ std::optional<StringRef> getConstantSpelling(Operation *operation) {
   return std::nullopt;
 }
 
+std::optional<StringRef> getElaboratedConstantSpelling(Operation *operation) {
+  if (auto constant =
+          operation->getAttrOfType<StringAttr>("elaborated_constant"))
+    return constant.getValue();
+  return getConstantSpelling(operation);
+}
+
+std::optional<StringRef> getTwoStatePatternSpelling(Operation *operation) {
+  if (auto pattern = operation->getAttrOfType<StringAttr>("two_state_pattern"))
+    return pattern.getValue();
+  if (auto constant =
+          operation->getAttrOfType<StringAttr>("elaborated_constant"))
+    return constant.getValue();
+  if (isa<semantic::SVConversionExpressionOp>(operation)) {
+    auto children = getChildren(operation);
+    if (children.size() == 1)
+      return getTwoStatePatternSpelling(children.front());
+  }
+  return std::nullopt;
+}
+
+void copyConstantSymbolValue(Operation *reference, Operation *symbol) {
+  if (auto constant = symbol->getAttrOfType<StringAttr>("constant_value"))
+    sim::set<sim::metadata::ConstantValue>(reference, constant);
+  if (auto pattern = symbol->getAttrOfType<StringAttr>("two_state_pattern"))
+    reference->setAttr("two_state_pattern", pattern);
+}
+
 std::optional<unsigned> getUnsizedUnknownFillWidth(Operation *operation) {
   auto literal = dyn_cast<semantic::SVIntegerLiteralOp>(operation);
   if (!literal)
@@ -1037,6 +1065,7 @@ makeVPITypeSemantics(Type type, Location location, ArrayAttr typedefLayers,
     DenseI64ArrayAttr childPackedOffsets;
     DenseI64ArrayAttr childRandTypes;
     ArrayAttr typedefAliases;
+    BoolAttr projected;
   };
   auto integerAttr = [&](uint64_t value) {
     return IntegerAttr::get(IntegerType::get(context, 64), APInt(64, value));
@@ -1053,7 +1082,7 @@ makeVPITypeSemantics(Type type, Location location, ArrayAttr typedefLayers,
         details.selectableWidth, details.bitstreamWidth, details.tagBits,
         details.queueBound, details.wildcardIndex, details.childOrdinals,
         details.childPackedOffsets, details.childRandTypes,
-        details.typedefAliases);
+        details.typedefAliases, details.projected);
   };
   std::function<FailureOr<sim::VPITypeSemanticsAttr>(Type)> lower =
       [&](Type current) -> FailureOr<sim::VPITypeSemanticsAttr> {
@@ -1087,10 +1116,24 @@ makeVPITypeSemantics(Type type, Location location, ArrayAttr typedefLayers,
       case semantic::SVIntegralFlavor::Integer:
         kind = sim::VPITypeKind::Integer;
         break;
+      case semantic::SVIntegralFlavor::Time:
+        kind = sim::VPITypeKind::Time;
+        break;
       }
       const int64_t sourceRange[] = {integral.getLeft(), integral.getRight()};
-      return make(kind, integral.getIsSigned(), integral.getIsFourState(), {},
-                  sourceRange);
+      // Reflection describes the declaration, independently of --two-state's
+      // executable domain. A projected leaf records that its integer backing
+      // is intentional; packed arrays and records derive both properties
+      // recursively from their declared leaves below.
+      bool sourceFourState =
+          integral.getIsFourState() || kind == sim::VPITypeKind::Logic ||
+          kind == sim::VPITypeKind::Reg || kind == sim::VPITypeKind::Integer ||
+          kind == sim::VPITypeKind::Time;
+      Details details;
+      if (sourceFourState && !integral.getIsFourState())
+        details.projected = BoolAttr::get(context, true);
+      return make(kind, integral.getIsSigned(), sourceFourState, {},
+                  sourceRange, {}, {}, details);
     }
     if (auto logic = dyn_cast<semantic::LogicType>(current)) {
       const int64_t sourceRange[] = {static_cast<int64_t>(logic.getWidth()) - 1,
@@ -1103,8 +1146,11 @@ makeVPITypeSemantics(Type type, Location location, ArrayAttr typedefLayers,
       if (failed(base))
         return failure();
       Attribute child = *base;
+      Details details;
+      details.projected = base->getProjected();
       return make(sim::VPITypeKind::Enum, base->getIsSigned(),
-                  base->getIsFourState(), enumeration.getName(), {}, child);
+                  base->getIsFourState(), enumeration.getName(), {}, child, {},
+                  details);
     }
     auto fixedArray =
         [&](sim::VPITypeKind kind, Type element, int64_t left,
@@ -1115,8 +1161,10 @@ makeVPITypeSemantics(Type type, Location location, ArrayAttr typedefLayers,
       Attribute childAttr = *child;
       const int64_t sourceRange[] = {left, right};
       const bool packed = kind == sim::VPITypeKind::PackedArray;
+      Details details;
+      details.projected = child->getProjected();
       return make(kind, packed && child->getIsSigned(), child->getIsFourState(),
-                  {}, sourceRange, childAttr);
+                  {}, sourceRange, childAttr, {}, details);
     };
     if (auto array = dyn_cast<semantic::RangedPackedArrayType>(current))
       return fixedArray(sim::VPITypeKind::PackedArray, array.getElementType(),
@@ -1188,6 +1236,8 @@ makeVPITypeSemantics(Type type, Location location, ArrayAttr typedefLayers,
         names.push_back(fieldName);
         children.push_back(*child);
         isFourState |= child->getIsFourState();
+        if (child->getProjected() && child->getProjected().getValue())
+          details.projected = child->getProjected();
         ordinals.push_back(ordinal.getValue().getSExtValue());
         packedOffsets.push_back(packedOffset.getValue().getSExtValue());
         // Slang/Obelisk use 0/1/2 for none/rand/randc; VPI uses 1/2/3.
@@ -1528,7 +1578,8 @@ makeVPITypeSemantics(Type type, Location location, ArrayAttr typedefLayers,
         current.getSelectableWidth(), current.getBitstreamWidth(),
         current.getTagBits(), current.getQueueBound(),
         current.getWildcardIndex(), current.getChildOrdinals(),
-        current.getChildPackedOffsets(), current.getChildRandTypes(), aliases);
+        current.getChildPackedOffsets(), current.getChildRandTypes(), aliases,
+        current.getProjected());
   };
   FailureOr<sim::VPITypeSemanticsAttr> result = apply(*root);
   if (failed(result))
@@ -2005,6 +2056,7 @@ FailureOr<DPIABIType> classifyDPIABIType(Type type, Location location) {
                                        : DPIABIKind::BitVector;
       break;
     case semantic::SVIntegralFlavor::Integer:
+    case semantic::SVIntegralFlavor::Time:
       kind = DPIABIKind::LogicVector;
       break;
     }
@@ -2119,7 +2171,43 @@ FailureOr<DPIABIType> classifyDPIABIType(Type type, Location location) {
     return failure();
   }
   bool fourState = isFourStateSemanticType(type);
-  return DPIABIType{fourState ? DPIABIKind::LogicVector : DPIABIKind::BitVector,
+  // The C representation follows the declared bit/logic flavor even when
+  // --two-state projects executable storage to integers. Transport's domain
+  // remains independent: a logic-vector C argument can marshal integer data.
+  bool logicABI = fourState;
+  auto includeLeaf = [&](Type child) -> LogicalResult {
+    FailureOr<DPIABIType> abi = classifyDPIABIType(child, location);
+    if (failed(abi))
+      return failure();
+    logicABI |=
+        abi->kind == DPIABIKind::Logic || abi->kind == DPIABIKind::LogicVector;
+    return success();
+  };
+  if (auto array = dyn_cast<semantic::RangedPackedArrayType>(type)) {
+    if (failed(includeLeaf(array.getElementType())))
+      return failure();
+  } else if (auto array = dyn_cast<semantic::PackedArrayType>(type)) {
+    if (failed(includeLeaf(array.getElementType())))
+      return failure();
+  } else if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type)) {
+    for (Attribute attr : aggregate.getFields()) {
+      auto field = dyn_cast<DictionaryAttr>(attr);
+      auto fieldType = field ? field.getAs<TypeAttr>("type") : TypeAttr{};
+      if (!fieldType || failed(includeLeaf(fieldType.getValue())))
+        return failure();
+    }
+  } else {
+    DictionaryAttr fields =
+        isa<semantic::PackedStructType>(type)
+            ? cast<semantic::PackedStructType>(type).getFields()
+            : cast<semantic::PackedUnionType>(type).getFields();
+    for (NamedAttribute field : fields) {
+      auto fieldType = dyn_cast<TypeAttr>(field.getValue());
+      if (!fieldType || failed(includeLeaf(fieldType.getValue())))
+        return failure();
+    }
+  }
+  return DPIABIType{logicABI ? DPIABIKind::LogicVector : DPIABIKind::BitVector,
                     static_cast<uint32_t>(*width), fourState,
                     simlowering::isSignedSemanticType(type)};
 }
@@ -2902,6 +2990,10 @@ FailureOr<sim::FrozenConstantAttr> freezeConstantSpelling(Type normalized,
           parseSVInteger(text.trim(), *width, location);
       if (failed(parsed))
         return failure();
+      if (isa<IntegerType>(scalar)) {
+        parsed->value &= ~parsed->unknown;
+        parsed->unknown.clearAllBits();
+      }
       auto planeType = builder.getIntegerType(*width);
       payload = builder.getArrayAttr(
           {builder.getIntegerAttr(planeType, parsed->value),

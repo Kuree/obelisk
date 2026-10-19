@@ -4,4 +4,6 @@
 
 // SHORT-HELP: OVERVIEW: Obelisk ahead-of-time SystemVerilog compiler
 // SHORT-HELP: -emit-slang
+// SHORT-HELP-DAG: --two-state
+// SHORT-HELP-DAG: --no-two-state-specialization
 // HIDDEN-HELP: -Xslang

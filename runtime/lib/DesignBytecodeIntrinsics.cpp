@@ -4940,7 +4940,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         case 0:
           return abi.width == 1 && !fourState;
         case 1:
-          return abi.width == 1 && fourState;
+          return abi.width == 1;
         case 2:
           return abi.width == 8 && !fourState;
         case 3:
@@ -4952,7 +4952,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         case 6:
           return !fourState;
         case 7:
-          return fourState;
+          return true;
         case 8:
         case 9:
           return abi.width == 64 && !fourState && (abi.flags & 2) == 0;
@@ -5252,7 +5252,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                                             : 0) |
           (cLayout ? OBELISK_RT_DPI_OPEN_ARRAY_C_LAYOUT : 0) |
           (packed ? OBELISK_RT_DPI_OPEN_ARRAY_PACKED : 0) |
-          (layout.fourState ? OBELISK_RT_DPI_OPEN_ARRAY_FOUR_STATE : 0) |
+          (layout.elementKind == 1 || layout.elementKind == 7
+               ? OBELISK_RT_DPI_OPEN_ARRAY_FOUR_STATE
+               : 0) |
           (storage.dynamic && storage.elementCount == 0
                ? OBELISK_RT_DPI_OPEN_ARRAY_EMPTY
                : 0);

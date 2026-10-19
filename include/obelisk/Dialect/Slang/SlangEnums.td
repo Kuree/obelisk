@@ -510,11 +510,13 @@ def SlangIntegral_Int      : I32EnumAttrCase<"Int",      5, "int">;
 def SlangIntegral_LongInt  : I32EnumAttrCase<"LongInt",  6, "longint">;
 def SlangIntegral_Byte     : I32EnumAttrCase<"Byte",     7, "byte">;
 def SlangIntegral_Integer  : I32EnumAttrCase<"Integer",  8, "integer">;
+def SlangIntegral_Time     : I32EnumAttrCase<"Time",     9, "time">;
 def SlangIntegralFlavor : I32EnumAttr<"IntegralFlavor",
     "declared SystemVerilog integral spelling", [
   SlangIntegral_Generic, SlangIntegral_Bit, SlangIntegral_Logic,
   SlangIntegral_Reg, SlangIntegral_ShortInt, SlangIntegral_Int,
-  SlangIntegral_LongInt, SlangIntegral_Byte, SlangIntegral_Integer
+  SlangIntegral_LongInt, SlangIntegral_Byte, SlangIntegral_Integer,
+  SlangIntegral_Time
 ]> {
   let cppNamespace = "::obelisk::slangir";
 }

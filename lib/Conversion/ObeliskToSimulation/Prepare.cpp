@@ -2331,7 +2331,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     };
     auto parseKnownIndex =
         [&](Operation *expression) -> std::optional<int64_t> {
-      std::optional<StringRef> spelling = getConstantSpelling(expression);
+      std::optional<StringRef> spelling =
+          getElaboratedConstantSpelling(expression);
       if (!spelling)
         return std::nullopt;
       FailureOr<ParsedConstant> parsed =
@@ -5436,9 +5437,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         }
         if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
                 semantic::SVSpecparamSymbolOp>(symbol->second))
-          if (auto constant =
-                  symbol->second->getAttrOfType<StringAttr>("constant_value"))
-            sim::set<sim::metadata::ConstantValue>(nested, constant);
+          copyConstantSymbolValue(nested, symbol->second);
       });
       root->walk([&](Operation *nested) {
         if (!isa<semantic::SVMemberAccessExpressionOp,
@@ -8343,9 +8342,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         }
         if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
                 semantic::SVSpecparamSymbolOp>(symbol->second))
-          if (auto constant =
-                  symbol->second->getAttrOfType<StringAttr>("constant_value"))
-            sim::set<sim::metadata::ConstantValue>(nested, constant);
+          copyConstantSymbolValue(nested, symbol->second);
       });
       constraint->walk([&](Operation *nested) {
         if (!sim::has<sim::metadata::RandomFunctionState>(nested))
@@ -11197,9 +11194,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             sim::set<sim::metadata::StaticNetConstant>(named, constant->second);
         if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
                 semantic::SVSpecparamSymbolOp>(symbol->second))
-          if (auto constant =
-                  symbol->second->getAttrOfType<StringAttr>("constant_value"))
-            sim::set<sim::metadata::ConstantValue>(named, constant);
+          copyConstantSymbolValue(named, symbol->second);
         auto field = classFieldSymbols.find(symbol->second);
         auto property =
             dyn_cast<semantic::SVClassPropertySymbolOp>(symbol->second);
@@ -11225,9 +11220,7 @@ void ObeliskSimPreparePass::runOnOperation() {
                                                          constant->second);
           if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
                   semantic::SVSpecparamSymbolOp>(symbol->second))
-            if (auto constant =
-                    symbol->second->getAttrOfType<StringAttr>("constant_value"))
-              sim::set<sim::metadata::ConstantValue>(hierarchical, constant);
+            copyConstantSymbolValue(hierarchical, symbol->second);
         }
         return;
       }
@@ -11239,9 +11232,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           return;
         if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
                 semantic::SVSpecparamSymbolOp>(symbol->second)) {
-          if (auto constant =
-                  symbol->second->getAttrOfType<StringAttr>("constant_value"))
-            sim::set<sim::metadata::ConstantValue>(member, constant);
+          copyConstantSymbolValue(member, symbol->second);
           return;
         }
         auto field = classFieldSymbols.find(symbol->second);

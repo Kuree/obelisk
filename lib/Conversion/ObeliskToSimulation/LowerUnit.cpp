@@ -3392,10 +3392,11 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
   if (failed(outputType))
     return failure();
   Type scalarType = sim::getPackedScalarType(*outputType);
-  auto logicType = dyn_cast_or_null<sim::LogicType>(scalarType);
-  if (!logicType)
+  auto width = scalarType ? sim::getPackedWidth(scalarType) : std::nullopt;
+  if (!width)
     return emitError(location)
-           << "primitive output is not four-state packed data";
+           << "primitive output is not packed integral data";
+  auto logicType = sim::LogicType::get(function.getContext(), *width);
 
   auto lowerInput = [&](Operation *input,
                         Type target = Type{}) -> FailureOr<Value> {

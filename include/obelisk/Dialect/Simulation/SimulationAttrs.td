@@ -105,7 +105,9 @@ def SimVPITypeSemanticsAttr
       OptionalParameter<"::mlir::DenseI64ArrayAttr">:$childOrdinals,
       OptionalParameter<"::mlir::DenseI64ArrayAttr">:$childPackedOffsets,
       OptionalParameter<"::mlir::DenseI64ArrayAttr">:$childRandTypes,
-      OptionalParameter<"::mlir::ArrayAttr">:$typedefAliases);
+      OptionalParameter<"::mlir::ArrayAttr">:$typedefAliases,
+      // A four-state declaration whose executable storage is value-only.
+      OptionalParameter<"::mlir::BoolAttr">:$projected);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }

@@ -153,6 +153,7 @@ LogicalResult materializeEvalTwoStateVariants(
   // domain. Two-state variants still require the same inductive closure proof
   // as Auto and are selected only after their canonical unknown plane clears.
   constexpr bool forceTwoState = false;
+  const bool specializeTwoState = isTwoStateSpecializationEnabled(module);
   auto domainProofs = StateDomainAnalysis::computeForSpecialization(design);
   if (failed(domainProofs))
     return failure();
@@ -176,6 +177,37 @@ LogicalResult materializeEvalTwoStateVariants(
         sourceCallers[callee].push_back(function);
       }
     });
+  // With frontend two-state semantics, integer computation needs no second
+  // copy, readiness scan or promotion latch. Runtime checkpoints/output still
+  // need the variant's hot/cold split, independently of state domain. Propagate
+  // both requirements to callers.
+  DenseSet<Operation *> needsVariant;
+  SmallVector<Operation *> variantWorklist;
+  const bool frontendTwoState = native::has<native::TwoState>(module);
+  for (sim::SimFuncOp function : design.getOps<sim::SimFuncOp>()) {
+    if (!frontendTwoState) {
+      needsVariant.insert(function);
+      continue;
+    }
+    bool needsOwnVariant = detail::containsLogic(function.getFunctionType());
+    function.walk([&](Operation *op) {
+      needsOwnVariant |=
+          isDirectOutput(op) || sim::isColdRuntimeCheckpoint(op) ||
+          llvm::any_of(op->getOperandTypes(), detail::containsLogic) ||
+          llvm::any_of(op->getResultTypes(), detail::containsLogic);
+      for (Region &region : op->getRegions())
+        for (Block &block : region)
+          needsOwnVariant |=
+              llvm::any_of(block.getArgumentTypes(), detail::containsLogic);
+    });
+    if (needsOwnVariant && needsVariant.insert(function).second)
+      variantWorklist.push_back(function);
+  }
+  while (!variantWorklist.empty())
+    for (Operation *caller :
+         sourceCallers.lookup(variantWorklist.pop_back_val()))
+      if (needsVariant.insert(caller).second)
+        variantWorklist.push_back(caller);
   SmallVector<sim::SimFuncOp> roots;
   llvm::SmallPtrSet<Operation *, 16> rootSet;
   for (sim::SimFuncOp function :
@@ -240,8 +272,11 @@ LogicalResult materializeEvalTwoStateVariants(
     // ordinary Tier-2/runtime route instead of discovering the runtime call
     // only after irreversible LLVM conversion.
     bool hasRuntimeDriverResolution = false;
+    bool hasRuntimeCheckpoint = false;
     for (sim::SimFuncOp function : closure)
       function.walk([&](Operation *operation) {
+        hasRuntimeCheckpoint |= sim::isColdRuntimeCheckpoint(operation) &&
+                                !isDirectOutput(operation);
         hasRuntimeDriverResolution |=
             isa<sim::SimDriverDriveDelayedNetOp>(operation) ||
             (stateLayout.hasPassSwitch &&
@@ -255,6 +290,12 @@ LogicalResult materializeEvalTwoStateVariants(
       ::obelisk::schedule::set<
           schedule::metadata::evalUnsupportedCheckpointOwner>(
           root, StringAttr::get(module.getContext(), root.getSymName()));
+    // Without optional path variants, a cold leaf executes through the whole
+    // canonical activation. Preserve the edge qualification and any preceding
+    // NBA staging instead of admitting a runtime call to the eval hot closure.
+    if (!specializeTwoState && hasRuntimeCheckpoint)
+      ::obelisk::schedule::set<schedule::Field::EvalCheckpointOnly>(
+          root, UnitAttr::get(module.getContext()));
   }
 
   if (sources.empty())
@@ -270,7 +311,11 @@ LogicalResult materializeEvalTwoStateVariants(
   llvm::SmallPtrSet<Operation *, 32> variantEligibleSources;
   llvm::SmallPtrSet<Operation *, 16> knownOnlyPathSources;
   llvm::SmallPtrSet<Operation *, 16> resetPathSources;
-  if (!forceTwoState) {
+  // Private four-state helper isolation and direct-output classification are
+  // required by the eval call closure even when state specialization is off.
+  // Disable only promotion analysis and variant selection below; the empty
+  // eligible set also prevents the later two-state clone/probe materialization.
+  if (!forceTwoState && specializeTwoState) {
     // A transient two-state route need not be globally two-state.  It is
     // sufficient that (1) every canonical input/output slice is known at the
     // quiescent handoff and (2) the complete instance body is known-input
@@ -770,8 +815,9 @@ LogicalResult materializeEvalTwoStateVariants(
         ::obelisk::schedule::set<
             schedule::metadata::evalPathGuardedKnownPreserving>(
             source, UnitAttr::get(module.getContext()));
-      if (closureKnownPreserving || !orderedRanges.empty() ||
-          !closureRuntimeFree || knownOnlyPath)
+      if (needsVariant.contains(source) &&
+          (closureKnownPreserving || !orderedRanges.empty() ||
+           !closureRuntimeFree || knownOnlyPath))
         routeEligibleSources.insert(source.getOperation());
     }
     // Do not build a nominal two-state owner that can retain a permanently
@@ -784,6 +830,7 @@ LogicalResult materializeEvalTwoStateVariants(
       for (Operation *callee : sourceCallees.lookup(operation))
         if (::obelisk::schedule::has<
                 ::obelisk::schedule::Field::EvalRawCaptures>(callee) &&
+            needsVariant.contains(callee) &&
             !routeEligibleSources.contains(callee)) {
           rejected.push_back(operation);
           break;
@@ -868,6 +915,8 @@ LogicalResult materializeEvalTwoStateVariants(
       eligibleClosure.push_back(cast<sim::SimFuncOp>(operation));
     for (size_t index = 0; index != eligibleClosure.size(); ++index) {
       sim::SimFuncOp function = eligibleClosure[index];
+      if (!needsVariant.contains(function))
+        continue;
       if (!variantEligibleSources.insert(function.getOperation()).second)
         continue;
       function.walk([&](sim::SimCallOp call) {

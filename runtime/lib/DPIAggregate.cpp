@@ -159,7 +159,7 @@ bool validLeaf(uint64_t bit, uint64_t byte, uint32_t category, uint32_t width,
   if (size == 0 || bit > totalWidth || width > totalWidth - bit ||
       byte > cSize || size > cSize - byte)
     return false;
-  return ((category == 1 || category == 7) ? 1u : 0u) == leafFourState;
+  return !leafFourState || category == 1 || category == 7;
 }
 
 void copyPlaneBits(const uint8_t *source, uint64_t sourceBit,
@@ -249,8 +249,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_aggregate_pack(
           copyPlaneBits(unknowns, source, reinterpret_cast<uint8_t *>(&bval), 0,
                         count);
         uint32_t aval = value ^ bval;
-        std::memcpy(destination + word * (leafFourState ? 8 : 4), &aval, 4);
-        if (leafFourState)
+        std::memcpy(destination + word * (category == 7 ? 8 : 4), &aval, 4);
+        if (category == 7)
           std::memcpy(destination + word * 8 + 4, &bval, 4);
       }
       return true;
@@ -320,7 +320,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_aggregate_unpack(
     if (category == 0 || category == 1) {
       bool a = current[0] & 1;
       bool b = (current[0] >> 1) & 1;
-      setBit(values, bit, a != b);
+      setBit(values, bit, leafFourState ? a != b : a && !b);
       if (leafFourState)
         setBit(unknowns, bit, b);
       return true;
@@ -351,12 +351,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_aggregate_unpack(
       uint64_t words = (uint64_t{width} + 31) / 32;
       for (uint64_t word = 0; word != words; ++word) {
         uint32_t aval = 0, bval = 0;
-        std::memcpy(&aval, current + word * (leafFourState ? 8 : 4), 4);
-        if (leafFourState)
+        std::memcpy(&aval, current + word * (category == 7 ? 8 : 4), 4);
+        if (category == 7)
           std::memcpy(&bval, current + word * 8 + 4, 4);
         uint32_t count = static_cast<uint32_t>(
             std::min<uint64_t>(32, uint64_t{width} - word * 32));
-        uint32_t value = aval ^ bval;
+        uint32_t value = leafFourState ? aval ^ bval : aval & ~bval;
         uint64_t destination = bit + word * 32;
         copyPlaneBits(reinterpret_cast<const uint8_t *>(&value), 0, values,
                       destination, count);
