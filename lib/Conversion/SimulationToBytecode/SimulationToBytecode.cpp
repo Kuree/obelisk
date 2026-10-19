@@ -222,6 +222,8 @@ FailureOr<EncodedSimulationDesign> Encoder::encode() {
   result.requiresContainerBitstreamFeature = requiresContainerBitstreamFeature;
   result.requiresRecursiveBitstreamFeature = requiresRecursiveBitstreamFeature;
   result.executionFlags = kExecutionHasBytecode;
+  if (native::has<native::TwoState>(design->getParentOfType<ModuleOp>()))
+    result.executionFlags |= OBELISK_RT_EXECUTION_TWO_STATE;
   if (!result.sampledRanges.empty())
     result.executionFlags |= kExecutionPreponedSnapshot;
   if (options.requireBytecode)

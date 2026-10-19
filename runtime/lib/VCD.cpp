@@ -152,7 +152,7 @@ bool traceableObject(const DesignDatabaseCache &database, uint32_t kind,
                      const uint8_t *record);
 
 bool bitAt(const uint8_t *plane, uint64_t bit) {
-  return (plane[bit / 8] & static_cast<uint8_t>(1u << (bit % 8))) != 0;
+  return plane && (plane[bit / 8] & static_cast<uint8_t>(1u << (bit % 8))) != 0;
 }
 
 // Compare one bit range across two planes that use identical bit offsets. The
@@ -212,7 +212,7 @@ obelisk_rt_status dumpPlanes(const obelisk_rt_context *context,
   const obelisk_rt_execution_descriptor_v1 &execution = *context->execution;
   const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
   if (plan && plan->state_bit_count == execution.state_bit_count &&
-      plan->state_value && plan->state_unknown) {
+      plan->state_value && (plan->state_unknown || context->twoState())) {
     value = plan->state_value;
     unknown = plan->state_unknown;
     return OBELISK_RT_OK;
@@ -879,7 +879,7 @@ struct PlanBuilder {
 // planes. Variables are sorted by canonical offset so each window owns a
 // contiguous index range.
 template <typename State>
-void buildRanges(State &state, uint64_t stateBitCount) {
+void buildRanges(State &state, uint64_t stateBitCount, bool twoState) {
   std::sort(state.variables.begin(), state.variables.end(),
             [](const TraceVariable &left, const TraceVariable &right) {
               if (left.sourceBit != right.sourceBit)
@@ -888,7 +888,8 @@ void buildRanges(State &state, uint64_t stateBitCount) {
             });
   uint64_t stateBytes = (stateBitCount + 7) / 8;
   state.shadowValue.assign(static_cast<size_t>(stateBytes), 0);
-  state.shadowUnknown.assign(static_cast<size_t>(stateBytes), 0);
+  if (!twoState)
+    state.shadowUnknown.assign(static_cast<size_t>(stateBytes), 0);
   state.ranges.clear();
   for (uint32_t index = 0; index != state.variables.size(); ++index) {
     const TraceVariable &variable = state.variables[index];
@@ -1018,8 +1019,9 @@ void updateShadow(VCDTraceState &state, const uint8_t *valuePlane,
     size_t length = static_cast<size_t>(range.byteEnd - range.byteBegin);
     std::memcpy(state.shadowValue.data() + range.byteBegin,
                 valuePlane + range.byteBegin, length);
-    std::memcpy(state.shadowUnknown.data() + range.byteBegin,
-                unknownPlane + range.byteBegin, length);
+    if (unknownPlane)
+      std::memcpy(state.shadowUnknown.data() + range.byteBegin,
+                  unknownPlane + range.byteBegin, length);
   }
 }
 
@@ -1153,7 +1155,7 @@ obelisk_rt_status buildPlan(obelisk_rt_context *context, VCDTraceState &state) {
   builder.emitDesign();
   append(state, "$enddefinitions $end\n");
 
-  buildRanges(state, context->execution->state_bit_count);
+  buildRanges(state, context->execution->state_bit_count, context->twoState());
   state.planBuilt = true;
   state.pendingInitial = true;
   finishLimit(state);
@@ -1196,8 +1198,9 @@ obelisk_rt_status emitSlot(obelisk_rt_context *context, VCDTraceState &state) {
       continue;
     bool moved = std::memcmp(state.shadowValue.data() + range.byteBegin,
                              valuePlane + range.byteBegin, length) != 0 ||
-                 std::memcmp(state.shadowUnknown.data() + range.byteBegin,
-                             unknownPlane + range.byteBegin, length) != 0;
+                 (unknownPlane &&
+                  std::memcmp(state.shadowUnknown.data() + range.byteBegin,
+                              unknownPlane + range.byteBegin, length) != 0);
     if (!moved)
       continue;
     for (uint32_t index = range.firstVariable; index != range.lastVariable;
@@ -1214,8 +1217,9 @@ obelisk_rt_status emitSlot(obelisk_rt_context *context, VCDTraceState &state) {
     }
     std::memcpy(state.shadowValue.data() + range.byteBegin,
                 valuePlane + range.byteBegin, length);
-    std::memcpy(state.shadowUnknown.data() + range.byteBegin,
-                unknownPlane + range.byteBegin, length);
+    if (unknownPlane)
+      std::memcpy(state.shadowUnknown.data() + range.byteBegin,
+                  unknownPlane + range.byteBegin, length);
   }
   finishLimit(state);
   return OBELISK_RT_OK;
@@ -1425,7 +1429,7 @@ obelisk_rt_status buildEVCDPlan(obelisk_rt_context *context,
     }
   }
   append(state, "$enddefinitions $end\n");
-  buildRanges(state, context->execution->state_bit_count);
+  buildRanges(state, context->execution->state_bit_count, context->twoState());
   state.planBuilt = true;
   state.pendingInitial = true;
   return OBELISK_RT_OK;
@@ -1452,8 +1456,9 @@ obelisk_rt_status emitEVCDSlot(obelisk_rt_context *context, EVCDSession &state,
       size_t length = static_cast<size_t>(range.byteEnd - range.byteBegin);
       std::memcpy(state.shadowValue.data() + range.byteBegin,
                   valuePlane + range.byteBegin, length);
-      std::memcpy(state.shadowUnknown.data() + range.byteBegin,
-                  unknownPlane + range.byteBegin, length);
+      if (unknownPlane)
+        std::memcpy(state.shadowUnknown.data() + range.byteBegin,
+                    unknownPlane + range.byteBegin, length);
     }
     return OBELISK_RT_OK;
   } else if (!checkpoint.empty()) {
@@ -1467,8 +1472,9 @@ obelisk_rt_status emitEVCDSlot(obelisk_rt_context *context, EVCDSession &state,
       size_t length = static_cast<size_t>(range.byteEnd - range.byteBegin);
       std::memcpy(state.shadowValue.data() + range.byteBegin,
                   valuePlane + range.byteBegin, length);
-      std::memcpy(state.shadowUnknown.data() + range.byteBegin,
-                  unknownPlane + range.byteBegin, length);
+      if (unknownPlane)
+        std::memcpy(state.shadowUnknown.data() + range.byteBegin,
+                    unknownPlane + range.byteBegin, length);
     }
     return OBELISK_RT_OK;
   }
@@ -1479,8 +1485,9 @@ obelisk_rt_status emitEVCDSlot(obelisk_rt_context *context, EVCDSession &state,
     bool moved = forceAll ||
                  std::memcmp(state.shadowValue.data() + range.byteBegin,
                              valuePlane + range.byteBegin, length) != 0 ||
-                 std::memcmp(state.shadowUnknown.data() + range.byteBegin,
-                             unknownPlane + range.byteBegin, length) != 0;
+                 (unknownPlane &&
+                  std::memcmp(state.shadowUnknown.data() + range.byteBegin,
+                              unknownPlane + range.byteBegin, length) != 0);
     if (moved)
       for (uint32_t index = range.firstVariable; index != range.lastVariable;
            ++index) {
@@ -1498,8 +1505,9 @@ obelisk_rt_status emitEVCDSlot(obelisk_rt_context *context, EVCDSession &state,
     if (moved) {
       std::memcpy(state.shadowValue.data() + range.byteBegin,
                   valuePlane + range.byteBegin, length);
-      std::memcpy(state.shadowUnknown.data() + range.byteBegin,
-                  unknownPlane + range.byteBegin, length);
+      if (unknownPlane)
+        std::memcpy(state.shadowUnknown.data() + range.byteBegin,
+                    unknownPlane + range.byteBegin, length);
     }
   }
   if (state.limitReached)
@@ -1981,8 +1989,9 @@ obelisk_rt_v1_dump_ports_control(obelisk_rt_context *context,
           size_t length = static_cast<size_t>(range.byteEnd - range.byteBegin);
           std::memcpy(session.shadowValue.data() + range.byteBegin,
                       valuePlane + range.byteBegin, length);
-          std::memcpy(session.shadowUnknown.data() + range.byteBegin,
-                      unknownPlane + range.byteBegin, length);
+          if (unknownPlane)
+            std::memcpy(session.shadowUnknown.data() + range.byteBegin,
+                        unknownPlane + range.byteBegin, length);
         }
       } else {
         for (const TraceVariable &variable : session.variables)

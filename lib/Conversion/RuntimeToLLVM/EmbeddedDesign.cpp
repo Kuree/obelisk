@@ -3,6 +3,7 @@
 #include "obelisk/Analysis/ManagedCollectionAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Conversion/RuntimeToLLVM.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -961,6 +962,8 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
     return failure();
 
   runtime::ExecutionFlags executionFlags = runtime::getExecutionFlags(module);
+  if (native::has<native::TwoState>(module))
+    executionFlags = executionFlags | runtime::ExecutionFlags::TwoState;
   uint64_t stateBits = 0;
   if (!exports.empty())
     executionFlags = executionFlags | runtime::ExecutionFlags::DPIExports;

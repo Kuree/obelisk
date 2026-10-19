@@ -160,6 +160,8 @@ static_assert(static_cast<uint32_t>(ExecutionFlags::CoverageSchema) ==
               OBELISK_RT_EXECUTION_COVERAGE_SCHEMA);
 static_assert(static_cast<uint32_t>(ExecutionFlags::PolledCollection) ==
               OBELISK_RT_EXECUTION_POLLED_COLLECTION);
+static_assert(static_cast<uint32_t>(ExecutionFlags::TwoState) ==
+              OBELISK_RT_EXECUTION_TWO_STATE);
 
 ExecutionFlags getExecutionFlags(Operation *module) {
   ExecutionFlagsAttr flags = get<ExecutionFlagSet>(module);

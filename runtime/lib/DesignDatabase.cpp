@@ -6729,8 +6729,8 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
         uint64_t sourceMask = uint64_t{1} << (bit % 64);
         uint64_t absolute = stateOffset + bit;
         uint64_t stateMask = uint64_t{1} << (absolute % 64);
-        uint64_t &stateValue = context->stateValue[absolute / 64];
-        uint64_t &stateUnknown = context->stateUnknown[absolute / 64];
+        auto stateValue = context->stateValue[absolute / 64];
+        auto stateUnknown = context->stateUnknown[absolute / 64];
         if (write) {
           bool oldValue = (stateValue & stateMask) != 0;
           bool oldUnknown = (stateUnknown & stateMask) != 0;

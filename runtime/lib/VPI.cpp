@@ -6280,6 +6280,13 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_put_value(vpiHandle opaque,
   if (!decodeValue(handle, source, info.bit_width, vpiTypeForHandle(handle),
                    value, unknown))
     return nullptr;
+  // Declared VPI types retain their four-state identity in --two-state, but
+  // foreign values enter value-only storage after X/Z-to-zero conversion.
+  if (context->twoState())
+    for (size_t word = 0; word != value.size(); ++word) {
+      value[word] &= ~unknown[word];
+      unknown[word] = 0;
+    }
   obelisk_rt_status status =
       flags == vpiForceFlag
           ? obelisk_rt_v1_design_force(context, handle->cursor, value.data(),

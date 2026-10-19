@@ -797,8 +797,9 @@ bool obelisk_rt_current_time_queue_pending_unlocked(
          ++root) {
       if (hasGeneratedNBASlots(context->nativeScheduleNBARoots[root]))
         return true;
-      const obelisk_rt_generated_nba_accumulator_256 *generated =
-          context->nativeScheduleNBARoots[root].generated_accumulator;
+      GeneratedNBAStorage generated(
+          context->nativeScheduleNBARoots[root].generated_accumulator,
+          context->twoState());
       if (generated && hasGeneratedNBAStages(*generated) &&
           generated->exec_region < OBELISK_RT_REGION_POSTPONED)
         return true;
@@ -1618,7 +1619,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
   bool statePlanesValid =
       plan->state_bit_count == 0
           ? plan->state_value == nullptr && plan->state_unknown == nullptr
-          : plan->state_value != nullptr && plan->state_unknown != nullptr;
+          : plan->state_value != nullptr &&
+                (plan->state_unknown != nullptr || context->twoState());
   if (!plan->mutable_state || plan->mutable_state_size == 0 ||
       plan->actor_capacity == 0 || !actorStorageFits || !statePlanesValid ||
       !nbaTablesValid || !fanoutTableValid || !actorRootTableValid ||
@@ -1669,7 +1671,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       return OBELISK_RT_INVALID_ARGUMENT;
     for (uint64_t slot = 0; slot != root.generated_slot_count; ++slot) {
       const auto &entry = root.generated_slots[slot];
-      if (!entry.offset || !entry.value || !entry.unknown || !entry.valid ||
+      if (!entry.offset || !entry.value ||
+          (!entry.unknown && !context->twoState()) || !entry.valid ||
           !entry.transition || !entry.bit_width || entry.bit_width > 64 ||
           entry.bit_width > root.bit_width)
         return OBELISK_RT_INVALID_ARGUMENT;
@@ -1855,7 +1858,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
     OBELISK_RT_TRY {
 #if defined(__x86_64__) || defined(_M_X64)
       __builtin_cpu_init();
-      context->nativeScheduleAVX2 = __builtin_cpu_supports("avx2");
+      // TODO: the AVX2 batch commits load the unknown plane unconditionally.
+      // Add value-only variants so two-state designs keep the vector path.
+      context->nativeScheduleAVX2 =
+          !context->twoState() && __builtin_cpu_supports("avx2");
 #else
       context->nativeScheduleAVX2 = false;
 #endif
@@ -1999,7 +2005,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
         size_t words = static_cast<size_t>((root.bit_width + 63) / 64);
         StaticNBAAccumulator accumulator;
         accumulator.value.assign(words, 0);
-        accumulator.unknown.assign(words, 0);
+        if (context->twoState())
+          accumulator.unknown.assignZero(words);
+        else
+          accumulator.unknown.assign(words, 0);
         accumulator.writeMask.assign(words, 0);
         accumulator.transient.assign(words, 0);
         accumulator.changed.assign(words, 0);
@@ -2007,7 +2016,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
         accumulator.negedge.assign(words, 0);
         context->staticNBAAccumulators.push_back(std::move(accumulator));
         if (root.generated_accumulator)
-          *root.generated_accumulator = {};
+          GeneratedNBAStorage(root.generated_accumulator, context->twoState())
+              .clear();
         for (uint64_t slot = 0; slot != root.generated_slot_count; ++slot)
           *root.generated_slots[slot].valid = 0;
       }
@@ -2556,7 +2566,8 @@ extern "C" obelisk_rt_status
 obelisk_rt_v1_native_state_bind_shared(obelisk_rt_context *context,
                                        uint8_t *value, uint8_t *unknown,
                                        uint64_t bitCount) {
-  if (!context || !value || !unknown || value == unknown ||
+  if (!context || !value || (!unknown && !context->twoState()) ||
+      value == unknown ||
       (reinterpret_cast<uintptr_t>(value) % alignof(uint64_t)) ||
       (reinterpret_cast<uintptr_t>(unknown) % alignof(uint64_t)))
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -2594,7 +2605,7 @@ obelisk_rt_v1_native_state_bind_shared(obelisk_rt_context *context,
 extern "C" obelisk_rt_status
 obelisk_rt_v1_native_state_sync(obelisk_rt_context *context, uint8_t *value,
                                 uint8_t *unknown, uint64_t bitCount) {
-  if (!context || !value || !unknown)
+  if (!context || !value || (!unknown && !context->twoState()))
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
   OBELISK_RT_TRY {
@@ -2627,7 +2638,8 @@ obelisk_rt_v1_native_state_bind_specialization(obelisk_rt_context *context,
     return OBELISK_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
   if (context->nativeSchedulePlan || !context->nativeStateValue ||
-      !context->nativeStateUnknown || !context->nativeStateBitCount ||
+      (!context->nativeStateUnknown && !context->twoState()) ||
+      !context->nativeStateBitCount ||
       (context->nativeStateSpecializationFast &&
        context->nativeStateSpecializationFast != fast))
     return OBELISK_RT_INVALID_LIFECYCLE;
@@ -2646,12 +2658,19 @@ obelisk_rt_v1_native_state_bind_continuous(obelisk_rt_context *context,
   *value = *unknown = *mask = nullptr;
   OBELISK_RT_TRY {
     ContextMutexLock lock(context);
-    if (!context->nativeStateValue || !context->nativeStateUnknown ||
+    if (!context->nativeStateValue ||
+        (!context->nativeStateUnknown && !context->twoState()) ||
         !context->nativeStateBitCount)
       return OBELISK_RT_INVALID_LIFECYCLE;
     size_t limbs = context->stateValue.size();
-    context->continuousValue.resize(limbs, 0);
-    context->continuousUnknown.resize(limbs, 0);
+    if (context->continuousValue.empty())
+      context->continuousValue.assign(limbs, 0);
+    if (context->continuousUnknown.empty()) {
+      if (context->twoState())
+        context->continuousUnknown.assignZero(limbs);
+      else
+        context->continuousUnknown.assign(limbs, 0);
+    }
     context->continuousMask.resize(limbs, 0);
     *value = reinterpret_cast<uint8_t *>(context->continuousValue.data());
     *unknown = reinterpret_cast<uint8_t *>(context->continuousUnknown.data());
@@ -4970,7 +4989,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                   auto &storage =
                       unknown ? context->stateUnknown : context->stateValue;
                   uint64_t mask = uint64_t{1} << (planeBit % 64);
-                  uint64_t &limb = storage[planeBit / 64];
+                  auto limb = storage[planeBit / 64];
                   limb = value ? limb | mask : limb & ~mask;
                 }
               };

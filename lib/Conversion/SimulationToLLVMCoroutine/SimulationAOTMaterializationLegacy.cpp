@@ -617,12 +617,13 @@ LogicalResult makeNativeAOTPlanLegacy(
           LLVM::AddressOfOp::create(builder, location, pointer, accumulator);
       Value valid = LLVM::LoadOp::create(
           builder, location, i32,
-          byteGEP(builder, location, accumulatorBase,
-                  offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
+          nbaFieldGEP(
+              builder, location, accumulatorBase,
+              offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
           4);
       Value region = LLVM::LoadOp::create(
           builder, location, i32,
-          byteGEP(
+          nbaFieldGEP(
               builder, location, accumulatorBase,
               offsetof(obelisk_rt_generated_nba_accumulator_256, exec_region)),
           4);
@@ -641,17 +642,19 @@ LogicalResult makeNativeAOTPlanLegacy(
       builder.setInsertionPointToStart(commitRoot);
       Value stagedValue = LLVM::LoadOp::create(
           builder, location, i64,
-          byteGEP(builder, location, accumulatorBase,
-                  offsetof(obelisk_rt_generated_nba_accumulator_256, value)),
+          nbaFieldGEP(
+              builder, location, accumulatorBase,
+              offsetof(obelisk_rt_generated_nba_accumulator_256, value)),
           8);
       Value stagedUnknown = LLVM::LoadOp::create(
           builder, location, i64,
-          byteGEP(builder, location, accumulatorBase,
-                  offsetof(obelisk_rt_generated_nba_accumulator_256, unknown)),
+          nbaFieldGEP(
+              builder, location, accumulatorBase,
+              offsetof(obelisk_rt_generated_nba_accumulator_256, unknown)),
           8);
       Value writeMask = LLVM::LoadOp::create(
           builder, location, i64,
-          byteGEP(
+          nbaFieldGEP(
               builder, location, accumulatorBase,
               offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
           8);
@@ -675,14 +678,15 @@ LogicalResult makeNativeAOTPlanLegacy(
       storeRoot(stateUnknown, offset, root.bit_width, newUnknown);
       LLVM::StoreOp::create(
           builder, location, llvmConstant(builder, location, i64, 0),
-          byteGEP(
+          nbaFieldGEP(
               builder, location, accumulatorBase,
               offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
           8);
       LLVM::StoreOp::create(
           builder, location, llvmConstant(builder, location, i32, 0),
-          byteGEP(builder, location, accumulatorBase,
-                  offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
+          nbaFieldGEP(
+              builder, location, accumulatorBase,
+              offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
           4);
       Value directlyCommitted = LLVM::LoadOp::create(
           builder, location, i64, directlyCommittedByWord[word], 8);
@@ -700,7 +704,7 @@ LogicalResult makeNativeAOTPlanLegacy(
       // within this barrier; a tracked root has no edge watcher.
       if (rootIndex < staticNBAPlan.trackTransients.size() &&
           staticNBAPlan.trackTransients[rootIndex]) {
-        Value transientAddress = byteGEP(
+        Value transientAddress = nbaFieldGEP(
             builder, location, accumulatorBase,
             offsetof(obelisk_rt_generated_nba_accumulator_256, transient));
         changed = arith::OrIOp::create(

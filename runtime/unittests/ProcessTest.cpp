@@ -1409,7 +1409,8 @@ TEST(RuntimeInternals, PackedPublicationPreservesUnchangedAndForcedBits) {
                (context->forceMask[absolute / 64] & mask)))
             continue;
           auto apply = [&](auto &plane, const auto &input) {
-            auto &word = plane[absolute / 64];
+            // CanonicalPlane indexing yields a proxy; bind either form.
+            auto &&word = plane[absolute / 64];
             word = ((input[bit / 8] >> (bit % 8)) & 1) ? word | mask
                                                        : word & ~mask;
           };
@@ -12081,7 +12082,7 @@ TEST(RuntimeInternals, WidePlaneStoresPreserveBoundsMasksAndContinuousValues) {
                   ? expected[absolute / 8] | byteMask
                   : expected[absolute / 8] & ~byteMask;
               if (canonical) {
-                auto &limb = expectedCanonical[absolute / 64];
+                auto &&limb = expectedCanonical[absolute / 64];
                 limb = next ? limb | mask : limb & ~mask;
               }
             }

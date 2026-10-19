@@ -357,13 +357,15 @@ def RTExecutionCoverageSchema :
     I32BitEnumAttrCaseBit<"CoverageSchema", 9, "coverage_schema">;
 def RTExecutionPolledCollection :
     I32BitEnumAttrCaseBit<"PolledCollection", 10, "polled_collection">;
+def RTExecutionTwoState :
+    I32BitEnumAttrCaseBit<"TwoState", 11, "two_state">;
 def RTExecutionFlags : I32BitEnumAttr<"ExecutionFlags",
     "execution descriptor capabilities", [
   RTExecutionNone, RTExecutionHasBytecode, RTExecutionHasDesignDatabase,
   RTExecutionVPIRead, RTExecutionVPIWrite, RTExecutionRequireBytecode,
   RTExecutionPreponedSnapshot, RTExecutionWaveformMetadata,
   RTExecutionDPIExports, RTExecutionClassBitstream, RTExecutionCoverageSchema,
-  RTExecutionPolledCollection
+  RTExecutionPolledCollection, RTExecutionTwoState
 ]> {
   let cppNamespace = "::obelisk::runtime";
   let genSpecializedAttr = 0;

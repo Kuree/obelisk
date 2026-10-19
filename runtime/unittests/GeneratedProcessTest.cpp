@@ -392,8 +392,8 @@ TEST(GeneratedProcess, CopyActivationPreservesFourStateTierHandoff) {
             uint64_t mask = uint64_t{1} << ((128 + bit) % 64);
             bool value = (bit + step) % 3 == 0;
             bool unknown = step % 4 != 0 && (bit + step) % 5 == 0;
-            auto &v = context->stateValue[(128 + bit) / 64];
-            auto &x = context->stateUnknown[(128 + bit) / 64];
+            auto v = context->stateValue[(128 + bit) / 64];
+            auto x = context->stateUnknown[(128 + bit) / 64];
             v = (v & ~mask) | (value ? mask : 0);
             x = (x & ~mask) | (unknown ? mask : 0);
           }

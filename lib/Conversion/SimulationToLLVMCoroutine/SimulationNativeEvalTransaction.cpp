@@ -30,6 +30,7 @@ struct PendingRoot {
   std::string accumulator;
   uint64_t bitmapOffset = 0;
   uint64_t payloadOffset = 0;
+  bool twoState = false;
 };
 
 struct PendingWord {
@@ -106,7 +107,7 @@ void store(OpBuilder &builder, Location loc, Value frame, uint64_t offset,
 }
 
 uint64_t field(const PendingRoot &root, unsigned lane) {
-  return root.payloadOffset + lane * 8;
+  return root.payloadOffset + (lane - (root.twoState && lane == 2)) * 8;
 }
 
 Value pendingBits(OpBuilder &builder, Location loc, Value frame,
@@ -223,8 +224,9 @@ void transfer(OpBuilder &builder, Location loc, Value frame,
                 .getResult();
         Value valid = LLVM::LoadOp::create(
             builder, loc, builder.getI32Type(),
-            byteGEP(builder, loc, accumulator,
-                    offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
+            nbaFieldGEP(
+                builder, loc, accumulator,
+                offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
             4);
         Value generated = LLVM::ICmpOp::create(
             builder, loc, LLVM::ICmpPredicate::ne,
@@ -232,13 +234,13 @@ void transfer(OpBuilder &builder, Location loc, Value frame,
             llvmConstant(builder, loc, builder.getI32Type(), 0));
         Value region = LLVM::LoadOp::create(
             builder, loc, builder.getI32Type(),
-            byteGEP(builder, loc, accumulator,
-                    offsetof(obelisk_rt_generated_nba_accumulator_256,
-                             exec_region)),
+            nbaFieldGEP(builder, loc, accumulator,
+                        offsetof(obelisk_rt_generated_nba_accumulator_256,
+                                 exec_region)),
             4);
         Value capturedMask = LLVM::LoadOp::create(
             builder, loc, builder.getI64Type(),
-            byteGEP(
+            nbaFieldGEP(
                 builder, loc, accumulator,
                 offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
             8);
@@ -267,9 +269,9 @@ void transfer(OpBuilder &builder, Location loc, Value frame,
           offsetof(obelisk_rt_generated_nba_accumulator_256, unknown),
           offsetof(obelisk_rt_generated_nba_accumulator_256, transient)};
       for (unsigned lane = 0; lane != 3; ++lane) {
-        if (lane == 2 && !root.transient)
+        if ((lane == 1 && root.twoState) || (lane == 2 && !root.transient))
           continue;
-        Value canonical = byteGEP(builder, loc, accumulator, offsets[lane]);
+        Value canonical = nbaFieldGEP(builder, loc, accumulator, offsets[lane]);
         if (exporting)
           LLVM::StoreOp::create(builder, loc,
                                 load(builder, loc, frame, field(root, lane)),
@@ -282,21 +284,22 @@ void transfer(OpBuilder &builder, Location loc, Value frame,
       if (exporting) {
         LLVM::StoreOp::create(
             builder, loc, constant(builder, loc, root.mask),
-            byteGEP(
+            nbaFieldGEP(
                 builder, loc, accumulator,
                 offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
             8);
         LLVM::StoreOp::create(
             builder, loc, llvmConstant(builder, loc, builder.getI32Type(), 1),
-            byteGEP(builder, loc, accumulator,
-                    offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
+            nbaFieldGEP(
+                builder, loc, accumulator,
+                offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
             4);
         LLVM::StoreOp::create(
             builder, loc,
             llvmConstant(builder, loc, builder.getI32Type(), root.region),
-            byteGEP(builder, loc, accumulator,
-                    offsetof(obelisk_rt_generated_nba_accumulator_256,
-                             exec_region)),
+            nbaFieldGEP(builder, loc, accumulator,
+                        offsetof(obelisk_rt_generated_nba_accumulator_256,
+                                 exec_region)),
             4);
         Value old =
             LLVM::LoadOp::create(builder, loc, builder.getI64Type(), leaf, 8);
@@ -332,21 +335,22 @@ void transfer(OpBuilder &builder, Location loc, Value frame,
         // after the private consumer commits it (LRM 4.9.4/10.4.2).
         LLVM::StoreOp::create(
             builder, loc, llvmConstant(builder, loc, builder.getI32Type(), 0),
-            byteGEP(builder, loc, accumulator,
-                    offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
+            nbaFieldGEP(
+                builder, loc, accumulator,
+                offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
             4);
         LLVM::StoreOp::create(
             builder, loc, constant(builder, loc, 0),
-            byteGEP(
+            nbaFieldGEP(
                 builder, loc, accumulator,
                 offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
             8);
         if (root.transient)
           LLVM::StoreOp::create(
               builder, loc, constant(builder, loc, 0),
-              byteGEP(builder, loc, accumulator,
-                      offsetof(obelisk_rt_generated_nba_accumulator_256,
-                               transient)),
+              nbaFieldGEP(builder, loc, accumulator,
+                          offsetof(obelisk_rt_generated_nba_accumulator_256,
+                                   transient)),
               8);
         LLVM::StoreOp::create(
             builder, loc,
@@ -679,8 +683,9 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
   }
   uint64_t frameBytes = words.size() * 8;
   for (auto &root : roots) {
+    root.twoState = bool(native::get<native::TwoState>(module));
     root.payloadOffset = frameBytes;
-    frameBytes += root.transient ? 24 : 16;
+    frameBytes += (root.transient ? 24 : 16) - (root.twoState ? 8 : 0);
   }
 
   // Freeze the transitive pure-call inventory before moving bodies. Outlined
@@ -911,7 +916,8 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
                             transient))
             lane = 2;
           if (lane) {
-            if (*lane == 2 && !root.transient) {
+            if ((*lane == 1 && root.twoState) ||
+                (*lane == 2 && !root.transient)) {
               if (read) {
                 read.replaceAllUsesWith(constant(builder, loc, 0));
                 read.erase();
@@ -1190,8 +1196,9 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
     for (const auto &root : roots)
       if (scope.test(root.ordinal))
         for (unsigned lane = 0; lane != (root.transient ? 3u : 2u); ++lane)
-          store(builder, loc, local, field(root, lane),
-                constant(builder, loc, 0));
+          if (lane != 1 || !root.twoState)
+            store(builder, loc, local, field(root, lane),
+                  constant(builder, loc, 0));
     transfer(builder, loc, local, roots, words,
              masks.lookup(original.getOperation()), false, writable);
     SmallVector<Value> args(entry->getArguments());

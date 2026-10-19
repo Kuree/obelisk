@@ -124,6 +124,8 @@ inline uint64_t loadPackedBits(const Plane &plane,
 
 inline uint64_t loadPackedBytes(const uint8_t *plane, uint64_t bitOffset,
                                 uint64_t bitWidth) {
+  if (!plane)
+    return 0;
   uint64_t firstByte = bitOffset / 8;
   uint32_t shift = bitOffset % 8;
   uint64_t byteCount = (shift + bitWidth + 7) / 8;
@@ -185,6 +187,8 @@ inline void storePackedBits(Plane &plane, uint64_t bitOffset,
 
 inline void storePackedBytes(uint8_t *plane, uint64_t bitOffset,
                              uint64_t bitWidth, uint64_t value) {
+  if (!plane)
+    return;
   uint64_t firstByte = bitOffset / 8;
   uint32_t shift = bitOffset % 8;
   uint64_t byteCount = (shift + bitWidth + 7) / 8;

@@ -789,9 +789,12 @@ public:
         Value oldValue = loadStatePlane(rewriter, op.getLoc(), netHandle,
                                         driveType, "__obelisk_state_value",
                                         false, layout.bitCount, &layout);
-        Value oldUnknown = loadStatePlane(rewriter, op.getLoc(), netHandle,
-                                          driveType, "__obelisk_state_unknown",
-                                          true, layout.bitCount, &layout);
+        Value oldUnknown =
+            net->fourState
+                ? loadStatePlane(rewriter, op.getLoc(), netHandle, driveType,
+                                 "__obelisk_state_unknown", true,
+                                 layout.bitCount, &layout)
+                : integerConstant(APInt::getZero(driveType.getWidth()));
         Value publishValue = driveValue;
         Value publishUnknown = driveUnknown;
         if (!net->fourState) {
@@ -813,9 +816,15 @@ public:
         Value valueChanged = storeStatePlane(
             rewriter, op.getLoc(), publication.handle, publication.value,
             "__obelisk_state_value", layout.bitCount, &layout);
-        Value unknownChanged = storeStatePlane(
-            rewriter, op.getLoc(), publication.handle, publication.unknown,
-            "__obelisk_state_unknown", layout.bitCount, &layout);
+        // The unknown plane of an integer net is permanently zero, including
+        // after external writes. Do not touch it for every known publication.
+        Value unknownChanged =
+            publication.net->fourState
+                ? storeStatePlane(rewriter, op.getLoc(), publication.handle,
+                                  publication.unknown,
+                                  "__obelisk_state_unknown", layout.bitCount,
+                                  &layout)
+                : boolean(false);
         changed = arith::OrIOp::create(
             rewriter, op.getLoc(), changed,
             arith::OrIOp::create(rewriter, op.getLoc(), valueChanged,

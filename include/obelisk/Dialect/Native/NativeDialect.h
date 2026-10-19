@@ -21,6 +21,10 @@ namespace obelisk::native {
 using OptimizationLevel = NativeDialect::OptimizationLevelAttrHelper;
 using MaxStateDomainFunctions =
     NativeDialect::MaxStateDomainFunctionsAttrHelper;
+using DisableTwoStateSpecialization =
+    NativeDialect::DisableTwoStateSpecializationAttrHelper;
+using TwoState = NativeDialect::TwoStateAttrHelper;
+using NBAField = NativeDialect::NbaFieldAttrHelper;
 using DebugTiming = NativeDialect::DebugTimingAttrHelper;
 using ClosedExecutable = NativeDialect::ClosedExecutableAttrHelper;
 using Partition = NativeDialect::PartitionAttrHelper;

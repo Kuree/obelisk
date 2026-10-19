@@ -2058,8 +2058,8 @@ bool publishNativeSignalTransitionUnlocked(
       if (!byteBit(changed, bit) || !canonicalBit(bit, absolute))
         continue;
       uint64_t mask = uint64_t{1} << (absolute % 64);
-      uint64_t &valueLimb = context->stateValue[absolute / 64];
-      uint64_t &unknownLimb = context->stateUnknown[absolute / 64];
+      auto valueLimb = context->stateValue[absolute / 64];
+      auto unknownLimb = context->stateUnknown[absolute / 64];
       valueLimb = byteBit(newValue, bit) ? valueLimb | mask : valueLimb & ~mask;
       unknownLimb = newUnknown && byteBit(newUnknown, bit)
                         ? unknownLimb | mask
@@ -2302,10 +2302,10 @@ uint64_t extractBatchBits(const uint64_t *plane, uint64_t position,
 void depositBatchBits(uint64_t *plane, uint64_t position, uint64_t width,
                       uint64_t mask, uint64_t bits) {
   uint64_t shift = position % 64;
-  uint64_t &low = plane[position / 64];
+  auto &low = plane[position / 64];
   low = (low & ~(mask << shift)) | ((bits & mask) << shift);
   if (shift != 0 && shift + width > 64) {
-    uint64_t &high = plane[position / 64 + 1];
+    auto &high = plane[position / 64 + 1];
     high = (high & ~(mask >> (64 - shift))) | ((bits & mask) >> (64 - shift));
   }
 }

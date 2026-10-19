@@ -4062,6 +4062,7 @@ public:
     }
     if (failed(detail::materializeNativeEvalTransactions(module)))
       return signalPassFailure();
+    detail::eliminateTwoStateUnknownPlane(module);
     markTiming("native eval transaction materialization");
     schedule::cacheNativePureCones(module);
     auto partitionInventory =
@@ -4104,6 +4105,8 @@ public:
     ::obelisk::schedule::remove<::obelisk::schedule::Field::MaxInlineOps>(
         module);
     native::remove<native::MaxStateDomainFunctions>(module);
+    native::remove<native::DisableTwoStateSpecialization>(module);
+    native::remove<native::TwoState>(module);
     native::remove<native::DebugTiming>(module);
     markTiming("native function finalization");
     if (failed(verify(module)))

@@ -193,7 +193,7 @@ void emitScalarNBACommitLoop(OpBuilder &b, ModuleOp module,
   Value accumulator = LLVM::LoadOp::create(
       b, loc, ptr, gep(address(accumulatorTable), ptr, index));
   auto field = [&](uint64_t offset) -> Value {
-    return byteGEP(b, loc, accumulator, offset);
+    return nbaFieldGEP(b, loc, accumulator, offset);
   };
   auto field64 = [&](uint64_t offset) -> Value {
     return LLVM::LoadOp::create(b, loc, i64, field(offset), 8);

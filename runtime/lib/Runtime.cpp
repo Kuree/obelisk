@@ -1221,7 +1221,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
                                       OBELISK_RT_EXECUTION_DPI_EXPORTS |
                                       OBELISK_RT_EXECUTION_CLASS_BITSTREAM |
                                       OBELISK_RT_EXECUTION_COVERAGE_SCHEMA |
-                                      OBELISK_RT_EXECUTION_POLLED_COLLECTION;
+                                      OBELISK_RT_EXECUTION_POLLED_COLLECTION |
+                                      OBELISK_RT_EXECUTION_TWO_STATE;
       if (execution->version != OBELISK_RT_VERSION ||
           execution->dpi_reserved != 0 ||
           (execution->flags & ~validFlags) != 0 ||
@@ -1299,7 +1300,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
       size_t limbs =
           static_cast<size_t>((execution->state_bit_count + 63) / 64);
       context->stateValue.assign(limbs, 0);
-      context->stateUnknown.assign(limbs, UINT64_MAX);
+      if (context->twoState())
+        context->stateUnknown.assignZero(limbs);
+      else
+        context->stateUnknown.assign(limbs, UINT64_MAX);
       unsigned tail = static_cast<unsigned>(execution->state_bit_count % 64);
       if (tail != 0)
         context->stateUnknown.back() &= (uint64_t{1} << tail) - 1;

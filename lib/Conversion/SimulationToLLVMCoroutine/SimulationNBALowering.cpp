@@ -816,7 +816,8 @@ public:
                                   position(sourceValue),
                                   position(sourceUnknown));
       auto mergeField = [&](size_t fieldOffset, Value positioned) {
-        Value address = byteGEP(rewriter, location, accumulator, fieldOffset);
+        Value address =
+            nbaFieldGEP(rewriter, location, accumulator, fieldOffset);
         Value previous =
             LLVM::LoadOp::create(rewriter, location, i64, address, 8);
         Value merged = arith::OrIOp::create(
@@ -833,7 +834,7 @@ public:
                  position(sourceValue));
       mergeField(offsetof(obelisk_rt_generated_nba_accumulator_256, unknown),
                  position(sourceUnknown));
-      Value maskAddress = byteGEP(
+      Value maskAddress = nbaFieldGEP(
           rewriter, location, accumulator,
           offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask));
       Value previousMask =
@@ -842,9 +843,9 @@ public:
           rewriter, location,
           arith::OrIOp::create(rewriter, location, previousMask, mask),
           maskAddress, 8);
-      Value validAddress =
-          byteGEP(rewriter, location, accumulator,
-                  offsetof(obelisk_rt_generated_nba_accumulator_256, valid));
+      Value validAddress = nbaFieldGEP(
+          rewriter, location, accumulator,
+          offsetof(obelisk_rt_generated_nba_accumulator_256, valid));
       Value previousValid =
           LLVM::LoadOp::create(rewriter, location, i32, validAddress, 4);
       LLVM::StoreOp::create(
@@ -856,7 +857,7 @@ public:
       LLVM::StoreOp::create(
           rewriter, location,
           llvmConstant(rewriter, location, i32, commitRegion),
-          byteGEP(
+          nbaFieldGEP(
               rewriter, location, accumulator,
               offsetof(obelisk_rt_generated_nba_accumulator_256, exec_region)),
           4);
@@ -1262,7 +1263,7 @@ public:
               *width == 64 ? UINT64_MAX : (uint64_t{1} << *width) - 1;
           uint64_t mask = sourceMask << decoded.offset;
           auto mergeField = [&](size_t fieldOffset, Value fieldValue) {
-            Value address = byteGEP(rewriter, location, base, fieldOffset);
+            Value address = nbaFieldGEP(rewriter, location, base, fieldOffset);
             Value positioned = fieldValue;
             if (decoded.offset != 0)
               positioned = arith::ShLIOp::create(
@@ -1347,7 +1348,7 @@ public:
               unknown);
           if (!compactEvalMetadata ||
               (!fullRootEvalStage && fixedWriteMask == 0)) {
-            Value maskAddress = byteGEP(
+            Value maskAddress = nbaFieldGEP(
                 rewriter, location, base,
                 offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask));
             Value oldMask =
@@ -1365,7 +1366,7 @@ public:
               LLVM::TruncOp::create(rewriter, location, i32, value);
           LLVM::StoreOp::create(
               rewriter, location, laneValue,
-              byteGEP(
+              nbaFieldGEP(
                   rewriter, location, base,
                   offsetof(obelisk_rt_generated_nba_accumulator_256, value) +
                       laneOffset),
@@ -1377,14 +1378,14 @@ public:
           LLVM::StoreOp::create(
               rewriter, location,
               llvmConstant(rewriter, location, i32, UINT32_MAX),
-              byteGEP(rewriter, location, base,
-                      offsetof(obelisk_rt_generated_nba_accumulator_256,
-                               write_mask) +
-                          laneOffset),
+              nbaFieldGEP(rewriter, location, base,
+                          offsetof(obelisk_rt_generated_nba_accumulator_256,
+                                   write_mask) +
+                              laneOffset),
               4);
           LLVM::StoreOp::create(
               rewriter, location, llvmConstant(rewriter, location, i32, 0),
-              byteGEP(
+              nbaFieldGEP(
                   rewriter, location, base,
                   offsetof(obelisk_rt_generated_nba_accumulator_256, unknown) +
                       laneOffset),
@@ -1393,16 +1394,16 @@ public:
         if (!fixedRegionEvalStage) {
           LLVM::StoreOp::create(
               rewriter, location, llvmConstant(rewriter, location, i32, 1),
-              byteGEP(
+              nbaFieldGEP(
                   rewriter, location, base,
                   offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
               4);
           LLVM::StoreOp::create(
               rewriter, location,
               llvmConstant(rewriter, location, i32, commitRegion),
-              byteGEP(rewriter, location, base,
-                      offsetof(obelisk_rt_generated_nba_accumulator_256,
-                               exec_region)),
+              nbaFieldGEP(rewriter, location, base,
+                          offsetof(obelisk_rt_generated_nba_accumulator_256,
+                                   exec_region)),
               4);
         }
         Value dirtyBase = LLVM::AddressOfOp::create(
@@ -1675,8 +1676,8 @@ void emitGeneratedNBATransient(OpBuilder &builder, Location location,
                                Value newValue, Value newUnknown, Value staged) {
   Type i64 = builder.getI64Type();
   auto field = [&](size_t offset) {
-    return byteGEP(builder, location, accumulator,
-                   offset + word * sizeof(uint64_t));
+    return nbaFieldGEP(builder, location, accumulator,
+                       offset + word * sizeof(uint64_t));
   };
   auto load = [&](size_t offset) {
     return LLVM::LoadOp::create(builder, location, i64, field(offset), 8)

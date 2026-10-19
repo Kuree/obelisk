@@ -10,7 +10,7 @@
 namespace {
 
 bool getBit(const uint8_t *bytes, uint64_t bit) {
-  return (bytes[bit / 8] & static_cast<uint8_t>(1u << (bit % 8))) != 0;
+  return bytes && (bytes[bit / 8] & static_cast<uint8_t>(1u << (bit % 8))) != 0;
 }
 
 void setBit(uint8_t *bytes, uint64_t bit, bool value) {
@@ -122,7 +122,8 @@ obelisk_rt_capture_preponed_unlocked(obelisk_rt_context *context) {
         last.snapshot_byte_offset + (last.bit_width + 7) / 8;
     size_t words = static_cast<size_t>((snapshotBytes + 7) / 8);
     context->preponedValue.resize(words);
-    context->preponedUnknown.resize(words);
+    if (!context->twoState())
+      context->preponedUnknown.resize(words);
 
     const uint8_t *value = nullptr;
     const uint8_t *unknown = nullptr;
@@ -135,7 +136,7 @@ obelisk_rt_capture_preponed_unlocked(obelisk_rt_context *context) {
       value = context->nativeStateValue;
       unknown = context->nativeStateUnknown;
     }
-    if (!value || !unknown) {
+    if (!value || (!unknown && !context->twoState())) {
       size_t stateWords =
           static_cast<size_t>((execution.state_bit_count + 63) / 64);
       if (context->stateValue.size() != stateWords ||
@@ -154,8 +155,9 @@ obelisk_rt_capture_preponed_unlocked(obelisk_rt_context *context) {
           extension.sampled_ranges[index];
       copyPackedRange(sampledValue + range.snapshot_byte_offset, value,
                       stateBytes, range.source_bit_offset, range.bit_width);
-      copyPackedRange(sampledUnknown + range.snapshot_byte_offset, unknown,
-                      stateBytes, range.source_bit_offset, range.bit_width);
+      if (sampledUnknown)
+        copyPackedRange(sampledUnknown + range.snapshot_byte_offset, unknown,
+                        stateBytes, range.source_bit_offset, range.bit_width);
     }
     return OBELISK_RT_OK;
   }
@@ -195,7 +197,8 @@ obelisk_rt_v1_sampled_read(obelisk_rt_context *context, uint64_t stableID,
     if (!resolveCanonicalRange(context, stableID, bitWidth, canonicalStart) ||
         !resolveSnapshotRange(context, canonicalStart, bitWidth,
                               snapshotStart) ||
-        context->preponedValue.empty() || context->preponedUnknown.empty())
+        context->preponedValue.empty() ||
+        (context->preponedUnknown.empty() && !context->twoState()))
       return OBELISK_RT_INVALID_HANDLE;
     std::memset(outValue, 0, bytes);
     std::memset(outUnknown, 0, bytes);
@@ -234,8 +237,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_sampled_history(
       history.bitWidth = bitWidth;
       history.depth = depth;
       history.value.assign(static_cast<size_t>(depth) * bytes, 0);
-      history.unknown.assign(static_cast<size_t>(depth) * bytes,
-                             fourState ? UINT8_MAX : 0);
+      if (fourState)
+        history.unknown.assign(static_cast<size_t>(depth) * bytes,
+                               fourState ? UINT8_MAX : 0);
       if (bitWidth % 8 != 0 && fourState)
         for (uint64_t index = 0; index != depth; ++index)
           history.unknown[index * bytes + bytes - 1] &=
@@ -246,15 +250,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_sampled_history(
 
     uint64_t selected = history.count < depth ? history.count : history.next;
     std::memcpy(outValue, history.value.data() + selected * bytes, bytes);
-    std::memcpy(outUnknown, history.unknown.data() + selected * bytes, bytes);
+    if (fourState)
+      std::memcpy(outUnknown, history.unknown.data() + selected * bytes, bytes);
+    else
+      std::memset(outUnknown, 0, bytes);
     if (gate) {
       std::memcpy(history.value.data() + history.next * bytes, currentValue,
                   bytes);
       if (fourState)
         std::memcpy(history.unknown.data() + history.next * bytes,
                     currentUnknown, bytes);
-      else
-        std::memset(history.unknown.data() + history.next * bytes, 0, bytes);
       history.next = (history.next + 1) % depth;
       if (history.count < depth)
         ++history.count;
@@ -284,8 +289,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_clocked_sample_update(
       history.bitWidth = bitWidth;
       history.depth = capacity;
       history.value.assign(static_cast<size_t>(capacity) * bytes, 0);
-      history.unknown.assign(static_cast<size_t>(capacity) * bytes,
-                             fourState ? UINT8_MAX : 0);
+      if (fourState)
+        history.unknown.assign(static_cast<size_t>(capacity) * bytes,
+                               fourState ? UINT8_MAX : 0);
       if (bitWidth % 8 != 0 && fourState)
         for (uint64_t index = 0; index != capacity; ++index)
           history.unknown[index * bytes + bytes - 1] &=
@@ -300,8 +306,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_clocked_sample_update(
     if (fourState)
       std::memcpy(history.unknown.data() + history.next * bytes, currentUnknown,
                   bytes);
-    else
-      std::memset(history.unknown.data() + history.next * bytes, 0, bytes);
     history.next = (history.next + 1) % capacity;
     if (history.count < capacity)
       ++history.count;
@@ -339,7 +343,8 @@ obelisk_rt_v1_clocked_sample_read(obelisk_rt_context *context, uint64_t siteID,
       return OBELISK_RT_OK;
     uint64_t index = (history.next + capacity - 1 - age) % capacity;
     std::memcpy(outValue, history.value.data() + index * bytes, bytes);
-    std::memcpy(outUnknown, history.unknown.data() + index * bytes, bytes);
+    if (fourState)
+      std::memcpy(outUnknown, history.unknown.data() + index * bytes, bytes);
     return OBELISK_RT_OK;
   }
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }

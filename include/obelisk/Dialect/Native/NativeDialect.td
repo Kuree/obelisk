@@ -24,6 +24,12 @@ def NativeDialect : Dialect {
     // Module: compilation options.
     "::mlir::IntegerAttr":$optimization_level,
     "::mlir::IntegerAttr":$max_state_domain_functions,
+    // Preserve four-state computation; also applies to bytecode narrowing.
+    "::mlir::UnitAttr":$disable_two_state_specialization,
+    // Frontend two-state semantics with value-only canonical storage.
+    "::mlir::UnitAttr":$two_state,
+    // Logical NBA field addresses, retained until transaction planning ends.
+    "::mlir::IntegerAttr":$nba_field,
     // Print native planning and timing diagnostics to stderr.
     "::mlir::UnitAttr":$debug_timing,
     // The driver lowers a complete executable and may omit unreferenced

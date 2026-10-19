@@ -1812,7 +1812,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           }
           if (absolute % 64 != 0 || absolute / 64 >= context->stateValue.size())
             return OBELISK_RT_INVALID_HANDLE;
-          uint64_t &slot = context->stateValue[absolute / 64];
+          auto slot = context->stateValue[absolute / 64];
           if (instruction.opcode == OBELISK_RT_DB_LOAD_STATE)
             managed = slot;
           else {
@@ -1952,7 +1952,10 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             if (context->assignMask.empty()) {
               context->assignMask.assign(limbs, 0);
               context->assignValue.assign(limbs, 0);
-              context->assignUnknown.assign(limbs, 0);
+              if (context->twoState())
+                context->assignUnknown.assignZero(limbs);
+              else
+                context->assignUnknown.assign(limbs, 0);
             }
           } else if (context->forceMask.empty()) {
             context->forceMask.assign(limbs, 0);
@@ -1963,7 +1966,10 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           size_t limbs = context->stateValue.size();
           context->continuousMask.assign(limbs, 0);
           context->continuousValue.assign(limbs, 0);
-          context->continuousUnknown.assign(limbs, 0);
+          if (context->twoState())
+            context->continuousUnknown.assignZero(limbs);
+          else
+            context->continuousUnknown.assign(limbs, 0);
         }
         bool equalStringContents = false;
         if (valueLayout.kind == OBELISK_RT_DBREG_STRING && !isLoad) {
@@ -2008,8 +2014,7 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             if (absolute % 64 != 0 ||
                 absolute / 64 >= context->stateValue.size())
               return OBELISK_RT_INVALID_HANDLE;
-            std::memcpy(&previous, &context->stateValue[absolute / 64],
-                        sizeof(previous));
+            previous = context->stateValue[absolute / 64];
           }
           if (obelisk_rt_validate_string(context, previous) != OBELISK_RT_OK ||
               obelisk_rt_validate_string(context, next) != OBELISK_RT_OK)

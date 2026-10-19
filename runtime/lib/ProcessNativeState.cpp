@@ -91,7 +91,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_initialize(
     obelisk_rt_context *context, uint8_t *value, uint8_t *unknown,
     uint64_t bitCount, const obelisk_rt_native_state_fill_v1 *fills,
     uint64_t fillCount) {
-  if (!context || !value || !unknown || value == unknown ||
+  if (!context || !value || (!unknown && !context->twoState()) ||
+      value == unknown ||
       (reinterpret_cast<uintptr_t>(value) % alignof(uint64_t)) ||
       (reinterpret_cast<uintptr_t>(unknown) % alignof(uint64_t)) ||
       (fillCount && !fills) ||
@@ -120,7 +121,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_initialize(
   // including partial bytes and zero padding outside the canonical state.
   size_t bytes = static_cast<size_t>((bitCount + 7) / 8) + 8;
   std::memset(value, 0, bytes);
-  std::memset(unknown, 0, bytes);
+  if (unknown)
+    std::memset(unknown, 0, bytes);
   auto set = [](uint8_t *plane, uint64_t begin, uint64_t width) {
     uint64_t end = begin + width;
     size_t first = static_cast<size_t>(begin / 8);
@@ -138,9 +140,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_initialize(
   };
   for (uint64_t i = 0; i < fillCount; ++i) {
     const auto &fill = fills[i];
-    if (fill.value)
+    if (fill.value && (unknown || !fill.unknown))
       set(value, fill.bit_offset, fill.bit_width);
-    if (fill.unknown)
+    if (fill.unknown && unknown)
       set(unknown, fill.bit_offset, fill.bit_width);
   }
   context->nativeStateInitialized = true;
@@ -409,7 +411,8 @@ obelisk_rt_v1_native_state_mark_unknown(obelisk_rt_context *context,
 bool validNativeStatePlanesUnlocked(const obelisk_rt_context *context,
                                     const uint8_t *value,
                                     const uint8_t *unknown, uint64_t bitCount) {
-  return context && value && unknown && context->execution &&
+  return context && value && (unknown || context->twoState()) &&
+         context->execution &&
          context->execution->state_bit_count == bitCount &&
          context->stateValue.size() == (bitCount + 63) / 64 &&
          context->stateUnknown.size() == context->stateValue.size() &&
@@ -427,7 +430,8 @@ static bool executionHasBytecodeState(const obelisk_rt_context *context) {
 
 static bool hasBoundNativeStatePlanes(const obelisk_rt_context *context,
                                       uint64_t bitCount) {
-  return context->nativeStateValue && context->nativeStateUnknown &&
+  return context->nativeStateValue &&
+         (context->nativeStateUnknown || context->twoState()) &&
          context->nativeStateBitCount >= bitCount;
 }
 
@@ -446,7 +450,8 @@ bool importNativeStatePlanesUnlocked(obelisk_rt_context *context,
   size_t byteCount = static_cast<size_t>((bitCount + 7) / 8);
   if (byteCount != 0) {
     std::memcpy(context->stateValue.data(), value, byteCount);
-    std::memcpy(context->stateUnknown.data(), unknown, byteCount);
+    if (unknown && context->stateUnknown.data())
+      std::memcpy(context->stateUnknown.data(), unknown, byteCount);
   }
 #else
   for (uint64_t bit = 0; bit != bitCount; ++bit) {
@@ -466,7 +471,8 @@ bool importNativeStatePlanesUnlocked(obelisk_rt_context *context,
 }
 
 bool importNativeRootInitializerPlanesUnlocked(obelisk_rt_context *context) {
-  if (!context || !context->nativeStateValue || !context->nativeStateUnknown)
+  if (!context || !context->nativeStateValue ||
+      (!context->nativeStateUnknown && !context->twoState()))
     return true;
   if (!context->execution ||
       context->nativeStateBitCount < context->execution->state_bit_count)
@@ -494,16 +500,23 @@ bool exportNativeStatePlanesUnlocked(const obelisk_rt_context *context,
     defined(_WIN32)
   if (byteCount != 0) {
     std::memcpy(value, context->stateValue.data(), byteCount);
-    std::memcpy(unknown, context->stateUnknown.data(), byteCount);
+    if (unknown) {
+      if (context->stateUnknown.data())
+        std::memcpy(unknown, context->stateUnknown.data(), byteCount);
+      else
+        std::memset(unknown, 0, byteCount);
+    }
     if (bitCount % 8 != 0) {
       uint8_t mask = static_cast<uint8_t>((1u << (bitCount % 8)) - 1);
       value[byteCount - 1] &= mask;
-      unknown[byteCount - 1] &= mask;
+      if (unknown)
+        unknown[byteCount - 1] &= mask;
     }
   }
 #else
   std::fill_n(value, byteCount, uint8_t{0});
-  std::fill_n(unknown, byteCount, uint8_t{0});
+  if (unknown)
+    std::fill_n(unknown, byteCount, uint8_t{0});
   for (uint64_t bit = 0; bit != bitCount; ++bit) {
     uint64_t mask = uint64_t{1} << (bit % 64);
     setByteBit(value, bit, (context->stateValue[bit / 64] & mask) != 0);
@@ -588,7 +601,8 @@ bool nativeMaskIntersectsRange(const std::vector<uint64_t> &mask,
 void obelisk_rt_sync_native_state_range_unlocked(obelisk_rt_context *context,
                                                  uint64_t begin,
                                                  uint64_t width) {
-  if (!context || !context->nativeStateValue || !context->nativeStateUnknown ||
+  if (!context || !context->nativeStateValue ||
+      (!context->nativeStateUnknown && !context->twoState()) ||
       begin >= context->nativeStateBitCount)
     return;
   uint64_t end = begin + std::min(width, context->nativeStateBitCount - begin);
@@ -622,7 +636,7 @@ bool storeNativeScheduleStateUnlocked(obelisk_rt_context *context,
     return false;
   const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
   if (plan && plan->state_bit_count != 0) {
-    if (!plan->state_value || !plan->state_unknown ||
+    if (!plan->state_value || (!plan->state_unknown && !context->twoState()) ||
         bitOffset > plan->state_bit_count ||
         bitWidth > plan->state_bit_count - bitOffset)
       return false;
@@ -635,7 +649,8 @@ bool storeNativeScheduleStateUnlocked(obelisk_rt_context *context,
   // older value.
   if (context->nativeStateValue || context->nativeStateUnknown ||
       context->nativeStateBitCount != 0) {
-    if (!context->nativeStateValue || !context->nativeStateUnknown ||
+    if (!context->nativeStateValue ||
+        (!context->nativeStateUnknown && !context->twoState()) ||
         bitOffset > context->nativeStateBitCount ||
         bitWidth > context->nativeStateBitCount - bitOffset)
       return false;
@@ -803,8 +818,8 @@ nativeOverride(obelisk_rt_context *context, uint8_t *globalValue,
                uint64_t bitWidth, uint32_t descriptorKind, uint32_t assign,
                bool dynamic, uint64_t ownerProcess, bool claim,
                const uint8_t *value, const uint8_t *unknown) {
-  if (!context || !globalValue || !globalUnknown || !value || bitWidth == 0 ||
-      bitWidth > UINT64_MAX - 7 || assign > 1 ||
+  if (!context || !globalValue || (!globalUnknown && !context->twoState()) ||
+      !value || bitWidth == 0 || bitWidth > UINT64_MAX - 7 || assign > 1 ||
       (dynamic && ownerProcess == 0) ||
       (descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE &&
        descriptorKind != OBELISK_RT_DESCRIPTOR_NET) ||
@@ -905,7 +920,10 @@ nativeOverride(obelisk_rt_context *context, uint8_t *globalValue,
         if (context->assignMask.empty()) {
           context->assignMask.assign(limbs, 0);
           context->assignValue.assign(limbs, 0);
-          context->assignUnknown.assign(limbs, 0);
+          if (context->twoState())
+            context->assignUnknown.assignZero(limbs);
+          else
+            context->assignUnknown.assign(limbs, 0);
         }
       } else if (context->forceMask.empty()) {
         context->forceMask.assign(limbs, 0);
@@ -992,8 +1010,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_release_override(
     obelisk_rt_context *context, uint8_t *globalValue, uint8_t *globalUnknown,
     uint64_t globalBitCount, uint64_t handle, uint64_t bitWidth,
     uint32_t descriptorKind, uint32_t assign) {
-  if (!context || !globalValue || !globalUnknown || bitWidth == 0 ||
-      bitWidth > UINT64_MAX - 7 || assign > 1 ||
+  if (!context || !globalValue || (!globalUnknown && !context->twoState()) ||
+      bitWidth == 0 || bitWidth > UINT64_MAX - 7 || assign > 1 ||
       (descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE &&
        descriptorKind != OBELISK_RT_DESCRIPTOR_NET) ||
       (assign && descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE) ||
@@ -1114,12 +1132,17 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
     obelisk_rt_context *context, const uint8_t *globalPlane,
     uint64_t globalBitCount, uint64_t handle, uint64_t bitWidth,
     uint32_t unknownPlane, uint32_t fallback, uint8_t *outValue) {
-  if (!context || !globalPlane || !outValue || bitWidth == 0 ||
-      bitWidth > UINT64_MAX - 7 || unknownPlane > 1 || fallback > 1)
+  if (!context || (!globalPlane && !(unknownPlane && context->twoState())) ||
+      !outValue || bitWidth == 0 || bitWidth > UINT64_MAX - 7 ||
+      unknownPlane > 1 || fallback > 1)
     return OBELISK_RT_INVALID_ARGUMENT;
   uint64_t byteCount = (bitWidth + 7) / 8;
   if (byteCount > std::numeric_limits<size_t>::max())
     return OBELISK_RT_INVALID_ARGUMENT;
+  if (unknownPlane && context->twoState()) {
+    std::memset(outValue, 0, static_cast<size_t>(byteCount));
+    return OBELISK_RT_OK;
+  }
   std::memset(outValue, fallback ? UINT8_MAX : 0,
               static_cast<size_t>(byteCount));
   auto maskPadding = [&] {
@@ -1293,13 +1316,16 @@ static obelisk_rt_status nativeStateStorePlane(
     obelisk_rt_context *context, uint8_t *globalPlane, uint64_t globalBitCount,
     uint64_t handle, uint64_t bitWidth, uint32_t unknownPlane,
     const uint8_t *value, uint8_t *outChanged, bool continuous) {
-  if (!context || !globalPlane || !value || !outChanged || bitWidth == 0 ||
-      bitWidth > UINT64_MAX - 7 || unknownPlane > 1)
+  if (!context || (!globalPlane && !(unknownPlane && context->twoState())) ||
+      !value || !outChanged || bitWidth == 0 || bitWidth > UINT64_MAX - 7 ||
+      unknownPlane > 1)
     return OBELISK_RT_INVALID_ARGUMENT;
   uint64_t byteCount = (bitWidth + 7) / 8;
   if (byteCount > std::numeric_limits<size_t>::max())
     return OBELISK_RT_INVALID_ARGUMENT;
   *outChanged = 0;
+  if (unknownPlane && context->twoState())
+    return OBELISK_RT_OK;
   if (handle == UINT64_MAX)
     return OBELISK_RT_OK;
   ContextTransaction transaction(context);
@@ -1375,7 +1401,10 @@ static obelisk_rt_status nativeStateStorePlane(
       if (continuous && context->continuousMask.empty()) {
         context->continuousMask.assign(canonicalPlane->size(), 0);
         context->continuousValue.assign(canonicalPlane->size(), 0);
-        context->continuousUnknown.assign(canonicalPlane->size(), 0);
+        if (context->twoState())
+          context->continuousUnknown.assignZero(canonicalPlane->size());
+        else
+          context->continuousUnknown.assign(canonicalPlane->size(), 0);
       }
     }
     // IEEE 1800-2023 6.11.2 and 9.4.2: a generic captured-handle store must
@@ -1440,9 +1469,8 @@ static obelisk_rt_status nativeStateStorePlane(
         next |= uint64_t{value[byte]} << (byte * 8);
       next &= packedWidthMask(bitWidth);
       if (continuous) {
-        std::vector<uint64_t> &retained = unknownPlane
-                                              ? context->continuousUnknown
-                                              : context->continuousValue;
+        auto &retained = unknownPlane ? context->continuousUnknown
+                                      : context->continuousValue;
         storePackedBits(retained, destination, bitWidth, next);
         storePackedBits(context->continuousMask, destination, bitWidth,
                         packedWidthMask(bitWidth));
@@ -1474,10 +1502,9 @@ static obelisk_rt_status nativeStateStorePlane(
           (context->assignMask[destination / 64] & destinationMask) != 0;
       bool next = byteBit(value, bit);
       if (canonical && continuous) {
-        std::vector<uint64_t> &retained = unknownPlane
-                                              ? context->continuousUnknown
-                                              : context->continuousValue;
-        uint64_t &retainedLimb = retained[destination / 64];
+        auto &retained = unknownPlane ? context->continuousUnknown
+                                      : context->continuousValue;
+        auto retainedLimb = retained[destination / 64];
         retainedLimb = next ? retainedLimb | destinationMask
                             : retainedLimb & ~destinationMask;
         context->continuousMask[destination / 64] |= destinationMask;
@@ -1494,7 +1521,7 @@ static obelisk_rt_status nativeStateStorePlane(
       setByteBit(globalPlane, destination, next);
       if (canonical) {
         uint64_t mask = uint64_t{1} << (destination % 64);
-        uint64_t &limb = (*canonicalPlane)[destination / 64];
+        auto limb = (*canonicalPlane)[destination / 64];
         limb = next ? limb | mask : limb & ~mask;
       }
     }

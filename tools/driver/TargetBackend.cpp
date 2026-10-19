@@ -13,6 +13,7 @@
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/Transforms/Passes.h"
+#include "obelisk/Runtime/Runtime.h"
 
 #include "BackendUtils.h"
 #include "NativeBackend.h"
@@ -829,7 +830,7 @@ addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
       module.getNamedGlobal("__obelisk_state_value");
   llvm::GlobalVariable *stateUnknown =
       module.getNamedGlobal("__obelisk_state_unknown");
-  if (!main || !current || !stateValue || !stateUnknown) {
+  if (!main || !current || !stateValue) {
     errs() << "obelisk: error: native state synchronization requires a "
               "generated scheduler main\n";
     return failure();
@@ -901,9 +902,12 @@ addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
   llvm::Value *runtimeContext =
       beforeSpawn.CreateLoad(pointer, current, "obelisk.vpi.context");
   auto *valueArray = dyn_cast<llvm::ArrayType>(stateValue->getValueType());
-  auto *unknownArray = dyn_cast<llvm::ArrayType>(stateUnknown->getValueType());
-  if (!valueArray || !unknownArray ||
-      valueArray->getNumElements() != unknownArray->getNumElements()) {
+  auto *unknownArray =
+      stateUnknown ? dyn_cast<llvm::ArrayType>(stateUnknown->getValueType())
+                   : nullptr;
+  if (!valueArray ||
+      (stateUnknown && (!unknownArray || valueArray->getNumElements() !=
+                                             unknownArray->getNumElements()))) {
     errs() << "obelisk: error: generated native state planes disagree\n";
     return failure();
   }
@@ -947,6 +951,20 @@ addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
               "native state planes\n";
     return failure();
   }
+  auto *executionFlags =
+      executionInitializer
+          ? dyn_cast<llvm::ConstantInt>(executionInitializer->getOperand(1))
+          : nullptr;
+  if (!stateUnknown && (!executionFlags || !(executionFlags->getZExtValue() &
+                                             OBELISK_RT_EXECUTION_TWO_STATE))) {
+    errs()
+        << "obelisk: error: four-state execution requires an unknown plane\n";
+    return failure();
+  }
+  llvm::Constant *unknownPointer =
+      stateUnknown
+          ? static_cast<llvm::Constant *>(stateUnknown)
+          : llvm::ConstantPointerNull::get(cast<llvm::PointerType>(pointer));
   if (requiresStateSync) {
     llvm::FunctionCallee sync = module.getOrInsertFunction(
         "obelisk_rt_v1_native_state_sync",
@@ -954,7 +972,7 @@ addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
                                 {pointer, pointer, pointer, i64}, false));
     llvm::Value *syncStatus = beforeSpawn.CreateCall(
         sync,
-        {runtimeContext, stateValue, stateUnknown,
+        {runtimeContext, stateValue, unknownPointer,
          llvm::ConstantInt::get(i64, stateBitCount->getZExtValue())},
         "obelisk.state.sync");
     beforeSpawn.CreateCall(fail, {runtimeContext, syncStatus});

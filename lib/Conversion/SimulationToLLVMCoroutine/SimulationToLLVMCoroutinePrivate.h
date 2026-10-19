@@ -583,6 +583,11 @@ buildNativeStateLayout(mlir::ModuleOp module,
                        const llvm::DataLayout &dataLayout);
 void materializeNativeStatePlanes(mlir::ModuleOp module,
                                   const NativeStateLayout &layout);
+void eliminateTwoStateUnknownPlane(mlir::ModuleOp module);
+/// Address an NBA field using its logical four-state offset. The two-state
+/// storage pass compacts the physical record after transaction planning.
+mlir::Value nbaFieldGEP(mlir::OpBuilder &builder, mlir::Location location,
+                        mlir::Value base, uint64_t offset);
 /// Number the roots the module's known.roots gates test and materialize
 /// their generated unknown summary, with the root records and ignored ranges
 /// the runtime binds. Runs once the gates are final, before their lowering.

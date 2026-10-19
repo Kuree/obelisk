@@ -931,7 +931,7 @@ struct StaticNBAAccumulator {
   uint64_t sequence = 0;
   bool valid = false;
   std::vector<uint64_t> value;
-  std::vector<uint64_t> unknown;
+  CanonicalPlane unknown;
   std::vector<uint64_t> writeMask;
   // Staged bits rewritten with a different value since the last barrier.
   // The merge keeps only the final value; the commit reports these bits as
@@ -2598,6 +2598,9 @@ struct obelisk_rt_context {
   // in the immutable reflection image.
   CanonicalPlane stateValue;
   CanonicalPlane stateUnknown;
+  bool twoState() const {
+    return execution && (execution->flags & OBELISK_RT_EXECUTION_TWO_STATE);
+  }
   // Canonical state captured once at entry to each time slot, before any
   // Active-region work. Sampled-value reads never consult the live planes.
   std::vector<uint64_t> preponedValue;
@@ -2610,8 +2613,8 @@ struct obelisk_rt_context {
   // every ordinary publication to the corresponding canonical design bit.
   std::vector<uint64_t> forceMask;
   std::vector<uint64_t> assignMask;
-  std::vector<uint64_t> assignValue;
-  std::vector<uint64_t> assignUnknown;
+  CanonicalPlane assignValue;
+  CanonicalPlane assignUnknown;
   // A nonzero entry identifies the detached evaluator that owns a dynamic
   // force/procedural-assign bit. Sparse ownership keeps ordinary designs free
   // of per-bit allocation and lets partially overlapping overrides retire an
@@ -2649,8 +2652,8 @@ struct obelisk_rt_context {
   // Unlike procedural writes, these remain active beneath force / assign and
   // are republished as soon as the higher-priority override is released.
   std::vector<uint64_t> continuousMask;
-  std::vector<uint64_t> continuousValue;
-  std::vector<uint64_t> continuousUnknown;
+  CanonicalPlane continuousValue;
+  CanonicalPlane continuousUnknown;
   // Built once from the immutable execution image and shared by net
   // resolution, force/release, deposits, and reflection connectivity checks.
   NetAliasCache netAliases;

@@ -10,6 +10,7 @@
 #ifndef OBELISK_RUNTIME_LIB_PROCESSSHARED_H
 #define OBELISK_RUNTIME_LIB_PROCESSSHARED_H
 
+#include "GeneratedNBAStorage.h"
 #include "RuntimeInternal.h"
 
 #include <cstdint>
@@ -86,10 +87,12 @@ findNativeStaticState(const obelisk_rt_context *context, uint32_t id);
 // These leaf accesses also serve bytecode publication and NBA boundaries.
 // Keep their bodies visible to callers without requiring whole-runtime LTO.
 inline bool byteBit(const uint8_t *bytes, uint64_t bit) {
-  return (bytes[bit / 8] & static_cast<uint8_t>(1u << (bit % 8))) != 0;
+  return bytes && (bytes[bit / 8] & static_cast<uint8_t>(1u << (bit % 8))) != 0;
 }
 
 inline void setByteBit(uint8_t *bytes, uint64_t bit, bool value) {
+  if (!bytes)
+    return;
   uint8_t mask = static_cast<uint8_t>(1u << (bit % 8));
   if (value)
     bytes[bit / 8] |= mask;
@@ -326,8 +329,7 @@ uint32_t
 nextDueNativeNBABarrierRegionUnlocked(const obelisk_rt_context *context,
                                       bool includeGenerated);
 
-bool hasGeneratedNBAStages(
-    const obelisk_rt_generated_nba_accumulator_256 &generated);
+bool hasGeneratedNBAStages(const GeneratedNBAStorage &generated);
 bool hasGeneratedNBASlots(const obelisk_rt_static_nba_root &root);
 void markStaticNBAAccumulatorPending(obelisk_rt_context *context,
                                      uint32_t rootIndex,

@@ -554,8 +554,8 @@ TEST(GeneratedVPITraversal, RefObjectValuesUseActualSemanticKindsAndStorage) {
     for (uint64_t bit = 0; bit != width; ++bit) {
       const uint64_t absolute = stateOffset + bit;
       const uint64_t mask = uint64_t{1} << (absolute % 64);
-      uint64_t &valueWord = context->stateValue[absolute / 64];
-      uint64_t &unknownWord = context->stateUnknown[absolute / 64];
+      auto valueWord = context->stateValue[absolute / 64];
+      auto unknownWord = context->stateUnknown[absolute / 64];
       valueWord = ((value >> bit) & 1) ? valueWord | mask : valueWord & ~mask;
       unknownWord =
           ((unknown >> bit) & 1) ? unknownWord | mask : unknownWord & ~mask;

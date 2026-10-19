@@ -1079,6 +1079,46 @@ obelisk_rt_status observeDpiCall(obelisk_rt_context *context, uint32_t importID,
   return OBELISK_RT_OK;
 }
 
+TEST(RuntimeState, TwoStateUsesValueOnlyBacking) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.flags = OBELISK_RT_EXECUTION_TWO_STATE;
+  execution.state_bit_count = 129;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_NE(context->stateValue.data(), nullptr);
+  EXPECT_EQ(context->stateUnknown.data(), nullptr);
+  EXPECT_EQ(context->stateUnknown.size(), 3u);
+  context->stateUnknown[1] = UINT64_MAX;
+  EXPECT_EQ(uint64_t(context->stateUnknown[1]), 0u);
+  CanonicalPlane copied = context->stateUnknown;
+  EXPECT_EQ(copied.data(), nullptr);
+  EXPECT_EQ(copied, context->stateUnknown);
+
+  alignas(8) uint8_t values[32]{};
+  const obelisk_rt_native_state_fill_v1 fills[] = {{0, 65, 1, 1},
+                                                   {65, 1, 1, 0}};
+  ASSERT_EQ(obelisk_rt_v1_native_state_initialize(context, values, nullptr, 129,
+                                                  fills, 2),
+            OBELISK_RT_OK);
+  EXPECT_EQ(values[0], 0u);
+  EXPECT_EQ(values[8], 2u);
+  ASSERT_EQ(
+      obelisk_rt_v1_native_state_bind_shared(context, values, nullptr, 129),
+      OBELISK_RT_OK);
+  EXPECT_EQ(context->stateUnknown.data(), nullptr);
+  uint8_t *retained = nullptr, *unknown = nullptr, *mask = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_native_state_bind_continuous(context, &retained,
+                                                       &unknown, &mask),
+            OBELISK_RT_OK);
+  EXPECT_NE(retained, nullptr);
+  EXPECT_NE(mask, nullptr);
+  EXPECT_EQ(unknown, nullptr);
+  EXPECT_EQ(context->continuousUnknown.data(), nullptr);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(RuntimeDPI, ValidatesDispatchContextAndNestedRestoration) {
   static constexpr char topName[] = "top";
   static constexpr char childName[] = "top.child";

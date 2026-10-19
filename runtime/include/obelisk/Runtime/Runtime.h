@@ -446,6 +446,9 @@ typedef struct obelisk_rt_handle_v1 {
 // records pressure but never collects or parks; the heap reclaims at polls,
 // between activations, and at designated collection points.
 #define OBELISK_RT_EXECUTION_POLLED_COLLECTION (UINT32_C(1) << 10)
+/* Value-only simulation state. Canonical unknown-plane pointers are null;
+ * DPI C representations retain their declared layout and receive zero bval. */
+#define OBELISK_RT_EXECUTION_TWO_STATE (UINT32_C(1) << 11)
 
 // Executable event-region ordinals. The eight PLI callback regions remain
 // compiler-only until the callback ABI can populate them. Preponed is serviced

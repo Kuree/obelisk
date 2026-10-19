@@ -2,9 +2,11 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 #include "obelisk/Analysis/NativeStorageLayout.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Runtime/Runtime.h"
 #include "obelisk/Runtime/StableHandle.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -18,6 +20,17 @@
 using namespace mlir;
 
 namespace obelisk::detail {
+
+Value nbaFieldGEP(OpBuilder &builder, Location location, Value base,
+                  uint64_t offset) {
+  Value address = byteGEP(builder, location, base, offset);
+  auto module =
+      builder.getInsertionBlock()->getParentOp()->getParentOfType<ModuleOp>();
+  if (module && native::get<native::TwoState>(module))
+    native::set<native::NBAField>(address.getDefiningOp(),
+                                  builder.getI64IntegerAttr(offset));
+  return address;
+}
 
 FailureOr<NativeStateLayout>
 buildNativeStateLayout(ModuleOp module, const llvm::DataLayout &dataLayout) {
@@ -181,6 +194,10 @@ void materializeNativeStatePlanes(ModuleOp module,
 
   SmallVector<uint64_t> fills;
   for (auto [offset, state] : roots) {
+    if (native::get<native::TwoState>(module)) {
+      state.value &= !state.unknown;
+      state.unknown = 0;
+    }
     if (!state.width || (!state.value && !state.unknown))
       continue;
     size_t size = fills.size();
@@ -208,6 +225,8 @@ void assignUnknownSummary(ModuleOp module, NativeStateLayout &layout) {
   layout.unknownSummaryPatterns.clear();
   layout.unknownSummaryGates = 0;
   layout.steadyUnknown.clear();
+  if (native::get<native::TwoState>(module))
+    return;
   module.walk([&](sim::SimStorageDeclOp storage) {
     auto ranges = sim::get<sim::metadata::SteadyUnknown>(storage);
     auto handle = layout.storage.find(storage.getId());
@@ -264,6 +283,117 @@ void assignUnknownSummary(ModuleOp module, NativeStateLayout &layout) {
                                std::min<uint64_t>(width, bound->width - low)});
   }
   materializeUnknownSummary(module, layout);
+}
+
+// Lowering shares its address calculations with mixed-state designs. Once
+// every producer is lowered, remove the implicit zero plane in one place.
+// In particular, a derived unknown pointer must become null too: keeping a
+// GEP of null would give the runtime a non-null, invalid plane address.
+void eliminateTwoStateUnknownPlane(ModuleOp module) {
+  if (!native::get<native::TwoState>(module))
+    return;
+  constexpr uint64_t unknownOffset =
+      offsetof(obelisk_rt_generated_nba_accumulator_256, unknown);
+  constexpr uint64_t afterUnknown =
+      offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask);
+  constexpr uint64_t unknownBytes = afterUnknown - unknownOffset;
+  static_assert(unknownBytes ==
+                sizeof(obelisk_rt_generated_nba_accumulator_256::unknown));
+  SmallVector<LLVM::GlobalOp> globals;
+  llvm::DenseSet<StringRef> names;
+  for (auto global : module.getOps<LLVM::GlobalOp>())
+    if (global.getSymName() == "__obelisk_state_unknown" ||
+        global.getSymName().starts_with("__obelisk_eval_nba_unknown_")) {
+      globals.push_back(global);
+      names.insert(global.getSymName());
+    }
+  llvm::DenseSet<Value> pointers;
+  SmallVector<Value> worklist;
+  module.walk([&](LLVM::AddressOfOp address) {
+    if (names.contains(address.getGlobalName())) {
+      pointers.insert(address.getResult());
+      worklist.push_back(address.getResult());
+    } else if (address.getGlobalName() == "__obelisk_continuous_unknown") {
+      for (Operation *user : address.getResult().getUsers())
+        if (auto load = dyn_cast<LLVM::LoadOp>(user))
+          if (pointers.insert(load.getResult()).second)
+            worklist.push_back(load.getResult());
+    }
+  });
+  // The generated accumulator's value, write mask and control fields keep
+  // their logical addresses during planning. Physically omit its 32-byte
+  // unknown array and close that hole only after pending-frame rewriting.
+  module.walk([&](LLVM::GEPOp gep) {
+    auto field = native::get<native::NBAField>(gep);
+    if (!field)
+      return;
+    native::remove<native::NBAField>(gep);
+    uint64_t offset = field.getValue().getZExtValue();
+    if (offset >= unknownOffset && offset < afterUnknown) {
+      if (pointers.insert(gep.getResult()).second)
+        worklist.push_back(gep.getResult());
+    } else if (offset >= afterUnknown) {
+      // nbaFieldGEP addresses the record as bytes with one constant index.
+      assert(gep.getDynamicIndices().empty() &&
+             gep.getRawConstantIndices().size() == 1 &&
+             "NBA field address is not a constant byte offset");
+      gep.setRawConstantIndices(
+          ArrayRef<int32_t>{int32_t(offset - unknownBytes)});
+    }
+  });
+  for (auto accumulator : module.getOps<LLVM::GlobalOp>()) {
+    if (!accumulator.getSymName().starts_with("__obelisk_aot_nba_accumulator_"))
+      continue;
+    auto type = LLVM::LLVMArrayType::get(
+        IntegerType::get(module.getContext(), 8),
+        sizeof(obelisk_rt_generated_nba_accumulator_256) - unknownBytes);
+    accumulator.setGlobalType(type);
+    accumulator.getInitializerRegion().walk(
+        [&](LLVM::ZeroOp zero) { zero.getResult().setType(type); });
+  }
+  for (size_t i = 0; i != worklist.size(); ++i)
+    for (Operation *user : worklist[i].getUsers())
+      if (isa<LLVM::GEPOp, LLVM::BitcastOp>(user) &&
+          pointers.insert(user->getResult(0)).second)
+        worklist.push_back(user->getResult(0));
+  SmallVector<Operation *> erase;
+  module.walk([&](Operation *op) {
+    OpBuilder builder(op);
+    if (auto load = dyn_cast<LLVM::LoadOp>(op)) {
+      if (pointers.contains(load.getAddr())) {
+        load.getResult().replaceAllUsesWith(
+            LLVM::ZeroOp::create(builder, op->getLoc(), load.getType()));
+        erase.push_back(op);
+      }
+    } else if (auto store = dyn_cast<LLVM::StoreOp>(op)) {
+      if (pointers.contains(store.getAddr()))
+        erase.push_back(op);
+    } else if (auto copy = dyn_cast<LLVM::MemcpyOp>(op)) {
+      if (pointers.contains(copy.getDst())) {
+        erase.push_back(op);
+      } else if (pointers.contains(copy.getSrc())) {
+        LLVM::MemsetOp::create(
+            builder, op->getLoc(), copy.getDst(),
+            LLVM::ZeroOp::create(builder, op->getLoc(), builder.getI8Type()),
+            copy.getLen(), copy.getIsVolatile());
+        erase.push_back(op);
+      }
+    } else if (auto set = dyn_cast<LLVM::MemsetOp>(op)) {
+      if (pointers.contains(set.getDst()))
+        erase.push_back(op);
+    }
+  });
+  for (Operation *op : erase)
+    op->erase();
+  for (Value pointer : llvm::reverse(worklist)) {
+    Operation *op = pointer.getDefiningOp();
+    OpBuilder builder(op);
+    pointer.replaceAllUsesWith(
+        LLVM::ZeroOp::create(builder, op->getLoc(), pointer.getType()));
+    op->erase();
+  }
+  for (auto global : globals)
+    global.erase();
 }
 
 void materializeUnknownSummary(ModuleOp module,

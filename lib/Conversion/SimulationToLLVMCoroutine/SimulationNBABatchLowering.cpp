@@ -100,7 +100,7 @@ public:
           // slots commit. Preserve its dirty bit for the later barrier.
           Value retained = c(0);
           if (auto acc = root.getLayoutAttr().getAccumulator()) {
-            Value stillPending = load32(byteGEP(
+            Value stillPending = load32(nbaFieldGEP(
                 b, loc, address(acc),
                 offsetof(obelisk_rt_generated_nba_accumulator_256, valid)));
             // This tests remaining captures after emitRoot, unlike the
@@ -378,7 +378,7 @@ private:
     if (auto symbol = root.getAccumulator()) {
       Value acc = address(symbol);
       auto field = [&](uint64_t offset) {
-        return byteGEP(b, loc, acc, offset);
+        return nbaFieldGEP(b, loc, acc, offset);
       };
       Value valid = load32(
           field(offsetof(obelisk_rt_generated_nba_accumulator_256, valid)));

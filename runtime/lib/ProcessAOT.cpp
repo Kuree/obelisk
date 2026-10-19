@@ -1864,12 +1864,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
           continue;
         uint8_t *values = context->nativeSchedulePlan->state_value;
         uint8_t *unknown = context->nativeSchedulePlan->state_unknown;
-        if (!values || !unknown)
+        if (!values || (!unknown && !context->twoState()))
           return OBELISK_RT_LAYOUT_MISMATCH;
         uint8_t mask = uint8_t{1} << (clock.bit_offset % 8);
         bool rising = (values[clock.bit_offset / 8] & mask) == 0;
         values[clock.bit_offset / 8] ^= mask;
-        unknown[clock.bit_offset / 8] &= static_cast<uint8_t>(~mask);
+        if (unknown)
+          unknown[clock.bit_offset / 8] &= static_cast<uint8_t>(~mask);
         if (clock.half_period > UINT64_MAX - clockProcess.wakeTime)
           return OBELISK_RT_OUT_OF_RESOURCES;
         clockProcess.wakeTime += clock.half_period;
@@ -2107,9 +2108,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
           instance->continuation != clock.continuation || !state ||
           clock.bit_offset < state->bitOffset ||
           clock.bit_offset - state->bitOffset >= state->bitWidth ||
-          !context->nativeSchedulePlan->state_unknown ||
-          (context->nativeSchedulePlan->state_unknown[clock.bit_offset / 8] &
-           (uint8_t{1} << (clock.bit_offset % 8))) != 0 ||
+          (!context->nativeSchedulePlan->state_unknown &&
+           !context->twoState()) ||
+          byteBit(context->nativeSchedulePlan->state_unknown,
+                  clock.bit_offset) ||
           scheduled.wakeTime < context->schedulerTime ||
           (scheduled.wakeTime > context->schedulerTime &&
            scheduled.wakeTime - context->schedulerTime > clock.half_period))
@@ -2406,8 +2408,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_snapshot_aot(
                 context, root, OBELISK_RT_REGION_NBA);
             status != OBELISK_RT_OK)
           return status;
-      const obelisk_rt_generated_nba_accumulator_256 *generated =
-          context->nativeScheduleNBARoots[root].generated_accumulator;
+      GeneratedNBAStorage generated(
+          context->nativeScheduleNBARoots[root].generated_accumulator,
+          context->twoState());
       if (!generated || !hasGeneratedNBAStages(*generated))
         continue;
       if (obelisk_rt_status status = materializeGeneratedNBAAccumulatorUnlocked(
@@ -3124,7 +3127,8 @@ void obelisk_rt_release_native_schedule_plan(
          ++root) {
       const auto &entry = context->nativeScheduleNBARoots[root];
       if (entry.generated_accumulator)
-        *entry.generated_accumulator = {};
+        GeneratedNBAStorage(entry.generated_accumulator, context->twoState())
+            .clear();
       for (uint64_t slot = 0; slot != entry.generated_slot_count; ++slot)
         *entry.generated_slots[slot].valid = 0;
     }

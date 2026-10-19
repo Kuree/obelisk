@@ -2525,7 +2525,9 @@ FailureOr<bool> makeNativeEvalPlan(
               makeZero(entry.unknownName, i64, 8);
               makeZero(entry.validName, i32, 4);
               makeZero(entry.validName + ".transition",
-                       LLVM::LLVMArrayType::get(i64, 4), 8);
+                       LLVM::LLVMArrayType::get(
+                           i64, native::get<native::TwoState>(module) ? 2 : 4),
+                       8);
               dynamicEvalNBAs.push_back(std::move(entry));
               existing = std::prev(dynamicEvalNBAs.end());
             }
@@ -2656,8 +2658,8 @@ FailureOr<bool> makeNativeEvalPlan(
                                       mask, position(staged64),
                                       position(stagedUnknown64));
           auto mergeField = [&](size_t fieldOffset, Value positioned) {
-            Value address =
-                byteGEP(nbaBuilder, call.getLoc(), accumulator, fieldOffset);
+            Value address = nbaFieldGEP(nbaBuilder, call.getLoc(), accumulator,
+                                        fieldOffset);
             Value previous = LLVM::LoadOp::create(nbaBuilder, call.getLoc(),
                                                   i64, address, 8);
             Value merged = arith::OrIOp::create(
@@ -2677,7 +2679,7 @@ FailureOr<bool> makeNativeEvalPlan(
           mergeField(
               offsetof(obelisk_rt_generated_nba_accumulator_256, unknown),
               position(stagedUnknown64));
-          Value maskAddress = byteGEP(
+          Value maskAddress = nbaFieldGEP(
               nbaBuilder, call.getLoc(), accumulator,
               offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask));
           Value previousMask = LLVM::LoadOp::create(nbaBuilder, call.getLoc(),
@@ -2686,7 +2688,7 @@ FailureOr<bool> makeNativeEvalPlan(
                                 arith::OrIOp::create(nbaBuilder, call.getLoc(),
                                                      previousMask, mask),
                                 maskAddress, 8);
-          Value validAddress = byteGEP(
+          Value validAddress = nbaFieldGEP(
               nbaBuilder, call.getLoc(), accumulator,
               offsetof(obelisk_rt_generated_nba_accumulator_256, valid));
           Value previousValid = LLVM::LoadOp::create(nbaBuilder, call.getLoc(),
@@ -2702,9 +2704,9 @@ FailureOr<bool> makeNativeEvalPlan(
               nbaBuilder, call.getLoc(),
               llvmConstant(nbaBuilder, call.getLoc(), i32,
                            proof->second.commitRegion),
-              byteGEP(nbaBuilder, call.getLoc(), accumulator,
-                      offsetof(obelisk_rt_generated_nba_accumulator_256,
-                               exec_region)),
+              nbaFieldGEP(nbaBuilder, call.getLoc(), accumulator,
+                          offsetof(obelisk_rt_generated_nba_accumulator_256,
+                                   exec_region)),
               4);
           uint32_t dirtyWord = root->second / 64;
           Value dirtyBase = LLVM::AddressOfOp::create(
@@ -6326,14 +6328,15 @@ FailureOr<bool> makeNativeEvalPlan(
       } else {
         Value valid = LLVM::LoadOp::create(
             builder, location, i32,
-            byteGEP(builder, location, accumulatorBase,
-                    offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
+            nbaFieldGEP(
+                builder, location, accumulatorBase,
+                offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
             4);
         Value region = LLVM::LoadOp::create(
             builder, location, i32,
-            byteGEP(builder, location, accumulatorBase,
-                    offsetof(obelisk_rt_generated_nba_accumulator_256,
-                             exec_region)),
+            nbaFieldGEP(builder, location, accumulatorBase,
+                        offsetof(obelisk_rt_generated_nba_accumulator_256,
+                                 exec_region)),
             4);
         regionMatches = arith::AndIOp::create(
             builder, location,
@@ -6351,8 +6354,9 @@ FailureOr<bool> makeNativeEvalPlan(
       builder.setInsertionPointToStart(commitRoot);
       Value stagedValue = LLVM::LoadOp::create(
           builder, location, i64,
-          byteGEP(builder, location, accumulatorBase,
-                  offsetof(obelisk_rt_generated_nba_accumulator_256, value)),
+          nbaFieldGEP(
+              builder, location, accumulatorBase,
+              offsetof(obelisk_rt_generated_nba_accumulator_256, value)),
           8);
       Value stagedUnknown;
       if (forcedTwoStateEval) {
@@ -6360,7 +6364,7 @@ FailureOr<bool> makeNativeEvalPlan(
       } else {
         auto load = LLVM::LoadOp::create(
             builder, location, i64,
-            byteGEP(
+            nbaFieldGEP(
                 builder, location, accumulatorBase,
                 offsetof(obelisk_rt_generated_nba_accumulator_256, unknown)),
             8);
@@ -6379,7 +6383,7 @@ FailureOr<bool> makeNativeEvalPlan(
       } else {
         auto capturedMask = LLVM::LoadOp::create(
             builder, location, i64,
-            byteGEP(
+            nbaFieldGEP(
                 builder, location, accumulatorBase,
                 offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
             8);
@@ -6418,14 +6422,15 @@ FailureOr<bool> makeNativeEvalPlan(
       if (fixedWriteMask == 0 && !fullRootStage) {
         LLVM::StoreOp::create(
             builder, location, llvmConstant(builder, location, i64, 0),
-            byteGEP(
+            nbaFieldGEP(
                 builder, location, accumulatorBase,
                 offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
             8);
         LLVM::StoreOp::create(
             builder, location, llvmConstant(builder, location, i32, 0),
-            byteGEP(builder, location, accumulatorBase,
-                    offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
+            nbaFieldGEP(
+                builder, location, accumulatorBase,
+                offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
             4);
       }
       Value changed = arith::OrIOp::create(
@@ -6437,7 +6442,7 @@ FailureOr<bool> makeNativeEvalPlan(
       // root has no edge watcher.
       if (rootIndex < staticNBAPlan.trackTransients.size() &&
           staticNBAPlan.trackTransients[rootIndex]) {
-        Value transientAddress = byteGEP(
+        Value transientAddress = nbaFieldGEP(
             builder, location, accumulatorBase,
             offsetof(obelisk_rt_generated_nba_accumulator_256, transient));
         changed = arith::OrIOp::create(
@@ -6973,14 +6978,15 @@ FailureOr<bool> makeNativeEvalPlan(
       } else {
         Value valid = LLVM::LoadOp::create(
             builder, location, i32,
-            byteGEP(builder, location, accumulatorBase,
-                    offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
+            nbaFieldGEP(
+                builder, location, accumulatorBase,
+                offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
             4);
         Value region = LLVM::LoadOp::create(
             builder, location, i32,
-            byteGEP(builder, location, accumulatorBase,
-                    offsetof(obelisk_rt_generated_nba_accumulator_256,
-                             exec_region)),
+            nbaFieldGEP(builder, location, accumulatorBase,
+                        offsetof(obelisk_rt_generated_nba_accumulator_256,
+                                 exec_region)),
             4);
         regionMatches = arith::AndIOp::create(
             builder, location,
@@ -7009,7 +7015,7 @@ FailureOr<bool> makeNativeEvalPlan(
                     builder, location,
                     LLVM::LoadOp::create(
                         builder, location, i64,
-                        byteGEP(
+                        nbaFieldGEP(
                             builder, location, accumulatorBase,
                             offsetof(obelisk_rt_generated_nba_accumulator_256,
                                      write_mask)),
@@ -7019,8 +7025,9 @@ FailureOr<bool> makeNativeEvalPlan(
                     .getResult();
       Value stagedUnknown = LLVM::LoadOp::create(
           builder, location, i64,
-          byteGEP(builder, location, accumulatorBase,
-                  offsetof(obelisk_rt_generated_nba_accumulator_256, unknown)),
+          nbaFieldGEP(
+              builder, location, accumulatorBase,
+              offsetof(obelisk_rt_generated_nba_accumulator_256, unknown)),
           8);
       stagedUnknown = arith::SelectOp::create(
           builder, location, knownEntry->getArgument(2), stagedUnknown,

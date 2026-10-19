@@ -1859,7 +1859,8 @@ obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept {
       } else if (driver.function == kDriverStateDescriptor) {
         bool initialX = (driver.argument & OBELISK_RT_DB_DRIVER_INITIAL_X) != 0;
         for (uint64_t bitIndex = 0; bitIndex != driver.planeSize; ++bitIndex) {
-          setBit(context->stateValue, driver.valueOffset + bitIndex, !initialX);
+          setBit(context->stateValue, driver.valueOffset + bitIndex,
+                 !context->twoState() && !initialX);
           setBit(context->stateUnknown, driver.valueOffset + bitIndex, true);
         }
       }

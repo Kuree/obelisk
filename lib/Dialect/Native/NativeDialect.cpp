@@ -31,7 +31,8 @@ LogicalResult
 NativeDialect::verifyOperationAttribute(Operation *operation,
                                         NamedAttribute attribute) {
   if (failed(discardable::verify<
-             OptimizationLevel, MaxStateDomainFunctions, DebugTiming,
+             OptimizationLevel, MaxStateDomainFunctions,
+             DisableTwoStateSpecialization, TwoState, NBAField, DebugTiming,
              ClosedExecutable, Partition, PartitionManifest, PartitionManifests,
              ElementDefaults, PhysicalPartitionManifest, Frame, FrameInputs,
              FrameCheckpoint, EntryKind, ScratchSize, ObserverWidth,
@@ -55,6 +56,8 @@ NativeDialect::verifyOperationAttribute(Operation *operation,
   };
   bool moduleOption = name == OptimizationLevel::getNameStr() ||
                       name == MaxStateDomainFunctions::getNameStr() ||
+                      name == DisableTwoStateSpecialization::getNameStr() ||
+                      name == TwoState::getNameStr() ||
                       name == DebugTiming::getNameStr() ||
                       name == ClosedExecutable::getNameStr() ||
                       name == PartitionManifests::getNameStr() ||
