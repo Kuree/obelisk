@@ -73,9 +73,12 @@ for td in inputs:
 # parsers. Keep the exceptions narrow so other verifier fixtures also exercise
 # the custom syntax, including malformed metadata that attr-dict can represent.
 exceptions = {
+    ("Dialect/Schedule/native-invalid.mlir", "schedule.known.roots"),  # Empty type list.
     ("IR/slang-invalid.mlir", "slang.type.string_type"),  # Missing symbol name.
     ("IR/simulation-invalid.mlir", "simulation.design"),  # Zero-block region.
     ("IR/simulation-invalid.mlir", "simulation.suspend.observe"),  # Empty type list.
+    ("IR/simulation-mailbox-equal-invalid.mlir", "simulation.mailbox.equal"),  # Different operand types.
+    ("IR/simulation-semaphore-equal-invalid.mlir", "simulation.semaphore.equal"),  # Wrong operand types.
     ("IR/runtime-invalid.mlir", "runtime.status.is"),  # Wrong enum attribute type.
 }
 generic_op = re.compile(

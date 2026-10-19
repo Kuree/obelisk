@@ -3,7 +3,7 @@
 module {
   func.func @outside(%ctx: !simulation.context, %owner: !simulation.argument_ref<!simulation.unpacked_array<0 : 0 x i32>>) {
     // expected-error @+1 {{selected bit window is outside the owner layout}}
-    %view = "simulation.reference_path.aggregate_slice"(%ctx, %owner) {
+    %view = simulation.reference_path.aggregate_slice %ctx, %owner {
       alignment = 1 : i64,
       bit_offset = 1 : i64,
       bit_width = 32 : i64,
@@ -26,7 +26,7 @@ module {
 module {
   func.func @overflow(%ctx: !simulation.context, %owner: !simulation.argument_ref<!simulation.unpacked_array<0 : 0 x i32>>) {
     // expected-error @+1 {{selected element size overflows the bit layout}}
-    %view = "simulation.reference_path.aggregate_slice"(%ctx, %owner) {
+    %view = simulation.reference_path.aggregate_slice %ctx, %owner {
       alignment = 1 : i64,
       bit_offset = 0 : i64,
       bit_width = 32 : i64,
@@ -49,7 +49,7 @@ module {
 module {
   func.func @alignment(%ctx: !simulation.context, %owner: !simulation.argument_ref<!simulation.unpacked_array<0 : 0 x i32>>) {
     // expected-error @+1 {{selected element metadata is invalid}}
-    %view = "simulation.reference_path.aggregate_slice"(%ctx, %owner) {
+    %view = simulation.reference_path.aggregate_slice %ctx, %owner {
       alignment = 3 : i64,
       bit_offset = 0 : i64,
       bit_width = 32 : i64,
@@ -72,7 +72,7 @@ module {
 module {
   func.func @width(%ctx: !simulation.context, %owner: !simulation.argument_ref<!simulation.unpacked_array<0 : 0 x i32>>) {
     // expected-error @+1 {{selected bit width must match the result element type}}
-    %view = "simulation.reference_path.aggregate_slice"(%ctx, %owner) {
+    %view = simulation.reference_path.aggregate_slice %ctx, %owner {
       alignment = 1 : i64,
       bit_offset = 0 : i64,
       bit_width = 31 : i64,
@@ -95,7 +95,7 @@ module {
 module {
   func.func @unknown(%ctx: !simulation.context, %owner: !simulation.argument_ref<!simulation.unpacked_array<0 : 0 x i32>>) {
     // expected-error @+1 {{four-state selection requires an owner unknown plane}}
-    %view = "simulation.reference_path.aggregate_slice"(%ctx, %owner) {
+    %view = simulation.reference_path.aggregate_slice %ctx, %owner {
       alignment = 1 : i64,
       bit_offset = 0 : i64,
       bit_width = 32 : i64,

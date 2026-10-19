@@ -1855,7 +1855,7 @@ def SimMailboxEqualOp : SimOp<"mailbox.equal", [Pure, Commutative,
   let summary = "compare nullable mailbox identities with equivalent message types";
   let arguments = (ins SimMailboxType:$lhs, SimMailboxType:$rhs);
   let results = (outs I1:$equal);
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs)";
+  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` qualified(type($lhs))";
   let hasFolder = 1;
 }
 
