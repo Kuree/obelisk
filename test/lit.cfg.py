@@ -13,7 +13,7 @@ from obelisk_lit_format import ObeliskShTest
 
 config.name = "OBELISK"
 config.test_format = ObeliskShTest()
-config.suffixes = [".mlir", ".sv", ".test", ".sdf"]
+config.suffixes = [".mlir", ".sv", ".test", ".sdf", ".ll"]
 config.test_source_root = os.path.dirname(__file__)
 config.test_exec_root = os.path.join(config.obelisk_obj_root, "test")
 
@@ -56,6 +56,9 @@ config.substitutions.append(
 )
 config.substitutions.append(("%obj_root", config.obelisk_obj_root))
 config.substitutions.append(("%llvm_dist", config.obelisk_llvm_dist))
+config.substitutions.append(
+    ("%pass_plugin", config.obelisk_llvm_pass_plugin)
+)
 config.substitutions.append(("%target_triple", config.obelisk_target_triple))
 target_llc_options = ["-mtriple={}".format(config.obelisk_target_triple)]
 if config.obelisk_target_triple.startswith("aarch64-"):

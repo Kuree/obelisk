@@ -454,6 +454,7 @@ add_lit_testsuite(check-obelisk "Running the Obelisk regression tests"
   obelisk-coverage-scaling-fixture
   obelisk-source-tokens-test
   obelisk-cov
+  ObeliskLLVMPassPlugin
   ${_obelisk_driver_test_dependencies}
   ${OBELISK_RUNTIME_UNIT_TARGETS}
 )

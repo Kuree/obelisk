@@ -115,6 +115,7 @@ function(obelisk_configure_driver target)
     ObeliskSimulationTransforms
     ObeliskSimulationToBytecode
     ObeliskSimulationToLLVMCoroutine
+    ObeliskLLVMPasses
     ObeliskSlangIR
     ObeliskSlangToObelisk
     ObeliskToSimulation

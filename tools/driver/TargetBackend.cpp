@@ -28,6 +28,7 @@
 #include "obelisk/Conversion/SimulationToBytecode.h"
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
+#include "obelisk/LLVM/ClockedGuardLayout.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Dialect/Simulation/Transforms/Passes.h"
@@ -750,6 +751,9 @@ LogicalResult optimizeLLVMModule(llvm::Module &module,
                                  ? builder.buildO0DefaultPipeline(level)
                                  : builder.buildPerModuleDefaultPipeline(level);
   passes.run(module, moduleAnalyses);
+  // Layout passes read the optimized shape of the kernels; see
+  // obelisk/LLVM/ClockedGuardLayout.h.
+  ClockedGuardLayoutPass().run(module, moduleAnalyses);
   if (verifyModule(module, &errs())) {
     errs() << "obelisk: error: invalid LLVM IR after native optimization\n";
     return failure();
