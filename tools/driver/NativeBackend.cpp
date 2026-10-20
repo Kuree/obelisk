@@ -111,7 +111,8 @@ LogicalResult checkUnifiedLTOInputs(ArrayRef<NativeLinkInput> inputs) {
     ErrorOr<std::unique_ptr<MemoryBuffer>> buffer =
         MemoryBuffer::getFile(input.path);
     // LLD reports unreadable inputs itself.
-    if (!buffer || identify_magic((*buffer)->getBuffer()) != file_magic::bitcode)
+    if (!buffer ||
+        identify_magic((*buffer)->getBuffer()) != file_magic::bitcode)
       continue;
     Expected<std::vector<BitcodeModule>> modules =
         getBitcodeModuleList((*buffer)->getMemBufferRef());
@@ -165,8 +166,7 @@ LogicalResult linkELFExecutable(
                                        : "libobelisk_rt.a";
   SmallVector<StringRef> staticInputNames{
       "clang_rt.crtbegin.o", runtimeArchive, "libc++.a",
-      "libc++abi.a",         "libunwind.a",  "libclang_rt.builtins.a",
-      "clang_rt.crtend.o"};
+      "libc++abi.a",         "libunwind.a",  "clang_rt.crtend.o"};
   for (StringRef name : staticInputNames) {
     FailureOr<std::string> path = supportInput(name);
     if (failed(path))
@@ -321,12 +321,13 @@ LogicalResult linkELFExecutable(
     }
   }
   owned.push_back("--start-group");
-  for (size_t index = 1; index <= 5; ++index)
-    owned.push_back(staticInputs[index]);
+  for (StringRef input :
+       ArrayRef<std::string>(staticInputs).drop_front().drop_back())
+    owned.push_back(input.str());
   owned.push_back(hostRuntime->libc);
   owned.push_back(hostRuntime->libm);
   owned.push_back("--end-group");
-  owned.push_back(staticInputs[6]);
+  owned.push_back(staticInputs.back());
   owned.push_back(hostRuntime->crtn);
   SmallVector<const char *> arguments;
   for (std::string &argument : owned)

@@ -88,6 +88,18 @@ target_include_directories(obelisk_rt PRIVATE
 
 target_compile_features(obelisk_rt PUBLIC cxx_std_17)
 target_link_libraries(obelisk_rt PUBLIC Threads::Threads)
+if(OBELISK_COMPILER_RT_BUILTINS)
+  # Flatten compiler-rt into our archive. Static consumers need only obelisk_rt;
+  # archive members are still extracted on demand by the linker.
+  add_custom_command(TARGET obelisk_rt POST_BUILD
+    COMMAND "${OBELISK_LLVM_TOOLS_DIR}/llvm-ar${_obelisk_host_executable_suffix}" qLs
+      "$<TARGET_FILE:obelisk_rt>" "${OBELISK_COMPILER_RT_BUILTINS}"
+    VERBATIM)
+  # LINK_DEPENDS is ignored for static libraries. A cheap ABI object carries
+  # the dependency so replacing the SDK's builtins also recreates this archive.
+  set_property(SOURCE lib/ABI.cpp APPEND PROPERTY OBJECT_DEPENDS
+    "${OBELISK_COMPILER_RT_BUILTINS}")
+endif()
 if(OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS)
   target_compile_definitions(obelisk_rt PRIVATE
     OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS=1)

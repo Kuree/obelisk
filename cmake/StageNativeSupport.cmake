@@ -33,7 +33,9 @@ foreach(path IN ITEMS
     "${SOURCE_DIR}/cmake/StageNativeSupport.cmake"
     "${SOURCE_DIR}/LICENSE"
     "${SOURCE_DIR}/docs/third-party/licenses/Apache-2.0.txt"
-    "${SOURCE_DIR}/docs/third-party/licenses/LLVM-exception.txt")
+    "${SOURCE_DIR}/docs/third-party/licenses/LLVM-exception.txt"
+    "${SOURCE_DIR}/docs/third-party/licenses/compiler-rt-LICENSE.TXT"
+    "${SOURCE_DIR}/docs/third-party/licenses/compiler-rt-CREDITS.TXT")
   file(SHA256 "${path}" digest)
   string(APPEND stage_material "input=${digest};")
 endforeach()
@@ -46,7 +48,8 @@ set(stage "${published}.tmp-${nonce}")
 file(REMOVE_RECURSE "${stage}")
 file(MAKE_DIRECTORY
   "${stage}/licenses/obelisk"
-  "${stage}/licenses/llvm")
+  "${stage}/licenses/llvm"
+  "${stage}/licenses/compiler-rt")
 
 file(COPY "${RUNTIME_ARCHIVE}" "${RUNTIME_LTO_ARCHIVE}"
           "${RUNTIME_PRELINKED_ARCHIVE}"
@@ -54,7 +57,6 @@ file(COPY "${RUNTIME_ARCHIVE}" "${RUNTIME_LTO_ARCHIVE}"
 file(COPY
   "${clang_runtime}/clang_rt.crtbegin.o"
   "${clang_runtime}/clang_rt.crtend.o"
-  "${clang_runtime}/libclang_rt.builtins.a"
   "${cxx_runtime}/libc++.a"
   "${cxx_runtime}/libc++abi.a"
   "${cxx_runtime}/libunwind.a"
@@ -67,6 +69,10 @@ configure_file("${SOURCE_DIR}/docs/third-party/licenses/Apache-2.0.txt"
                "${stage}/licenses/llvm/Apache-2.0.txt" COPYONLY)
 configure_file("${SOURCE_DIR}/docs/third-party/licenses/LLVM-exception.txt"
                "${stage}/licenses/llvm/LLVM-exception.txt" COPYONLY)
+configure_file("${SOURCE_DIR}/docs/third-party/licenses/compiler-rt-LICENSE.TXT"
+               "${stage}/licenses/compiler-rt/LICENSE.TXT" COPYONLY)
+configure_file("${SOURCE_DIR}/docs/third-party/licenses/compiler-rt-CREDITS.TXT"
+               "${stage}/licenses/compiler-rt/CREDITS.TXT" COPYONLY)
 
 # Record source-tree prefixes embedded by the prebuilt LLVM runtimes. The
 # linker strips exactly these SDK-derived prefixes from the final local ELF;
@@ -98,6 +104,7 @@ file(WRITE "${stage}/README.txt"
   "libobelisk_rt.a contains native ELF objects for -O0 links.\n"
   "libobelisk_rt_lto.a contains unified LLVM bitcode for Full-LTO links.\n"
   "libobelisk_rt_prelinked.a contains a Full-LTO-optimized ELF runtime for ThinLTO links.\n"
+  "Each runtime archive also contains prebuilt compiler-rt builtins as native objects.\n"
   "Host C-runtime inputs are discovered in-process when an executable is linked.\n"
   "Generated executables require the glibc version provided by the build host.\n"
   "Install libc development files before configuring Obelisk.\n")

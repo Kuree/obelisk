@@ -77,8 +77,8 @@ if(NOT _obelisk_target_triple_explicit)
   endif()
 endif()
 
-set(OBELISK_NATIVE_SUPPORT_LAYOUT_VERSION "2" CACHE STRING
-    "Internal native-support staging layout version")
+set(OBELISK_NATIVE_SUPPORT_LAYOUT_VERSION "3" CACHE INTERNAL
+    "Internal native-support staging layout version" FORCE)
 string(SHA256 OBELISK_NATIVE_SUPPORT_KEY
   "layout=${OBELISK_NATIVE_SUPPORT_LAYOUT_VERSION};target=${OBELISK_TARGET_TRIPLE};llvm=${OBELISK_LLVM_VERSION}")
 
@@ -122,6 +122,11 @@ if(NOT "${OBELISK_HOST_C_RUNTIME_PREFLIGHT_KEY}" STREQUAL
 endif()
 
 set(_obelisk_target_runtime_dir "${CMAKE_BINARY_DIR}/target-runtime")
+set(OBELISK_COMPILER_RT_BUILTINS
+    "${OBELISK_LLVM_DIST_DIR}/lib/clang/${LLVM_VERSION_MAJOR}/lib/${OBELISK_TARGET_TRIPLE}/libclang_rt.builtins.a")
+if(NOT EXISTS "${OBELISK_COMPILER_RT_BUILTINS}")
+  message(FATAL_ERROR "The SDK is missing ${OBELISK_COMPILER_RT_BUILTINS}")
+endif()
 set(OBELISK_TARGET_RUNTIME_ARCHIVE
     "${_obelisk_target_runtime_dir}/libobelisk_rt.a")
 set(OBELISK_TARGET_RUNTIME_LTO_ARCHIVE
@@ -239,9 +244,11 @@ add_custom_command(
   COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/llvm-ar" rcs
           "${OBELISK_TARGET_RUNTIME_ARCHIVE}"
           ${_obelisk_target_runtime_objects}
+  COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/llvm-ar" qL
+          "${OBELISK_TARGET_RUNTIME_ARCHIVE}" "${OBELISK_COMPILER_RT_BUILTINS}"
   COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/llvm-ranlib"
           "${OBELISK_TARGET_RUNTIME_ARCHIVE}"
-  DEPENDS ${_obelisk_target_runtime_objects}
+  DEPENDS ${_obelisk_target_runtime_objects} "${OBELISK_COMPILER_RT_BUILTINS}"
   COMMENT "Archiving target libobelisk_rt.a with llvm-ar"
   VERBATIM)
 add_custom_command(
@@ -251,19 +258,20 @@ add_custom_command(
   COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/llvm-ar" rcs
           "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
           ${_obelisk_target_runtime_lto_objects}
+  COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/llvm-ar" qL
+          "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}" "${OBELISK_COMPILER_RT_BUILTINS}"
   COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/llvm-ranlib"
           "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
-  DEPENDS ${_obelisk_target_runtime_lto_objects}
+  DEPENDS ${_obelisk_target_runtime_lto_objects} "${OBELISK_COMPILER_RT_BUILTINS}"
   COMMENT "Archiving target libobelisk_rt_lto.a with llvm-ar"
   VERBATIM)
 add_custom_command(
   OUTPUT "${OBELISK_TARGET_RUNTIME_PRELINKED_OBJECT}"
   COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/ld.lld"
           -r --lto=full --lto-O3 --lto-CGO3
-          --whole-archive "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
-          --no-whole-archive
+          ${_obelisk_target_runtime_lto_objects}
           -o "${OBELISK_TARGET_RUNTIME_PRELINKED_OBJECT}"
-  DEPENDS "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
+  DEPENDS ${_obelisk_target_runtime_lto_objects}
   COMMENT "Prelinking the target runtime with Full LTO"
   VERBATIM)
 add_custom_command(
@@ -273,9 +281,11 @@ add_custom_command(
   COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/llvm-ar" rcs
           "${OBELISK_TARGET_RUNTIME_PRELINKED_ARCHIVE}"
           "${OBELISK_TARGET_RUNTIME_PRELINKED_OBJECT}"
+  COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/llvm-ar" qL
+          "${OBELISK_TARGET_RUNTIME_PRELINKED_ARCHIVE}" "${OBELISK_COMPILER_RT_BUILTINS}"
   COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/llvm-ranlib"
           "${OBELISK_TARGET_RUNTIME_PRELINKED_ARCHIVE}"
-  DEPENDS "${OBELISK_TARGET_RUNTIME_PRELINKED_OBJECT}"
+  DEPENDS "${OBELISK_TARGET_RUNTIME_PRELINKED_OBJECT}" "${OBELISK_COMPILER_RT_BUILTINS}"
   COMMENT "Archiving the prelinked target runtime"
   VERBATIM)
 add_custom_target(obelisk_target_runtime
@@ -293,7 +303,6 @@ set(_obelisk_native_support_byproducts
   "${OBELISK_NATIVE_SUPPORT_DIR}/BUILD_PATH_PREFIXES.txt"
   "${OBELISK_NATIVE_SUPPORT_DIR}/clang_rt.crtbegin.o"
   "${OBELISK_NATIVE_SUPPORT_DIR}/clang_rt.crtend.o"
-  "${OBELISK_NATIVE_SUPPORT_DIR}/libclang_rt.builtins.a"
   "${OBELISK_NATIVE_SUPPORT_DIR}/libc++.a"
   "${OBELISK_NATIVE_SUPPORT_DIR}/libc++abi.a"
   "${OBELISK_NATIVE_SUPPORT_DIR}/libunwind.a"
@@ -304,6 +313,9 @@ set(_obelisk_native_support_byproducts
   "${OBELISK_NATIVE_SUPPORT_DIR}/licenses/llvm/LICENSE.TXT"
   "${OBELISK_NATIVE_SUPPORT_DIR}/licenses/llvm/Apache-2.0.txt"
   "${OBELISK_NATIVE_SUPPORT_DIR}/licenses/llvm/LLVM-exception.txt")
+list(APPEND _obelisk_native_support_byproducts
+  "${OBELISK_NATIVE_SUPPORT_DIR}/licenses/compiler-rt/LICENSE.TXT"
+  "${OBELISK_NATIVE_SUPPORT_DIR}/licenses/compiler-rt/CREDITS.TXT")
 add_custom_command(
   OUTPUT "${OBELISK_NATIVE_SUPPORT_STAMP}"
   BYPRODUCTS ${_obelisk_native_support_byproducts}
@@ -327,6 +339,8 @@ add_custom_command(
     "${_obelisk_source_dir}/LICENSE"
     "${_obelisk_source_dir}/docs/third-party/licenses/Apache-2.0.txt"
     "${_obelisk_source_dir}/docs/third-party/licenses/LLVM-exception.txt"
+    "${_obelisk_source_dir}/docs/third-party/licenses/compiler-rt-LICENSE.TXT"
+    "${_obelisk_source_dir}/docs/third-party/licenses/compiler-rt-CREDITS.TXT"
   COMMENT "Staging local Obelisk native-link support"
   VERBATIM)
 add_custom_target(obelisk_native_support

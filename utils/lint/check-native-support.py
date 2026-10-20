@@ -16,18 +16,9 @@ source_root = pathlib.Path(sys.argv[3]).resolve()
 llvm_dist = pathlib.Path(sys.argv[4]).resolve()
 slang_source = pathlib.Path(sys.argv[5]).resolve()
 reflection_include = pathlib.Path(sys.argv[6]).resolve()
+target_triple = sys.argv[7]
 shutil.rmtree(scratch, ignore_errors=True)
 scratch.mkdir(parents=True)
-
-target_candidates = [
-    path.name
-    for path in (llvm_dist / "lib/clang/22/lib").iterdir()
-    if (path / "libclang_rt.builtins.a").is_file()
-    and (llvm_dist / "lib" / path.name / "libc++.a").is_file()
-]
-if len(target_candidates) != 1:
-    raise SystemExit(f"expected one LLVM native runtime: {target_candidates}")
-target_triple = target_candidates[0]
 
 
 def run_checked(command, message):
@@ -106,6 +97,7 @@ for source in (graph_runtime / "lib").glob("*.cpp"):
             f'set(OBELISK_TARGET_REFLECTION_INCLUDE_DIR [[{reflection_include}]])',
             'set(OBELISK_LLVM_VERSION "22.1.6")',
             'set(LLVM_VERSION_MAJOR "22")',
+            f'set(OBELISK_TARGET_TRIPLE [[{target_triple}]])',
             f'include([[{source_root / "cmake/TargetNativeSupport.cmake"}]])',
             "",
         )
@@ -184,6 +176,11 @@ lto_members = [
 ]
 archive_inspection = scratch / "archive-inspection"
 archive_inspection.mkdir()
+builtin_members = run_checked(
+    [llvm_dist / "bin/llvm-ar", "t",
+     llvm_dist / "lib/clang/22/lib" / target_triple / "libclang_rt.builtins.a"],
+    "could not inspect compiler-rt builtins archive",
+).stdout.decode().splitlines()
 
 
 def inspect_archive(archive, expected_members, bitcode):
@@ -191,7 +188,7 @@ def inspect_archive(archive, expected_members, bitcode):
         [llvm_dist / "bin/llvm-ar", "t", archive],
         f"could not inspect target runtime archive {archive.name}",
     ).stdout.decode().splitlines()
-    if members != expected_members:
+    if members != expected_members + builtin_members:
         raise SystemExit(
             f"target runtime archive has unstable members: {archive}: {members}"
         )
@@ -200,7 +197,8 @@ def inspect_archive(archive, expected_members, bitcode):
             [llvm_dist / "bin/llvm-ar", "p", archive, member],
             f"could not extract {member} from {archive.name}",
         ).stdout
-        if bitcode:
+        member_is_bitcode = bitcode and member in expected_members
+        if member_is_bitcode:
             output = archive_inspection / f"{archive.name}-{member}.ll"
             parser = [llvm_dist / "bin/llvm-dis", "-o", output, "-"]
         else:
@@ -213,7 +211,7 @@ def inspect_archive(archive, expected_members, bitcode):
         )
         if parsed.returncode:
             sys.stdout.buffer.write(parsed.stdout)
-            kind = "LLVM bitcode" if bitcode else "ELF"
+            kind = "LLVM bitcode" if member_is_bitcode else "ELF"
             raise SystemExit(f"{archive.name} member {member} is not {kind}")
 
 

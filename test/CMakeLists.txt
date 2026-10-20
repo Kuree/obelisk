@@ -425,18 +425,24 @@ set(_obelisk_lint_dir "${PROJECT_SOURCE_DIR}/utils/lint")
 add_custom_target(check-obelisk-lint
   COMMAND "${Python_EXECUTABLE}" "${_obelisk_lint_dir}/check-assembly-formats.py"
     "${OBELISK_LLVM_DIST_DIR}" "${PROJECT_SOURCE_DIR}" "${PROJECT_BINARY_DIR}"
-  COMMAND "${Python_EXECUTABLE}"
-    "${_obelisk_lint_dir}/check-dynamic-scan-feature-layout.py"
-    "${PROJECT_SOURCE_DIR}" "${PROJECT_BINARY_DIR}/runtime/libobelisk_rt.a"
-    "${OBELISK_LLVM_DIST_DIR}"
-  COMMAND "${Python_EXECUTABLE}" "${_obelisk_lint_dir}/check-native-support.py"
-    "${CMAKE_COMMAND}" "${CMAKE_CURRENT_BINARY_DIR}/lint/native-support"
-    "${PROJECT_SOURCE_DIR}" "${OBELISK_LLVM_DIST_DIR}"
-    "${OBELISK_SLANG_SOURCE_DIR}" "${PROJECT_BINARY_DIR}/include"
   DEPENDS obelisk_rt
   COMMENT "Running the Obelisk repository and build-graph lints"
   USES_TERMINAL
 )
+# These inspect ELF sections and the Linux native-support staging graph.
+if(OBELISK_NATIVE_PLATFORM STREQUAL "linux")
+  add_custom_command(TARGET check-obelisk-lint POST_BUILD
+    COMMAND "${Python_EXECUTABLE}"
+      "${_obelisk_lint_dir}/check-dynamic-scan-feature-layout.py"
+      "${PROJECT_SOURCE_DIR}" "$<TARGET_FILE:obelisk_rt>"
+      "${OBELISK_LLVM_DIST_DIR}" "${OBELISK_COMPILER_RT_BUILTINS}"
+    COMMAND "${Python_EXECUTABLE}" "${_obelisk_lint_dir}/check-native-support.py"
+      "${CMAKE_COMMAND}" "${CMAKE_CURRENT_BINARY_DIR}/lint/native-support"
+      "${PROJECT_SOURCE_DIR}" "${OBELISK_LLVM_DIST_DIR}"
+      "${OBELISK_SLANG_SOURCE_DIR}" "${PROJECT_BINARY_DIR}/include"
+      "${OBELISK_TARGET_TRIPLE}"
+    VERBATIM)
+endif()
 set_target_properties(check-obelisk-lint PROPERTIES FOLDER "Tests")
 
 add_lit_testsuite(check-obelisk "Running the Obelisk regression tests"

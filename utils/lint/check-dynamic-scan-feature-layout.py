@@ -4,14 +4,15 @@ import subprocess
 import sys
 
 
-if len(sys.argv) != 4:
+if len(sys.argv) != 5:
     raise SystemExit(
-        "usage: check-dynamic-scan-feature-layout.py SOURCE ARCHIVE LLVM_DIST"
+        "usage: check-dynamic-scan-feature-layout.py SOURCE ARCHIVE LLVM_DIST BUILTINS"
     )
 
 source = pathlib.Path(sys.argv[1])
 archive = pathlib.Path(sys.argv[2])
 llvm = pathlib.Path(sys.argv[3]) / "bin"
+builtins = pathlib.Path(sys.argv[4])
 
 # ABI.cpp is compiled independently for native and wasm32 target runtimes.
 # These width-independent assertions lock the wasm32 rule that uint64_t keeps
@@ -95,9 +96,12 @@ host_common = cmake_list(runtime_cmake, "_obelisk_runtime_common_sources")
 host_cold = cmake_list(runtime_cmake, "_obelisk_runtime_cold_tail_sources")
 expected_members = [pathlib.Path(item).name + ".o"
                     for item in host_common + host_cold]
-if members != expected_members:
+if members[:len(expected_members)] != expected_members:
     raise SystemExit("built runtime archive does not preserve its declared "
                      "common/cold-tail grouping")
+builtin_members = run([llvm / "llvm-ar", "t", builtins]).decode().splitlines()
+if members[len(expected_members):] != builtin_members:
+    raise SystemExit("runtime archive does not contain the compiler-rt builtins members")
 if host_cold[:9] != [
     "lib/ScanFormat.cpp",
     "lib/DynamicScanBytecode.cpp",
