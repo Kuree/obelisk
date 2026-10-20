@@ -1,0 +1,9 @@
+// REQUIRES: windows
+// RUN: %split-file %S/Inputs/windows-pi.defs %t.dir
+// RUN: %llvm_dist/bin/llvm-dlltool -m %dlltool_machine -D simulator.exe -d %native_support/obelisk-pi.def -l %t.dir/host.lib
+// RUN: %target_clang -fuse-ld=lld -shared %S/Inputs/dpi_impl.c -I%resource_dir/include %t.dir/host.lib -Xlinker /def:%t.dir/dpi.def -o %t.dir/dpi.dll
+// RUN: obelisk %S/dpi.sv %t.dir/dpi.dll -o %t.dir/simulator.exe
+// RUN: %t.dir/simulator.exe | FileCheck %S/dpi.sv --check-prefix=OUTPUT
+// RUN: obelisk --execution-tier=bytecode %S/dpi.sv %t.dir/dpi.dll -o %t.dir/simulator.exe
+// RUN: %t.dir/simulator.exe | FileCheck %S/dpi.sv --check-prefix=OUTPUT
+// RUN: llvm-readobj --coff-exports %t.dir/simulator.exe | FileCheck %S/dpi.sv --check-prefix=EXPORTS --implicit-check-not=obelisk_rt_v1_

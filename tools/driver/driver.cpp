@@ -11,7 +11,7 @@
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/Transforms/Passes.h"
-#if OBELISK_HAS_NATIVE_BACKEND
+#if OBELISK_HAS_HOST_C_RUNTIME
 #include "HostCRuntime.h"
 #endif
 #include "DriverMain.h"
@@ -64,6 +64,7 @@
 #include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/Triple.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -190,8 +191,12 @@ static std::string resolveSVLibraryPath(StringRef root, StringRef path,
   } else {
     resolved = path;
   }
-  if (appendExtension)
-    resolved += ".so";
+  if (appendExtension) {
+    // Annex J names libraries without a suffix; the registered native target
+    // supplies its shared-library extension.
+    resolved +=
+        Triple(OBELISK_NATIVE_TARGET_TRIPLE).isOSWindows() ? ".dll" : ".so";
+  }
   sys::path::remove_dots(resolved, true);
   return resolved.str().str();
 }
@@ -1636,7 +1641,7 @@ int obelisk::driver::runObeliskDriver(
     return 0;
   }
   if (args.hasArg(OPT_print_host_c_runtime)) {
-#if OBELISK_HAS_NATIVE_BACKEND
+#if OBELISK_HAS_HOST_C_RUNTIME
     FailureOr<obelisk::driver::HostCRuntimeInputs> inputs =
         obelisk::driver::discoverHostCRuntime(OBELISK_NATIVE_TARGET_TRIPLE,
                                               driverExecutablePath);

@@ -1,5 +1,11 @@
 add_subdirectory(SourceTokens)
 
+if(WIN32)
+  # Slang's expected<> header follows the Microsoft STL exception setting.
+  # Match Slang's exception ABI in this isolated frontend library.
+  set(LLVM_REQUIRES_EH ON)
+endif()
+
 add_mlir_library(ObeliskFrontend
   Frontend.cpp
   SDF.cpp

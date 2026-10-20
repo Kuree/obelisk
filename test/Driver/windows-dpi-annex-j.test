@@ -1,0 +1,11 @@
+// REQUIRES: windows
+// RUN: mkdir -p %t.dir/root
+// RUN: %target_clang -fuse-ld=lld -shared %S/Inputs/dpi_annex_j_bootstrap.c -Xlinker /export:annex_j_bootstrap -o %t.dir/root/bootstrap.dll
+// RUN: %target_clang -fuse-ld=lld -shared %S/Inputs/dpi_annex_j_direct.c -Xlinker /export:annex_j_direct -o %t.dir/root/direct.dll
+// RUN: cp %S/Inputs/dpi_annex_j.libs %t.dir/root/libraries.list
+// RUN: obelisk %S/dpi-annex-j.sv -sv_root %t.dir/root -sv_liblist libraries.list -sv_lib direct -o %t.dir/simulator.exe
+// RUN: %t.dir/simulator.exe | FileCheck %S/dpi-annex-j.sv
+// RUN: llvm-readobj --coff-imports %t.dir/simulator.exe | FileCheck %s
+
+// CHECK: Name: {{.*}}bootstrap.dll
+// CHECK: Name: {{.*}}direct.dll

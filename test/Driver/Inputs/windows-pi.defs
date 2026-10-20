@@ -1,0 +1,20 @@
+//--- vpi.def
+EXPORTS
+  vlog_startup_routines DATA
+  vpi_release_value
+  vpi_release_net
+  vpi_force_release_value
+//--- dpi.def
+EXPORTS
+  dpi_add
+  dpi_scalars
+  dpi_update
+  dpi_unused
+  dpi_void
+  dpi_reals
+  dpi_logic_inout
+//--- tasks.def
+EXPORTS
+  c_work
+  c_cancel_self
+  c_cancel_parent

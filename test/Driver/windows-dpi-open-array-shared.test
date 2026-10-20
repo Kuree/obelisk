@@ -1,0 +1,8 @@
+// REQUIRES: windows
+// RUN: %split-file %S/Inputs/windows-pi.defs %t.dir
+// RUN: %llvm_dist/bin/llvm-dlltool -m %dlltool_machine -D simulator.exe -d %native_support/obelisk-pi.def -l %t.dir/host.lib
+// RUN: %target_clang -fuse-ld=lld -shared %S/Inputs/dpi_open_array_impl.c -I%resource_dir/include %t.dir/host.lib -Xlinker /export:inspect_arrays -Xlinker /export:inspect_dynamic -o %t.dir/array.dll
+// RUN: obelisk %S/dpi-open-array.sv %t.dir/array.dll -o %t.dir/simulator.exe
+// RUN: %t.dir/simulator.exe | FileCheck %S/dpi-open-array.sv
+// RUN: obelisk --execution-tier=bytecode %S/dpi-open-array.sv %t.dir/array.dll -o %t.dir/simulator.exe
+// RUN: %t.dir/simulator.exe | FileCheck %S/dpi-open-array.sv

@@ -1,0 +1,34 @@
+# LLVM, MLIR, Clang and LLD 22.1.6 for Windows x86-64.
+# Exact conda-forge binary packages; URL fragments are SHA-256 digests.
+@EXPLICIT
+https://conda.anaconda.org/conda-forge/noarch/compiler-rt22_win-64-22.1.6-h49e36cd_0.conda#fdc6fe0b23b396f33b478b8e890cef0b624cc2c6f96e1ac26ad2289dea4eeb12
+https://conda.anaconda.org/conda-forge/win-64/ucrt-10.0.26100.0-h57928b3_0.conda#3005729dce6f3d3f5ec91dfc49fc75a0095f9cd23bab49efb899657297ac91a5
+https://conda.anaconda.org/conda-forge/win-64/vcomp14-14.51.36247-habf1de7_41.conda#731e043390c9457299484d39e427221fc868a9249540a498a5a4f6456c7744d1
+https://conda.anaconda.org/conda-forge/win-64/vc14_runtime-14.51.36247-habf1de7_41.conda#4e4cb599cdc41bf2109d1464c127b5bcbddf548ce3e322e612afb691338b48f8
+https://conda.anaconda.org/conda-forge/win-64/vc-14.5-ha367084_41.conda#35444c55a92e2f7f7ba26bc70f81e56e52344f7d064c0fd4b40a46a58517b79c
+https://conda.anaconda.org/conda-forge/win-64/libiconv-1.18-hc1393d2_3.conda#35e04e3ddac7720fc7c550a1c9f998604299d6a7bd1f3ec9b2825d825061daa2
+https://conda.anaconda.org/conda-forge/win-64/liblzma-5.8.3-hfd05255_1.conda#d36c4a1e1f80fd08e18a407e03622ff2f34dfdd022da6488ad19603dea19e6d5
+https://conda.anaconda.org/conda-forge/win-64/icu-78.3-h5112557_2.conda#75c549b55b673e15de8785a8e5dd85bca7eb612eee0ff4dc8d7bdaa15eacbdbb
+https://conda.anaconda.org/conda-forge/win-64/llvm-openmp-23.1.3-h49e36cd_1.conda#3eed860d303cff84c3ab771312ebb3e0b26ad10d92b38ed98a33f3bef7edd01b
+https://conda.anaconda.org/conda-forge/win-64/libzlib-1.3.2-hfd05255_3.conda#0629c2cc0404d3bb29d6baa7b4ba62da80797015e86de050db81ea5a07050527
+https://conda.anaconda.org/conda-forge/win-64/compiler-rt22-22.1.6-h49e36cd_0.conda#bb1cfb3ce4317c468154b69321864be5994961f479c8d9655618f6acd4a14941
+https://conda.anaconda.org/conda-forge/win-64/clang-format-22.1.6-default_hac490eb_1.conda#0f401d251bf410ab212e0030e208abf4ac67f18cfdc37cf212053346b5360a01
+https://conda.anaconda.org/conda-forge/win-64/libxml2-16-2.15.4-h3cfd58e_1.conda#819c4edd7b7bcfa9461aeccb56c0a7e9fa7c251163333e64222c142499822958
+https://conda.anaconda.org/conda-forge/win-64/zstd-1.5.7-h534d264_7.conda#ca7daae4f218a11fab82cc2857f0ea518ec3f46acec60490485347a4c22c6b3e
+https://conda.anaconda.org/conda-forge/win-64/libxml2-2.15.4-he095d88_1.conda#81e8cace5c3cb62c4125882b4a6df33ab48c16349231d8ea5008bbe0ee93c10f
+https://conda.anaconda.org/conda-forge/win-64/libclang13-22.1.6-default_ha2db4b5_1.conda#fcfdef2a69e6971419c77387ea95773f99ebb70b62283c74f553e206ff8b6532
+https://conda.anaconda.org/conda-forge/win-64/clang-22-22.1.6-default_hac490eb_1.conda#9848469fd46e5ecfb3966006a7a47c8383b3799c1385c58a562d3038625ac0e5
+https://conda.anaconda.org/conda-forge/win-64/libllvm22-22.1.6-h830ff33_0.conda#96e1b12b4a89b06282eb4e36fea80f64bb84160fb95c020d98780d1f29343f8e
+https://conda.anaconda.org/conda-forge/win-64/libllvm-c22-22.1.6-h830ff33_0.conda#811b2ff34c00b65156bc023545c257be560ac53fafc9515f640f843bdf03a2af
+https://conda.anaconda.org/conda-forge/win-64/libclang-cpp-22.1.6-default_hac490eb_1.conda#8dabfde724c7e6ab1078531b381d3ea93689e13bb09e5d0c794faa082f4639af
+https://conda.anaconda.org/conda-forge/win-64/lld-22.1.6-hc465015_0.conda#783dcde239d5280cfdf807f84c296c9094b82e74d2e23ea638dc7d7ac5c78243
+https://conda.anaconda.org/conda-forge/win-64/libclang-22.1.6-default_hac490eb_1.conda#32565259f9c1e770314c0be25b379457a5c13793bae5dc358cf02470a7fb52fc
+https://conda.anaconda.org/conda-forge/win-64/clang-tools-22.1.6-default_hac490eb_1.conda#e2485a3327eec15a72b44c497efb5ce7b5a2aa8f48a58abf61051bfc56c7a99c
+https://conda.anaconda.org/conda-forge/win-64/clang-22.1.6-default_nocfg_hbb9487a_1.conda#b9c053ee84d2ec9cfc36923b48af06e145d906378575d0156edfeb02e4ef3d81
+https://conda.anaconda.org/conda-forge/win-64/llvm-tools-22.1.6-h752b59f_0.conda#47b8d2451932bca69991b36abb6cc2c90a4139b4950dd1d063f99172f32b50f7
+https://conda.anaconda.org/conda-forge/win-64/clangxx-22.1.6-default_nocfg_hbb9487a_1.conda#862037d82f1c86d6066ceedb05850339e40971e22739dc986858bf7b76376915
+https://conda.anaconda.org/conda-forge/win-64/llvmdev-22.1.6-h830ff33_0.conda#6d9ecdd5ebced8637654c923e6bdece9f5c5ba7461129cb5abc9e409479dbf4a
+https://conda.anaconda.org/conda-forge/win-64/clangdev-22.1.6-default_hac490eb_1.conda#62477d1dd032514ec821f5b668670d5e73e366c6f5a375ec1c3d972de3a6e22c
+https://conda.anaconda.org/conda-forge/win-64/mlir-22.1.6-h830ff33_0.conda#a65bc70de0058c14761f3c3474bb85790f6b9a8229d25fef7697766bb940ce72
+https://conda.anaconda.org/conda-forge/win-64/libxml2-devel-2.15.4-he095d88_1.conda#b97b56748afc73c28346d1e6d79a28f2c30d4a9db712322423f2bff06d07fbc2
+https://conda.anaconda.org/conda-forge/win-64/zlib-1.3.2-hfd05255_3.conda#5a0b55df66ff07b4342e04967cef69f8bf348f6a0fb1cc1eca741c7b015dfe77

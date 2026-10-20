@@ -58,8 +58,8 @@ obelisk --emit-dpi-header design.sv -o design_dpi.h
 The resource include directory is `$RESOURCE_DIR/include` and contains the
 pinned `svdpi.h`.
 
-Compile C or C++ for the same host-native Linux architecture and ABI as
-Obelisk, then pass the resulting object to the final link:
+On Linux, compile C or C++ for the same host architecture and ABI as Obelisk,
+then pass the resulting object to the final link:
 
 ```sh
 cc -c dpi.c -I"$RESOURCE_DIR/include" -o dpi.o
@@ -84,30 +84,26 @@ obelisk design.sv libdpi.so -o simulator
 
 Annex J discovery is also available. `-sv_root` establishes the relative
 root, `-sv_liblist` reads an indented `#!SV_LIBRARIES` bootstrap list, and
-`-sv_lib name` adds `name.so`; bootstrap libraries are ordered before direct
-libraries and aliases of the same file are suppressed.
+`-sv_lib name` adds `name.so` on Linux or `name.dll` on Windows. Bootstrap
+libraries are ordered before direct libraries and aliases of the same file
+are suppressed.
 
-Direct inputs are classified by contents rather than filename suffix. ELF
-objects, archives, LLVM bitcode, and ELF shared objects are passed to the
+Direct inputs are classified by contents rather than filename suffix. ELF or COFF
+objects, archives, LLVM bitcode, and native shared libraries are passed to the
 native link; text remains SystemVerilog input. Native inputs are rejected for
 `-c`, textual LLVM output, and non-link actions because those artifacts can be
 linked by the caller.
 
-These container and loader rules belong to the registered Linux platform
-source set. A future macOS or Windows backend will provide the corresponding
-Mach-O or COFF classification and loader rules while preserving this shared
-DPI input flow.
-
-Every shared object is retained as a normal `DT_NEEDED` dependency under
-`--no-as-needed`. Obelisk never copies it. The supplied directory is added to
+On Linux, every shared object is retained as a normal `DT_NEEDED` dependency
+under `--no-as-needed`. Obelisk never copies it. The supplied directory is added to
 the simulator's `DT_RUNPATH`: relative inputs use a literal `$ORIGIN`-relative
 entry and absolute inputs use their normalized absolute parent directory.
 SONAMEs become runtime loader identities. A no-SONAME library is linked by
 basename so an absolute build path is not recorded in `DT_NEEDED`. Duplicate
 loader identities and SONAMEs containing `/` are rejected.
 
-During compilation Obelisk loads each shared object to validate it and probes
-its module handle for `vlog_startup_routines`. This can execute ELF
+On Linux, Obelisk loads each shared object during compilation to validate it
+and probes its module handle for `vlog_startup_routines`. This can execute ELF
 constructors, so native inputs must be trusted. A shared object without that
 symbol is an ordinary DPI/helper dependency. A VPI startup object requires
 `--vpi=read` or `--vpi=full`.
@@ -126,6 +122,47 @@ falls back to native or non-LTO linking.
 
 The wasm32 target has no host C ABI. It rejects DPI and Annex J inputs
 explicitly before probing or loading foreign libraries.
+
+### Windows DLLs
+
+Windows supports COFF objects, static archives, matching SDK bitcode, and DLLs
+in both native and bytecode execution. Build foreign code with the SDK's Clang
+and `-fms-runtime-lib=dll`. For statically linked foreign objects, define
+`DPI_DLLISPEC` and `PLI_DLLISPEC` as empty so calls use ordinary external symbols.
+
+A DLL calling `sv*`, `vpi_*`, or exported SystemVerilog functions imports them
+from the final simulator executable. Generate its host import library with the
+SDK's `llvm-dlltool` and the staged standard API export list. This example uses
+the automatically downloaded x86-64 SDK; an ARM64 SDK uses `-m arm64` and its
+own target triple in the support path:
+
+```powershell
+$sdk = "$PWD/build-windows/sdk/Library/bin"
+$resource = & ./build-windows/tools/driver/obelisk.exe --print-resource-dir
+& "$sdk/llvm-dlltool.exe" -m i386:x86-64 -D simulator.exe `
+  -d "$resource/targets/x86_64-pc-windows-msvc/obelisk-pi.def" -l host.lib
+& "$sdk/clang.exe" -fms-runtime-lib=dll -fuse-ld=lld -shared dpi.c `
+  "-I$resource/include" host.lib -Xlinker /def:dpi.def -o dpi.dll
+./build-windows/tools/driver/obelisk.exe design.sv dpi.dll -o simulator.exe
+./simulator.exe
+```
+
+Here `dpi.def` lists the DLL's exported foreign functions under `EXPORTS`.
+For VPI, also export `vlog_startup_routines DATA` and enable `--vpi=read` or
+`--vpi=full`. Additional exported SystemVerilog entry points can be listed in a
+second `.def` file and imported with another `llvm-dlltool` invocation.
+The `-D` image name must match the final executable basename, including `.exe`.
+Obelisk reads DLL exports and imports with LLVM, generates its DLL import
+libraries in process, and exports the host functions requested by the DLLs.
+It keeps each DLL loaded even when it provides only a VPI startup table.
+
+Direct DLL inputs are copied beside the final executable and recorded by
+basename. Keep those DLLs beside the simulator when deploying it; the bundle
+can move together while preserving the executable name used by host imports.
+Distinct DLLs with the same case-insensitive basename are rejected. DLLs are
+inspected without loading them into the compiler process.
+At startup, the Windows runtime resolves each VPI table in its already-loaded
+module and bounds its null-terminated table by readable mapped storage.
 
 ## Select the execution tier
 

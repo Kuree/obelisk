@@ -49,6 +49,7 @@ set(LLVM_LINK_COMPONENTS
 set(OBELISK_BACKEND_SOURCES)
 set(OBELISK_NATIVE_INPUTS_SOURCE)
 set(OBELISK_HAS_NATIVE_BACKEND 0)
+set(OBELISK_HAS_HOST_C_RUNTIME 0)
 set(OBELISK_HAS_WASM_BACKEND 0)
 
 list(APPEND LLVM_LINK_COMPONENTS
@@ -65,6 +66,11 @@ if(NOT EMSCRIPTEN)
   if(OBELISK_NATIVE_PLATFORM STREQUAL "linux")
     list(APPEND LLVM_LINK_COMPONENTS nativecodegen)
     list(APPEND OBELISK_BACKEND_SOURCES NativeBackend.cpp HostCRuntime.cpp)
+    set(OBELISK_NATIVE_INPUTS_SOURCE NativeInputs.cpp)
+    set(OBELISK_HAS_HOST_C_RUNTIME 1)
+  elseif(OBELISK_NATIVE_PLATFORM STREQUAL "windows")
+    list(APPEND LLVM_LINK_COMPONENTS nativecodegen)
+    list(APPEND OBELISK_BACKEND_SOURCES WindowsBackend.cpp)
     set(OBELISK_NATIVE_INPUTS_SOURCE NativeInputs.cpp)
   else()
     message(FATAL_ERROR
@@ -102,6 +108,7 @@ function(obelisk_configure_driver target)
     OBELISK_VERSION_STRING="${PROJECT_VERSION}"
     OBELISK_RESOURCE_DIR="${OBELISK_RESOURCE_DIR}"
     OBELISK_HAS_NATIVE_BACKEND=${OBELISK_HAS_NATIVE_BACKEND}
+    OBELISK_HAS_HOST_C_RUNTIME=${OBELISK_HAS_HOST_C_RUNTIME}
     OBELISK_HAS_WASM_BACKEND=${OBELISK_HAS_WASM_BACKEND}
     OBELISK_DEFAULT_TARGET="${OBELISK_DEFAULT_TARGET}"
     OBELISK_NATIVE_TARGET_TRIPLE="${OBELISK_TARGET_TRIPLE}"
@@ -127,10 +134,14 @@ function(obelisk_configure_driver target)
     MLIRTargetLLVMIRExport
     lldCommon
     lldWasm
-    $<$<NOT:$<BOOL:${EMSCRIPTEN}>>:lldELF>
+    $<$<STREQUAL:${OBELISK_NATIVE_PLATFORM},linux>:lldELF>
+    $<$<STREQUAL:${OBELISK_NATIVE_PLATFORM},windows>:lldCOFF>
   )
   if(NOT EMSCRIPTEN)
     target_link_libraries(${target} PRIVATE clangDriver clangBasic)
+  endif()
+  if(WIN32)
+    target_link_libraries(${target} PRIVATE "${OBELISK_COMPILER_RT_BUILTINS}")
   endif()
   mlir_check_all_link_libraries(${target})
 endfunction()
@@ -160,7 +171,7 @@ if(EMSCRIPTEN)
     "-sENVIRONMENT=web,worker,node")
 endif()
 
-if(OBELISK_INCLUDE_TESTS AND NOT EMSCRIPTEN)
+if(OBELISK_INCLUDE_TESTS AND OBELISK_NATIVE_PLATFORM STREQUAL "linux")
   add_llvm_executable(obelisk-host-c-runtime-test EXCLUDE_FROM_ALL
     PARTIAL_SOURCES_INTENDED
     ${PROJECT_SOURCE_DIR}/test/Support/HostCRuntimeTest.cpp

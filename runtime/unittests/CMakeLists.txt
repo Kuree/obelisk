@@ -2,6 +2,9 @@
 # a CMake subdirectory; it is never linked into the native runtime archive.
 set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+if(WIN32)
+  set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+endif()
 FetchContent_Declare(googletest
   URL "https://github.com/google/googletest/archive/refs/tags/v1.17.0.tar.gz"
   URL_HASH

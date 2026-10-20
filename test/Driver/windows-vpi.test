@@ -1,0 +1,15 @@
+// REQUIRES: windows
+// RUN: %split-file %S/Inputs/windows-pi.defs %t.dir
+// RUN: %llvm_dist/bin/llvm-dlltool -m %dlltool_machine -D simulator.exe -d %native_support/obelisk-pi.def -l %t.dir/host.lib
+// RUN: %target_clang -fuse-ld=lld -shared %S/Inputs/vpi_startup.c -I%resource_dir/include %t.dir/host.lib -Xlinker /def:%t.dir/vpi.def -o %t.dir/first.dll
+// RUN: %target_clang -fuse-ld=lld -shared %S/Inputs/vpi_startup_second.c -I%resource_dir/include %t.dir/host.lib -Xlinker /export:vlog_startup_routines,data -o %t.dir/second.dll
+// RUN: not obelisk --vpi=off %S/vpi.sv %t.dir/first.dll -o %t.dir/simulator.exe 2>&1 | FileCheck %S/vpi.sv --check-prefix=OFF
+// RUN: cd %t.dir && obelisk --vpi=full %S/vpi.sv first.dll first.dll second.dll -o simulator.exe
+// RUN: %t.dir/simulator.exe | FileCheck %S/vpi.sv --check-prefix=OUTPUT
+// RUN: llvm-readobj --coff-imports --coff-exports %t.dir/simulator.exe | FileCheck %s
+
+// CHECK-DAG: Name: {{.*}}first.dll
+// CHECK-DAG: Name: {{.*}}second.dll
+// CHECK-DAG: Name: vpi_handle_by_name
+// CHECK-DAG: Name: vpi_get_value
+// CHECK-DAG: Name: vpi_put_value

@@ -1,0 +1,18 @@
+# Translate LLVM's target spelling only where Windows tools require their own
+# machine names. Keep these in one place for SDK repairs and integration tests.
+function(obelisk_windows_target triple prefix)
+  if(NOT triple MATCHES "-windows-msvc")
+    message(FATAL_ERROR "Windows native target requires the Microsoft ABI: ${triple}")
+  endif()
+  if(triple MATCHES "^(x86_64|amd64)-")
+    set(machine "i386:x86-64")
+    set(header_machine "IMAGE_FILE_MACHINE_AMD64")
+  elseif(triple MATCHES "^(aarch64|arm64)-")
+    set(machine "arm64")
+    set(header_machine "IMAGE_FILE_MACHINE_ARM64")
+  else()
+    message(FATAL_ERROR "Unsupported Windows native target: ${triple}")
+  endif()
+  set(${prefix}_DLLTOOL_MACHINE "${machine}" PARENT_SCOPE)
+  set(${prefix}_COFF_MACHINE "${header_machine}" PARENT_SCOPE)
+endfunction()

@@ -1,0 +1,24 @@
+// REQUIRES: windows
+// RUN: %split-file %s %t.dir
+// RUN: %target_clang -fuse-ld=lld -shared %t.dir/impl.c -Wl,/export:actual_add -o %t.dir/impl.dll
+// RUN: %target_clang -fuse-ld=lld -shared -nostdlib %t.dir/empty.c -Wl,/noentry -Xlinker /def:%t.dir/forward.def -o %t.dir/forward.dll
+// RUN: mkdir -p %t.dir/bundle
+// RUN: obelisk %t.dir/design.sv %t.dir/forward.dll %t.dir/impl.dll -o %t.dir/bundle/simulator.exe
+// RUN: %t.dir/bundle/simulator.exe | FileCheck %s
+// RUN: obelisk --execution-tier=bytecode %t.dir/design.sv %t.dir/forward.dll %t.dir/impl.dll -o %t.dir/bundle/simulator.exe
+// RUN: %t.dir/bundle/simulator.exe | FileCheck %s
+
+// CHECK: forwarded=42
+
+//--- design.sv
+module forwarded_dpi;
+  import "DPI-C" pure function int dpi_add(input int value);
+  initial $display("forwarded=%0d", dpi_add(37));
+endmodule
+//--- impl.c
+int actual_add(int value) { return value + 5; }
+//--- empty.c
+int unused;
+//--- forward.def
+EXPORTS
+  dpi_add=impl.actual_add

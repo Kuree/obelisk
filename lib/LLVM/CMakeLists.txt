@@ -13,4 +13,6 @@ add_llvm_library(ObeliskLLVMPasses STATIC
 target_include_directories(ObeliskLLVMPasses PUBLIC
   ${PROJECT_SOURCE_DIR}/include)
 
-add_subdirectory(Plugin)
+if(NOT WIN32)
+  add_subdirectory(Plugin)
+endif()

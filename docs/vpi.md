@@ -9,12 +9,12 @@ obelisk --vpi=read design.sv plugin.so -o simulator
 obelisk --vpi=full design.sv uvm_backdoor.so helpers.a -o simulator
 ```
 
-Obelisk probes each shared object during compilation for the standard
+On Linux, Obelisk probes each shared object during compilation for the standard
 `vlog_startup_routines` symbol. A module exporting that table is rejected under
 `--vpi=off`. Probing loads the DSO and can run its ELF constructors, so native
 inputs must be trusted.
 
-At runtime every detected module is already present through `DT_NEEDED`.
+On Linux, every detected module is already present through `DT_NEEDED`.
 Obelisk obtains a handle with `RTLD_NOLOAD`, resolves the startup table on that
 specific handle, validates its ELF symbol extent and null terminator, and calls
 the tables in positional-input order. Repeated filesystem identities are
@@ -24,6 +24,12 @@ access begins when `cbEndOfCompile` callbacks run. Startup runs after runtime,
 DPI, class, and native-state registration and before the root process is
 spawned. The VPI context remains active through scheduler execution, including
 DPI calls, and is deactivated before context destruction.
+
+Windows DLLs use the same VPI lifecycle, callbacks, and value API. Obelisk
+inspects PE tables without loading DLLs into the compiler and generates import
+libraries with LLVM. The runtime resolves startup tables in their linked
+modules and bounds table reads by readable mapped storage. See
+[Windows DLLs](dpi.md#windows-dlls) for the host import library build steps.
 
 The current backdoor subset provides hierarchical and scoped
 `vpi_handle_by_name`, `$root.` normalization, scope relations, filtered

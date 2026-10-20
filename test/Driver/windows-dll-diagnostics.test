@@ -1,0 +1,14 @@
+// REQUIRES: windows
+// RUN: %split-file %S/Inputs/windows-pi.defs %t.dir
+// RUN: %llvm_dist/bin/llvm-dlltool -m %dlltool_machine -D simulator.exe -d %native_support/obelisk-pi.def -l %t.dir/host.lib
+// RUN: %target_clang -fuse-ld=lld -shared %S/Inputs/dpi_impl.c -I%resource_dir/include %t.dir/host.lib -Xlinker /def:%t.dir/dpi.def -o %t.dir/first.dll
+// RUN: mkdir -p %t.dir/other
+// RUN: cp %t.dir/first.dll %t.dir/other/FIRST.dll
+// RUN: not obelisk %S/dpi.sv %t.dir/first.dll %t.dir/other/FIRST.dll -o %t.dir/simulator.exe 2>&1 | FileCheck %s --check-prefix=COLLISION
+// RUN: not obelisk %S/dpi.sv %t.dir/first.dll -o %t.dir/wrong.exe 2>&1 | FileCheck %s --check-prefix=IMAGE
+// RUN: not obelisk %S/dpi.sv %obelisk%exeext -o %t.dir/simulator.exe 2>&1 | FileCheck %s --check-prefix=EXE
+
+// COLLISION: duplicate runtime loader identity 'first.dll'
+// IMAGE: DLL imports simulator image 'simulator.exe' but output image is 'wrong.exe'
+// IMAGE-SAME: regenerate its host import library
+// EXE: PE executable input is not linkable:

@@ -54,8 +54,8 @@ set(OBELISK_OP_SHARD_COUNT "4" CACHE STRING
 #===------------------------------------------------------------------------===
 # Toolchain: a CMake-managed prebuilt LLVM + MLIR release SDK.
 #
-# We deliberately do not build LLVM or MLIR from source and do not consume any
-# downstream compiler package. The selected binary SDK must contain matching
+# We deliberately do not build LLVM or MLIR from source. The selected binary
+# SDK must contain matching
 # LLVM and MLIR headers, libraries, TableGen tools, and CMake package files.
 #
 # The official archive is downloaded and extracted below CMAKE_BINARY_DIR. A
@@ -71,6 +71,20 @@ set(OBELISK_LLVM_VERSION "22.1.6")
 cmake_host_system_information(RESULT _obelisk_host_processor
   QUERY OS_PLATFORM)
 
+set(OBELISK_LLVM_INSTALL_DIR "" CACHE PATH
+  "Existing matching LLVM + MLIR + Clang + LLD binary SDK")
+if(OBELISK_LLVM_INSTALL_DIR)
+  get_filename_component(OBELISK_LLVM_DIST_DIR
+    "${OBELISK_LLVM_INSTALL_DIR}" ABSOLUTE)
+elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows" AND
+       _obelisk_host_processor MATCHES "^(x86_64|amd64|AMD64)$" AND
+       NOT OBELISK_LLVM_PREBUILT_SHA256)
+  # LLVM's official Windows archive omits MLIR. Use one pinned set of
+  # upstream conda-forge binaries, including the LLD development libraries.
+  include("${CMAKE_CURRENT_LIST_DIR}/cmake/WindowsPrebuiltLLVM.cmake")
+endif()
+
+if(NOT OBELISK_LLVM_DIST_DIR)
 if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND
    _obelisk_host_processor MATCHES "^(x86_64|amd64|AMD64)$")
   set(_obelisk_llvm_archive_name
@@ -104,6 +118,7 @@ if(NOT OBELISK_LLVM_PREBUILT_URL OR NOT OBELISK_LLVM_PREBUILT_SHA256)
   message(FATAL_ERROR
     "No official LLVM + MLIR v${OBELISK_LLVM_VERSION} archive is known for "
     "${CMAKE_HOST_SYSTEM_NAME}/${_obelisk_host_processor}; set "
+    "OBELISK_LLVM_INSTALL_DIR to a matching binary SDK, or set "
     "OBELISK_LLVM_PREBUILT_URL and OBELISK_LLVM_PREBUILT_SHA256")
 endif()
 
@@ -170,6 +185,7 @@ get_filename_component(_obelisk_llvm_cmake_dir
   "${_obelisk_llvm_package_config}" DIRECTORY)
 get_filename_component(OBELISK_LLVM_DIST_DIR
   "${_obelisk_llvm_cmake_dir}/../../.." ABSOLUTE)
+endif()
 
 if(NOT EXISTS "${OBELISK_LLVM_DIST_DIR}/lib/cmake/llvm/LLVMConfig.cmake" OR
    NOT EXISTS "${OBELISK_LLVM_DIST_DIR}/lib/cmake/mlir/MLIRConfig.cmake")
@@ -185,29 +201,40 @@ endif()
 option(OBELISK_USE_SDK_CLANG
   "Compile with the prebuilt LLVM distribution's clang unless a compiler is chosen"
   ON)
+set(_obelisk_host_executable_suffix "")
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
+  set(_obelisk_host_executable_suffix ".exe")
+endif()
 set(_obelisk_sdk_clang "${OBELISK_LLVM_DIST_DIR}/bin/clang")
-if(OBELISK_USE_SDK_CLANG AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND
+set(_obelisk_sdk_cxx "${_obelisk_sdk_clang}++${_obelisk_host_executable_suffix}")
+if(OBELISK_USE_SDK_CLANG AND
+   CMAKE_HOST_SYSTEM_NAME MATCHES "^(Linux|Windows)$" AND
    NOT CMAKE_TOOLCHAIN_FILE AND
    NOT DEFINED CMAKE_C_COMPILER AND NOT DEFINED CMAKE_CXX_COMPILER AND
    NOT DEFINED ENV{CC} AND NOT DEFINED ENV{CXX} AND
-   EXISTS "${_obelisk_sdk_clang}++")
-  # The SDK's clang compiles against the host's libstdc++ and links with the
-  # host's C library, so make sure it can build a C++ program here first.
+   EXISTS "${_obelisk_sdk_cxx}")
+  # The SDK's Clang uses the host's C++ library and C runtime. Verify that
+  # their headers and libraries are installed before selecting the compiler.
   set(_obelisk_probe_dir "${CMAKE_BINARY_DIR}/CMakeFiles/ObeliskSDKClangProbe")
   file(MAKE_DIRECTORY "${_obelisk_probe_dir}")
   file(WRITE "${_obelisk_probe_dir}/probe.cpp"
     "#include <string>\n"
     "int main() { return static_cast<int>(std::string(\"a\").size()) - 1; }\n")
   execute_process(
-    COMMAND "${_obelisk_sdk_clang}++" "${_obelisk_probe_dir}/probe.cpp"
-      -o "${_obelisk_probe_dir}/probe"
+    COMMAND "${_obelisk_sdk_cxx}" "${_obelisk_probe_dir}/probe.cpp"
+      -o "${_obelisk_probe_dir}/probe${_obelisk_host_executable_suffix}"
     RESULT_VARIABLE _obelisk_probe_result
     OUTPUT_QUIET
     ERROR_VARIABLE _obelisk_probe_error)
   if(_obelisk_probe_result EQUAL 0)
-    set(CMAKE_C_COMPILER "${_obelisk_sdk_clang}" CACHE FILEPATH "C compiler")
-    set(CMAKE_CXX_COMPILER "${_obelisk_sdk_clang}++" CACHE FILEPATH
+    set(CMAKE_C_COMPILER "${_obelisk_sdk_clang}${_obelisk_host_executable_suffix}"
+      CACHE FILEPATH "C compiler")
+    set(CMAKE_CXX_COMPILER "${_obelisk_sdk_cxx}" CACHE FILEPATH
       "C++ compiler")
+  elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
+    message(FATAL_ERROR
+      "The SDK's Clang cannot build against this host's C++ library. "
+      "Install Visual Studio C++ build tools and a Windows SDK:\n${_obelisk_probe_error}")
   else()
     message(STATUS
       "The SDK's clang cannot build against this host's C++ library; using "
@@ -218,6 +245,12 @@ if(OBELISK_USE_SDK_CLANG AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND
   unset(_obelisk_probe_error)
 endif()
 unset(_obelisk_sdk_clang)
+unset(_obelisk_sdk_cxx)
+
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows" AND NOT CMAKE_TOOLCHAIN_FILE)
+  set(CMAKE_LINKER "${OBELISK_LLVM_DIST_DIR}/bin/lld-link.exe"
+    CACHE FILEPATH "SDK COFF linker")
+endif()
 
 project(obelisk
   VERSION 0.1.0
@@ -226,30 +259,74 @@ project(obelisk
 
 set(MLIR_DIR "${OBELISK_LLVM_DIST_DIR}/lib/cmake/mlir")
 set(LLVM_DIR "${OBELISK_LLVM_DIST_DIR}/lib/cmake/llvm")
+list(PREPEND CMAKE_PREFIX_PATH "${OBELISK_LLVM_DIST_DIR}")
+if(WIN32 AND NOT DEFINED ENV{VSINSTALLDIR})
+  find_program(_obelisk_vswhere vswhere
+    HINTS "$ENV{ProgramFiles\(x86\)}/Microsoft Visual Studio/Installer")
+  if(_obelisk_vswhere)
+    execute_process(COMMAND "${_obelisk_vswhere}" -latest -products "*"
+      -property installationPath
+      OUTPUT_VARIABLE _obelisk_visual_studio OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(_obelisk_visual_studio)
+      set(ENV{VSINSTALLDIR} "${_obelisk_visual_studio}")
+    endif()
+  endif()
+endif()
 
 find_package(LLVM REQUIRED CONFIG)
 find_package(MLIR REQUIRED CONFIG)
 set(LLD_DIR "${OBELISK_LLVM_DIST_DIR}/lib/cmake/lld")
 find_package(LLD REQUIRED CONFIG)
+if(NOT LLVM_PACKAGE_VERSION VERSION_EQUAL OBELISK_LLVM_VERSION)
+  message(FATAL_ERROR
+    "The binary SDK must provide LLVM ${OBELISK_LLVM_VERSION}, got ${LLVM_PACKAGE_VERSION}")
+endif()
+if(WIN32)
+  set(OBELISK_TARGET_TRIPLE "${LLVM_HOST_TRIPLE}" CACHE STRING
+    "Native code-generation target triple")
+  include("${PROJECT_SOURCE_DIR}/cmake/WindowsTarget.cmake")
+  obelisk_windows_target("${LLVM_HOST_TRIPLE}" OBELISK_WINDOWS_HOST)
+  obelisk_windows_target("${OBELISK_TARGET_TRIPLE}" OBELISK_WINDOWS_TARGET)
+  if(NOT OBELISK_WINDOWS_HOST_COFF_MACHINE STREQUAL
+         OBELISK_WINDOWS_TARGET_COFF_MACHINE)
+    message(FATAL_ERROR
+      "Native target ${OBELISK_TARGET_TRIPLE} must match the SDK host ${LLVM_HOST_TRIPLE}")
+  endif()
+  execute_process(
+    COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/clang.exe"
+      --target=${OBELISK_TARGET_TRIPLE} --rtlib=compiler-rt -print-libgcc-file-name
+    RESULT_VARIABLE _obelisk_builtins_status
+    OUTPUT_VARIABLE OBELISK_COMPILER_RT_BUILTINS
+    ERROR_VARIABLE _obelisk_builtins_diagnostic OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT _obelisk_builtins_status EQUAL 0 OR
+     NOT EXISTS "${OBELISK_COMPILER_RT_BUILTINS}")
+    message(FATAL_ERROR
+      "The SDK has no compiler-rt builtins for ${OBELISK_TARGET_TRIPLE}: "
+      "${OBELISK_COMPILER_RT_BUILTINS} ${_obelisk_builtins_diagnostic}")
+  endif()
+endif()
 
 message(STATUS "Using prebuilt LLVM ${LLVM_PACKAGE_VERSION} + MLIR")
 message(STATUS "  LLVM package = ${LLVM_DIR}")
 message(STATUS "  MLIR package = ${MLIR_DIR}")
 message(STATUS "  LLD package = ${LLD_DIR}")
 
-if(NOT EXISTS "${OBELISK_LLVM_DIST_DIR}/bin/llvm-tblgen" OR
-   NOT EXISTS "${OBELISK_LLVM_DIST_DIR}/bin/mlir-tblgen")
+if(NOT EXISTS "${OBELISK_LLVM_DIST_DIR}/bin/llvm-tblgen${_obelisk_host_executable_suffix}" OR
+   NOT EXISTS "${OBELISK_LLVM_DIST_DIR}/bin/mlir-tblgen${_obelisk_host_executable_suffix}")
   message(FATAL_ERROR
     "The prebuilt LLVM + MLIR distribution is missing TableGen tools")
 endif()
 set(OBELISK_LLVM_TOOLS_DIR "${OBELISK_LLVM_DIST_DIR}/bin" CACHE INTERNAL
     "Matching prebuilt LLVM/MLIR tool directory" FORCE)
+if(WIN32)
+  include("${PROJECT_SOURCE_DIR}/cmake/WindowsSDKSupport.cmake")
+endif()
 
 # Keep generators and libraries on the same prebuilt distribution even when a
 # build directory was previously configured against another SDK.
-set(LLVM_TABLEGEN_EXE "${OBELISK_LLVM_TOOLS_DIR}/llvm-tblgen"
+set(LLVM_TABLEGEN_EXE "${OBELISK_LLVM_TOOLS_DIR}/llvm-tblgen${_obelisk_host_executable_suffix}"
     CACHE FILEPATH "Matching LLVM TableGen executable" FORCE)
-set(MLIR_TABLEGEN_EXE "${OBELISK_LLVM_TOOLS_DIR}/mlir-tblgen"
+set(MLIR_TABLEGEN_EXE "${OBELISK_LLVM_TOOLS_DIR}/mlir-tblgen${_obelisk_host_executable_suffix}"
     CACHE FILEPATH "Matching MLIR TableGen executable" FORCE)
 
 list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}" "${LLVM_CMAKE_DIR}")
@@ -258,6 +335,13 @@ include(TableGen)
 include(AddLLVM)
 include(AddMLIR)
 include(HandleLLVMOptions)
+if(WIN32 AND CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC" AND NOT MSVC)
+  # LLVM 22's add_link_opts assumes non-MSVC compiler drivers use ELF. The
+  # SDK's clang++ has GNU command-line syntax but targets the MSVC COFF ABI.
+  # Supply COFF dead stripping and keep AddLLVM from adding --gc-sections.
+  set(LLVM_NO_DEAD_STRIP ON)
+  add_link_options("$<$<NOT:$<CONFIG:Debug>>:LINKER:/OPT:REF>")
+endif()
 
 # The compiler tools statically link LLVM, MLIR, slang and Z3 with debug info
 # into 1.3-1.5 GB executables. GNU ld takes ~15 s for each, longer than a
@@ -291,6 +375,13 @@ if(OBELISK_USE_SDK_LLD AND NOT LLVM_USE_LINKER AND NOT EMSCRIPTEN AND
   unset(_obelisk_lld_flags)
   unset(_obelisk_lld_dir)
 endif()
+if(WIN32)
+  # CMake already links GNU-style Clang on Windows through lld-link. Match the
+  # usual Linux stack reserve: the Windows 1 MiB default is too small for
+  # nested semantic lowering and assertion expression analysis.
+  add_link_options(LINKER:/STACK:8388608 LINKER:/debug:symtab
+                   LINKER:/OPT:NOICF)
+endif()
 
 if(EMSCRIPTEN)
   # wasm32, not wasm64. No Safari release implements the Memory64 proposal,
@@ -322,9 +413,8 @@ elseif(APPLE)
     "no macOS native backend is registered; configure with emcmake to target "
     "wasm32")
 elseif(WIN32)
-  message(FATAL_ERROR
-    "no Windows native backend is registered; configure with emcmake to "
-    "target wasm32")
+  set(OBELISK_NATIVE_PLATFORM "windows")
+  set(_obelisk_configure_windows_support TRUE)
 else()
   message(FATAL_ERROR
     "native executable generation requires a Linux host, or "
@@ -353,6 +443,10 @@ if(OBELISK_ENABLE_Z3)
   set(OBELISK_Z3_VERSION "4.13.4")
   set(OBELISK_Z3_ARCHIVE_SHA256
       "4071977e66e9f3d239b7b098ceddfe62ffdf3c71e345e9524a4a5001d1f4adf3")
+  set(_obelisk_z3_library_name "libz3.a")
+  if(WIN32)
+    set(_obelisk_z3_library_name "z3.lib")
+  endif()
   set(_obelisk_z3_install "${CMAKE_BINARY_DIR}/z3-${OBELISK_Z3_VERSION}")
   if(EMSCRIPTEN)
     set(_obelisk_z3_single_threaded ON)
@@ -361,6 +455,7 @@ if(OBELISK_ENABLE_Z3)
   endif()
   set(_obelisk_z3_cmake_args
       -DCMAKE_BUILD_TYPE=Release
+      "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
       -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
       -DCMAKE_POSITION_INDEPENDENT_CODE=ON
       -DZ3_BUILD_LIBZ3_SHARED=OFF
@@ -407,7 +502,7 @@ if(OBELISK_ENABLE_Z3)
   endif()
   if(OBELISK_Z3_INSTALL_DIR)
     set(_obelisk_z3_install "${OBELISK_Z3_INSTALL_DIR}")
-    if(NOT EXISTS "${_obelisk_z3_install}/lib/libz3.a" OR
+    if(NOT EXISTS "${_obelisk_z3_install}/lib/${_obelisk_z3_library_name}" OR
        NOT EXISTS "${_obelisk_z3_install}/include/z3.h" OR
        NOT EXISTS "${_obelisk_z3_install}/include/z3_version.h")
       message(FATAL_ERROR
@@ -439,7 +534,7 @@ if(OBELISK_ENABLE_Z3)
       EXCLUDE_FROM_ALL TRUE
       CMAKE_ARGS ${_obelisk_z3_cmake_args}
       INSTALL_DIR "${_obelisk_z3_install}"
-      BUILD_BYPRODUCTS "${_obelisk_z3_install}/lib/libz3.a")
+      BUILD_BYPRODUCTS "${_obelisk_z3_install}/lib/${_obelisk_z3_library_name}")
   else()
     ExternalProject_Add(obelisk_z3_project
       URL "https://github.com/Z3Prover/z3/archive/refs/tags/z3-${OBELISK_Z3_VERSION}.tar.gz"
@@ -448,14 +543,14 @@ if(OBELISK_ENABLE_Z3)
       EXCLUDE_FROM_ALL TRUE
       CMAKE_ARGS ${_obelisk_z3_cmake_args}
       INSTALL_DIR "${_obelisk_z3_install}"
-      BUILD_BYPRODUCTS "${_obelisk_z3_install}/lib/libz3.a")
+      BUILD_BYPRODUCTS "${_obelisk_z3_install}/lib/${_obelisk_z3_library_name}")
   endif()
   if(NOT OBELISK_Z3_INSTALL_DIR)
     file(MAKE_DIRECTORY "${_obelisk_z3_install}/include")
   endif()
   add_library(ObeliskZ3 STATIC IMPORTED GLOBAL)
   set_target_properties(ObeliskZ3 PROPERTIES
-    IMPORTED_LOCATION "${_obelisk_z3_install}/lib/libz3.a"
+    IMPORTED_LOCATION "${_obelisk_z3_install}/lib/${_obelisk_z3_library_name}"
     INTERFACE_INCLUDE_DIRECTORIES "${_obelisk_z3_install}/include")
   if(EMSCRIPTEN)
     # The solver benefits from a growable compiler heap. Exception handling is
@@ -538,6 +633,9 @@ if(_obelisk_configure_native_support)
   # Configure it only after FetchContent has resolved the source tree.
   include("${PROJECT_SOURCE_DIR}/cmake/TargetNativeSupport.cmake")
 endif()
+if(_obelisk_configure_windows_support)
+  include("${PROJECT_SOURCE_DIR}/cmake/TargetWindowsSupport.cmake")
+endif()
 
 #===------------------------------------------------------------------------===
 # Language standard. Obelisk stays at the SDK's C++17 baseline except for the
@@ -577,7 +675,7 @@ endif()
 add_custom_target(obelisk-generated-files)
 add_subdirectory(utils/obelisk-tblgen)
 add_subdirectory(include)
-if(EMSCRIPTEN AND TARGET obelisk_target_runtime)
+if((EMSCRIPTEN OR WIN32) AND TARGET obelisk_target_runtime)
   # TargetWasmSupport is loaded before the reflection generators are declared.
   # Keep its direct compiler commands behind the imported host-generated files.
   add_dependencies(obelisk_target_runtime obelisk-generated-files)
@@ -588,6 +686,39 @@ add_subdirectory(tools)
 
 if(OBELISK_INCLUDE_TESTS)
   add_subdirectory(test)
+endif()
+
+if(WIN32)
+  # LLVM's Windows packages use a few DLLs. Stage them beside our tools so
+  # generated-file commands and tests also work without activating conda.
+  function(obelisk_collect_windows_tools directory)
+    get_property(targets DIRECTORY "${directory}" PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(target IN LISTS targets)
+      get_target_property(type "${target}" TYPE)
+      if(type STREQUAL "EXECUTABLE" OR type STREQUAL "MODULE_LIBRARY")
+        set_property(GLOBAL APPEND PROPERTY OBELISK_WINDOWS_TOOLS "${target}")
+      endif()
+    endforeach()
+    get_property(subdirectories DIRECTORY "${directory}" PROPERTY SUBDIRECTORIES)
+    foreach(subdirectory IN LISTS subdirectories)
+      obelisk_collect_windows_tools("${subdirectory}")
+    endforeach()
+  endfunction()
+  obelisk_collect_windows_tools("${PROJECT_SOURCE_DIR}")
+  get_property(windows_tools GLOBAL PROPERTY OBELISK_WINDOWS_TOOLS)
+  set(windows_tool_directories)
+  foreach(target IN LISTS windows_tools)
+    list(APPEND windows_tool_directories "$<TARGET_FILE_DIR:${target}>")
+  endforeach()
+  add_custom_target(obelisk_windows_runtime_dlls
+    COMMAND "${CMAKE_COMMAND}"
+      "-DSDK=${OBELISK_LLVM_DIST_DIR}"
+      "-DDIRECTORIES=${windows_tool_directories}"
+      -P "${PROJECT_SOURCE_DIR}/cmake/StageWindowsDLLs.cmake"
+    VERBATIM)
+  foreach(target IN LISTS windows_tools)
+    add_dependencies("${target}" obelisk_windows_runtime_dlls)
+  endforeach()
 endif()
 
 message(STATUS "obelisk configured against prebuilt LLVM + MLIR")
