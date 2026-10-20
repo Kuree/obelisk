@@ -2,6 +2,7 @@
 
 #include "obelisk/Runtime/Runtime.h"
 
+#include "../lib/ProcessAllocation.h"
 #include "../lib/ProcessShared.h"
 #include "../lib/RuntimeInternal.h"
 
@@ -17,6 +18,9 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#if defined(_WIN32)
+#include <malloc.h>
+#endif
 
 extern "C" const obelisk_rt_process_descriptor_v1
     generatedDescriptor asm("execution_process.__obelisk_process_descriptor");
@@ -820,6 +824,36 @@ TEST(GeneratedProcess, ProcessFramesCanBeFreedByDifferentWorkers) {
 
 } // namespace
 
+#if defined(_WIN32)
+// Interpose the CRT import used by the runtime, just as aligned_alloc is
+// interposed below on POSIX. Offset zero uses the same _aligned_free contract.
+extern "C" void *countedAlignedMalloc(size_t size,
+                                      size_t alignment) asm("_aligned_malloc");
+extern "C" void *countedAlignedMalloc(size_t size, size_t alignment) {
+  void *allocation = _aligned_offset_malloc(size, alignment, 0);
+  if (allocation)
+    ++alignedAllocationCount;
+  return allocation;
+}
+extern "C" {
+void *(*__imp__aligned_malloc)(size_t, size_t) = countedAlignedMalloc;
+}
+
+namespace {
+class ProcessAllocationEnvironment : public ::testing::Environment {
+  void SetUp() override {
+    // Windows also uses _aligned_malloc for the pool's over-aligned metadata.
+    // Initialize that shared infrastructure before measuring per-frame costs,
+    // including when lit runs a single test in a fresh process.
+    void *block = obelisk::process::allocateProcessMemory(128, 16);
+    ASSERT_NE(block, nullptr);
+    obelisk::process::releaseProcessMemory(block, 128, 16);
+  }
+};
+::testing::Environment *const processAllocationEnvironment =
+    ::testing::AddGlobalTestEnvironment(new ProcessAllocationEnvironment);
+} // namespace
+#else
 extern "C" void *aligned_alloc(size_t alignment, size_t size) {
   void *allocation = nullptr;
   if (posix_memalign(&allocation, alignment, size) != 0)
@@ -827,3 +861,4 @@ extern "C" void *aligned_alloc(size_t alignment, size_t size) {
   ++alignedAllocationCount;
   return allocation;
 }
+#endif

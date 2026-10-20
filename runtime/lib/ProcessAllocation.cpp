@@ -8,9 +8,28 @@
 #include <mutex>
 #include <new>
 #include <optional>
+#if defined(_WIN32)
+#include <malloc.h>
+#endif
 
 namespace obelisk::process {
 namespace {
+
+void *allocateAlignedProcessBlock(size_t size, size_t alignment) noexcept {
+#if defined(_WIN32)
+  return _aligned_malloc(size, alignment);
+#else
+  return std::aligned_alloc(alignment, size);
+#endif
+}
+
+void freeAlignedProcessBlock(void *allocation) noexcept {
+#if defined(_WIN32)
+  _aligned_free(allocation);
+#else
+  std::free(allocation);
+#endif
+}
 
 struct ProcessFreeBlock {
   ProcessFreeBlock *next;
@@ -37,7 +56,7 @@ struct ThreadProcessAllocationCache {
     for (ProcessFreeBlock *allocation : blocks)
       if (allocation) {
         allocation->~ProcessFreeBlock();
-        std::free(allocation);
+        freeAlignedProcessBlock(allocation);
       }
   }
 };
@@ -53,7 +72,7 @@ public:
     size_t classSize = 0;
     std::optional<size_t> bucketIndex = classify(size, alignment, classSize);
     if (!bucketIndex)
-      return std::aligned_alloc(alignment, size);
+      return allocateAlignedProcessBlock(size, alignment);
 
     if (classSize <= kMaxThreadLocalProcessFrameBytes) {
       ProcessFreeBlock *&local =
@@ -78,7 +97,7 @@ public:
         return allocation;
       }
     }
-    return std::aligned_alloc(alignment, classSize);
+    return allocateAlignedProcessBlock(classSize, alignment);
   }
 
   void release(void *allocation, size_t size, size_t alignment) noexcept {
@@ -90,7 +109,7 @@ public:
     size_t classSize = 0;
     std::optional<size_t> bucketIndex = classify(size, alignment, classSize);
     if (!bucketIndex) {
-      std::free(allocation);
+      freeAlignedProcessBlock(allocation);
       return;
     }
 
@@ -106,7 +125,7 @@ public:
     size_t cached = cachedBytes.load(std::memory_order_relaxed);
     for (;;) {
       if (classSize > maxCachedBytes - cached) {
-        std::free(allocation);
+        freeAlignedProcessBlock(allocation);
         return;
       }
       if (cachedBytes.compare_exchange_weak(cached, cached + classSize,
@@ -119,7 +138,7 @@ public:
       std::lock_guard<std::mutex> lock(bucket.mutex);
       if (bucket.count >= maxBlocksPerClass) {
         cachedBytes.fetch_sub(classSize, std::memory_order_relaxed);
-        std::free(allocation);
+        freeAlignedProcessBlock(allocation);
         return;
       }
       bucket.head = ::new (allocation) ProcessFreeBlock{bucket.head};
@@ -173,7 +192,7 @@ ProcessAllocationPool *processAllocationPool() noexcept {
 void *allocateProcessMemory(size_t size, size_t alignment) noexcept {
   if (ProcessAllocationPool *pool = processAllocationPool())
     return pool->allocate(size, alignment);
-  return std::aligned_alloc(alignment, size);
+  return allocateAlignedProcessBlock(size, alignment);
 }
 
 void releaseProcessMemory(void *allocation, size_t size,
@@ -181,7 +200,7 @@ void releaseProcessMemory(void *allocation, size_t size,
   if (ProcessAllocationPool *pool = processAllocationPool())
     pool->release(allocation, size, alignment);
   else
-    std::free(allocation);
+    freeAlignedProcessBlock(allocation);
 }
 
 } // namespace obelisk::process

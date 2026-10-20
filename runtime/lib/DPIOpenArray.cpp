@@ -3,7 +3,7 @@
 #include "RuntimeInternal.h"
 #include "obelisk/Runtime/Runtime.h"
 #if defined(_MSC_VER) || defined(__MINGW32__) || defined(__CYGWIN__)
-#define DPI_DLLISPEC __declspec(dllexport)
+#define DPI_DLLISPEC
 #elif defined(__GNUC__) || defined(__clang__)
 #define DPI_EXTERN __attribute__((visibility("default")))
 #endif

@@ -100,6 +100,12 @@ if(OBELISK_COMPILER_RT_BUILTINS)
   set_property(SOURCE lib/ABI.cpp APPEND PROPERTY OBJECT_DEPENDS
     "${OBELISK_COMPILER_RT_BUILTINS}")
 endif()
+if(WIN32)
+  # Consumers of this archive resolve VPI entry points statically, so the
+  # canonical IEEE headers must not turn their calls into DLL imports.
+  target_compile_definitions(obelisk_rt PUBLIC PLI_DLLISPEC= PLI_DLLESPEC=)
+  target_compile_definitions(obelisk_rt INTERFACE DPI_DLLISPEC=)
+endif()
 if(OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS)
   target_compile_definitions(obelisk_rt PRIVATE
     OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS=1)

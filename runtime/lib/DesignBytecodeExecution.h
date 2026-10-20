@@ -27,22 +27,32 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
 // Keep uncommon feature service bodies out of the monolithic intrinsic
 // dispatcher. This preserves the established bytecode interpreter layout for
 // designs that never encode these intrinsics.
-#if defined(__clang__) || defined(__GNUC__)
-__attribute__((weak))
+//
+// ELF and wasm links use weak definitions. COFF needs strong definitions in
+// the feature objects and weak references only in the dispatcher, which
+// defines OBELISK_RT_BYTECODE_DISPATCHER before including this header, so an
+// absent feature does not extract its archive member.
+#if defined(_WIN32)
+#if defined(OBELISK_RT_BYTECODE_DISPATCHER)
+#define OBELISK_RT_FEATURE_SERVICE __attribute__((weak))
+#else
+#define OBELISK_RT_FEATURE_SERVICE
 #endif
-obelisk_rt_status
-invokeDynamicScanIntrinsic(const Image &image, Frame &frame,
-                           obelisk_rt_context *context, IntrinsicSite site,
-                           uint32_t intrinsicId);
+#elif defined(__clang__) || defined(__GNUC__)
+#define OBELISK_RT_FEATURE_SERVICE __attribute__((weak))
+#else
+#define OBELISK_RT_FEATURE_SERVICE
+#endif
 
-#if defined(__clang__) || defined(__GNUC__)
-__attribute__((weak))
-#endif
-obelisk_rt_status
-invokeContainerBitstreamIntrinsic(const Image &image, Frame &frame,
-                                  obelisk_rt_context *context,
-                                  IntrinsicSite site, uint32_t siteIndex,
-                                  uint32_t intrinsicId);
+OBELISK_RT_FEATURE_SERVICE obelisk_rt_status invokeDynamicScanIntrinsic(
+    const Image &image, Frame &frame, obelisk_rt_context *context,
+    IntrinsicSite site, uint32_t intrinsicId);
+
+OBELISK_RT_FEATURE_SERVICE obelisk_rt_status invokeContainerBitstreamIntrinsic(
+    const Image &image, Frame &frame, obelisk_rt_context *context,
+    IntrinsicSite site, uint32_t siteIndex, uint32_t intrinsicId);
+
+#undef OBELISK_RT_FEATURE_SERVICE
 
 } // namespace obelisk::designbytecode
 

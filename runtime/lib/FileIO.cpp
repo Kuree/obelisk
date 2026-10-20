@@ -37,6 +37,10 @@ bool normalizeMode(std::string_view mode, std::string &normalized) {
   if (std::find(modes.begin(), modes.end(), mode) == modes.end())
     return false;
   normalized.assign(mode);
+  // SV file offsets and unformatted reads count bytes. Disable the Windows
+  // CRT's CRLF and Ctrl-Z translation for every supported open mode.
+  if (mode.find('b') == std::string_view::npos)
+    normalized += 'b';
   return true;
 }
 
@@ -464,7 +468,7 @@ obelisk_rt_v1_file_open_mcd(obelisk_rt_context *context, const char *path,
       return OBELISK_RT_OUT_OF_RESOURCES;
     }
     errno = 0;
-    FILE *stream = std::fopen(pathString->c_str(), "w");
+    FILE *stream = std::fopen(pathString->c_str(), "wb");
     if (!stream) {
       int error = errno ? errno : EIO;
       setLastErrorUnlocked(context, "fopen failed: " + hostErrorMessage(error));

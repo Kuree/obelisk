@@ -13,14 +13,20 @@
 #include "obelisk/Reflection/DesignReflection.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
 
-// VPI startup loads a caller-provided shared object and reads the ELF symbol
-// size of its vlog_startup_routines table. WebAssembly has neither, and a
-// wasm build links its design statically, so that path is compiled out there
-// rather than emulated. Everything else in this file is portable.
-#if !defined(__EMSCRIPTEN__)
+// Native VPI startup finds tables in libraries already linked into the image.
+// ELF provides a symbol size; PE tables are bounded by readable mapped memory.
+// WebAssembly links its design statically and has no dynamic startup modules.
+#if defined(__linux__) && !defined(__EMSCRIPTEN__)
 #define OBELISK_RT_VPI_DYNAMIC_STARTUP 1
 #include <dlfcn.h>
 #include <elf.h>
+#elif defined(_WIN32)
+#define OBELISK_RT_VPI_DYNAMIC_STARTUP 1
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <filesystem>
+#include <system_error>
+#include <windows.h>
 #endif
 
 #include <algorithm>
@@ -42,7 +48,7 @@
 #include <vector>
 
 #if defined(_WIN32)
-#define OBELISK_VPI_EXPORT __declspec(dllexport)
+#define OBELISK_VPI_EXPORT
 #elif defined(__GNUC__) || defined(__clang__)
 #define OBELISK_VPI_EXPORT __attribute__((visibility("default")))
 #else
@@ -299,7 +305,13 @@ private:
 
 #if defined(OBELISK_RT_VPI_DYNAMIC_STARTUP)
 struct DynamicModuleCloser {
-  void operator()(void *module) const noexcept { (void)dlclose(module); }
+  void operator()(void *module) const noexcept {
+#if defined(_WIN32)
+    (void)FreeLibrary(static_cast<HMODULE>(module));
+#else
+    (void)dlclose(module);
+#endif
+  }
 };
 #endif
 
@@ -3823,6 +3835,40 @@ obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
              vpiSystem);
     return OBELISK_RT_IO_ERROR;
 #else
+#if defined(_WIN32)
+    std::wstring moduleName;
+    OBELISK_RT_TRY { moduleName = std::filesystem::u8path(name).wstring(); }
+    OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+    HMODULE module = nullptr;
+    if (!GetModuleHandleExW(0, moduleName.c_str(), &module)) {
+      std::string diagnostic = std::system_category().message(GetLastError());
+      setError(state.get(), diagnostic.c_str(), vpiSystem);
+      return OBELISK_RT_IO_ERROR;
+    }
+    std::unique_ptr<void, DynamicModuleCloser> moduleGuard(module);
+    void *symbol = reinterpret_cast<void *>(
+        GetProcAddress(module, "vlog_startup_routines"));
+    if (!symbol) {
+      setError(state.get(), "VPI startup table is missing", vpiSystem);
+      return OBELISK_RT_INVALID_DESIGN;
+    }
+    MEMORY_BASIC_INFORMATION region{};
+    if (!VirtualQuery(symbol, &region, sizeof(region)) ||
+        region.State != MEM_COMMIT ||
+        (region.Protect & (PAGE_GUARD | PAGE_NOACCESS)) ||
+        reinterpret_cast<uintptr_t>(symbol) % alignof(void *) != 0) {
+      setError(state.get(), "VPI startup table is not readable");
+      return OBELISK_RT_INVALID_DESIGN;
+    }
+    size_t available =
+        region.RegionSize - (static_cast<const char *>(symbol) -
+                             static_cast<const char *>(region.BaseAddress));
+    size_t entries = std::min<size_t>(available / sizeof(void *), 65536);
+    if (!entries) {
+      setError(state.get(), "VPI startup table has no bounded PE storage");
+      return OBELISK_RT_INVALID_DESIGN;
+    }
+#else
     void *module = dlopen(name, RTLD_LAZY | RTLD_NOLOAD);
     if (!module) {
       setError(state.get(), dlerror(), vpiSystem);
@@ -3849,6 +3895,7 @@ obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
       setError(state.get(), "VPI startup table has no bounded ELF symbol size");
       return OBELISK_RT_INVALID_DESIGN;
     }
+#endif
     auto *routines = static_cast<void (**)(void)>(symbol);
     bool terminated = false;
     bool routineFailed = false;
@@ -5064,8 +5111,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   // by the fixed-image dispatch above so lexical queries remain valid without
   // a live frame.
   if (property == vpiAutomatic) {
-    const uint32_t objectType =
-        static_cast<uint32_t>(vpiTypeForHandle(handle));
+    const uint32_t objectType = static_cast<uint32_t>(vpiTypeForHandle(handle));
     if (objectType == vpiClassDefn || objectType == vpiClassTypespec)
       return 1;
     if (isVariableVPIKind(objectType))

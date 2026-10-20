@@ -1,5 +1,6 @@
 //===- DesignBytecodeIntrinsics.cpp - Runtime service dispatch ----------===//
 
+#define OBELISK_RT_BYTECODE_DISPATCHER 1
 #include "DesignBytecodeExecution.h"
 #include "DesignBytecodeNets.h"
 #include "ProcessValidation.h"
