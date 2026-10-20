@@ -1,6 +1,7 @@
 //===- VCDTest.cpp - Waveform dump tests ---------------------------------===//
 
 #include "../lib/RuntimeInternal.h"
+#include "TestEnvironment.h"
 #include "obelisk/Runtime/Runtime.h"
 #include "obelisk/Runtime/StableHash.h"
 
@@ -779,9 +780,9 @@ TEST(VCD, UnpackedArrayElementsAreDifferencedIndependently) {
 TEST(VCD, OversizedUnpackedArraysAreOmittedNotSmashed) {
   Fixture fixture;
   ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(setenv("OBELISK_RT_DUMP_MAX_ARRAY", "2", 1), 0);
+  ASSERT_EQ(setTestEnvironment("OBELISK_RT_DUMP_MAX_ARRAY", "2"), 0);
   ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(unsetenv("OBELISK_RT_DUMP_MAX_ARRAY"), 0);
+  ASSERT_EQ(unsetTestEnvironment("OBELISK_RT_DUMP_MAX_ARRAY"), 0);
   ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
             OBELISK_RT_OK);
   fixture.advanceTo(10);

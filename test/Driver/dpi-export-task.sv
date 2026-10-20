@@ -1,4 +1,4 @@
-// RUN: %target_clang -fPIC -c %S/Inputs/dpi_export_task_impl.c -I%resource_dir/include -o %t.o
+// RUN: %target_clang %target_pic -c %S/Inputs/dpi_export_task_impl.c -I%resource_dir/include -o %t.o
 // RUN: obelisk %s %t.o -o %t.native
 // RUN: %t.native | FileCheck %s --check-prefix=OUTPUT
 // RUN: obelisk --execution-tier=bytecode %s %t.o -o %t.bytecode

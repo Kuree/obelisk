@@ -10,8 +10,8 @@ endmodule
 
   RUN: cd %S && %obelisk --std=1800-2023 -O0 --coverage=line -o %t.sim html-report-tokens.sv
   RUN: %t.sim --coverage-output=%t.obcov
-  RUN: %obelisk -dump-tokens --std=1800-2023 %s -o /dev/stdout | FileCheck %s --check-prefix=TOKENS
-  RUN: %obelisk -dump-tokens --std=1800-2017 %s -o /dev/stdout | FileCheck %s --check-prefix=TOKENS
+  RUN: %obelisk -dump-tokens --std=1800-2023 %s -o - | FileCheck %s --check-prefix=TOKENS
+  RUN: %obelisk -dump-tokens --std=1800-2017 %s -o - | FileCheck %s --check-prefix=TOKENS
   RUN: obelisk-cov report --format=html --source-root=%S --std=1800-2023 %t.obcov | FileCheck %s --check-prefix=HTML
   RUN: obelisk-cov report --format=html --source-root=%S --std=1800-2017 %t.obcov | FileCheck %s --check-prefix=HTML
   RUN: not obelisk-cov report --format=html --std=1800-2005 %t.obcov 2>&1 | FileCheck %s --check-prefix=BAD-STD

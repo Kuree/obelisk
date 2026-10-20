@@ -1,3 +1,9 @@
+# Installed LLVM configs record their own lit defaults as a normal variable.
+# Preserve an explicit command-line cache setting, including worker limits.
+if(DEFINED CACHE{LLVM_LIT_ARGS})
+  get_property(LLVM_LIT_ARGS CACHE LLVM_LIT_ARGS PROPERTY VALUE)
+endif()
+
 option(OBELISK_ENABLE_REAL_UVM_TESTS
   "Fetch and run the opt-in Accellera UVM 2020.3.1 regression" OFF)
 set(OBELISK_REAL_UVM_DIR "")
@@ -416,6 +422,9 @@ set(_obelisk_driver_test_dependencies)
 if(TARGET obelisk-host-c-runtime-test)
   list(APPEND _obelisk_driver_test_dependencies obelisk-host-c-runtime-test)
 endif()
+if(TARGET ObeliskLLVMPassPlugin)
+  list(APPEND _obelisk_driver_test_dependencies ObeliskLLVMPassPlugin)
+endif()
 
 # Repository and build-graph lints inspect sources, archives, and an isolated
 # CMake graph rather than compiler behavior, so they run outside the lit
@@ -460,7 +469,6 @@ add_lit_testsuite(check-obelisk "Running the Obelisk regression tests"
   obelisk-coverage-scaling-fixture
   obelisk-source-tokens-test
   obelisk-cov
-  ObeliskLLVMPassPlugin
   ${_obelisk_driver_test_dependencies}
   ${OBELISK_RUNTIME_UNIT_TARGETS}
 )

@@ -1,6 +1,8 @@
+// REQUIRES: native-elf
+// The harness interposes runtime calls with the ELF linker's --wrap option.
 // RUN: %llvm_dist/bin/clang -I%S/../../runtime/include -I%resource_dir/include -c %S/Inputs/statement-fusion-vpi.c -o %t.helper.o
 // RUN: obelisk-opt %S/Inputs/statement-fusion-vpi.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=full},schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion,simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=full prune-native=true},convert-obelisk-sim-processes-to-llvm-coroutines)' | obelisk-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %t.helper.o -Wl,--wrap=obelisk_rt_v1_scheduler_run -Wl,--wrap=obelisk_rt_v1_display %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
+// RUN: %target_cxx %t.o %t.helper.o -Wl,--wrap=obelisk_rt_v1_scheduler_run -Wl,--wrap=obelisk_rt_v1_display %runtime_link_flags -o %t.exe
 // RUN: %t.exe | FileCheck %s
 
 // Acyclic statement dependencies do not make internal VPI deposits

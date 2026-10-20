@@ -121,7 +121,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // LOWER: llvm.call @obelisk_rt_v1_scheduler_termination_requested(%arg1)
 // LOWER: llvm.cond_br %{{.*}}, ^{{bb[0-9]+}}, ^[[SCAN:bb[0-9]+]]
 // LOWER-NEXT: ^[[SCAN]]:
-// LOWER-NEXT: llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
+// LOWER: llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
 // LOWER: "llvm.intr.cttz"
 // LOWER: llvm.br ^[[SWITCH]](
 

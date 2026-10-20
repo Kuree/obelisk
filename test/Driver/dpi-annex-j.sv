@@ -1,3 +1,4 @@
+// REQUIRES: native-elf
 // RUN: rm -rf %t.dir
 // RUN: mkdir -p %t.dir/root
 // RUN: %target_clang -fPIC -shared %S/Inputs/dpi_annex_j_bootstrap.c -Wl,-soname,bootstrap.so -o %t.dir/root/bootstrap.so

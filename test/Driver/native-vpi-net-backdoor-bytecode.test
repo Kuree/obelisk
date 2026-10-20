@@ -1,3 +1,4 @@
+// REQUIRES: native-elf
 // The bytecode tier reads the nets of native-vpi-net-backdoor.sv through the
 // same VPI probe library.
 // RUN: mkdir -p %t.dir/lib %t.dir/bin

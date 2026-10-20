@@ -39,10 +39,10 @@ endmodule
 // HELP-DAG: Select the code-generation target
 
 // BAD-TARGET: obelisk: error: unsupported target 'wasm64'; expected native or wasm32
-// MISSING-SYSROOT: obelisk: error: wasm sysroot '{{.*}}/missing' is not a directory
+// MISSING-SYSROOT: obelisk: error: wasm sysroot '{{.*[\\/]}}missing' is not a directory
 // WASM64-SYSROOT: has no wasm32-emscripten libraries; a wasm64 sysroot cannot satisfy the 32-bit runtime ABI
-// MISSING-RUNTIME: obelisk: error: wasm support is missing '{{.*}}/libobelisk_rt.a'
-// MISSING-LIBS: obelisk: error: wasm sysroot is missing '{{.*}}/libstubs.a'
+// MISSING-RUNTIME: obelisk: error: wasm support is missing '{{.*[\\/]}}libobelisk_rt.a'
+// MISSING-LIBS: obelisk: error: wasm sysroot is missing '{{.*[\\/]}}libstubs.a'
 
 //--- no-runtime/bin/placeholder
 // Split-file fixture: the driver executable is copied beside this file.

@@ -30,20 +30,20 @@
 // LOWER: simulation.container.import_fixed {{.*}}element_span = 32 : i64
 // LOWER: simulation.covergroup.create {{.*}} payloads[{{.*}}] {{.*}} : (!simulation.dynamic_array<!simulation.packed_array<1 : 0 x i1>>, !simulation.dynamic_array<i32>, !simulation.dynamic_array<i32>, !simulation.queue<i32, 3>, i32, !simulation.dynamic_array<!simulation.packed_array<3 : 0 x !simulation.logic<1>>>, !simulation.dynamic_array<f64>, !simulation.dynamic_array<f32>)
 
-// SCHEMA-DAG: functional_value_set id=[[PACKED_SET:[1-9][0-9]*]] {{.*}} atoms=0 width=32 kind=1 flags=1 signedness=2 set_expression=[[PACKED_EXPR:[1-9][0-9]*]]
-// SCHEMA-DAG: functional_value_set id=[[FIXED_SET:[1-9][0-9]*]] {{.*}} atoms=0 width=32 kind=1 flags=1 signedness=2 set_expression=[[FIXED_EXPR:[1-9][0-9]*]]
-// SCHEMA-DAG: functional_value_set id=[[DYNAMIC_SET:[1-9][0-9]*]] {{.*}} atoms=0 width=32 kind=1 flags=1 signedness=2 set_expression=[[DYNAMIC_EXPR:[1-9][0-9]*]]
-// SCHEMA-DAG: functional_value_set id=[[QUEUE_SET:[1-9][0-9]*]] {{.*}} atoms=0 width=32 kind=1 flags=1 signedness=2 set_expression=[[QUEUE_EXPR:[1-9][0-9]*]]
-// SCHEMA-DAG: functional_value_set id=[[LOGIC_SET:[1-9][0-9]*]] {{.*}} atoms=0 width=4 kind=1 flags=1 signedness=2 set_expression=[[LOGIC_EXPR:[1-9][0-9]*]]
-// SCHEMA-DAG: functional_value_set id=[[REAL_SET:[1-9][0-9]*]] {{.*}} atoms=0 width=64 kind=2 flags=1 signedness=3 set_expression=[[REAL_EXPR:[1-9][0-9]*]]
-// SCHEMA-DAG: functional_value_set id=[[SHORTREAL_SET:[1-9][0-9]*]] {{.*}} atoms=0 width=64 kind=2 flags=1 signedness=3 set_expression=[[SHORTREAL_EXPR:[1-9][0-9]*]]
-// SCHEMA-DAG: functional_expression id=[[PACKED_EXPR]] owner=[[PACKED_SET]] owner_kind=5 role=6 result_kind=4 width=2 signedness=1 {{.*}} phase=1 {{.*}} flags=0
-// SCHEMA-DAG: functional_expression id=[[FIXED_EXPR]] owner=[[FIXED_SET]] owner_kind=5 role=6 result_kind=4 width=32 signedness=2 {{.*}} phase=1 {{.*}} flags=0
-// SCHEMA-DAG: functional_expression id=[[DYNAMIC_EXPR]] owner=[[DYNAMIC_SET]] owner_kind=5 role=6 result_kind=4 width=32 signedness=2 {{.*}} phase=1 {{.*}} flags=0
-// SCHEMA-DAG: functional_expression id=[[QUEUE_EXPR]] owner=[[QUEUE_SET]] owner_kind=5 role=6 result_kind=4 width=32 signedness=2 {{.*}} phase=1 {{.*}} flags=0
-// SCHEMA-DAG: functional_expression id=[[LOGIC_EXPR]] owner=[[LOGIC_SET]] owner_kind=5 role=6 result_kind=4 width=4 signedness=1 {{.*}} phase=1 {{.*}} flags=1
-// SCHEMA-DAG: functional_expression id=[[REAL_EXPR]] owner=[[REAL_SET]] owner_kind=5 role=6 result_kind=4 width=64 signedness=3 {{.*}} phase=1 {{.*}} flags=0
-// SCHEMA-DAG: functional_expression id=[[SHORTREAL_EXPR]] owner=[[SHORTREAL_SET]] owner_kind=5 role=6 result_kind=4 width=32 signedness=3 {{.*}} phase=1 {{.*}} flags=0
+// SCHEMA-DAG: functional_expression id=[[PACKED_EXPR:[1-9][0-9]*]] owner=[[PACKED_SET:[1-9][0-9]*]] owner_kind=5 role=6 result_kind=4 width=2 signedness=1 {{.*}} phase=1 {{.*}} flags=0
+// SCHEMA-DAG: functional_expression id=[[FIXED_EXPR:[1-9][0-9]*]] owner=[[FIXED_SET:[1-9][0-9]*]] owner_kind=5 role=6 result_kind=4 width=32 signedness=2 {{.*}} phase=1 {{.*}} flags=0
+// SCHEMA-DAG: functional_expression id=[[DYNAMIC_EXPR:[1-9][0-9]*]] owner=[[DYNAMIC_SET:[1-9][0-9]*]] owner_kind=5 role=6 result_kind=4 width=32 signedness=2 {{.*}} phase=1 {{.*}} flags=0
+// SCHEMA-DAG: functional_expression id=[[QUEUE_EXPR:[1-9][0-9]*]] owner=[[QUEUE_SET:[1-9][0-9]*]] owner_kind=5 role=6 result_kind=4 width=32 signedness=2 {{.*}} phase=1 {{.*}} flags=0
+// SCHEMA-DAG: functional_expression id=[[LOGIC_EXPR:[1-9][0-9]*]] owner=[[LOGIC_SET:[1-9][0-9]*]] owner_kind=5 role=6 result_kind=4 width=4 signedness=1 {{.*}} phase=1 {{.*}} flags=1
+// SCHEMA-DAG: functional_expression id=[[REAL_EXPR:[1-9][0-9]*]] owner=[[REAL_SET:[1-9][0-9]*]] owner_kind=5 role=6 result_kind=4 width=64 signedness=3 {{.*}} phase=1 {{.*}} flags=0
+// SCHEMA-DAG: functional_expression id=[[SHORTREAL_EXPR:[1-9][0-9]*]] owner=[[SHORTREAL_SET:[1-9][0-9]*]] owner_kind=5 role=6 result_kind=4 width=32 signedness=3 {{.*}} phase=1 {{.*}} flags=0
+// SCHEMA-DAG: functional_value_set id=[[PACKED_SET]] {{.*}} atoms=0 width=32 kind=1 flags=1 signedness=2 set_expression=[[PACKED_EXPR]]
+// SCHEMA-DAG: functional_value_set id=[[FIXED_SET]] {{.*}} atoms=0 width=32 kind=1 flags=1 signedness=2 set_expression=[[FIXED_EXPR]]
+// SCHEMA-DAG: functional_value_set id=[[DYNAMIC_SET]] {{.*}} atoms=0 width=32 kind=1 flags=1 signedness=2 set_expression=[[DYNAMIC_EXPR]]
+// SCHEMA-DAG: functional_value_set id=[[QUEUE_SET]] {{.*}} atoms=0 width=32 kind=1 flags=1 signedness=2 set_expression=[[QUEUE_EXPR]]
+// SCHEMA-DAG: functional_value_set id=[[LOGIC_SET]] {{.*}} atoms=0 width=4 kind=1 flags=1 signedness=2 set_expression=[[LOGIC_EXPR]]
+// SCHEMA-DAG: functional_value_set id=[[REAL_SET]] {{.*}} atoms=0 width=64 kind=2 flags=1 signedness=3 set_expression=[[REAL_EXPR]]
+// SCHEMA-DAG: functional_value_set id=[[SHORTREAL_SET]] {{.*}} atoms=0 width=64 kind=2 flags=1 signedness=3 set_expression=[[SHORTREAL_EXPR]]
 
 //--- input.sv
 module top;

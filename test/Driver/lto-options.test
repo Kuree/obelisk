@@ -18,5 +18,5 @@
 # HELP: -flto {{ *}}Enable LTO above -O0 (ThinLTO for partitioned native designs)
 # HELP: -fno-lto {{ *}}Disable LTO and link the object runtime archive (default)
 
-# OBJECT: obelisk: error: native support is missing '{{.*}}/libobelisk_rt.a'
-# LTO: obelisk: error: native support is missing '{{.*}}/libobelisk_rt_lto.a'
+# OBJECT: obelisk: error: native support is missing '{{.*[\\/]}}libobelisk_rt.a'
+# LTO: obelisk: error: native support is missing '{{.*[\\/]}}libobelisk_rt_lto.a'

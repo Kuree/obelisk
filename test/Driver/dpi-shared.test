@@ -1,3 +1,4 @@
+// REQUIRES: native-elf
 // RUN: %target_clang -fPIC -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.o
 // RUN: %target_clang -nostdlib -shared %t.o -o %t.so
 // RUN: obelisk %S/dpi.sv %t.so -o %t.shared

@@ -2,8 +2,8 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.bytecode.mlir
 // RUN: obelisk-translate --mlir-to-llvmir %t.native.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup' | %llc -filetype=obj -relocation-model=pic -o %t.native.o
 // RUN: obelisk-translate --mlir-to-llvmir %t.bytecode.mlir | %llc -filetype=obj -relocation-model=pic -o %t.bytecode.o
-// RUN: %llvm_dist/bin/clang++ %t.native.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.native.exe
-// RUN: %llvm_dist/bin/clang++ %t.bytecode.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.bytecode.exe
+// RUN: %target_cxx %t.native.o %runtime_link_flags -o %t.native.exe
+// RUN: %target_cxx %t.bytecode.o %runtime_link_flags -o %t.bytecode.exe
 // RUN: %t.native.exe | FileCheck %s
 // RUN: %t.bytecode.exe | FileCheck %s
 
@@ -36,7 +36,7 @@ module attributes {
     }
     simulation.func @initial(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
-      %path = simulation.bytes.constant "/dev/null"
+      %path = simulation.bytes.constant "dumpvars.vcd"
       %scope = simulation.bytes.constant ""
       %levels = arith.constant 0 : i64
       simulation.dump.open %ctx, %path : (!simulation.context, !simulation.bytes) -> ()

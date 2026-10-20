@@ -1,3 +1,4 @@
+// REQUIRES: native-elf
 // RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/two_state_vpi.c -I%resource_dir/include -o %t.so
 // RUN: obelisk --two-state --vpi=full -O0 --native-scheduler=generic %s %t.so -o %t.generic
 // RUN: %t.generic | FileCheck %s

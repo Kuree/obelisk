@@ -1,3 +1,4 @@
+// REQUIRES: native-elf
 // RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/vpi_collapsed_ports.c -I%resource_dir/include -o %t.probe.so
 // RUN: obelisk -O3 --vpi=full --mlir-timing %s %t.probe.so -o %t.o3 2> %t.timing
 // RUN: FileCheck %s --check-prefix=ADMISSION < %t.timing

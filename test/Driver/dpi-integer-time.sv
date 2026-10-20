@@ -1,4 +1,4 @@
-// RUN: %target_clang -fPIC -c \
+// RUN: %target_clang %target_pic -c \
 // RUN:   %S/Inputs/dpi_integer_time.c \
 // RUN:   -I%resource_dir/include -o %t.o
 // RUN: obelisk -O3 --vpi=off %s %t.o -o %t.o3.native

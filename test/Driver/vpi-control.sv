@@ -1,3 +1,4 @@
+// REQUIRES: native-elf
 // RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/vpi_control.c -I%resource_dir/include -o %t.probe.so
 // RUN: obelisk -O0 --vpi=full --coverage=toggle %s %t.probe.so -o %t.native
 // RUN: %t.native | FileCheck %s

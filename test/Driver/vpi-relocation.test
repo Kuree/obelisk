@@ -1,3 +1,4 @@
+// REQUIRES: native-elf
 // VPI libraries load through the executable's relative RUNPATH, so vpi.sv's
 // simulator still runs after moving it together with its libraries.
 // RUN: mkdir -p %t.dir/lib %t.dir/bin %t.dir/relocated/bin %t.dir/relocated/lib

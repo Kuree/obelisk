@@ -1,3 +1,4 @@
+// REQUIRES: native-elf
 // RUN: env PATH=/nonexistent %obelisk %s -o %t.exe
 // RUN: llvm-readelf -h -l -d %t.exe | FileCheck %s --check-prefix=ELF --implicit-check-not='(RPATH)' --implicit-check-not='(RUNPATH)'
 // RUN: llvm-strings %t.exe | FileCheck %s --check-prefix=PATHS --implicit-check-not='/glibc/' --implicit-check-not='workspace/obelisk' --implicit-check-not='/home/runner/'

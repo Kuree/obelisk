@@ -1,4 +1,4 @@
-// RUN: %target_clang -fPIC -c \
+// RUN: %target_clang %target_pic -c \
 // RUN:   %S/Inputs/dpi_open_array_shapes_impl.c -I%resource_dir/include -o %t.o
 // RUN: %obelisk --target=native -o %t.native %s %t.o
 // RUN: %t.native | FileCheck %s

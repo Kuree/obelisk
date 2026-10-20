@@ -4,7 +4,7 @@
 // RUN: obelisk -O3 --execution-tier=bytecode --std=1800-2023 %s -o %t.bytecode
 // RUN: %t.bytecode --seed=1 | diff -u %t.native.out -
 // RUN: %t.native --seed=2 > %t.seed2.out
-// RUN: not /usr/bin/cmp -s %t.native.out %t.seed2.out
+// RUN: not cmp -s %t.native.out %t.seed2.out
 
 module native_dynamic_array_methods;
   int a[] = '{3, 1, 2, 1};

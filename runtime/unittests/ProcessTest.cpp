@@ -1,5 +1,6 @@
 //===- ProcessTest.cpp - Shared process instance ABI tests ---------------===//
 
+#include "TestEnvironment.h"
 #include "obelisk/Runtime/ClockKernelReadySet.h"
 #include "obelisk/Runtime/Runtime.h"
 #include "obelisk/Runtime/StableHandle.h"
@@ -937,13 +938,14 @@ groupedStaticActivationExecute(obelisk_rt_process_instance_v1 *instance) {
     *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_CHANGE, 0, 1, 0, 0};
     *entry = {1, OBELISK_RT_WAIT_EDGE_CHANGE, 1};
   }
-  *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
-                       id == 90 ? OBELISK_RT_SUSPEND_DELAY
-                                : OBELISK_RT_SUSPEND_CHANGE,
-                       1,
-                       OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
-                       0,
-                       48};
+  *instance->action = {
+      OBELISK_RT_FRAGMENT_SUSPEND,
+      static_cast<obelisk_rt_suspend_kind>(
+          id == 90 ? OBELISK_RT_SUSPEND_DELAY : OBELISK_RT_SUSPEND_CHANGE),
+      1,
+      OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
+      0,
+      48};
   return OBELISK_RT_OK;
 }
 
@@ -1667,6 +1669,7 @@ TEST(RuntimeInternals, ClosingAChannelDisablesTheMonitorWritingToIt) {
   std::string contents((std::istreambuf_iterator<char>(written)),
                        std::istreambuf_iterator<char>());
   EXPECT_EQ(contents, "bit=0\n");
+  written.close();
   obelisk_rt_v1_context_destroy(context);
   std::filesystem::remove(path);
 }
@@ -2181,8 +2184,12 @@ TEST(RuntimeInternals, NoChangeUsesPayForPlaySignedOpenWindows) {
 TEST(RuntimeInternals, ClockOccurrenceStateIsLazyAndOrdinaryWaitLayoutStable) {
   static_assert(sizeof(void *) != 8 || sizeof(SignalSubscription) == 72);
   static_assert(sizeof(obelisk_rt_wait_record_v1) == 32);
+  // The maps' sizes depend on the C++ standard library. RuntimeInternal.h
+  // checks their exact aggregate layout; keep the fixed libstdc++ footprint.
+#if defined(__GLIBCXX__)
   static_assert(sizeof(void *) != 8 ||
                 sizeof(ClockOccurrenceFeatureState) == 240);
+#endif
 
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
@@ -10223,7 +10230,7 @@ TEST(Scheduler, UnknownSummaryClearsCleanRootsAndReportsRuntimeWrites) {
 TEST(SchedulerDeathTest, UnknownSummaryVerificationRejectsUnreportedWrites) {
   // With verification, a root whose summary bit is clear while its plane
   // holds X/Z (a writer that skipped its report) stops the simulation.
-  ASSERT_EQ(setenv("OBELISK_RT_VERIFY_UNKNOWN_SUMMARY", "1", 1), 0);
+  ASSERT_EQ(setTestEnvironment("OBELISK_RT_VERIFY_UNKNOWN_SUMMARY", "1"), 0);
   obelisk_rt_execution_descriptor_v1 execution{};
   execution.version = OBELISK_RT_VERSION;
   execution.state_bit_count = 64;
@@ -10241,7 +10248,7 @@ TEST(SchedulerDeathTest, UnknownSummaryVerificationRejectsUnreportedWrites) {
   ASSERT_EQ(obelisk_rt_v1_native_state_bind_unknown_summary(
                 context, u, 64, &summary, roots, 1, nullptr, 0),
             OBELISK_RT_OK);
-  ASSERT_EQ(unsetenv("OBELISK_RT_VERIFY_UNKNOWN_SUMMARY"), 0);
+  ASSERT_EQ(unsetTestEnvironment("OBELISK_RT_VERIFY_UNKNOWN_SUMMARY"), 0);
   const uint64_t gate[] = {0, 1};
   auto refresh = [&] {
     return obelisk_rt_v1_native_state_refresh_unknown_summary(context, gate, 1,

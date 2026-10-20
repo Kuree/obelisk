@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.lowered
 // RUN: FileCheck %s --implicit-check-not=native.nba_field --implicit-check-not=__obelisk_state_unknown < %t.lowered
 // RUN: obelisk-translate --mlir-to-llvmir %t.lowered | %llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %target_clang -O2 %t.o %S/Inputs/native-nba-batch-two-state.c -o %t.exe
+// RUN: %target_clang %target_link_flags -O2 %t.o %S/Inputs/native-nba-batch-two-state.c -o %t.exe
 // RUN: %t.exe
 
 // IEEE 1800-2023 4.4.2.8, 4.5, 4.9.4: an NBA barrier cannot consume

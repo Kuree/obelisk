@@ -1,3 +1,4 @@
+// REQUIRES: native-elf
 // RUN: %split-file %s %t
 // RUN: %target_clang -fPIC -shared -nostdlib %t/plugin.c -I%resource_dir/include -o %t/plugin.so
 // RUN: obelisk -O3 --vpi=full --native-scheduler=eval --mlir-timing %t/design.sv %t/plugin.so -o %t/eval 2> %t.timing

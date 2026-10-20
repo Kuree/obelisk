@@ -1,3 +1,4 @@
+// REQUIRES: native-elf
 // RUN: mkdir -p %t.dir/lib %t.dir/bin
 // RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/vpi_startup.c -I%resource_dir/include -Wl,-soname,libobelisk_vpi_test.so -o %t.dir/lib/libobelisk_vpi_test.so
 // RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/vpi_startup_second.c -I%resource_dir/include -Wl,-soname,libobelisk_vpi_second.so -o %t.dir/lib/libobelisk_vpi_second.so

@@ -2833,6 +2833,10 @@ TEST_F(RuntimeTest, ScansOnAnInvalidDescriptorReportEndOfFile) {
 }
 
 TEST_F(RuntimeTest, FormattedScanReadErrorsAreInputFailures) {
+#if defined(_WIN32)
+  GTEST_SKIP() << "The Windows CRT rejects directory streams at fopen; this "
+                  "test needs a directory stream that fails only when read";
+#endif
   TempDirectory temporary;
   std::filesystem::path directory = temporary.file("scan-error");
   ASSERT_TRUE(std::filesystem::create_directory(directory));

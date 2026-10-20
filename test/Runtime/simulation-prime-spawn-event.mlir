@@ -3,9 +3,7 @@
 // RUN:   | obelisk-translate --mlir-to-llvmir \
 // RUN:   | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup' \
 // RUN:   | %llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a \
-// RUN:   %native_support/libc++.a %native_support/libc++abi.a \
-// RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
+// RUN: %target_cxx %t.o %runtime_link_flags -o %t.exe
 // RUN: %t.exe --execution-tier=bytecode | FileCheck %s
 // RUN: %t.exe --execution-tier=native | FileCheck %s
 

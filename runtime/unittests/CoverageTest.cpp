@@ -1949,8 +1949,9 @@ TEST_F(CoverageRuntimeDesignTest,
         unknown ? &unknown : nullptr,
         nullptr,
         0,
-        unknown ? OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE
-                : OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+        static_cast<obelisk_rt_functional_value_kind_v1>(
+            unknown ? OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE
+                    : OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL),
         0};
     obelisk_rt_covergroup_v1 handle = 0;
     ASSERT_EQ(obelisk_rt_v1_covergroup_create(local, 10, nullptr, 0, &predicate,
@@ -7458,8 +7459,9 @@ TEST_F(CoverageRuntimeDesignTest,
           nullptr,
           nullptr,
           0,
-          shortReal ? OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL
-                    : OBELISK_RT_FUNCTIONAL_VALUE_REAL,
+          static_cast<obelisk_rt_functional_value_kind_v1>(
+              shortReal ? OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL
+                        : OBELISK_RT_FUNCTIONAL_VALUE_REAL),
           0};
       ASSERT_EQ(obelisk_rt_v1_covergroup_sample(context, handle, &packet, 1),
                 OBELISK_RT_OK);

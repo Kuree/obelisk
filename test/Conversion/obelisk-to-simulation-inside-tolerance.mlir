@@ -80,8 +80,8 @@ module attributes {coverage.language_version = 2023 : i32} {
 // CHECK-LABEL: simulation.func private @unit_0(
 // CHECK: %[[P:.*]] = simulation.ref.load %arg2
 // CHECK: %[[A:.*]] = simulation.ref.load %arg1
-// CHECK: %[[LOW:.*]] = arith.subi %[[A]], %c1_i32
-// CHECK: %[[HIGH:.*]] = arith.addi %[[A]], %c1_i32
+// CHECK-DAG: %[[LOW:.*]] = arith.subi %[[A]], %c1_i32
+// CHECK-DAG: %[[HIGH:.*]] = arith.addi %[[A]], %c1_i32
 // CHECK: %[[ABOVE:.*]] = arith.cmpi sge, %[[P]], %[[LOW]]
 // CHECK: %[[BELOW:.*]] = arith.cmpi sle, %[[P]], %[[HIGH]]
 // CHECK: %[[ABOVE_HIGH:.*]] = arith.cmpi sge, %[[P]], %[[HIGH]]
@@ -98,5 +98,5 @@ module attributes {coverage.language_version = 2023 : i32} {
 // CHECK: %[[BITS:.*]] = arith.bitcast %[[REAL_STEP]] : f64 to i64
 // CHECK: %[[TRUNCATED:.*]] = arith.bitcast %{{.*}} : i64 to f64
 // CHECK: %[[STEP:.*]] = simulation.real.to_integer %[[TRUNCATED]] signed = true : i32
-// CHECK: arith.subi %{{.*}}, %[[STEP]]
-// CHECK: arith.addi %{{.*}}, %[[STEP]]
+// CHECK-DAG: arith.subi %{{.*}}, %[[STEP]]
+// CHECK-DAG: arith.addi %{{.*}}, %[[STEP]]

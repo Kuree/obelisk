@@ -1,4 +1,4 @@
-// RUN: %target_clang -fPIC -c %S/Inputs/two_state_dpi.c -I%resource_dir/include -o %t.o
+// RUN: %target_clang %target_pic -c %S/Inputs/two_state_dpi.c -I%resource_dir/include -o %t.o
 // RUN: obelisk --two-state -O3 %s %t.o -o %t.native
 // RUN: %t.native | FileCheck %s
 // RUN: obelisk --two-state -O3 --execution-tier=bytecode %s %t.o -o %t.bytecode

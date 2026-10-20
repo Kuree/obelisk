@@ -1,3 +1,4 @@
+// REQUIRES: native-elf
 // Every optimization level runs native.sv to the same output, and -O0 still
 // garbage-collects unused runtime sections.
 // RUN: obelisk %S/native.sv -o %t.exe

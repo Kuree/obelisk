@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %S/../Conversion/simulation-multiword-eval-nba-runtime.mlir --pass-pipeline='builtin.module(test-obelisk-replicate,simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines,test-obelisk-export-llvm-symbols{globals=__obelisk_state_unknown,__obelisk_eval_kernel_promotion_latched_v1,__obelisk_eval_promotion_pending_mask_v1,__obelisk_eval_selected_variant_v1_0,__obelisk_eval_selected_variant_v1_63,__obelisk_eval_selected_variant_v1_64,__obelisk_eval_route_promotion_pending_v1,__obelisk_eval_route_promotion_dirty_v1 main=model_main})' -o %t.exposed.mlir
 // RUN: obelisk-translate --mlir-to-llvmir %t.exposed.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' -S -o %t.proof.ll
-// RUN: %llvm_dist/bin/clang++ -O0 %t.proof.ll %S/Inputs/check-promotion-multiword.cpp %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.proof.exe
+// RUN: %target_cxx -O0 %t.proof.ll %S/Inputs/check-promotion-multiword.cpp %runtime_link_flags -o %t.proof.exe
 // RUN: %t.proof.exe | FileCheck %s --check-prefix=PROOF
 
 // Runtime semantics for ../Conversion/simulation-multiword-eval-nba-runtime.mlir.

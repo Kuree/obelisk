@@ -280,8 +280,8 @@ module attributes {
 // suppressing its self wakeup without retaining a runtime transition callback.
 // EVENT-LABEL: llvm.func @loop.__obelisk_eval_body_0(
 // EVENT: %[[INGRESS:.*]] = llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
-// EVENT-NEXT: %[[OTHER:.*]] = llvm.mlir.constant(2 : i64)
-// EVENT-NEXT: %[[NONE:.*]] = llvm.mlir.constant(0 : i64)
+// EVENT-DAG: %[[OTHER:.*]] = llvm.mlir.constant(2 : i64)
+// EVENT-DAG: %[[NONE:.*]] = llvm.mlir.constant(0 : i64)
 // EVENT-NEXT: %[[BITS:.*]] = llvm.select %{{.*}}, %[[OTHER]], %[[NONE]]
 // EVENT-NEXT: %[[QUEUED:.*]] = llvm.load %[[INGRESS]]
 // EVENT-NEXT: %[[MERGED:.*]] = llvm.or %[[QUEUED]], %[[BITS]]

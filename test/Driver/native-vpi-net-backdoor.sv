@@ -1,3 +1,4 @@
+// REQUIRES: native-elf
 // RUN: mkdir -p %t.dir/lib %t.dir/bin
 // RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/vpi_net_probe.c -I%resource_dir/include -Wl,-soname,libobelisk_vpi_net_probe.so -o %t.dir/lib/libobelisk_vpi_net_probe.so
 // RUN: cd %t.dir && obelisk -O2 --vpi=read --native-scheduler=auto %s lib/libobelisk_vpi_net_probe.so -o bin/read-auto

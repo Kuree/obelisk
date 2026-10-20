@@ -1,4 +1,4 @@
-// RUN: %target_clang -fPIC -c \
+// RUN: %target_clang %target_pic -c \
 // RUN:   %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.o
 // RUN: obelisk %s %t.o -o %t.native
 // RUN: not --status=19 %t.native > %t.native.out

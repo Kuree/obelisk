@@ -1,3 +1,4 @@
+// REQUIRES: native-elf
 // RUN: mkdir -p %t.collision/first %t.collision/second
 // RUN: %target_clang -fPIC -nostdlib -shared %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.collision/first/plugin.so
 // RUN: cp %t.collision/first/plugin.so %t.collision/second/plugin.so

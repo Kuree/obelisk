@@ -1,3 +1,4 @@
+// REQUIRES: native-elf
 // RUN: %split-file %s %t
 // RUN: %target_clang -fPIC -shared -nostdlib %t/plugin.c -I%resource_dir/include -Wl,-soname,libnative_aot_vpi_transition.so -o %t/libnative_aot_vpi_transition.so
 // RUN: cd %t && obelisk --vpi=full --native-scheduler=aot %t/design.sv libnative_aot_vpi_transition.so -o simulator

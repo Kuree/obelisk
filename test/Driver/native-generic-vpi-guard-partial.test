@@ -1,3 +1,4 @@
+// REQUIRES: native-elf
 // A partially admitted design keeps the VPI guard of
 // native-generic-vpi-guard.sv for its generic remainder.
 // RUN: %split-file %S/native-generic-vpi-guard.sv %t

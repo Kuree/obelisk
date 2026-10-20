@@ -1,3 +1,4 @@
+; REQUIRES: llvm-pass-plugin
 ; RUN: %llvm_dist/bin/opt -load-pass-plugin=%pass_plugin -passes=obelisk-clocked-guard-layout -S %s | FileCheck %s
 
 ; One-armed guards in a clocked kernel body get an unlikely arm edge in either

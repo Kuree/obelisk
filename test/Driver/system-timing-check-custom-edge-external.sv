@@ -1,3 +1,4 @@
+// REQUIRES: native-elf
 // RUN: %split-file %s %t
 // RUN: mkdir -p %t.dir/lib %t.dir/bin
 // RUN: %target_clang -fPIC -shared -nostdlib %t/plugin.c -I%resource_dir/include -Wl,-soname,libcustom_edge_external.so -o %t.dir/lib/libcustom_edge_external.so

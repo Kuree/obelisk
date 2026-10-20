@@ -1,3 +1,4 @@
+// REQUIRES: native-elf
 // RUN: %target_clang -fPIC -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.o
 // RUN: not obelisk --dpi-link=%t.o %S/dpi.sv -o %t.removed 2>&1 | FileCheck %s --check-prefix=REMOVED
 // RUN: not obelisk %t.o -o %t.native-only 2>&1 | FileCheck %s --check-prefix=NATIVE-ONLY

@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s --schedule-optimize-native-words -o %t.words
 // RUN: FileCheck %s --check-prefix=WORDS < %t.words
 // RUN: obelisk-opt %t.words --convert-schedule-word-regions --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
+// RUN: %target_cxx %t.o %runtime_link_flags -o %t.exe
 // RUN: %t.exe | FileCheck %s
 
 // Unpacked storage starts at the left declaration bound, unlike packed bits.

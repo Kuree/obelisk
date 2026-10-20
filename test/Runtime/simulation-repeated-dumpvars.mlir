@@ -3,9 +3,7 @@
 // RUN:   | obelisk-translate --mlir-to-llvmir \
 // RUN:   | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup' \
 // RUN:   | %llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a \
-// RUN:   %native_support/libc++.a %native_support/libc++abi.a \
-// RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
+// RUN: %target_cxx %t.o %runtime_link_flags -o %t.exe
 // RUN: %t.exe | FileCheck %s
 // RUN: %t.exe --execution-tier=bytecode | FileCheck %s
 
@@ -38,7 +36,7 @@ module attributes {
         attributes {entry_kind = 1 : i32, code_unit_id = 9971001 : i64} {
       %scale = arith.constant -9 : i32
       %levels = arith.constant 0 : i64
-      %path = simulation.bytes.constant "/dev/null"
+      %path = simulation.bytes.constant "dumpvars.vcd"
       %scope = simulation.bytes.constant ""
       simulation.dump.timescale %ctx, %scale :
           (!simulation.context, i32) -> ()

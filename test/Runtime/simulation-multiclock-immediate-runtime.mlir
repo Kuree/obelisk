@@ -3,9 +3,7 @@
 // RUN:   | obelisk-translate --mlir-to-llvmir \
 // RUN:   | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup' \
 // RUN:   | %llc -filetype=obj -relocation-model=pic -o %t.o0.o
-// RUN: %llvm_dist/bin/clang++ %t.o0.o %native_support/libobelisk_rt.a \
-// RUN:   %native_support/libc++.a %native_support/libc++abi.a \
-// RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o0.exe
+// RUN: %target_cxx %t.o0.o %runtime_link_flags -o %t.o0.exe
 // RUN: %t.o0.exe --execution-tier=native | FileCheck %s --implicit-check-not=FAIL
 // RUN: %t.o0.exe --execution-tier=bytecode | FileCheck %s --implicit-check-not=FAIL
 // RUN: obelisk-opt %s \
@@ -13,9 +11,7 @@
 // RUN:   | obelisk-translate --mlir-to-llvmir \
 // RUN:   | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup' \
 // RUN:   | %llc -filetype=obj -relocation-model=pic -o %t.o3.o
-// RUN: %llvm_dist/bin/clang++ %t.o3.o %native_support/libobelisk_rt.a \
-// RUN:   %native_support/libc++.a %native_support/libc++abi.a \
-// RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o3.exe
+// RUN: %target_cxx %t.o3.o %runtime_link_flags -o %t.o3.exe
 // RUN: %t.o3.exe --execution-tier=native | FileCheck %s --implicit-check-not=FAIL
 // RUN: %t.o3.exe --execution-tier=bytecode | FileCheck %s --implicit-check-not=FAIL
 

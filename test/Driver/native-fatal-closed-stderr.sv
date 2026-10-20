@@ -1,3 +1,4 @@
+// REQUIRES: native-elf
 // RUN: obelisk -O3 %s -o %t.native
 // RUN: not --status=19 %t.native > %t.native.out 2> /dev/full
 // RUN: FileCheck %s --check-prefix=STDOUT < %t.native.out

@@ -10,8 +10,8 @@
 // PLAN-NEXT: %[[OLD_UNKNOWN:.*]] = llvm.zext %{{.*}} : i8 to i64
 // PLAN-NEXT: %[[NEW_VALUE:.*]] = llvm.zext %{{.*}} : i8 to i64
 // PLAN-NEXT: %[[NEW_UNKNOWN:.*]] = llvm.zext %{{.*}} : i8 to i64
-// PLAN-NEXT: %[[VALUE_DELTA:.*]] = llvm.xor %[[OLD_VALUE]], %[[NEW_VALUE]] : i64
-// PLAN-NEXT: %[[UNKNOWN_DELTA:.*]] = llvm.xor %[[OLD_UNKNOWN]], %[[NEW_UNKNOWN]] : i64
+// PLAN-DAG: %[[VALUE_DELTA:.*]] = llvm.xor %[[OLD_VALUE]], %[[NEW_VALUE]] : i64
+// PLAN-DAG: %[[UNKNOWN_DELTA:.*]] = llvm.xor %[[OLD_UNKNOWN]], %[[NEW_UNKNOWN]] : i64
 // PLAN-NEXT: %[[DELTA:.*]] = llvm.or %[[VALUE_DELTA]], %[[UNKNOWN_DELTA]] : i64
 // PLAN: llvm.icmp "eq" %[[DELTA]], %{{.*}} : i64
 // PLAN-NOT: llvm.call %

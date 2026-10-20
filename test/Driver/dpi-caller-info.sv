@@ -1,4 +1,4 @@
-// RUN: %target_clang -fPIC -c \
+// RUN: %target_clang %target_pic -c \
 // RUN:   %S/Inputs/dpi_caller_impl.c \
 // RUN:   -I%resource_dir/include -o %t.o
 // RUN: obelisk %t.o %S/Inputs/dpi-caller-a.sv \

@@ -26,6 +26,19 @@ config.excludes = [
 ]
 
 llvm_config.with_system_environment(["HOME", "TMP", "TEMP"])
+llvm_config.with_environment(
+    "PATH", os.path.join(config.obelisk_llvm_dist, "bin"), append_path=True
+)
+if sys.platform == "win32":
+    llvm_config.with_system_environment(
+        ["SYSTEMROOT", "COMSPEC", "PATHEXT", "INCLUDE", "LIB", "LIBPATH",
+         "VCINSTALLDIR", "VCToolsInstallDir", "WindowsSdkDir", "WindowsSDKVersion"]
+    )
+    config.available_features.add("windows")
+elif "-linux-" in config.obelisk_target_triple:
+    config.available_features.add("native-elf")
+if sys.platform != "win32":
+    config.available_features.add("llvm-pass-plugin")
 config.substitutions.append(("%obelisk", config.obelisk_driver_executable))
 # The test driver lowers resource limits so tests can reach them with small
 # inputs (see test/Support/DriverTestMain.cpp).
@@ -50,6 +63,8 @@ config.substitutions.append(
 config.substitutions.append(
     ("%native_support", config.obelisk_native_support_dir)
 )
+config.substitutions.append(("%dlltool_machine", config.obelisk_dlltool_machine))
+config.substitutions.append(("%coff_machine", config.obelisk_coff_machine))
 config.substitutions.append(("%source_root", config.obelisk_source_root))
 config.substitutions.append(
     ("%slang_source_root", config.obelisk_slang_source_root)
@@ -60,6 +75,10 @@ config.substitutions.append(
     ("%pass_plugin", config.obelisk_llvm_pass_plugin)
 )
 config.substitutions.append(("%target_triple", config.obelisk_target_triple))
+config.substitutions.append(("%target_pic", "" if sys.platform == "win32" else "-fPIC"))
+config.substitutions.append(("%exeext", ".exe" if sys.platform == "win32" else ""))
+config.substitutions.append(("%target_link_flags",
+                             "-fuse-ld=lld -nostartfiles" if sys.platform == "win32" else ""))
 target_llc_options = ["-mtriple={}".format(config.obelisk_target_triple)]
 if config.obelisk_target_triple.startswith("aarch64-"):
     # Long fused evaluation groups can form linear chains of hundreds of
@@ -78,16 +97,40 @@ config.substitutions.append(
 config.substitutions.append(
     (
         "%target_clang",
-        '"{}/bin/clang" --target={}'.format(
-            config.obelisk_llvm_dist, config.obelisk_target_triple
+        '"{}/bin/clang" --target={} {}'.format(
+            config.obelisk_llvm_dist, config.obelisk_target_triple,
+            "-fms-runtime-lib=dll -DDPI_DLLISPEC= -DPLI_DLLISPEC= -DPLI_DLLESPEC="
+            if sys.platform == "win32" else "",
         ),
     )
 )
 config.substitutions.append(
+    ("%target_cxx", '"{}/bin/clang++" --target={}'.format(
+        config.obelisk_llvm_dist, config.obelisk_target_triple))
+)
+if sys.platform == "win32":
+    runtime_link_flags = (
+        '-fuse-ld=lld -nostartfiles -Wl,/debug:symtab -Wl,/stack:8388608 -Wl,/opt:noicf '
+        '-fms-runtime-lib=dll -DDPI_DLLISPEC= '
+        '-DPLI_DLLISPEC= -DPLI_DLLESPEC= '
+        '"{0}/libobelisk_rt.a"'
+    ).format(config.obelisk_native_support_dir)
+    read_exports = '"{}/bin/llvm-readobj" --coff-exports'.format(config.obelisk_llvm_dist)
+else:
+    runtime_link_flags = (
+        '"{0}/libobelisk_rt.a" "{0}/libc++.a" "{0}/libc++abi.a" '
+        '"{0}/libunwind.a" -nostdlib++ -lpthread -ldl'
+    ).format(config.obelisk_native_support_dir)
+    read_exports = '"{}/bin/llvm-readelf" --dyn-syms'.format(config.obelisk_llvm_dist)
+config.substitutions.append(("%runtime_link_flags", runtime_link_flags))
+config.substitutions.append(("%read_exports", read_exports))
+config.substitutions.append(("%feature_section_prefix",
+                             "COFF-SECTION" if sys.platform == "win32" else "SECTION"))
+config.substitutions.append(
     ("%runtime_archive", config.obelisk_runtime_archive)
 )
 config.substitutions.append(("%cmake", config.cmake_executable))
-node = shutil.which("node")
+node = shutil.which("node") if sys.platform != "win32" else None
 if node:
     config.available_features.add("node")
     config.substitutions.append(("%node", node))
@@ -95,7 +138,9 @@ lcov = shutil.which("lcov")
 if lcov:
     config.available_features.add("lcov")
     config.substitutions.append(("%lcov", lcov))
-split_file = next(
+split_file = shutil.which(
+    "split-file", path=os.path.join(config.obelisk_llvm_dist, "libexec", "llvm")
+) or next(
     (
         path
         for name in [
@@ -129,7 +174,7 @@ tool_dirs = [
 ]
 llvm_config.add_tool_substitutions(
     ["obelisk", "obelisk-cov", "obelisk-opt", "obelisk-translate", "obelisk-sim-standard-api-test", "FileCheck",
-     "llvm-readelf", "llvm-strings", "mlir-opt", "mlir-runner",
+     "llvm-readelf", "llvm-readobj", "llvm-strings", "mlir-opt", "mlir-runner",
      "mlir-translate", "not", "opt"],
     tool_dirs,
 )

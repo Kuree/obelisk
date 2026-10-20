@@ -1,3 +1,4 @@
+// REQUIRES: native-elf
 // A read-only VPI plugin under full and read access (inputs in
 // native-aot-vpi-transition.sv).
 // RUN: %split-file %S/native-aot-vpi-transition.sv %t
