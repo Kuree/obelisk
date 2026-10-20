@@ -13,87 +13,65 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+
 jobs:
-  # ---------------------------------------------------------------------------
-  # Step 1: build the repository and run the lit regression suite on each
-  # native host. Windows builds with the pinned conda-forge SDK downloaded by
-  # cmake/WindowsPrebuiltLLVM.cmake. Both legs share every step except tool
-  # installation and the Linux-only artifact upload. The Linux leg keeps the
-  # original check name.
-  #
-  # The Windows leg is advisory until it has a proven green run: a failure is
-  # reported on its own check but does not fail the workflow, so it can never
-  # skip the wasm job or block the Pages deploy, both of which need this job.
-  # Drop continue-on-error once Windows is a required check.
-  # ---------------------------------------------------------------------------
+  # Preserve the required x86-64 check name; new hosts stay advisory until green.
   build-and-test:
     name: ${{ matrix.name }}
     strategy:
       fail-fast: false
       matrix:
+        # Disjoint cache prefixes retain existing caches without mixing hosts.
         include:
           - name: Build and test
             os: ubuntu-latest
             advisory: false
+            ccache: native-Linux
+          - name: Build and test (Linux ARM64)
+            os: ubuntu-24.04-arm
+            advisory: true
+            ccache: native-ARM64-Linux
           - name: Build and test (Windows)
             os: windows-latest
             advisory: true
+            ccache: native-Windows
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.advisory }}
     timeout-minutes: 300
     defaults:
       run:
         shell: bash
-    env:
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CMAKE_BUILD_PARALLEL_LEVEL: 4
     steps:
-      # Git for Windows checks text out with CRLF by default. Tests compare
-      # source bytes and offsets, so keep the repository's LF endings.
+      # Byte-offset tests require LF, including on Windows.
       - name: Keep LF line endings
         if: runner.os == 'Windows'
         run: git config --global core.autocrlf false
 
       - uses: actions/checkout@v4
 
-      # No disk reclamation step: the Linux runner starts with ~87 GB free on
-      # a 145 GB volume, and a full build -- 12 GB of extracted LLVM, the
-      # 1.9 GB archive and ~6 GB of build tree -- peaks around 22 GB. The
-      # Windows budget is unmeasured; the stats step below reports it.
-      - name: Install build tools
+      - name: Install build and test tools (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build cmake ccache
-          # The runner's system Python is externally managed (PEP 668), so a
-          # plain --user install is refused; this is a throwaway VM, so opting
-          # out of the marker is the whole fix.
+          # The LLVM SDK omits split-file; use the newest packaged test tools.
+          llvm_tools=$(apt-cache --names-only search '^llvm-[0-9]+-tools$' \
+                       | cut -d' ' -f1 | sort -V | tail -1)
+          test -n "$llvm_tools"
+          sudo apt-get install -y --no-install-recommends ninja-build cmake ccache \
+            python3-pip "$llvm_tools"
+          # Permit a user install with the runner's externally managed Python.
           python3 -m pip install --user --break-system-packages lit
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-      # test/lit.cfg.py treats a missing split-file as fatal, which aborts the
-      # entire suite rather than skipping the tests that use it. The pinned
-      # LLVM release archive ships neither split-file nor FileCheck (hence
-      # tools/filecheck), and the runner image is not guaranteed to carry
-      # llvm-N-tools, so install it explicitly.
-      - name: Install LLVM test tools
-        if: runner.os == 'Linux'
-        run: |
-          package=$(apt-cache --names-only search '^llvm-[0-9]+-tools$' \
-                    | cut -d' ' -f1 | sort -V | tail -1)
-          test -n "$package"
-          sudo apt-get install -y --no-install-recommends "$package"
-          # lit.cfg.py falls back to a fixed list of versioned names, so
-          # publish the unversioned one; a newer package can then never fall
-          # off the end of that list.
+          # An unversioned name avoids lit.cfg.py's fixed version fallback list.
           mkdir -p "$HOME/.local/bin"
-          ln -sf "$(ls -1 /usr/bin/split-file-* | sort -V | tail -1)" \
+          ln -sf "/usr/lib/${llvm_tools%-tools}/bin/split-file" \
                  "$HOME/.local/bin/split-file"
           "$HOME/.local/bin/split-file" --version
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      # The image already provides CMake, Python and Visual Studio's C++
-      # workload with a Windows SDK, which the SDK's Clang links against. The
-      # conda-forge SDK ships split-file, and lit finds Git's Unix tools.
+      # The Windows image provides CMake/Python/MSVC; the SDK provides split-file.
       - name: Install build tools (Windows)
         if: runner.os == 'Windows'
         run: |
@@ -102,40 +80,26 @@ jobs:
           python -c "import sysconfig; print(sysconfig.get_path('scripts'))" \
             >> "$GITHUB_PATH"
 
-      # Nothing downloaded is cached. Every pinned archive is content-addressed
-      # and fetched over the network either way, so a cache restore would move
-      # the same bytes from a different host; the shared 10 GB budget is worth
-      # more to ccache, which stores something the runner cannot re-fetch.
-      #
-      # Cache entries are immutable, so a compiler cache has to be written under
-      # a fresh key each run and recovered through the prefix fallback --
-      # a fixed key would freeze at the first green build and decay from there.
+      # Reserve cache space for compiled objects. Per-commit keys allow updates
+      # to immutable entries; the prefix restores the latest compatible cache.
       - name: Restore compiler cache
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-native-${{ runner.os }}-${{ github.sha }}
-          restore-keys: ccache-native-${{ runner.os }}-
+          key: ccache-${{ matrix.ccache }}-${{ github.sha }}
+          restore-keys: ccache-${{ matrix.ccache }}-
 
-      # Both SDKs are re-extracted on every run. CMake's extraction keeps the
-      # Linux archive's file times; micromamba's handling is unverified, so
-      # the Windows compiler is identified by content, one hash per compile.
       - name: Prepare compiler cache
         run: |
           ccache --max-size=2G
           ccache --set-config=sloppiness=pch_defines,time_macros
+          # Windows SDK extraction may change compiler timestamps.
           if [ "$RUNNER_OS" = Windows ]; then
             ccache --set-config=compiler_check=content
           fi
           ccache --zero-stats
 
-      # ccache is opted into here rather than in CMakeLists.txt, so local
-      # builds are untouched. The launcher reaches Z3's nested configure
-      # through the pass-through in CMakeLists.txt.
-      #
-      # The real-UVM regression is opt-in because it fetches the Accellera
-      # release, but it is only two frontend tests over a ~10 MB archive and it
-      # is the one thing guarding elaboration of unmodified UVM, so CI pays it.
+      # Exercise unmodified UVM as well as the self-contained regressions.
       - name: Configure
         run: |
           cmake -S . -B build -G Ninja \
@@ -150,12 +114,9 @@ jobs:
       - name: Build
         run: cmake --build build
 
-      # Host generators run in the native build. Their architecture-independent
-      # outputs are the only build artifact the wasm compiler consumes from
-      # this stage; future generators extend the same generated/ tree. The
-      # wasm job stays on Linux, so only the Linux leg publishes them.
+      # Publish architecture-independent wasm inputs once, from Linux x86-64.
       - name: Upload generated files
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && runner.arch == 'X64'
         uses: actions/upload-artifact@v4
         with:
           name: obelisk-generated-files
@@ -169,39 +130,26 @@ jobs:
           ccache --show-stats --verbose
           df -h .
 
-      # Saved only from the default branch: cache entries are branch-scoped, so
-      # pull-request entries can never be read by main yet still consume the
-      # shared 10 GB budget and evict the entries everything else relies on.
-      # Pull requests still restore from main above.
+      # PRs restore main's cache; branch-only saves would just compete for space.
       - name: Save compiler cache
         if: github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-native-${{ runner.os }}-${{ github.sha }}
+          key: ccache-${{ matrix.ccache }}-${{ github.sha }}
 
       - name: Run lit regression suite
         run: cmake --build build --target check-obelisk
 
-  # ---------------------------------------------------------------------------
-  # Build and smoke-test the wasm toolchain on every ref. Main additionally
-  # uploads the tested page for the deploy job below, so pull requests cannot
-  # merge wasm-only regressions.
-  #
-  # Project-owned generators are native executables. The native stage publishes
-  # their architecture-independent output tree and the wasm stage consumes it;
-  # no host tool or generated source is baked into the LLVM SDK.
-  # ---------------------------------------------------------------------------
+  # Test wasm on every ref; main also publishes the tested site for deployment.
   wasm-build-and-test:
     name: Build and test wasm
+    # This waits for all native legs, including advisory ones.
     needs: build-and-test
     runs-on: ubuntu-latest
     timeout-minutes: 300
-    # The SDK image is built only when its Dockerfile or LLVM pin changes.
-    # Normal CI consumes that immutable artifact instead of rebuilding LLVM.
     env:
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CMAKE_BUILD_PARALLEL_LEVEL: 4
+      # Reuse the pinned SDK instead of rebuilding LLVM in CI.
       WASM_IMAGE: ghcr.io/kuree/obelisk-llvm-wasm32:latest@sha256:7e679d82f15d0455379891c22ee43da20224951a3d36db3204d0b4d6ad493d9c
     steps:
       - uses: actions/checkout@v4
@@ -215,8 +163,6 @@ jobs:
       - name: Pull wasm32 SDK image
         run: docker pull "$WASM_IMAGE"
 
-      # A separate key from the native job: different compiler, different
-      # target, so the two would only evict each other under one key.
       - name: Restore compiler cache
         uses: actions/cache/restore@v4
         with:
@@ -231,9 +177,7 @@ jobs:
             -e CCACHE_DIR=/ccache "$WASM_IMAGE" \
             sh -c 'ccache --max-size=2G && ccache --set-config=sloppiness=pch_defines,time_macros && ccache --zero-stats'
 
-      # The SDK ships inside the image. CMakeLists.txt always downloads and
-      # extracts OBELISK_LLVM_PREBUILT_URL, so it is consumed through a file://
-      # URL rather than needing a source change.
+      # Feed the SDK bundled in the image to CMake through a local file URL.
       - name: Build obelisk for wasm32
         run: |
           docker run --rm -v "$PWD:/src" -v "$CCACHE_DIR:/ccache" \
@@ -329,10 +273,7 @@ jobs:
           docker run --rm -v "$PWD:/src" -w /src -e OBELISK_WEB_SITE=site \
             "$WASM_IMAGE" node test/web/smoke-test.mjs
 
-      # Every design the page offers, at both optimization levels. The smoke
-      # test proves one small design works; these cover classes, randomization,
-      # assertions, tri-state nets and an RV32IM core, which is a far wider
-      # slice of the language and of the runtime ABI.
+      # Cover every shipped design at both optimization levels.
       - name: Run every example design
         run: |
           docker run --rm -v "$PWD:/src" -w /src -e OBELISK_WEB_SITE=site \
@@ -345,16 +286,10 @@ jobs:
         with:
           path: site
 
-  # The wasm job owns the artifact so the exact files that passed its
-  # browser-toolchain smoke test are the ones deployed. This job performs no
-  # rebuild and never writes to a branch.
-  #
-  # Depends on both builds even though only one produces the artifact: a page
-  # must never ship from a commit whose Linux regression suite is failing.
-  # The advisory Windows leg does not gate it.
+  # Deploy the tested artifact; wasm's dependency also enforces the native check.
   deploy-pages:
     name: Deploy Pages
-    needs: [build-and-test, wasm-build-and-test]
+    needs: wasm-build-and-test
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
