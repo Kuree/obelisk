@@ -2446,9 +2446,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_snapshot_aot(
                         : scheduled.signalTriggered);
       readyCount += ready;
       obelisk_rt_fragment_action_v1 action{
-          scheduled.suspendKind == OBELISK_RT_SUSPEND_NONE
-              ? OBELISK_RT_FRAGMENT_CONTINUE
-              : OBELISK_RT_FRAGMENT_SUSPEND,
+          static_cast<obelisk_rt_fragment_action_kind>(
+              scheduled.suspendKind == OBELISK_RT_SUSPEND_NONE
+                  ? OBELISK_RT_FRAGMENT_CONTINUE
+                  : OBELISK_RT_FRAGMENT_SUSPEND),
           scheduled.suspendKind,
           instance->continuation,
           scheduled.suspendKind == OBELISK_RT_SUSPEND_NONE

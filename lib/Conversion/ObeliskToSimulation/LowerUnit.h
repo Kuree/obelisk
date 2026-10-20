@@ -1256,7 +1256,7 @@ private:
   ::mlir::LogicalResult
   copyRandSequenceOutputs(RandSequenceProductionReturn &production,
                           ::mlir::Location location);
-  ::mlir::SmallVector<RandSequenceProductionReturn>
+  ::mlir::SmallVector<RandSequenceProductionReturn, 0>
       randSequenceProductionReturns;
   ::mlir::SmallVector<::llvm::DenseMap<::mlir::Operation *, ::mlir::Value>>
       randSequenceResultReferences;

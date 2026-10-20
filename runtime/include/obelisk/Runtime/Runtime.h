@@ -1484,10 +1484,12 @@ enum {
 // Pointer-free class bit-stream image. Every record is naturally aligned and
 // has the same byte layout on native64 and wasm32. Offsets are image-relative;
 // counts and ranges are validated before any record is trusted.
+// This header is also C. MSVC-compatible compilers type every unfixed enum as
+// int, which cannot hold UINT32_MAX, so the sentinel is a macro.
+#define OBELISK_RT_CLASS_BITSTREAM_NO_BYTECODE UINT32_MAX
 enum {
   OBELISK_RT_CLASS_BITSTREAM_BLOB_MAGIC = UINT32_C(0x43425342),
   OBELISK_RT_CLASS_BITSTREAM_BLOB_VERSION = UINT32_C(1),
-  OBELISK_RT_CLASS_BITSTREAM_NO_BYTECODE = UINT32_MAX,
   OBELISK_RT_CLASS_BITSTREAM_FIELD_FOUR_STATE = UINT32_C(1) << 0
 };
 
@@ -2156,6 +2158,8 @@ enum {
   OBELISK_RT_WAIT_CLOCK_OCCURRENCE_OBSERVERS = UINT32_C(1) << 5
 };
 typedef uint32_t obelisk_rt_wait_edge_kind;
+// A macro for the same reason as OBELISK_RT_CLASS_BITSTREAM_NO_BYTECODE.
+#define OBELISK_RT_WAIT_EDGE_NONE UINT32_MAX
 enum {
   OBELISK_RT_WAIT_EDGE_CHANGE = 0,
   OBELISK_RT_WAIT_EDGE_POSEDGE = 1,
@@ -2166,8 +2170,7 @@ enum {
   // 0--5 are 01, 0x, 10, 1x, x0, and x1 respectively. The marker keeps every
   // existing wait record and ordinary direct-wait edge value unchanged.
   OBELISK_RT_WAIT_EDGE_TRANSITION_MASK = UINT32_C(0x100),
-  OBELISK_RT_WAIT_EDGE_TRANSITION_CLASSES = UINT32_C(0x3f),
-  OBELISK_RT_WAIT_EDGE_NONE = UINT32_MAX
+  OBELISK_RT_WAIT_EDGE_TRANSITION_CLASSES = UINT32_C(0x3f)
 };
 
 enum {

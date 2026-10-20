@@ -2193,7 +2193,9 @@ struct StochasticQueueEntry {
   uint64_t addTime = 0;
 };
 
-struct StochasticQueueState {
+// Explicit alignment keeps MSVC STL pair/node packing from under-aligning the
+// 128-bit accumulator when this state is stored in an unordered_map.
+struct alignas(16) StochasticQueueState {
   uint32_t type = 0;
   uint64_t maximumLength = 0;
   uint64_t head = 0;

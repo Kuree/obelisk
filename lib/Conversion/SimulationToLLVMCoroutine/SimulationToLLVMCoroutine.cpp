@@ -2322,7 +2322,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     std::string fourStateFallbackName;
     std::string checkpointBodyName;
   };
-  SmallVector<Route> routes;
+  SmallVector<Route, 0> routes;
   bool routeError = false;
   ::obelisk::detail::walkNativeFunctions<
       LLVM::LLVMFuncOp>(module, [&](LLVM::LLVMFuncOp function) {

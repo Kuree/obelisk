@@ -867,9 +867,9 @@ getRecursiveBitStreamPlan(Type type, ClassBitStreamGroupResolver objectGroup,
   uint64_t recordCount = records.size() / recordWords;
   SmallVector<uint64_t> plan{
       uint64_t{OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_MAGIC} |
-          (uint64_t{hasObject
-                        ? OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_OBJECT_VERSION
-                        : OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_VERSION}
+          (static_cast<uint64_t>(
+               hasObject ? OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_OBJECT_VERSION
+                         : OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_VERSION)
            << 32),
       recordCount, root->second.span, 0};
   llvm::append_range(plan, records);

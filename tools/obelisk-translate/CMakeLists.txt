@@ -13,6 +13,8 @@ target_link_libraries(obelisk-translate
     ObeliskRuntimeIR
     ObeliskSDFIR
     ObeliskScheduleIR
+    ObeliskSimulationAnalysis
+    MLIRControlFlowDialect
     MLIRBuiltinToLLVMIRTranslation
     MLIRLLVMToLLVMIRTranslation
     MLIRTargetLLVMIRExport
