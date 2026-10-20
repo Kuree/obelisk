@@ -17,8 +17,14 @@ jobs:
   # ---------------------------------------------------------------------------
   # Step 1: build the repository and run the lit regression suite on each
   # native host. Windows builds with the pinned conda-forge SDK downloaded by
-  # cmake/WindowsPrebuiltLLVM.cmake; everything after tool installation is
-  # shared. The Linux leg keeps the original check name.
+  # cmake/WindowsPrebuiltLLVM.cmake. Both legs share every step except tool
+  # installation and the Linux-only artifact upload. The Linux leg keeps the
+  # original check name.
+  #
+  # The Windows leg is advisory until it has a proven green run: a failure is
+  # reported on its own check but does not fail the workflow, so it can never
+  # skip the wasm job or block the Pages deploy, both of which need this job.
+  # Drop continue-on-error once Windows is a required check.
   # ---------------------------------------------------------------------------
   build-and-test:
     name: ${{ matrix.name }}
@@ -28,9 +34,12 @@ jobs:
         include:
           - name: Build and test
             os: ubuntu-latest
+            advisory: false
           - name: Build and test (Windows)
             os: windows-latest
+            advisory: true
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.advisory }}
     timeout-minutes: 300
     defaults:
       run:
@@ -47,9 +56,10 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      # No disk reclamation step: the runner starts with ~87 GB free on a
-      # 145 GB volume, and a full build -- 12 GB of extracted LLVM, the 1.9 GB
-      # archive and ~6 GB of build tree -- peaks around 22 GB.
+      # No disk reclamation step: the Linux runner starts with ~87 GB free on
+      # a 145 GB volume, and a full build -- 12 GB of extracted LLVM, the
+      # 1.9 GB archive and ~6 GB of build tree -- peaks around 22 GB. The
+      # Windows budget is unmeasured; the stats step below reports it.
       - name: Install build tools
         if: runner.os == 'Linux'
         run: |
@@ -107,8 +117,9 @@ jobs:
           key: ccache-native-${{ runner.os }}-${{ github.sha }}
           restore-keys: ccache-native-${{ runner.os }}-
 
-      # The Windows SDK is reinstalled by micromamba on every run, so the
-      # compiler's mtime is not stable there; identify it by content instead.
+      # Both SDKs are re-extracted on every run. CMake's extraction keeps the
+      # Linux archive's file times; micromamba's handling is unverified, so
+      # the Windows compiler is identified by content, one hash per compile.
       - name: Prepare compiler cache
         run: |
           ccache --max-size=2G
@@ -154,7 +165,9 @@ jobs:
 
       - name: Compiler cache stats
         if: always()
-        run: ccache --show-stats --verbose
+        run: |
+          ccache --show-stats --verbose
+          df -h .
 
       # Saved only from the default branch: cache entries are branch-scoped, so
       # pull-request entries can never be read by main yet still consume the
@@ -336,9 +349,9 @@ jobs:
   # browser-toolchain smoke test are the ones deployed. This job performs no
   # rebuild and never writes to a branch.
   #
-  # Depends on both builds even though only one produces the artifact: the two
-  # now run concurrently, and a page must never ship from a commit whose native
-  # regression suite is failing.
+  # Depends on both builds even though only one produces the artifact: a page
+  # must never ship from a commit whose Linux regression suite is failing.
+  # The advisory Windows leg does not gate it.
   deploy-pages:
     name: Deploy Pages
     needs: [build-and-test, wasm-build-and-test]
