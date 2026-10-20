@@ -15,22 +15,43 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Step 1: build the repository and run the lit regression suite.
+  # Step 1: build the repository and run the lit regression suite on each
+  # native host. Windows builds with the pinned conda-forge SDK downloaded by
+  # cmake/WindowsPrebuiltLLVM.cmake; everything after tool installation is
+  # shared. The Linux leg keeps the original check name.
   # ---------------------------------------------------------------------------
   build-and-test:
-    name: Build and test
-    runs-on: ubuntu-latest
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Build and test
+            os: ubuntu-latest
+          - name: Build and test (Windows)
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 300
+    defaults:
+      run:
+        shell: bash
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CMAKE_BUILD_PARALLEL_LEVEL: 4
     steps:
+      # Git for Windows checks text out with CRLF by default. Tests compare
+      # source bytes and offsets, so keep the repository's LF endings.
+      - name: Keep LF line endings
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+
       - uses: actions/checkout@v4
 
       # No disk reclamation step: the runner starts with ~87 GB free on a
       # 145 GB volume, and a full build -- 12 GB of extracted LLVM, the 1.9 GB
       # archive and ~6 GB of build tree -- peaks around 22 GB.
       - name: Install build tools
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build cmake ccache
@@ -46,6 +67,7 @@ jobs:
       # tools/filecheck), and the runner image is not guaranteed to carry
       # llvm-N-tools, so install it explicitly.
       - name: Install LLVM test tools
+        if: runner.os == 'Linux'
         run: |
           package=$(apt-cache --names-only search '^llvm-[0-9]+-tools$' \
                     | cut -d' ' -f1 | sort -V | tail -1)
@@ -58,6 +80,17 @@ jobs:
           ln -sf "$(ls -1 /usr/bin/split-file-* | sort -V | tail -1)" \
                  "$HOME/.local/bin/split-file"
           "$HOME/.local/bin/split-file" --version
+
+      # The image already provides CMake, Python and Visual Studio's C++
+      # workload with a Windows SDK, which the SDK's Clang links against. The
+      # conda-forge SDK ships split-file, and lit finds Git's Unix tools.
+      - name: Install build tools (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install --no-progress -y ninja ccache
+          python -m pip install lit
+          python -c "import sysconfig; print(sysconfig.get_path('scripts'))" \
+            >> "$GITHUB_PATH"
 
       # Nothing downloaded is cached. Every pinned archive is content-addressed
       # and fetched over the network either way, so a cache restore would move
@@ -74,10 +107,15 @@ jobs:
           key: ccache-native-${{ runner.os }}-${{ github.sha }}
           restore-keys: ccache-native-${{ runner.os }}-
 
+      # The Windows SDK is reinstalled by micromamba on every run, so the
+      # compiler's mtime is not stable there; identify it by content instead.
       - name: Prepare compiler cache
         run: |
           ccache --max-size=2G
           ccache --set-config=sloppiness=pch_defines,time_macros
+          if [ "$RUNNER_OS" = Windows ]; then
+            ccache --set-config=compiler_check=content
+          fi
           ccache --zero-stats
 
       # ccache is opted into here rather than in CMakeLists.txt, so local
@@ -103,8 +141,10 @@ jobs:
 
       # Host generators run in the native build. Their architecture-independent
       # outputs are the only build artifact the wasm compiler consumes from
-      # this stage; future generators extend the same generated/ tree.
+      # this stage; future generators extend the same generated/ tree. The
+      # wasm job stays on Linux, so only the Linux leg publishes them.
       - name: Upload generated files
+        if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
           name: obelisk-generated-files
