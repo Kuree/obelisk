@@ -104,11 +104,15 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
     double precisionSteps = amount * static_cast<double>(scale / quantum);
     double roundedSteps = std::round(precisionSteps);
     long double ticks = static_cast<long double>(roundedSteps) * quantum;
-    if (amount < 0 || !std::isfinite(roundedSteps) || ticks > maximumTicks)
-      ticks = maximumTicks;
+    // On Windows long double is binary64, which rounds INT64_MAX to 2^63.
+    // Keep saturation in integer form instead of casting that rounded limit.
+    uint64_t delayTicks =
+        amount < 0 || !std::isfinite(roundedSteps) || ticks >= maximumTicks
+            ? static_cast<uint64_t>(std::numeric_limits<int64_t>::max())
+            : static_cast<uint64_t>(ticks);
     return sim::SimTimeConstantOp::create(
                builder, location, sim::TimeType::get(function.getContext()),
-               builder.getI64IntegerAttr(static_cast<uint64_t>(ticks)))
+               builder.getI64IntegerAttr(delayTicks))
         .getResult();
   }
 

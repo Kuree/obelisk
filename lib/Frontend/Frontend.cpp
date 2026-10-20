@@ -2500,8 +2500,7 @@ private:
           amount * static_cast<long double>(unitFs / precisionFs);
       long double femtoseconds = std::round(steps) * precisionFs;
       if (!std::isfinite(femtoseconds) || femtoseconds < 0 ||
-          femtoseconds >
-              static_cast<long double>(std::numeric_limits<int64_t>::max()))
+          femtoseconds >= 0x1p63L)
         return false;
       delays.push_back(static_cast<int64_t>(femtoseconds));
     }
@@ -2687,8 +2686,23 @@ private:
             staticDelays = false;
             break;
           }
-          amount = static_cast<long double>(*converted);
-        } else if (value.isReal()) {
+          // Preserve all 64 integer bits even on hosts whose long double is
+          // binary64. SDF INCREMENT must see the exact pre-annotation delay.
+          if (unitFs != 0 &&
+              *converted > std::numeric_limits<uint64_t>::max() / unitFs) {
+            staticDelays = false;
+            break;
+          }
+          uint64_t femtoseconds = *converted * unitFs;
+          if (femtoseconds >
+              static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+            staticDelays = false;
+            break;
+          }
+          delays.push_back(static_cast<int64_t>(femtoseconds));
+          continue;
+        }
+        if (value.isReal()) {
           amount = static_cast<long double>(value.real());
         } else if (value.isShortReal()) {
           amount = static_cast<long double>(value.shortReal());
@@ -2706,8 +2720,7 @@ private:
             amount * static_cast<long double>(unitFs / precisionFs);
         long double femtoseconds = std::round(steps) * precisionFs;
         if (!std::isfinite(femtoseconds) || femtoseconds < 0 ||
-            femtoseconds >
-                static_cast<long double>(std::numeric_limits<int64_t>::max())) {
+            femtoseconds >= 0x1p63L) {
           staticDelays = false;
           break;
         }
@@ -2926,8 +2939,7 @@ private:
         if (!std::isfinite(femtoseconds) ||
             femtoseconds <
                 static_cast<long double>(std::numeric_limits<int64_t>::min()) ||
-            femtoseconds >
-                static_cast<long double>(std::numeric_limits<int64_t>::max()))
+            femtoseconds >= 0x1p63L)
           return std::nullopt;
         return static_cast<int64_t>(femtoseconds);
       };
@@ -3281,8 +3293,7 @@ private:
               amount * static_cast<long double>(unitFs / precisionFs);
           long double femtoseconds = std::round(steps) * precisionFs;
           if (!std::isfinite(femtoseconds) || femtoseconds < 0 ||
-              femtoseconds >
-                  static_cast<long double>(std::numeric_limits<int64_t>::max()))
+              femtoseconds >= 0x1p63L)
             return std::nullopt;
           return static_cast<int64_t>(femtoseconds);
         };
