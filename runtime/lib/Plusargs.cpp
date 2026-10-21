@@ -384,8 +384,7 @@ obelisk_rt_v1_plusarg_parse_real(obelisk_rt_string_v1 string,
     if (begin != end && *begin == '+')
       ++begin;
     double value = 0.0;
-    auto parsed =
-        std::from_chars(begin, end, value, std::chars_format::general);
+    auto parsed = obelisk_rt_from_chars_real(begin, end, value);
     if (parsed.ec == std::errc{} && parsed.ptr == end)
       *outValue = value;
     return OBELISK_RT_OK;

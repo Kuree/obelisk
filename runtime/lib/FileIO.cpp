@@ -130,7 +130,8 @@ public:
   }
   int get() {
 #if defined(__linux__) || defined(__APPLE__)
-    return ::getc_unlocked(stream);
+    // Unqualified: Darwin's stdio defines getc_unlocked as a buffer macro.
+    return getc_unlocked(stream);
 #else
     return std::fgetc(stream);
 #endif

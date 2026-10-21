@@ -11,6 +11,14 @@ foreach(vpi_header vpi_user.h sv_vpi_user.h vpi_compatibility.h)
     "${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800/${vpi_header}"
     "${OBELISK_RESOURCE_DIR}/include/${vpi_header}" COPYONLY)
 endforeach()
+if(APPLE)
+  # Outside Linux and Windows the IEEE header takes its fixed-width types from
+  # <sys/types.h>, which on Darwin lacks the unsigned ones VPI applications use.
+  file(READ "${OBELISK_RESOURCE_DIR}/include/vpi_user.h" _obelisk_vpi_user)
+  file(WRITE "${OBELISK_RESOURCE_DIR}/include/vpi_user.h"
+    "#include <stdint.h>\n${_obelisk_vpi_user}")
+  unset(_obelisk_vpi_user)
+endif()
 file(MAKE_DIRECTORY "${OBELISK_RESOURCE_DIR}/include/obelisk")
 configure_file(
   "${PROJECT_SOURCE_DIR}/runtime/include/obelisk/vpi_user_compat.h"
@@ -72,6 +80,10 @@ if(NOT EMSCRIPTEN)
     list(APPEND LLVM_LINK_COMPONENTS nativecodegen)
     list(APPEND OBELISK_BACKEND_SOURCES WindowsBackend.cpp)
     set(OBELISK_NATIVE_INPUTS_SOURCE NativeInputs.cpp)
+  elseif(OBELISK_NATIVE_PLATFORM STREQUAL "macos")
+    list(APPEND LLVM_LINK_COMPONENTS nativecodegen)
+    list(APPEND OBELISK_BACKEND_SOURCES MacOSBackend.cpp)
+    set(OBELISK_NATIVE_INPUTS_SOURCE NativeInputs.cpp)
   else()
     message(FATAL_ERROR
       "Native platform '${OBELISK_NATIVE_PLATFORM}' has no registered driver "
@@ -113,6 +125,11 @@ function(obelisk_configure_driver target)
     OBELISK_DEFAULT_TARGET="${OBELISK_DEFAULT_TARGET}"
     OBELISK_NATIVE_TARGET_TRIPLE="${OBELISK_TARGET_TRIPLE}"
   )
+  if(APPLE)
+    target_compile_definitions(${target} PRIVATE
+      OBELISK_MACOS_DEPLOYMENT_TARGET="${CMAKE_OSX_DEPLOYMENT_TARGET}"
+      OBELISK_MACOS_SDK_VERSION="${OBELISK_MACOS_SDK_VERSION}")
+  endif()
   llvm_update_compile_flags(${target})
   target_link_libraries(${target} PRIVATE
     ObeliskFrontend
@@ -136,6 +153,7 @@ function(obelisk_configure_driver target)
     lldWasm
     $<$<STREQUAL:${OBELISK_NATIVE_PLATFORM},linux>:lldELF>
     $<$<STREQUAL:${OBELISK_NATIVE_PLATFORM},windows>:lldCOFF>
+    $<$<STREQUAL:${OBELISK_NATIVE_PLATFORM},macos>:lldMachO>
   )
   if(NOT EMSCRIPTEN)
     target_link_libraries(${target} PRIVATE clangDriver clangBasic)

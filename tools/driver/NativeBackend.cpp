@@ -29,7 +29,6 @@
 #include "llvm/TargetParser/SubtargetFeature.h"
 
 #include <algorithm>
-#include <filesystem>
 #include <memory>
 #include <optional>
 #include <system_error>
@@ -269,44 +268,16 @@ LogicalResult linkELFExecutable(
     owned.push_back("--as-needed");
 
   if (!sharedLibraryInputs.empty()) {
-    namespace fs = std::filesystem;
-    std::error_code pathError;
-    fs::path outputAbsolute =
-        fs::absolute(fs::path(outputPath.str()), pathError).lexically_normal();
-    if (pathError) {
-      errs() << "obelisk: error: could not resolve output directory for "
-                "RUNPATH generation: "
-             << pathError.message() << '\n';
-      return failure();
-    }
-    fs::path outputDirectory = outputAbsolute.parent_path();
     SmallVector<std::string> runpaths;
     llvm::StringSet<> seenRunpaths;
     for (const SharedLibraryInput &input : sharedLibraryInputs) {
-      fs::path suppliedDirectory(input.suppliedDirectory);
-      std::string runpath;
-      if (input.suppliedPathWasAbsolute) {
-        runpath = suppliedDirectory.lexically_normal().string();
-      } else {
-        fs::path suppliedAbsolute =
-            fs::absolute(suppliedDirectory, pathError).lexically_normal();
-        if (pathError) {
-          errs() << "obelisk: error: could not resolve shared-library "
-                    "directory '"
-                 << input.suppliedDirectory << "': " << pathError.message()
-                 << '\n';
-          return failure();
-        }
-        fs::path relative =
-            suppliedAbsolute.lexically_relative(outputDirectory);
-        if (relative.empty())
-          relative = ".";
-        runpath = "$ORIGIN";
-        if (relative != ".")
-          runpath += "/" + relative.generic_string();
-      }
-      if (seenRunpaths.insert(runpath).second)
-        runpaths.push_back(std::move(runpath));
+      FailureOr<std::string> runpath = getSharedLibraryRunpath(
+          outputPath, input.suppliedDirectory, input.suppliedPathWasAbsolute,
+          "$ORIGIN");
+      if (failed(runpath))
+        return failure();
+      if (seenRunpaths.insert(*runpath).second)
+        runpaths.push_back(std::move(*runpath));
     }
     if (!runpaths.empty()) {
       owned.push_back("-z");

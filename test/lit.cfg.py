@@ -37,6 +37,11 @@ if sys.platform == "win32":
     config.available_features.add("windows")
 elif "-linux-" in config.obelisk_target_triple:
     config.available_features.add("native-elf")
+elif sys.platform == "darwin":
+    # Upstream Clang does not ask xcrun for the SDK; it reads SDKROOT, as
+    # Xcode's tools do, for headers and link stubs.
+    llvm_config.with_environment("SDKROOT", config.obelisk_macos_sysroot)
+    config.available_features.add("native-macho")
 if sys.platform != "win32":
     config.available_features.add("llvm-pass-plugin")
 config.substitutions.append(("%obelisk", config.obelisk_driver_executable))
@@ -94,19 +99,30 @@ config.substitutions.append(
         ),
     )
 )
+target_compile_flags = ""
+target_cxx_flags = ""
+if sys.platform == "win32":
+    target_compile_flags = (
+        "-fms-runtime-lib=dll -DDPI_DLLISPEC= -DPLI_DLLISPEC= -DPLI_DLLESPEC="
+    )
+elif sys.platform == "darwin":
+    target_compile_flags = '-isysroot "{}"'.format(config.obelisk_macos_sysroot)
+    target_cxx_flags = '{} -nostdinc++ -isystem "{}"'.format(
+        target_compile_flags, config.obelisk_macos_cxx_headers
+    )
 config.substitutions.append(
     (
         "%target_clang",
         '"{}/bin/clang" --target={} {}'.format(
             config.obelisk_llvm_dist, config.obelisk_target_triple,
-            "-fms-runtime-lib=dll -DDPI_DLLISPEC= -DPLI_DLLISPEC= -DPLI_DLLESPEC="
-            if sys.platform == "win32" else "",
+            target_compile_flags,
         ),
     )
 )
 config.substitutions.append(
-    ("%target_cxx", '"{}/bin/clang++" --target={}'.format(
-        config.obelisk_llvm_dist, config.obelisk_target_triple))
+    ("%target_cxx", '"{}/bin/clang++" --target={} {}'.format(
+        config.obelisk_llvm_dist, config.obelisk_target_triple,
+        target_cxx_flags))
 )
 if sys.platform == "win32":
     runtime_link_flags = (
@@ -116,6 +132,13 @@ if sys.platform == "win32":
         '"{0}/libobelisk_rt.a"'
     ).format(config.obelisk_native_support_dir)
     read_exports = '"{}/bin/llvm-readobj" --coff-exports'.format(config.obelisk_llvm_dist)
+elif sys.platform == "darwin":
+    runtime_link_flags = '"{0}/libobelisk_rt.a" "@{0}/weak-imports.rsp" -lc++'.format(
+        config.obelisk_native_support_dir
+    )
+    read_exports = '"{}/bin/llvm-nm" --extern-only --defined-only'.format(
+        config.obelisk_llvm_dist
+    )
 else:
     runtime_link_flags = (
         '"{0}/libobelisk_rt.a" "{0}/libc++.a" "{0}/libc++abi.a" '
@@ -125,7 +148,9 @@ else:
 config.substitutions.append(("%runtime_link_flags", runtime_link_flags))
 config.substitutions.append(("%read_exports", read_exports))
 config.substitutions.append(("%feature_section_prefix",
-                             "COFF-SECTION" if sys.platform == "win32" else "SECTION"))
+                             "COFF-SECTION" if sys.platform == "win32"
+                             else "MACHO-SECTION" if sys.platform == "darwin"
+                             else "SECTION"))
 config.substitutions.append(
     ("%runtime_archive", config.obelisk_runtime_archive)
 )

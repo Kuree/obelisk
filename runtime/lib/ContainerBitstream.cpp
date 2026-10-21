@@ -1277,6 +1277,24 @@ obelisk_rt_v1_recursive_export_bitstream(
   return status;
 }
 
+#if defined(__APPLE__)
+// ContainerBitstreamBytecode.cpp reaches this service by a private name on
+// Mach-O; its weak fallback must not capture native calls to the public one.
+OBELISK_RT_RECURSIVE_BITSTREAM_TEXT obelisk_rt_status
+obelisk_rt_recursive_export_bitstream_service(
+    obelisk_rt_context *context, const void *inputValue,
+    const void *inputUnknown, uint64_t inputPlaneSize, uint64_t inputBitWidth,
+    uint32_t inputFourState, void *outValue, void *outUnknown,
+    uint64_t outputPlaneSize, uint64_t outputBitWidth, uint32_t outputFourState,
+    const void *plan, uint64_t planSize, uint32_t observe, uint32_t *outMatched,
+    uint64_t *outWatch) {
+  return obelisk_rt_v1_recursive_export_bitstream(
+      context, inputValue, inputUnknown, inputPlaneSize, inputBitWidth,
+      inputFourState, outValue, outUnknown, outputPlaneSize, outputBitWidth,
+      outputFourState, plan, planSize, observe, outMatched, outWatch);
+}
+#endif
+
 #endif
 
 #ifndef OBELISK_RT_RECURSIVE_BITSTREAM_ONLY

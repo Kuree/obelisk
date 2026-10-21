@@ -3,6 +3,7 @@
 #include "obelisk/Reflection/DesignReflection.h"
 #include "obelisk/Runtime/Runtime.h"
 
+#include "GeneratedSymbol.h"
 #include "sv_vpi_user.h"
 #include "vpi_user.h"
 #include "gtest/gtest.h"
@@ -14,7 +15,7 @@
 #include <vector>
 
 extern "C" const obelisk_rt_process_descriptor_v1 staticArraysDescriptor asm(
-    "static_arrays_process.__obelisk_process_descriptor");
+    OBELISK_TEST_SYMBOL("static_arrays_process.__obelisk_process_descriptor"));
 
 namespace {
 

@@ -123,6 +123,96 @@ LogicalResult atomicallyReplace(StringRef temporary, StringRef output) {
   return success();
 }
 
+FailureOr<std::string> getSharedLibraryRunpath(StringRef outputPath,
+                                               StringRef suppliedDirectory,
+                                               bool suppliedPathWasAbsolute,
+                                               StringRef origin) {
+  SmallString<256> directory(suppliedDirectory);
+  if (suppliedPathWasAbsolute) {
+    sys::path::remove_dots(directory, true);
+    return directory.str().str();
+  }
+  SmallString<256> image(outputPath);
+  if (std::error_code error = sys::fs::make_absolute(image)) {
+    errs() << "obelisk: error: could not resolve output directory for "
+              "runpath generation: "
+           << error.message() << '\n';
+    return failure();
+  }
+  sys::path::remove_dots(image, true);
+  sys::path::remove_filename(image);
+  if (std::error_code error = sys::fs::make_absolute(directory)) {
+    errs() << "obelisk: error: could not resolve shared-library directory '"
+           << suppliedDirectory << "': " << error.message() << '\n';
+    return failure();
+  }
+  sys::path::remove_dots(directory, true);
+  // Both paths are absolute and normalized: drop their common prefix, then
+  // climb out of the rest of the image directory.
+  auto from = sys::path::begin(image), fromEnd = sys::path::end(image);
+  auto to = sys::path::begin(directory), toEnd = sys::path::end(directory);
+  for (; from != fromEnd && to != toEnd && *from == *to; ++from, ++to) {
+  }
+  std::string runpath = origin.str();
+  for (; from != fromEnd; ++from)
+    runpath += "/..";
+  for (; to != toEnd; ++to)
+    runpath += ("/" + *to).str();
+  return runpath;
+}
+
+ArrayRef<StringLiteral> getRuntimeDPIEntryPoints() {
+  static constexpr StringLiteral names[] = {
+      "svDpiVersion",       "svGetBitselBit",    "svGetBitselLogic",
+      "svPutBitselBit",     "svPutBitselLogic",  "svGetPartselBit",
+      "svGetPartselLogic",  "svPutPartselBit",   "svPutPartselLogic",
+      "svGetScope",         "svSetScope",        "svGetNameFromScope",
+      "svGetScopeFromName", "svPutUserData",     "svGetUserData",
+      "svGetCallerInfo",    "svIsDisabledState", "svAckDisabledState",
+      "svGetTime",          "svGetTimeUnit",     "svGetTimePrecision"};
+  return names;
+}
+
+ArrayRef<StringLiteral> getRuntimeVPIEntryPoints() {
+  static constexpr StringLiteral names[] = {
+      "vpi_chk_error",
+      "vpi_compare_objects",
+      "vpi_control",
+      "vpi_flush",
+      "vpi_free_object",
+      "vpi_get",
+      "vpi_get64",
+      "vpi_get_cb_info",
+      "vpi_get_data",
+      "vpi_get_delays",
+      "vpi_get_str",
+      "vpi_get_systf_info",
+      "vpi_get_time",
+      "vpi_get_userdata",
+      "vpi_get_value",
+      "vpi_get_value_array",
+      "vpi_get_vlog_info",
+      "vpi_handle",
+      "vpi_handle_by_index",
+      "vpi_handle_by_multi_index",
+      "vpi_handle_by_name",
+      "vpi_handle_multi",
+      "vpi_iterate",
+      "vpi_mcd_name",
+      "vpi_printf",
+      "vpi_put_userdata",
+      "vpi_put_value",
+      "vpi_register_cb",
+      "vpi_register_systf",
+      "vpi_release_handle",
+      "vpi_remove_cb",
+      "vpi_scan",
+      "vpi_vprintf",
+      // Obelisk's object-model query for VPI applications.
+      "obelisk_rt_v1_vpi_object_model"};
+  return names;
+}
+
 std::optional<std::string>
 TargetBackend::findSupportTree(StringRef executablePath) const {
   SmallString<256> executable(executablePath);

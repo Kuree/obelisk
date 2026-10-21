@@ -17,6 +17,10 @@
 #define PLI_DLLESPEC
 #endif
 
+// Outside Linux and Windows the IEEE header takes its fixed-width types from
+// <sys/types.h>, which on Darwin lacks the unsigned ones.
+#include <cstdint>
+
 #include "obelisk/vpi_user_compat.h"
 #include "sv_vpi_user.h"
 #include "vpi_user.h"

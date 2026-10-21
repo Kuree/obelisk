@@ -1,8 +1,8 @@
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=ENCODE --implicit-check-not=runtime.design_database
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' | FileCheck %s --check-prefix=DATABASE
 // RUN: obelisk-opt %s --mlir-print-debuginfo --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{opt-level=3 caller-growth-percent=10000 caller-growth-constant=10000 design-growth-percent=10000 design-growth-constant=10000}),encode-obelisk-sim-to-bytecode{vpi=full})' | FileCheck %s --check-prefix=INLINED-DATABASE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LOWER --implicit-check-not=add.__obelisk_bytecode_entry --implicit-check-not=observe.__obelisk_bytecode_entry
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | opt -S -passes=verify | FileCheck %s --check-prefix=LLVM
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LOWER --implicit-check-not=add.__obelisk_bytecode_entry --implicit-check-not=observe.__obelisk_bytecode_entry --implicit-check-not='section = ".obelisk'
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | opt -S -passes=verify | FileCheck %s --check-prefix=LLVM --implicit-check-not='section ".obelisk'
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
 // RUN:   --test-obelisk-print-bytecode -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=INSTRUCTIONS
@@ -152,16 +152,12 @@ module attributes {
 // LOWER: llvm.mlir.addressof @process.__obelisk_bytecode_entry
 // LOWER: llvm.mlir.global internal constant @process.__obelisk_bytecode_entry
 // LOWER: llvm.mlir.global external constant @__obelisk_execution_descriptor_v1
-// LOWER-SAME: section = ".obelisk.execution"
 // LOWER: llvm.mlir.global internal constant @__obelisk_activations_v1
-// LOWER-SAME: section = ".obelisk.execution"
 // LOWER: llvm.mlir.constant(71 : i64)
 // LOWER: llvm.mlir.addressof @process.__obelisk_process_descriptor
 // LOWER: llvm.mlir.constant(3 : i32)
 // LOWER: llvm.mlir.global external constant @__obelisk_design_database_v1
-// LOWER-SAME: section = ".obelisk.design"
 // LOWER: llvm.mlir.global external constant @__obelisk_bytecode_image_v1
-// LOWER-SAME: section = ".obelisk.bytecode"
 // LOWER: llvm.mlir.global appending constant @llvm.used
 // LOWER-SAME: section = "llvm.metadata"
 // LOWER-SAME: !llvm.array<2 x ptr>
@@ -169,12 +165,8 @@ module attributes {
 // LOWER-SAME: !llvm.array<1 x ptr>
 
 // LLVM: @__obelisk_execution_descriptor_v1 = constant
-// LLVM-SAME: section ".obelisk.execution"
 // LLVM: @__obelisk_activations_v1 = internal constant
-// LLVM-SAME: section ".obelisk.execution"
 // LLVM: @__obelisk_design_database_v1 = constant
-// LLVM-SAME: section ".obelisk.design"
 // LLVM: @__obelisk_bytecode_image_v1 = constant
-// LLVM-SAME: section ".obelisk.bytecode"
 // LLVM: @llvm.used = appending constant [2 x ptr] [ptr @preexisting, ptr @__obelisk_design_database_v1], section "llvm.metadata"
 // LLVM: @llvm.compiler.used = appending constant [1 x ptr] [ptr @preexisting], section "llvm.metadata"

@@ -19,6 +19,19 @@ obelisk_rt_execute_dpi_export_bytecode(
     uint32_t inputCount, obelisk_rt_import_output_v1 *outputs,
     uint32_t outputCount) noexcept;
 
+#if defined(__APPLE__)
+// Mach-O extracts archive members even for weak references. Define the
+// absent-tier result here; DPIExportBytecode.cpp's strong definition replaces
+// it when a design references that feature's link anchor.
+obelisk_rt_status obelisk_rt_execute_dpi_export_bytecode(
+    const obelisk_rt_execution_descriptor_v1 &,
+    const obelisk_rt_export_descriptor_v1 &, obelisk_rt_context *,
+    const obelisk_rt_import_input_v1 *, uint32_t, obelisk_rt_import_output_v1 *,
+    uint32_t) noexcept {
+  return OBELISK_RT_TIER_UNAVAILABLE;
+}
+#endif
+
 namespace {
 
 thread_local std::vector<std::vector<std::string>> exportStringFrames;

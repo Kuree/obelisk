@@ -4,6 +4,7 @@
 
 #include "../lib/RuntimeInternal.h"
 
+#include "GeneratedSymbol.h"
 #include "sv_vpi_user.h"
 #include "vpi_user.h"
 #include "gtest/gtest.h"
@@ -14,8 +15,8 @@
 #include <string>
 #include <vector>
 
-extern "C" const obelisk_rt_process_descriptor_v1
-    dumpDescriptor asm("dump.__obelisk_process_descriptor");
+extern "C" const obelisk_rt_process_descriptor_v1 dumpDescriptor asm(
+    OBELISK_TEST_SYMBOL("dump.__obelisk_process_descriptor"));
 
 namespace {
 

@@ -51,6 +51,10 @@ struct SharedLibraryInput {
   bool hasEmbeddedLoaderIdentity = false;
   bool hasVPIStartup = false;
   bool suppliedPathWasAbsolute = false;
+  // Mach-O only: symbols the dylib binds from its host image at load time,
+  // which the executable must export, or a flat namespace that may bind any.
+  std::vector<std::string> hostImports;
+  bool flatNamespace = false;
 };
 
 struct NativeLinkInput {

@@ -313,8 +313,10 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
   return success();
 }
 
+// Embedded data stays in the target's default sections. Nothing locates it by
+// section, and Mach-O rejects ELF-style names that lack a "segment," prefix.
 LLVM::GlobalOp makeByteGlobal(ModuleOp module, StringRef name,
-                              DenseI8ArrayAttr bytes, StringRef section) {
+                              DenseI8ArrayAttr bytes) {
   OpBuilder builder(module.getContext());
   builder.setInsertionPointToStart(module.getBody());
   Type array = LLVM::LLVMArrayType::get(builder.getI8Type(), bytes.size());
@@ -323,7 +325,6 @@ LLVM::GlobalOp makeByteGlobal(ModuleOp module, StringRef name,
   auto global = LLVM::GlobalOp::create(builder, module.getLoc(), array, true,
                                        LLVM::Linkage::External, name,
                                        builder.getStringAttr(contents), 8);
-  global->setAttr("section", builder.getStringAttr(section));
   return global;
 }
 
@@ -357,8 +358,8 @@ LLVM_ATTRIBUTE_NOINLINE LogicalResult materializeDPIExportDescriptors(
       context, {i32, i32, i64, i64, i64, i32, i32, i32, i32, pointer, i64});
   Type exportsType = LLVM::LLVMArrayType::get(exportType, exports.size());
   makeAggregateGlobal(
-      module, exportsType, kExportsName, LLVM::Linkage::Internal,
-      ".obelisk.execution", [&](OpBuilder &builder) {
+      module, exportsType, kExportsName, LLVM::Linkage::Internal, "",
+      [&](OpBuilder &builder) {
         Value records =
             LLVM::ZeroOp::create(builder, module.getLoc(), exportsType);
         for (auto [index, info] : llvm::enumerate(exports)) {
@@ -530,15 +531,13 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
            << kCoverageSchemaName << "'";
 
   if (bytecode)
-    makeByteGlobal(module, kBytecodeName, bytecode, ".obelisk.bytecode");
+    makeByteGlobal(module, kBytecodeName, bytecode);
   if (database)
-    makeByteGlobal(module, kDatabaseName, database, ".obelisk.design");
+    makeByteGlobal(module, kDatabaseName, database);
   if (classBitstream)
-    makeByteGlobal(module, kClassBitstreamName, classBitstream,
-                   ".obelisk.class_bitstream");
+    makeByteGlobal(module, kClassBitstreamName, classBitstream);
   if (coverageSchema)
-    makeByteGlobal(module, kCoverageSchemaName, coverageSchema,
-                   ".obelisk.coverage");
+    makeByteGlobal(module, kCoverageSchemaName, coverageSchema);
 
   MLIRContext *context = module.getContext();
   Type pointer = LLVM::LLVMPointerType::get(context);
@@ -718,8 +717,8 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
     Type activationArray =
         LLVM::LLVMArrayType::get(activationType, activations.size());
     makeAggregateGlobal(
-        module, activationArray, kActivationsName, LLVM::Linkage::Internal,
-        ".obelisk.execution", [&](OpBuilder &builder) {
+        module, activationArray, kActivationsName, LLVM::Linkage::Internal, "",
+        [&](OpBuilder &builder) {
           Value records =
               LLVM::ZeroOp::create(builder, module.getLoc(), activationArray);
           for (auto [index, activation] : llvm::enumerate(activations)) {
@@ -768,7 +767,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
         LLVM::LLVMArrayType::get(observerCaptureType, observer.captures.size());
     makeAggregateGlobal(
         module, capturesType, observer.capturesSymbol, LLVM::Linkage::Internal,
-        ".obelisk.execution", [&](OpBuilder &builder) {
+        "", [&](OpBuilder &builder) {
           Value values =
               LLVM::ZeroOp::create(builder, module.getLoc(), capturesType);
           for (auto [index, capture] : llvm::enumerate(observer.captures)) {
@@ -795,8 +794,8 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
     Type observersType =
         LLVM::LLVMArrayType::get(observerType, observers.size());
     makeAggregateGlobal(
-        module, observersType, kObserversName, LLVM::Linkage::Internal,
-        ".obelisk.execution", [&](OpBuilder &builder) {
+        module, observersType, kObserversName, LLVM::Linkage::Internal, "",
+        [&](OpBuilder &builder) {
           Value records =
               LLVM::ZeroOp::create(builder, module.getLoc(), observersType);
           for (auto [index, observer] : llvm::enumerate(observers)) {
@@ -913,8 +912,8 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
     }
     Type dpiScopeArray = LLVM::LLVMArrayType::get(dpiScopeType, scopes.size());
     makeAggregateGlobal(
-        module, dpiScopeArray, kDPIScopesName, LLVM::Linkage::Internal,
-        ".obelisk.execution", [&](OpBuilder &builder) {
+        module, dpiScopeArray, kDPIScopesName, LLVM::Linkage::Internal, "",
+        [&](OpBuilder &builder) {
           Value records =
               LLVM::ZeroOp::create(builder, module.getLoc(), dpiScopeArray);
           for (auto [index, scope] : llvm::enumerate(scopes)) {
@@ -1016,7 +1015,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
         LLVM::LLVMArrayType::get(sampledRangeType, sampledRanges.size());
     makeAggregateGlobal(
         module, sampledRangeArray, kSampledRangesName, LLVM::Linkage::Internal,
-        ".obelisk.execution", [&](OpBuilder &builder) {
+        "", [&](OpBuilder &builder) {
           Value records =
               LLVM::ZeroOp::create(builder, module.getLoc(), sampledRangeArray);
           for (auto [index, range] : llvm::enumerate(sampledRanges)) {
@@ -1085,8 +1084,8 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
   uint64_t checksum = bytecode ? read64(bytecode.asArrayRef(), 32) : 0;
 
   makeAggregateGlobal(
-      module, executionStorageType, kExecutionName, LLVM::Linkage::External,
-      ".obelisk.execution", [&](OpBuilder &builder) {
+      module, executionStorageType, kExecutionName, LLVM::Linkage::External, "",
+      [&](OpBuilder &builder) {
         Value value =
             LLVM::ZeroOp::create(builder, module.getLoc(), executionType);
         value = insertValue(

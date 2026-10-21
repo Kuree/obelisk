@@ -10,3 +10,4 @@
 # SYMBOLS-DAG: obelisk_rt_v1_file_scan_dynamic
 # SECTION: Name: .obelisk.feature.text
 # COFF-SECTION: Name: .text
+# MACHO-SECTION: Name: __text

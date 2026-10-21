@@ -9,6 +9,8 @@
 #include "llvm/BinaryFormat/Magic.h"
 #include "llvm/Object/COFF.h"
 #include "llvm/Object/ELF.h"
+#include "llvm/Object/MachO.h"
+#include "llvm/Object/MachOUniversal.h"
 #include "llvm/Support/DynamicLibrary.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
@@ -98,6 +100,106 @@ Expected<std::optional<std::string>> readELFSoname(StringRef path) {
   return std::optional<std::string>();
 }
 
+// Universal files are linked through their native slice, which may be an
+// object, an archive, or a dylib.
+Expected<file_magic> identifyUniversalSlice(StringRef path) {
+  auto buffer = MemoryBuffer::getFile(path);
+  if (!buffer)
+    return errorCodeToError(buffer.getError());
+  auto universal =
+      object::MachOUniversalBinary::create((*buffer)->getMemBufferRef());
+  if (!universal)
+    return universal.takeError();
+  auto slice = (*universal)->getObjectForArch("arm64");
+  if (!slice)
+    return slice.takeError();
+  StringRef contents = (*buffer)->getBuffer();
+  if (slice->getOffset() > contents.size() ||
+      slice->getSize() > contents.size() - slice->getOffset())
+    return createStringError(inconvertibleErrorCode(),
+                             "universal arm64 slice is truncated");
+  return identify_magic(contents.substr(slice->getOffset(), slice->getSize()));
+}
+
+struct MachODylib {
+  std::string installName;
+  // Undefined symbols left for the simulator image to provide at load time.
+  std::vector<std::string> hostImports;
+  bool flatNamespace = false;
+  bool hasVPIStartup = false;
+};
+
+Expected<MachODylib> readMachODylib(StringRef path) {
+  auto buffer = MemoryBuffer::getFile(path);
+  if (!buffer)
+    return errorCodeToError(buffer.getError());
+  auto binary = object::createBinary((*buffer)->getMemBufferRef());
+  if (!binary)
+    return binary.takeError();
+  std::unique_ptr<object::MachOObjectFile> slice;
+  auto *macho = dyn_cast<object::MachOObjectFile>(binary->get());
+  if (auto *universal = dyn_cast<object::MachOUniversalBinary>(binary->get())) {
+    auto selected = universal->getMachOObjectForArch("arm64");
+    if (!selected)
+      return selected.takeError();
+    slice = std::move(*selected);
+    macho = slice.get();
+  }
+  if (!macho || !macho->is64Bit() ||
+      macho->getArch() != Triple(OBELISK_NATIVE_TARGET_TRIPLE).getArch() ||
+      macho->getHeader64().cpusubtype != MachO::CPU_SUBTYPE_ARM64_ALL)
+    return createStringError(inconvertibleErrorCode(),
+                             "Mach-O library is not for the native ARM64 target");
+  if (macho->getHeader64().filetype != MachO::MH_DYLIB)
+    return createStringError(inconvertibleErrorCode(),
+                             "Mach-O input is not a dynamic library");
+  MachODylib result;
+  // Inspect the export trie rather than dlopen: a DPI/VPI library may import
+  // simulator symbols that only the generated executable will provide.
+  Error exportError = Error::success();
+  for (const object::ExportEntry &entry : macho->exports(exportError))
+    result.hasVPIStartup |= entry.name() == "_vlog_startup_routines";
+  if (exportError)
+    return std::move(exportError);
+  // A two-level image marks the imports it expects from its host with the
+  // dynamic-lookup ordinal. Weak imports are optional and may stay unbound.
+  result.flatNamespace = !(macho->getHeader64().flags & MachO::MH_TWOLEVEL);
+  if (!result.flatNamespace) {
+    for (const object::SymbolRef &symbol : macho->symbols()) {
+      MachO::nlist_64 entry =
+          macho->getSymbol64TableEntry(symbol.getRawDataRefImpl());
+      if ((entry.n_type & MachO::N_STAB) ||
+          (entry.n_type & MachO::N_TYPE) != MachO::N_UNDF ||
+          !(entry.n_type & MachO::N_EXT) || entry.n_value != 0 ||
+          (entry.n_desc & MachO::N_WEAK_REF) ||
+          MachO::GET_LIBRARY_ORDINAL(entry.n_desc) !=
+              MachO::DYNAMIC_LOOKUP_ORDINAL)
+        continue;
+      Expected<StringRef> name = symbol.getName();
+      if (!name)
+        return name.takeError();
+      result.hostImports.push_back(name->str());
+    }
+  }
+  for (const auto &command : macho->load_commands()) {
+    if (command.C.cmd != MachO::LC_ID_DYLIB)
+      continue;
+    auto dylib = macho->getDylibIDLoadCommand(command);
+    if (dylib.dylib.name < sizeof(MachO::dylib_command) ||
+        dylib.dylib.name >= command.C.cmdsize)
+      break;
+    StringRef name(command.Ptr + dylib.dylib.name,
+                   command.C.cmdsize - dylib.dylib.name);
+    size_t end = name.find('\0');
+    if (end == StringRef::npos || end == 0)
+      break;
+    result.installName = name.take_front(end).str();
+    return std::move(result);
+  }
+  return createStringError(inconvertibleErrorCode(),
+                           "Mach-O library has no valid LC_ID_DYLIB install name");
+}
+
 LogicalResult classifySharedLibrary(StringRef suppliedPath, file_magic magic,
                                     StringRef vpiMode,
                                     StringSet<> &canonicalPaths,
@@ -122,8 +224,12 @@ LogicalResult classifySharedLibrary(StringRef suppliedPath, file_magic magic,
     return success();
 
   const bool coff = magic == file_magic::pecoff_executable;
+  const bool macho = magic == file_magic::macho_dynamically_linked_shared_lib ||
+                     magic == file_magic::macho_universal_binary;
   std::optional<std::string> embeddedName;
   bool hasVPIStartup = false;
+  std::vector<std::string> hostImports;
+  bool flatNamespace = false;
   if (coff) {
     auto buffer = MemoryBuffer::getFile(canonical);
     if (!buffer) {
@@ -161,6 +267,26 @@ LogicalResult classifySharedLibrary(StringRef suppliedPath, file_magic magic,
       }
       hasVPIStartup |= name == "vlog_startup_routines";
     }
+  } else if (macho) {
+    Expected<MachODylib> dylib = readMachODylib(canonical);
+    if (!dylib) {
+      error(Twine("could not inspect dylib '") + suppliedPath +
+            "': " + toString(dylib.takeError()));
+      return failure();
+    }
+    // dyld resolves a relative install name against the working directory,
+    // and the executable cannot rename it without invalidating its signature.
+    if (!StringRef(dylib->installName).starts_with("/") &&
+        !StringRef(dylib->installName).starts_with("@")) {
+      error(Twine("dylib '") + suppliedPath + "' has relative install name '" +
+            dylib->installName + "'; relink it with -install_name @rpath/" +
+            sys::path::filename(dylib->installName));
+      return failure();
+    }
+    embeddedName = std::move(dylib->installName);
+    hostImports = std::move(dylib->hostImports);
+    flatNamespace = dylib->flatNamespace;
+    hasVPIStartup = dylib->hasVPIStartup;
   } else {
     Expected<std::optional<std::string>> soname = readELFSoname(canonical);
     if (!soname) {
@@ -201,7 +327,7 @@ LogicalResult classifySharedLibrary(StringRef suppliedPath, file_magic magic,
     return failure();
   }
 
-  if (!coff) {
+  if (!coff && !macho) {
     std::string loaderDiagnostic;
     sys::DynamicLibrary library =
         sys::DynamicLibrary::getLibrary(canonical.c_str(), &loaderDiagnostic);
@@ -229,6 +355,8 @@ LogicalResult classifySharedLibrary(StringRef suppliedPath, file_magic magic,
   input.loaderName = std::move(loaderName);
   input.hasEmbeddedLoaderIdentity = embeddedName.has_value();
   input.hasVPIStartup = hasVPIStartup;
+  input.hostImports = std::move(hostImports);
+  input.flatNamespace = flatNamespace;
   input.suppliedPathWasAbsolute = sys::path::is_absolute(suppliedPath);
   result.sharedLibraries.push_back(std::move(input));
   result.nativeLinkInputs.push_back({NativeLinkInput::Kind::SharedLibrary,
@@ -242,17 +370,21 @@ LogicalResult classifySharedLibrary(StringRef suppliedPath, file_magic magic,
 // The registered native backend links one object format. Native inputs in
 // the other format are rejected like any other unsupported binary.
 bool matchesNativeObjectFormat(file_magic magic) {
-  static const bool coff =
-      Triple(OBELISK_NATIVE_TARGET_TRIPLE).isOSBinFormatCOFF();
+  static const Triple target(OBELISK_NATIVE_TARGET_TRIPLE);
   switch (magic) {
   case file_magic::elf_relocatable:
   case file_magic::elf_shared_object:
   case file_magic::elf_executable:
-    return !coff;
+    return target.isOSBinFormatELF();
   case file_magic::coff_object:
   case file_magic::coff_import_library:
   case file_magic::pecoff_executable:
-    return coff;
+    return target.isOSBinFormatCOFF();
+  case file_magic::macho_object:
+  case file_magic::macho_executable:
+  case file_magic::macho_dynamically_linked_shared_lib:
+  case file_magic::macho_universal_binary:
+    return target.isOSBinFormatMachO();
   default:
     return true;
   }
@@ -278,8 +410,18 @@ LogicalResult classifyDirectInputs(ArrayRef<std::string> inputs,
       error(Twine("unsupported binary input format for '") + input + "'");
       return failure();
     }
+    file_magic linkMagic = magic;
+    if (magic == file_magic::macho_universal_binary) {
+      Expected<file_magic> slice = identifyUniversalSlice(input);
+      if (!slice) {
+        error(Twine("could not inspect universal binary '") + input +
+              "': " + toString(slice.takeError()));
+        return failure();
+      }
+      linkMagic = *slice;
+    }
     bool native = false;
-    switch (magic) {
+    switch (linkMagic) {
     case file_magic::unknown: {
       ErrorOr<std::unique_ptr<MemoryBuffer>> buffer =
           MemoryBuffer::getFile(input);
@@ -298,12 +440,14 @@ LogicalResult classifyDirectInputs(ArrayRef<std::string> inputs,
     case file_magic::elf_relocatable:
     case file_magic::coff_object:
     case file_magic::coff_import_library:
+    case file_magic::macho_object:
     case file_magic::bitcode:
     case file_magic::archive:
       native = true;
       break;
     case file_magic::elf_shared_object:
     case file_magic::pecoff_executable:
+    case file_magic::macho_dynamically_linked_shared_lib:
       native = true;
       if (!nativeInputsAllowed) {
         error(Twine("native input '") + input +
@@ -317,6 +461,9 @@ LogicalResult classifyDirectInputs(ArrayRef<std::string> inputs,
       continue;
     case file_magic::elf_executable:
       error(Twine("ELF executable input is not linkable: '") + input + "'");
+      return failure();
+    case file_magic::macho_executable:
+      error(Twine("Mach-O executable input is not linkable: '") + input + "'");
       return failure();
     default:
       error(Twine("unsupported binary input format for '") + input + "'");

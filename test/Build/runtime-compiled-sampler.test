@@ -8,5 +8,5 @@
 
 # Target archives contain the simple sampler and no defined or unresolved Z3
 # entry points. Compiler Z3 is solely responsible for generating Boolean plans.
-# STATIC-DAG: T obelisk_rt_v1_random_solve_modes_state{{$}}
+# STATIC-DAG: T {{_?}}obelisk_rt_v1_random_solve_modes_state{{$}}
 # MEMBERS: RandSamplePlan.{{o|obj}}

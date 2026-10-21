@@ -217,8 +217,41 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
 endif()
 set(_obelisk_sdk_clang "${OBELISK_LLVM_DIST_DIR}/bin/clang")
 set(_obelisk_sdk_cxx "${_obelisk_sdk_clang}++${_obelisk_host_executable_suffix}")
+set(_obelisk_probe_flags)
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin" AND NOT CMAKE_TOOLCHAIN_FILE)
+  if(NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET AND
+     NOT DEFINED ENV{MACOSX_DEPLOYMENT_TARGET})
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING
+      "Minimum macOS version for the compiler and generated simulations")
+  endif()
+  # The SDK's libraries are ThinLTO bitcode that only its own LLD can link,
+  # and its Clang neither asks xcrun for an SDK nor, since CMake 4, receives
+  # one by default. Its bundled libc++ headers also assume a newer libc++ than
+  # macOS provides, so host code uses the SDK's system C++ headers instead.
+  set(_obelisk_macos_sdk "${CMAKE_OSX_SYSROOT}")
+  if(NOT IS_DIRECTORY "${_obelisk_macos_sdk}")
+    set(_obelisk_sdk_name macosx)
+    if(CMAKE_OSX_SYSROOT)
+      set(_obelisk_sdk_name "${CMAKE_OSX_SYSROOT}")
+    endif()
+    execute_process(COMMAND xcrun --sdk "${_obelisk_sdk_name}" --show-sdk-path
+      RESULT_VARIABLE _obelisk_xcrun_result
+      OUTPUT_VARIABLE _obelisk_macos_sdk OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(NOT _obelisk_xcrun_result EQUAL 0 OR
+       NOT IS_DIRECTORY "${_obelisk_macos_sdk}")
+      message(FATAL_ERROR
+        "Building Obelisk on macOS requires Xcode or the Command Line Tools")
+    endif()
+    set(CMAKE_OSX_SYSROOT "${_obelisk_macos_sdk}" CACHE PATH "macOS SDK")
+  endif()
+  set(OBELISK_HOST_CXX_STDLIB_FLAGS
+    "-stdlib++-isystem ${_obelisk_macos_sdk}/usr/include/c++/v1")
+  set(_obelisk_probe_flags -isysroot "${_obelisk_macos_sdk}"
+    "-mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}"
+    -stdlib++-isystem "${_obelisk_macos_sdk}/usr/include/c++/v1")
+endif()
 if(OBELISK_USE_SDK_CLANG AND
-   CMAKE_HOST_SYSTEM_NAME MATCHES "^(Linux|Windows)$" AND
+   CMAKE_HOST_SYSTEM_NAME MATCHES "^(Linux|Windows|Darwin)$" AND
    NOT CMAKE_TOOLCHAIN_FILE AND
    NOT DEFINED CMAKE_C_COMPILER AND NOT DEFINED CMAKE_CXX_COMPILER AND
    NOT DEFINED ENV{CC} AND NOT DEFINED ENV{CXX} AND
@@ -231,7 +264,8 @@ if(OBELISK_USE_SDK_CLANG AND
     "#include <string>\n"
     "int main() { return static_cast<int>(std::string(\"a\").size()) - 1; }\n")
   execute_process(
-    COMMAND "${_obelisk_sdk_cxx}" "${_obelisk_probe_dir}/probe.cpp"
+    COMMAND "${_obelisk_sdk_cxx}" ${_obelisk_probe_flags}
+      "${_obelisk_probe_dir}/probe.cpp"
       -o "${_obelisk_probe_dir}/probe${_obelisk_host_executable_suffix}"
     RESULT_VARIABLE _obelisk_probe_result
     OUTPUT_QUIET
@@ -245,6 +279,9 @@ if(OBELISK_USE_SDK_CLANG AND
     message(FATAL_ERROR
       "The SDK's Clang cannot build against this host's C++ library. "
       "Install Visual Studio C++ build tools and a Windows SDK:\n${_obelisk_probe_error}")
+  elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
+    message(FATAL_ERROR
+      "The SDK's Clang cannot build against the macOS SDK:\n${_obelisk_probe_error}")
   else()
     message(STATUS
       "The SDK's clang cannot build against this host's C++ library; using "
@@ -256,6 +293,7 @@ if(OBELISK_USE_SDK_CLANG AND
 endif()
 unset(_obelisk_sdk_clang)
 unset(_obelisk_sdk_cxx)
+unset(_obelisk_probe_flags)
 
 if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows" AND NOT CMAKE_TOOLCHAIN_FILE)
   set(CMAKE_LINKER "${OBELISK_LLVM_DIST_DIR}/bin/lld-link.exe"
@@ -341,6 +379,30 @@ set(MLIR_TABLEGEN_EXE "${OBELISK_LLVM_TOOLS_DIR}/mlir-tblgen${_obelisk_host_exec
 
 list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}" "${LLVM_CMAKE_DIR}")
 
+# The macOS SDK ships its libraries as ThinLTO bitcode, which only its own LLD
+# can link. Select it before LLVM's options detect the linker, and share one
+# ThinLTO cache across the host executables.
+if(APPLE AND OBELISK_USE_SDK_LLD AND NOT LLVM_USE_LINKER AND
+   EXISTS "${OBELISK_LLVM_TOOLS_DIR}/ld64.lld")
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    set(LLVM_USE_LINKER lld)
+  else()
+    set(LLVM_USE_LINKER "${OBELISK_LLVM_TOOLS_DIR}/ld64.lld")
+  endif()
+  set(OBELISK_HOST_LTO_CACHE_DIR "${CMAKE_BINARY_DIR}/lto.cache" CACHE PATH
+    "ThinLTO cache for host links of the macOS SDK's bitcode libraries")
+  foreach(flags CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS
+                CMAKE_MODULE_LINKER_FLAGS)
+    string(APPEND ${flags} " -Wl,-cache_path_lto,${OBELISK_HOST_LTO_CACHE_DIR}")
+  endforeach()
+  message(STATUS "Host linker: ${OBELISK_LLVM_TOOLS_DIR}/ld64.lld")
+endif()
+# Upstream Clang would otherwise use the SDK's bundled libc++ headers.
+if(APPLE AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND
+   OBELISK_HOST_CXX_STDLIB_FLAGS)
+  string(APPEND CMAKE_CXX_FLAGS " ${OBELISK_HOST_CXX_STDLIB_FLAGS}")
+endif()
+
 include(TableGen)
 include(AddLLVM)
 include(AddMLIR)
@@ -419,9 +481,12 @@ elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
   set(OBELISK_NATIVE_PLATFORM "linux")
   set(_obelisk_configure_native_support TRUE)
 elseif(APPLE)
-  message(FATAL_ERROR
-    "no macOS native backend is registered; configure with emcmake to target "
-    "wasm32")
+  if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$" OR
+     (CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_OSX_ARCHITECTURES STREQUAL "arm64"))
+    message(FATAL_ERROR "The macOS native backend requires an ARM64 host and build")
+  endif()
+  set(OBELISK_NATIVE_PLATFORM "macos")
+  set(_obelisk_configure_macos_support TRUE)
 elseif(WIN32)
   set(OBELISK_NATIVE_PLATFORM "windows")
   set(_obelisk_configure_windows_support TRUE)
@@ -501,6 +566,20 @@ if(OBELISK_ENABLE_Z3)
   if(CMAKE_CXX_COMPILER_TARGET)
     list(APPEND _obelisk_z3_cmake_args
       "-DCMAKE_CXX_COMPILER_TARGET=${CMAKE_CXX_COMPILER_TARGET}")
+  endif()
+  # Build Z3 for the outer macOS target. Its own default is the SDK version,
+  # which makes the linker warn about every Z3 object.
+  if(APPLE)
+    foreach(variable IN ITEMS CMAKE_OSX_DEPLOYMENT_TARGET
+                              CMAKE_OSX_ARCHITECTURES CMAKE_OSX_SYSROOT)
+      if(${variable})
+        list(APPEND _obelisk_z3_cmake_args "-D${variable}=${${variable}}")
+      endif()
+    endforeach()
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND OBELISK_HOST_CXX_STDLIB_FLAGS)
+      list(APPEND _obelisk_z3_cmake_args
+        "-DCMAKE_CXX_FLAGS=${OBELISK_HOST_CXX_STDLIB_FLAGS}")
+    endif()
   endif()
   # Z3 is by far the largest nested build, so a compiler cache the outer build
   # opted into has to reach it too; the isolated configure would otherwise miss
@@ -646,6 +725,9 @@ endif()
 if(_obelisk_configure_windows_support)
   include("${PROJECT_SOURCE_DIR}/cmake/TargetWindowsSupport.cmake")
 endif()
+if(_obelisk_configure_macos_support)
+  include("${PROJECT_SOURCE_DIR}/cmake/TargetMacOSSupport.cmake")
+endif()
 
 #===------------------------------------------------------------------------===
 # Language standard. Obelisk stays at the SDK's C++17 baseline except for the
@@ -685,7 +767,7 @@ endif()
 add_custom_target(obelisk-generated-files)
 add_subdirectory(utils/obelisk-tblgen)
 add_subdirectory(include)
-if((EMSCRIPTEN OR WIN32) AND TARGET obelisk_target_runtime)
+if((EMSCRIPTEN OR WIN32 OR APPLE) AND TARGET obelisk_target_runtime)
   # TargetWasmSupport is loaded before the reflection generators are declared.
   # Keep its direct compiler commands behind the imported host-generated files.
   add_dependencies(obelisk_target_runtime obelisk-generated-files)

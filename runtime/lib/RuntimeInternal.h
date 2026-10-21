@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -178,6 +179,13 @@ struct FileEntry {
 bool obelisk_rt_file_name_unlocked(obelisk_rt_context *context,
                                    uint32_t descriptor,
                                    std::string_view &name) noexcept;
+
+// std::from_chars(first, last, value, std::chars_format::general) for double.
+// libc++ provides that overload only from macOS 26, so the runtime matches its
+// subject sequence itself and converts it in the "C" locale.
+std::from_chars_result obelisk_rt_from_chars_real(const char *first,
+                                                  const char *last,
+                                                  double &value);
 
 // Parsed dynamic $sscanf/$fscanf formats are feature-local and immutable.
 // Prefix strings are owned by the plan, so scanners may use their bytes after

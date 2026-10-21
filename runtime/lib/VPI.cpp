@@ -14,12 +14,17 @@
 #include "obelisk/Reflection/VPIObjectModel.h"
 
 // Native VPI startup finds tables in libraries already linked into the image.
-// ELF provides a symbol size; PE tables are bounded by readable mapped memory.
+// ELF provides a symbol size; Mach-O/PE use readable mapped memory bounds.
 // WebAssembly links its design statically and has no dynamic startup modules.
 #if defined(__linux__) && !defined(__EMSCRIPTEN__)
 #define OBELISK_RT_VPI_DYNAMIC_STARTUP 1
 #include <dlfcn.h>
 #include <elf.h>
+#elif defined(__APPLE__)
+#define OBELISK_RT_VPI_DYNAMIC_STARTUP 1
+#include <dlfcn.h>
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
 #elif defined(_WIN32)
 #define OBELISK_RT_VPI_DYNAMIC_STARTUP 1
 #define WIN32_LEAN_AND_MEAN
@@ -3884,6 +3889,27 @@ obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
                vpiSystem);
       return OBELISK_RT_INVALID_DESIGN;
     }
+#if defined(__APPLE__)
+    mach_vm_address_t address = reinterpret_cast<uintptr_t>(symbol);
+    mach_vm_size_t size = 0;
+    vm_region_basic_info_data_64_t region{};
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t memoryObject = MACH_PORT_NULL;
+    kern_return_t status = mach_vm_region(
+        mach_task_self(), &address, &size, VM_REGION_BASIC_INFO_64,
+        reinterpret_cast<vm_region_info_t>(&region), &count, &memoryObject);
+    if (memoryObject != MACH_PORT_NULL)
+      mach_port_deallocate(mach_task_self(), memoryObject);
+    uintptr_t table = reinterpret_cast<uintptr_t>(symbol);
+    if (status != KERN_SUCCESS || !(region.protection & VM_PROT_READ) ||
+        table < address || table - address >= size ||
+        table % alignof(void *) != 0) {
+      setError(state.get(), "VPI startup table has no readable Mach-O storage");
+      return OBELISK_RT_INVALID_DESIGN;
+    }
+    size_t entries = std::min<size_t>((size - (table - address)) / sizeof(void *),
+                                      65536);
+#else
     size_t entries = 0;
     Dl_info addressInfo{};
     void *extra = nullptr;
@@ -3895,6 +3921,7 @@ obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
       setError(state.get(), "VPI startup table has no bounded ELF symbol size");
       return OBELISK_RT_INVALID_DESIGN;
     }
+#endif
 #endif
     auto *routines = static_cast<void (**)(void)>(symbol);
     bool terminated = false;

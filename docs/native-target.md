@@ -937,7 +937,6 @@ would make their absolute `GROUP` entries resolve against the wrong root.
 
 Native platform code is isolated behind `TargetBackend`. CMake registers the
 Linux source set: ELF input classification, clang-based host C-runtime
-discovery, and LLD's ELF driver. A future macOS or Windows port should register
-a parallel Mach-O or COFF source set with its own support staging and runtime
-discovery; the target-independent MLIR/LLVM pipeline and driver option flow do
-not need to change.
+discovery, and LLD's ELF driver. Windows and macOS register parallel COFF and
+Mach-O source sets with their own support staging and link inputs. All three
+share the target-independent MLIR/LLVM pipeline and driver option flow.

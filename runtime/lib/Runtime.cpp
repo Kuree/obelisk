@@ -21,6 +21,16 @@ bool obelisk_rt_validate_dpi_exports(
     const obelisk_rt_execution_descriptor_v1 &execution,
     const obelisk_rt_execution_extension_v1 &extension) noexcept;
 
+#if defined(__APPLE__)
+// Mach-O extracts archive members even for weak references. DPIExport.cpp's
+// strong definition replaces this one whenever a design links that object.
+bool obelisk_rt_validate_dpi_exports(
+    const obelisk_rt_execution_descriptor_v1 &,
+    const obelisk_rt_execution_extension_v1 &) noexcept {
+  return false;
+}
+#endif
+
 namespace {
 
 thread_local obelisk_rt_context *threadTransactionContext = nullptr;

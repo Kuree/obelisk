@@ -33,6 +33,23 @@ bool obelisk_rt_expand_class_watch_group(obelisk_rt_context *context,
                                          RecursiveWatchGroupVisit visit,
                                          void *environment);
 
+#if defined(__APPLE__)
+// Mach-O extracts archive members even for weak references. Define the
+// absent-feature result here; the bit-stream feature objects' strong
+// definitions replace it when a design links them.
+bool obelisk_rt_expand_recursive_watch_group(obelisk_rt_context *context,
+                                             uint64_t, RecursiveWatchGroupVisit,
+                                             void *) {
+  context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+  return false;
+}
+bool obelisk_rt_expand_class_watch_group(obelisk_rt_context *context, uint64_t,
+                                         RecursiveWatchGroupVisit, void *) {
+  context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+  return false;
+}
+#endif
+
 namespace {
 
 /// At most this many released subscriptions, and as many emptied bucket

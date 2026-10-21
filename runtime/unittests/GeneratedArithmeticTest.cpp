@@ -4,10 +4,11 @@
 
 #include "../lib/RuntimeInternal.h"
 
+#include "GeneratedSymbol.h"
 #include "gtest/gtest.h"
 
-extern "C" const obelisk_rt_process_descriptor_v1
-    arithmeticDescriptor asm("arithmetic_process.__obelisk_process_descriptor");
+extern "C" const obelisk_rt_process_descriptor_v1 arithmeticDescriptor asm(
+    OBELISK_TEST_SYMBOL("arithmetic_process.__obelisk_process_descriptor"));
 
 TEST(GeneratedArithmetic, MultiWidthBytecodeMatchesNativeExecution) {
   ASSERT_EQ(arithmeticDescriptor.available_tiers,

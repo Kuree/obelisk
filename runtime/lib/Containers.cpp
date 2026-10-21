@@ -14,6 +14,17 @@
 #include <optional>
 #include <stdexcept>
 
+#if defined(_WIN32)
+#include <locale.h>
+#include <stdlib.h>
+#elif defined(__APPLE__)
+#include <stdlib.h>
+#include <xlocale.h>
+#elif !defined(__EMSCRIPTEN__)
+#include <locale.h>
+#include <stdlib.h>
+#endif
+
 static int64_t signedAssocValue(uint64_t value, uint64_t width);
 
 namespace {
@@ -2539,6 +2550,94 @@ obelisk_rt_v1_string_parse_logic(obelisk_rt_string_v1 string, uint32_t radix,
   return OBELISK_RT_OK;
 }
 
+// Converts a matched decimal subject sequence independently of setlocale(),
+// as std::from_chars does. Emscripten's musl always uses '.'.
+static double parseRealInCLocale(const char *spelling) {
+#if defined(_WIN32)
+  static const _locale_t locale = _create_locale(LC_ALL, "C");
+  if (locale)
+    return _strtod_l(spelling, nullptr, locale);
+#elif !defined(__EMSCRIPTEN__)
+  static const locale_t locale = newlocale(LC_ALL_MASK, "C", locale_t{});
+  if (locale)
+    return strtod_l(spelling, nullptr, locale);
+#endif
+  return std::strtod(spelling, nullptr);
+}
+
+std::from_chars_result obelisk_rt_from_chars_real(const char *first,
+                                                  const char *last,
+                                                  double &value) {
+  auto isDigit = [](char byte) { return byte >= '0' && byte <= '9'; };
+  auto startsWith = [&](const char *at, std::string_view word) {
+    if (static_cast<size_t>(last - at) < word.size())
+      return false;
+    for (size_t index = 0; index != word.size(); ++index)
+      if ((at[index] | 0x20) != word[index])
+        return false;
+    return true;
+  };
+  // The general format admits no leading white space, '+' or hexadecimal
+  // form; a value takes its sign only from a leading '-'.
+  const char *cursor = first;
+  bool negative = cursor != last && *cursor == '-';
+  if (negative)
+    ++cursor;
+  if (startsWith(cursor, "inf")) {
+    cursor += startsWith(cursor, "infinity") ? 8 : 3;
+    value = negative ? -std::numeric_limits<double>::infinity()
+                     : std::numeric_limits<double>::infinity();
+    return {cursor, std::errc{}};
+  }
+  if (startsWith(cursor, "nan")) {
+    cursor += 3;
+    if (cursor != last && *cursor == '(') {
+      const char *close = cursor + 1;
+      while (close != last &&
+             (isDigit(*close) || *close == '_' ||
+              ((*close | 0x20) >= 'a' && (*close | 0x20) <= 'z')))
+        ++close;
+      if (close != last && *close == ')')
+        cursor = close + 1;
+    }
+    value = std::copysign(std::numeric_limits<double>::quiet_NaN(),
+                          negative ? -1.0 : 1.0);
+    return {cursor, std::errc{}};
+  }
+  bool digits = false;
+  bool nonzero = false;
+  auto scanDigits = [&] {
+    for (; cursor != last && isDigit(*cursor); ++cursor) {
+      digits = true;
+      nonzero |= *cursor != '0';
+    }
+  };
+  scanDigits();
+  if (cursor != last && *cursor == '.') {
+    ++cursor;
+    scanDigits();
+  }
+  if (!digits)
+    return {first, std::errc::invalid_argument};
+  // An exponent without digits is not part of the subject sequence.
+  if (cursor != last && (*cursor == 'e' || *cursor == 'E')) {
+    const char *exponent = cursor + 1;
+    if (exponent != last && (*exponent == '+' || *exponent == '-'))
+      ++exponent;
+    if (exponent != last && isDigit(*exponent)) {
+      while (exponent != last && isDigit(*exponent))
+        ++exponent;
+      cursor = exponent;
+    }
+  }
+  double parsed = parseRealInCLocale(std::string(first, cursor).c_str());
+  // Overflow rounds to infinity and underflow to zero; subnormals are values.
+  if (std::isinf(parsed) || (parsed == 0.0 && nonzero))
+    return {cursor, std::errc::result_out_of_range};
+  value = parsed;
+  return {cursor, std::errc{}};
+}
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_string_parse_real(obelisk_rt_string_v1 string, double *outValue) {
   if (!outValue)
@@ -2560,8 +2659,7 @@ obelisk_rt_v1_string_parse_real(obelisk_rt_string_v1 string, double *outValue) {
                             *begin == '\r' || *begin == '\f' || *begin == '\v'))
       ++begin;
     double value = 0.0;
-    auto parsed =
-        std::from_chars(begin, end, value, std::chars_format::general);
+    auto parsed = obelisk_rt_from_chars_real(begin, end, value);
     if (parsed.ec == std::errc{})
       *outValue = value;
     return OBELISK_RT_OK;
@@ -2620,9 +2718,8 @@ obelisk_rt_v1_string_parse_real_constant(obelisk_rt_string_v1 string,
       if (view.bytes[index] != '_')
         spelling.push_back(view.bytes[index]);
     double value = 0.0;
-    auto parsed =
-        std::from_chars(spelling.data(), spelling.data() + spelling.size(),
-                        value, std::chars_format::general);
+    auto parsed = obelisk_rt_from_chars_real(
+        spelling.data(), spelling.data() + spelling.size(), value);
     if (parsed.ec == std::errc{}) {
       *outValue = value;
     } else if (parsed.ec == std::errc::result_out_of_range) {

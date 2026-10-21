@@ -100,6 +100,26 @@ if(OBELISK_COMPILER_RT_BUILTINS)
   set_property(SOURCE lib/ABI.cpp APPEND PROPERTY OBJECT_DEPENDS
     "${OBELISK_COMPILER_RT_BUILTINS}")
 endif()
+if(APPLE)
+  # Host-side tests also consume the runtime as a normal static library.
+  # Give their compiler driver the same bounded weak-import allowance used
+  # by the in-process Mach-O linker for generated simulations.
+  set(_obelisk_macos_weak_imports "${CMAKE_CURRENT_BINARY_DIR}/weak-imports")
+  add_custom_command(TARGET obelisk_rt POST_BUILD
+    BYPRODUCTS "${_obelisk_macos_weak_imports}.txt"
+               "${_obelisk_macos_weak_imports}.rsp"
+    COMMAND "${CMAKE_COMMAND}"
+      "-DLLVM_NM=${OBELISK_LLVM_TOOLS_DIR}/llvm-nm"
+      "-DRUNTIME=$<TARGET_FILE:obelisk_rt>"
+      "-DOUTPUT_PREFIX=${_obelisk_macos_weak_imports}"
+      -P "${PROJECT_SOURCE_DIR}/cmake/MacOSWeakImports.cmake"
+    VERBATIM)
+  target_link_options(obelisk_rt INTERFACE "@${_obelisk_macos_weak_imports}.rsp")
+  set_property(TARGET obelisk_rt APPEND PROPERTY INTERFACE_LINK_DEPENDS
+    "${_obelisk_macos_weak_imports}.rsp")
+  set_property(SOURCE lib/ABI.cpp APPEND PROPERTY OBJECT_DEPENDS
+    "${PROJECT_SOURCE_DIR}/cmake/MacOSWeakImports.cmake")
+endif()
 if(WIN32)
   # Consumers of this archive resolve VPI entry points statically, so the
   # canonical IEEE headers must not turn their calls into DLL imports.

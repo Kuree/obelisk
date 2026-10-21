@@ -4,6 +4,7 @@
 
 #include "obelisk/Runtime/Runtime.h"
 
+#include "GeneratedSymbol.h"
 #include "sv_vpi_user.h"
 #include "vpi_user.h"
 #include "gtest/gtest.h"
@@ -12,8 +13,8 @@
 #include <string>
 #include <vector>
 
-extern "C" const obelisk_rt_process_descriptor_v1
-    interconnectDescriptor asm("initial.__obelisk_process_descriptor");
+extern "C" const obelisk_rt_process_descriptor_v1 interconnectDescriptor asm(
+    OBELISK_TEST_SYMBOL("initial.__obelisk_process_descriptor"));
 
 namespace {
 

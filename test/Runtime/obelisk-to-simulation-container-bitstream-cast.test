@@ -2,12 +2,14 @@
 
 // RUN: obelisk-opt %S/../Conversion/obelisk-to-simulation-container-bitstream-cast.mlir --pass-pipeline='builtin.module(lower-obelisk-to-sim{opt-level=0},simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | obelisk-translate --mlir-to-llvmir | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %target_cxx %t.o %runtime_link_flags -o %t.exe
-// RUN: %llvm_dist/bin/llvm-nm -C --defined-only %t.exe | FileCheck %s --check-prefix=BYTECODE-LINK '--implicit-check-not={{ [TtW] .*}}recursive_bitstream' '--implicit-check-not={{ [TtW] .*}}recursive_export' '--implicit-check-not={{ [TtW] .*}}expand_recursive'
+// Mach-O dispatchers define weak fallbacks under the hook names; the link
+// anchors and entry points show that no strong definition replaced them.
+// RUN: %llvm_dist/bin/llvm-nm -C --defined-only %t.exe | FileCheck %s --check-prefix=BYTECODE-LINK '--implicit-check-not={{ [TtW] .*}}recursive_bitstream' '--implicit-check-not={{ [TtW] .*}}v{{[0-9]+}}_recursive_export' %if !native-macho %{ '--implicit-check-not={{ [TtW] .*}}expand_recursive' %}
 // RUN: not %t.exe --execution-tier=native 2>&1 | FileCheck %s --check-prefix=FATAL
 // RUN: not %t.exe --execution-tier=bytecode 2>&1 | FileCheck %s --check-prefix=FATAL
 // RUN: obelisk-opt %S/../Conversion/obelisk-to-simulation-container-bitstream-cast.mlir '--lower-obelisk-to-sim=opt-level=0' --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | %llc -filetype=obj -relocation-model=pic -o %t.native.o
 // RUN: %target_cxx %t.native.o %runtime_link_flags -o %t.native.exe
-// RUN: %llvm_dist/bin/llvm-nm -C --defined-only %t.native.exe | FileCheck %s --check-prefix=NATIVE-LINK '--implicit-check-not={{ [TtW] .*}}container_bitstream_link_anchor' '--implicit-check-not={{ [TtW] .*}}invokeContainerBitstreamIntrinsic' '--implicit-check-not={{ [TtW] .*}}recursive_bitstream' '--implicit-check-not={{ [TtW] .*}}recursive_export' '--implicit-check-not={{ [TtW] .*}}expand_recursive'
+// RUN: %llvm_dist/bin/llvm-nm -C --defined-only %t.native.exe | FileCheck %s --check-prefix=NATIVE-LINK '--implicit-check-not={{ [TtW] .*}}container_bitstream_link_anchor' '--implicit-check-not={{ [TtW] .*}}recursive_bitstream' '--implicit-check-not={{ [TtW] .*}}v{{[0-9]+}}_recursive_export' %if !native-macho %{ '--implicit-check-not={{ [TtW] .*}}invokeContainerBitstreamIntrinsic' '--implicit-check-not={{ [TtW] .*}}expand_recursive' %}
 
 // BYTECODE-LINK-DAG: obelisk_rt_v1_container_export_bitstream
 // BYTECODE-LINK-DAG: obelisk_rt_v1_container_bitstream_link_anchor

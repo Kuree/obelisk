@@ -194,8 +194,10 @@ static std::string resolveSVLibraryPath(StringRef root, StringRef path,
   if (appendExtension) {
     // Annex J names libraries without a suffix; the registered native target
     // supplies its shared-library extension.
-    resolved +=
-        Triple(OBELISK_NATIVE_TARGET_TRIPLE).isOSWindows() ? ".dll" : ".so";
+    Triple target(OBELISK_NATIVE_TARGET_TRIPLE);
+    resolved += target.isOSWindows() ? ".dll"
+                : target.isOSDarwin() ? ".dylib"
+                                      : ".so";
   }
   sys::path::remove_dots(resolved, true);
   return resolved.str().str();

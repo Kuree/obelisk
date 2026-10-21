@@ -13511,7 +13511,8 @@ TEST(DesignBytecode, ScheduledClockOccurrenceRejectsMalformedWaitRecords) {
     size_t requiredWaitEnd = 8 + sizeof(obelisk_rt_wait_record_v1) +
                              2 * sizeof(obelisk_rt_wait_entry_v1);
     task.frame.resize(std::max(task.frame.size(), requiredWaitEnd));
-    task.scratchOffset = std::max(task.scratchOffset, requiredWaitEnd);
+    task.scratchOffset =
+        std::max<uint64_t>(task.scratchOffset, requiredWaitEnd);
     ASSERT_LE(8 + sizeof(obelisk_rt_wait_record_v1) +
                   2 * sizeof(obelisk_rt_wait_entry_v1),
               task.scratchOffset);

@@ -42,8 +42,17 @@ jobs:
             os: windows-11-arm
             advisory: true
             ccache: native-ARM64-Windows
+          # The arm64 runner has 3 cores and 7 GB of memory.
+          - name: Build and test (aarch64-apple-darwin)
+            os: macos-15
+            advisory: false
+            ccache: native-ARM64-macOS
+            parallel: 2
+            lit_jobs: 3
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.advisory }}
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: ${{ matrix.parallel || 4 }}
     timeout-minutes: 300
     defaults:
       run:
@@ -84,6 +93,18 @@ jobs:
           python -c "import sysconfig; print(sysconfig.get_path('scripts'))" \
             >> "$GITHUB_PATH"
 
+      - name: Install build and test tools (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install ccache zstd
+          python3 -m venv "$RUNNER_TEMP/obelisk-venv"
+          "$RUNNER_TEMP/obelisk-venv/bin/python" -m pip install lit
+          # The runner's existing LLVM supplies split-file, omitted by our SDK.
+          ln -s "$(brew --prefix llvm@18)/bin/split-file" \
+            "$RUNNER_TEMP/obelisk-venv/bin/split-file"
+          "$RUNNER_TEMP/obelisk-venv/bin/split-file" --version
+          echo "$RUNNER_TEMP/obelisk-venv/bin" >> "$GITHUB_PATH"
+
       # Reserve cache space for compiled objects. Per-commit keys allow updates
       # to immutable entries; the prefix restores the latest compatible cache.
       - name: Restore compiler cache
@@ -97,8 +118,9 @@ jobs:
         run: |
           ccache --max-size=2G
           ccache --set-config=sloppiness=pch_defines,time_macros
-          # Windows SDK extraction may change compiler timestamps.
-          if [ "$RUNNER_OS" = Windows ]; then
+          # SDK extraction may change the timestamps of the compiler that
+          # builds the Windows and macOS target runtimes.
+          if [ "$RUNNER_OS" != Linux ]; then
             ccache --set-config=compiler_check=content
           fi
           ccache --zero-stats
@@ -106,10 +128,20 @@ jobs:
       # Exercise unmodified UVM as well as the self-contained regressions.
       - name: Configure
         run: |
+          host_args=()
+          if [ "$RUNNER_OS" = macOS ]; then
+            # Find only the zstd keg: Homebrew's shared include directory also
+            # holds packages such as fmt that would shadow the bundled ones.
+            host_args=(
+              "-Dzstd_ROOT=$(brew --prefix zstd)"
+              -DCMAKE_OSX_ARCHITECTURES=arm64
+              -DLLVM_PARALLEL_LINK_JOBS=1)
+          fi
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            "${host_args[@]}" \
             -DOBELISK_ENABLE_PCH=ON \
-            "-DLLVM_LIT_ARGS=-sv;-j12" \
+            "-DLLVM_LIT_ARGS=-sv;-j${{ matrix.lit_jobs || 12 }}" \
             -DOBELISK_INCLUDE_TESTS=ON \
             -DOBELISK_ENABLE_REAL_UVM_TESTS=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \

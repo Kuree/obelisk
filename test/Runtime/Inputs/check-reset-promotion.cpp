@@ -3,12 +3,19 @@
 #include <cstdio>
 #include <cstring>
 
+// asm labels are final symbol names; Mach-O prefixes C symbols with '_'.
+#define OBELISK_TEST_STRINGIFY_(text) #text
+#define OBELISK_TEST_STRINGIFY(text) OBELISK_TEST_STRINGIFY_(text)
+#define OBELISK_TEST_SYMBOL(name)                                              \
+  OBELISK_TEST_STRINGIFY(__USER_LABEL_PREFIX__) name
+
 extern "C" {
 extern uint8_t __obelisk_state_value[], __obelisk_state_unknown[];
 extern uint8_t __obelisk_eval_selected_variant_v1_0;
 extern uint8_t __obelisk_eval_step_four_state_fallback_v1;
 extern uint64_t __obelisk_eval_route_promotion_pending_v1[];
-uint8_t probe(void *) asm("lane.__obelisk_eval_body_0.__obelisk_path_known_0");
+uint8_t probe(void *) asm(
+    OBELISK_TEST_SYMBOL("lane.__obelisk_eval_body_0.__obelisk_path_known_0"));
 void __obelisk_eval_path_dispatch_v1_0(void *);
 void __obelisk_eval_route_promotion_scan_v1();
 void __obelisk_eval_promotion_invalidate_range_v1(uint64_t, uint64_t);

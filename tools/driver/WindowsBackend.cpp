@@ -322,14 +322,7 @@ LogicalResult linkCOFFExecutable(ArrayRef<std::string> modulePaths,
   if (options.dpi) {
     // Export the base DPI API only for designs that use the boundary. Marking
     // the static runtime itself dllexport would retain it in every simulator.
-    for (StringRef name :
-         {"svDpiVersion",       "svGetBitselBit",    "svGetBitselLogic",
-          "svPutBitselBit",     "svPutBitselLogic",  "svGetPartselBit",
-          "svGetPartselLogic",  "svPutPartselBit",   "svPutPartselLogic",
-          "svGetScope",         "svSetScope",        "svGetNameFromScope",
-          "svGetScopeFromName", "svPutUserData",     "svGetUserData",
-          "svGetCallerInfo",    "svIsDisabledState", "svAckDisabledState",
-          "svGetTime",          "svGetTimeUnit",     "svGetTimePrecision"})
+    for (StringRef name : getRuntimeDPIEntryPoints())
       linkArguments.push_back(("/export:" + name).str());
   }
   bool foundLinkJob = false;

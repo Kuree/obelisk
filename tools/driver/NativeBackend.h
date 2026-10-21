@@ -1,4 +1,4 @@
-//===- NativeBackend.h - Host-native Linux ELF backend ----------*- C++ -*-===//
+//===- NativeBackend.h - Registered host-native backend ---------*- C++ -*-===//
 
 #ifndef OBELISK_TOOLS_DRIVER_NATIVEBACKEND_H
 #define OBELISK_TOOLS_DRIVER_NATIVEBACKEND_H

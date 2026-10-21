@@ -8,6 +8,20 @@
 #include <cstring>
 #include <optional>
 
+#if defined(__APPLE__)
+// Mach-O extracts archive members even for weak references, and native code
+// calls the public entry point directly, so a fallback cannot take its name.
+// Reach the recursive service through a private name defined only beside it.
+__attribute__((weak)) obelisk_rt_status
+obelisk_rt_recursive_export_bitstream_service(
+    obelisk_rt_context *, const void *, const void *, uint64_t, uint64_t,
+    uint32_t, void *, void *, uint64_t, uint64_t, uint32_t, const void *,
+    uint64_t, uint32_t, uint32_t *, uint64_t *) {
+  return OBELISK_RT_INVALID_BYTECODE;
+}
+#define OBELISK_RT_RECURSIVE_EXPORT_BITSTREAM                                  \
+  obelisk_rt_recursive_export_bitstream_service
+#else
 #if defined(__clang__) || defined(__GNUC__)
 extern "C" __attribute__((weak)) obelisk_rt_status
 obelisk_rt_v1_recursive_export_bitstream(
@@ -17,6 +31,9 @@ obelisk_rt_v1_recursive_export_bitstream(
     uint64_t outputPlaneSize, uint64_t outputBitWidth, uint32_t outputFourState,
     const void *plan, uint64_t planSize, uint32_t observe, uint32_t *outMatched,
     uint64_t *outWatch);
+#endif
+#define OBELISK_RT_RECURSIVE_EXPORT_BITSTREAM                                  \
+  obelisk_rt_v1_recursive_export_bitstream
 #endif
 
 namespace obelisk::designbytecode {
@@ -28,6 +45,17 @@ obelisk_rt_status
 invokeClassBitstreamIntrinsic(const Image &image, Frame &frame,
                               obelisk_rt_context *context, IntrinsicSite site,
                               uint32_t siteIndex, uint32_t intrinsicId);
+
+#if defined(__APPLE__)
+// ClassBitstreamBytecode.cpp's strong definition replaces this when a design
+// references its link anchor.
+obelisk_rt_status invokeClassBitstreamIntrinsic(const Image &, Frame &,
+                                                obelisk_rt_context *,
+                                                IntrinsicSite, uint32_t,
+                                                uint32_t) {
+  return OBELISK_RT_INVALID_BYTECODE;
+}
+#endif
 
 extern "C" OBELISK_RT_FEATURE_TEXT void
 obelisk_rt_v1_container_bitstream_link_anchor() {}
@@ -120,7 +148,7 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeContainerBitstreamIntrinsic(
     return operandAt(image, site.firstOperand + site.inputCount + index).first;
   };
   if (recursive) {
-    if (!obelisk_rt_v1_recursive_export_bitstream)
+    if (!OBELISK_RT_RECURSIVE_EXPORT_BITSTREAM)
       return OBELISK_RT_INVALID_BYTECODE;
     if (inputRegister(0) == outputRegister(0) ||
         inputRegister(0) == outputRegister(1) ||
@@ -162,7 +190,7 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeContainerBitstreamIntrinsic(
     uint8_t *outputValue = frame.data + output.offset;
     uint32_t matchedValue = 0;
     uint64_t watchValue = 0;
-    obelisk_rt_status status = obelisk_rt_v1_recursive_export_bitstream(
+    obelisk_rt_status status = OBELISK_RT_RECURSIVE_EXPORT_BITSTREAM(
         context, inputValue,
         inputFourState ? inputValue + inputPlaneSize : nullptr, inputPlaneSize,
         inputWidth, inputFourState, outputValue,

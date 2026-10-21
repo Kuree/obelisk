@@ -6,6 +6,7 @@
 #include "../lib/ProcessShared.h"
 #include "../lib/RuntimeInternal.h"
 
+#include "GeneratedSymbol.h"
 #include "gtest/gtest.h"
 
 #include <algorithm>
@@ -22,28 +23,28 @@
 #include <malloc.h>
 #endif
 
-extern "C" const obelisk_rt_process_descriptor_v1
-    generatedDescriptor asm("execution_process.__obelisk_process_descriptor");
-extern "C" void
-generatedRamp(obelisk_rt_process_instance_v1 *, uint32_t, uint64_t *,
-              uint64_t *) asm("execution_process.__obelisk_coro_ramp");
-extern "C" const obelisk_rt_process_descriptor_v1
-    failingDescriptor asm("failing_process.__obelisk_process_descriptor");
+extern "C" const obelisk_rt_process_descriptor_v1 generatedDescriptor asm(
+    OBELISK_TEST_SYMBOL("execution_process.__obelisk_process_descriptor"));
+extern "C" void generatedRamp(obelisk_rt_process_instance_v1 *, uint32_t,
+                              uint64_t *, uint64_t *)
+    asm(OBELISK_TEST_SYMBOL("execution_process.__obelisk_coro_ramp"));
+extern "C" const obelisk_rt_process_descriptor_v1 failingDescriptor asm(
+    OBELISK_TEST_SYMBOL("failing_process.__obelisk_process_descriptor"));
 extern "C" const obelisk_rt_process_descriptor_v1 orchestrationDescriptor asm(
-    "orchestration_process.__obelisk_process_descriptor");
-extern "C" const obelisk_rt_process_descriptor_v1
-    automaticDescriptor asm("automatic_process.__obelisk_process_descriptor");
+    OBELISK_TEST_SYMBOL("orchestration_process.__obelisk_process_descriptor"));
+extern "C" const obelisk_rt_process_descriptor_v1 automaticDescriptor asm(
+    OBELISK_TEST_SYMBOL("automatic_process.__obelisk_process_descriptor"));
 extern "C" const obelisk_rt_process_descriptor_v1 automaticLoopDescriptor asm(
-    "automatic_loop_process.__obelisk_process_descriptor");
-extern "C" const obelisk_rt_process_descriptor_v1
-    groupDescriptor asm("group_process.__obelisk_process_descriptor");
-extern "C" const obelisk_rt_process_descriptor_v1
-    copyDescriptor asm("copy_process.__obelisk_process_descriptor");
+    OBELISK_TEST_SYMBOL("automatic_loop_process.__obelisk_process_descriptor"));
+extern "C" const obelisk_rt_process_descriptor_v1 groupDescriptor asm(
+    OBELISK_TEST_SYMBOL("group_process.__obelisk_process_descriptor"));
+extern "C" const obelisk_rt_process_descriptor_v1 copyDescriptor asm(
+    OBELISK_TEST_SYMBOL("copy_process.__obelisk_process_descriptor"));
 extern "C" const obelisk_rt_process_descriptor_v1 secondCopyDescriptor asm(
-    "copy_process_second.__obelisk_process_descriptor");
+    OBELISK_TEST_SYMBOL("copy_process_second.__obelisk_process_descriptor"));
 
-extern "C" const obelisk_rt_table_process_descriptor_v1
-    tableDescriptor asm("table_process.__obelisk_process_descriptor");
+extern "C" const obelisk_rt_table_process_descriptor_v1 tableDescriptor asm(
+    OBELISK_TEST_SYMBOL("table_process.__obelisk_process_descriptor"));
 
 namespace {
 
