@@ -18,7 +18,7 @@ env:
   CMAKE_BUILD_PARALLEL_LEVEL: 4
 
 jobs:
-  # Linux x86-64 is required; new hosts stay advisory until green.
+  # Every host is required; a new host stays advisory until green.
   build-and-test:
     name: ${{ matrix.name }}
     strategy:
@@ -32,15 +32,15 @@ jobs:
             ccache: native-Linux
           - name: Build and test (aarch64-unknown-linux-gnu)
             os: ubuntu-24.04-arm
-            advisory: true
+            advisory: false
             ccache: native-ARM64-Linux
           - name: Build and test (x86_64-pc-windows-msvc)
             os: windows-latest
-            advisory: true
+            advisory: false
             ccache: native-Windows
           - name: Build and test (aarch64-pc-windows-msvc)
             os: windows-11-arm
-            advisory: true
+            advisory: false
             ccache: native-ARM64-Windows
           # The arm64 runner has 3 cores and 7 GB of memory.
           - name: Build and test (aarch64-apple-darwin)
