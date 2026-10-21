@@ -23,6 +23,7 @@
 #include "mlir/IR/Matchers.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SetVector.h"
 
 using namespace mlir;
 
@@ -43,18 +44,24 @@ void removeCollection(schedule::NativeGCCollectOp collection) {
       builder, collection.getLoc(), builder.getI32IntegerAttr(OBELISK_RT_OK));
   collection.getStatus().replaceAllUsesWith(ok);
   collection.erase();
-  for (Operation *user : llvm::make_early_inc_range(ok.getUsers())) {
-    auto compare = dyn_cast<arith::CmpIOp>(user);
+  // A folded branch is erased, and it may also forward the status or the
+  // check, so gather each set of users before rewriting any of them.
+  llvm::SetVector<arith::CmpIOp> compares;
+  for (Operation *user : ok.getUsers())
+    if (auto compare = dyn_cast<arith::CmpIOp>(user))
+      compares.insert(compare);
+  for (arith::CmpIOp compare : compares) {
     APInt lhs, rhs;
-    if (!compare || !matchPattern(compare.getLhs(), m_ConstantInt(&lhs)) ||
+    if (!matchPattern(compare.getLhs(), m_ConstantInt(&lhs)) ||
         !matchPattern(compare.getRhs(), m_ConstantInt(&rhs)))
       continue;
     bool taken = arith::applyCmpPredicate(compare.getPredicate(), lhs, rhs);
-    for (Operation *branchUser :
-         llvm::make_early_inc_range(compare->getUsers())) {
-      auto branch = dyn_cast<cf::CondBranchOp>(branchUser);
-      if (!branch || branch.getCondition() != compare.getResult())
-        continue;
+    llvm::SetVector<cf::CondBranchOp> branches;
+    for (Operation *user : compare->getUsers())
+      if (auto branch = dyn_cast<cf::CondBranchOp>(user))
+        if (branch.getCondition() == compare.getResult())
+          branches.insert(branch);
+    for (cf::CondBranchOp branch : branches) {
       Block *block = branch->getBlock();
       Block *next = taken ? branch.getTrueDest() : branch.getFalseDest();
       SmallVector<Value> operands(taken ? branch.getTrueDestOperands()

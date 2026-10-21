@@ -21,6 +21,7 @@
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "slang/analysis/AnalysisManager.h"
@@ -40,6 +41,7 @@
 #include "slang/syntax/SyntaxTree.h"
 #include "slang/syntax/SyntaxVisitor.h"
 #include "slang/util/OS.h"
+#include "slang/util/String.h"
 #include "slang/util/VersionInfo.h"
 
 #include <algorithm>
@@ -48,6 +50,7 @@
 #include <charconv>
 #include <cmath>
 #include <concepts>
+#include <filesystem>
 #include <functional>
 #include <limits>
 #include <map>
@@ -6493,6 +6496,30 @@ buildSlangArguments(ArrayRef<std::string> inputs,
   return result;
 }
 
+/// Slang reads standard input for the input '-' only under the name
+/// weakly_canonical("-"), and libc++ resolves that to a file in the working
+/// directory. Cache standard input under that name instead, so slang's own
+/// load still reads it in input order.
+static bool cacheStandardInput(slang::driver::Driver &driver,
+                               ArrayRef<std::string> inputs) {
+  if (!llvm::is_contained(inputs, "-"))
+    return true;
+  std::error_code error;
+  std::filesystem::path name = std::filesystem::weakly_canonical("-", error);
+  // Slang reports a resolution failure itself.
+  if (error || name == "-")
+    return true;
+  llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> text =
+      llvm::MemoryBuffer::getSTDIN();
+  if (!text) {
+    llvm::errs() << "error: could not read standard input: "
+                 << text.getError().message() << '\n';
+    return false;
+  }
+  driver.sourceManager.assignText(slang::getU8Str(name), (*text)->getBuffer());
+  return true;
+}
+
 } // namespace
 
 FailureOr<std::string>
@@ -6516,7 +6543,7 @@ preprocessSystemVerilog(ArrayRef<std::string> inputFilenames,
     slang::bitmask<slang::driver::PreprocessOutputFlags> flags;
     succeeded =
         driver.parseCommandLine(static_cast<int>(argv.size()), argv.data()) &&
-        driver.processOptions();
+        driver.processOptions() && cacheStandardInput(driver, inputFilenames);
     if (succeeded) {
       succeeded = driver.runPreprocessor(flags);
     }
@@ -6544,7 +6571,7 @@ importSystemVerilog(ArrayRef<std::string> inputFilenames, MLIRContext &context,
     argv.push_back(argument.c_str());
 
   if (!driver.parseCommandLine(static_cast<int>(argv.size()), argv.data()) ||
-      !driver.processOptions())
+      !driver.processOptions() || !cacheStandardInput(driver, inputFilenames))
     return failure();
   if (!driver.parseAllSources())
     return failure();
