@@ -18,7 +18,7 @@ env:
   CMAKE_BUILD_PARALLEL_LEVEL: 4
 
 jobs:
-  # Preserve the required x86-64 check name; new hosts stay advisory until green.
+  # Linux x86-64 is required; new hosts stay advisory until green.
   build-and-test:
     name: ${{ matrix.name }}
     strategy:
@@ -26,18 +26,22 @@ jobs:
       matrix:
         # Disjoint cache prefixes retain existing caches without mixing hosts.
         include:
-          - name: Build and test
+          - name: Build and test (x86_64-unknown-linux-gnu)
             os: ubuntu-latest
             advisory: false
             ccache: native-Linux
-          - name: Build and test (Linux ARM64)
+          - name: Build and test (aarch64-unknown-linux-gnu)
             os: ubuntu-24.04-arm
             advisory: true
             ccache: native-ARM64-Linux
-          - name: Build and test (Windows)
+          - name: Build and test (x86_64-pc-windows-msvc)
             os: windows-latest
             advisory: true
             ccache: native-Windows
+          - name: Build and test (aarch64-pc-windows-msvc)
+            os: windows-11-arm
+            advisory: true
+            ccache: native-ARM64-Windows
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.advisory }}
     timeout-minutes: 300
@@ -143,7 +147,7 @@ jobs:
 
   # Test wasm on every ref; main also publishes the tested site for deployment.
   wasm-build-and-test:
-    name: Build and test wasm
+    name: Build and test (wasm32-unknown-emscripten)
     # This waits for all native legs, including advisory ones.
     needs: build-and-test
     runs-on: ubuntu-latest

@@ -70,6 +70,16 @@ set(OBELISK_LLVM_VERSION "22.1.6")
 # CMAKE_HOST_SYSTEM_PROCESSOR is only set by project().
 cmake_host_system_information(RESULT _obelisk_host_processor
   QUERY OS_PLATFORM)
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows" AND
+   DEFINED ENV{PROCESSOR_ARCHITEW6432})
+  # An emulated shell may report its own architecture instead of the host's.
+  set(_obelisk_host_processor "$ENV{PROCESSOR_ARCHITEW6432}")
+endif()
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows" AND
+   _obelisk_host_processor MATCHES "^(aarch64|arm64|ARM64)$")
+  # The first conda-forge Windows ARM64 MLIR SDK is 22.1.8.
+  set(OBELISK_LLVM_VERSION "22.1.8")
+endif()
 
 set(OBELISK_LLVM_INSTALL_DIR "" CACHE PATH
   "Existing matching LLVM + MLIR + Clang + LLD binary SDK")
@@ -77,7 +87,7 @@ if(OBELISK_LLVM_INSTALL_DIR)
   get_filename_component(OBELISK_LLVM_DIST_DIR
     "${OBELISK_LLVM_INSTALL_DIR}" ABSOLUTE)
 elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows" AND
-       _obelisk_host_processor MATCHES "^(x86_64|amd64|AMD64)$" AND
+       _obelisk_host_processor MATCHES "^(x86_64|amd64|AMD64|aarch64|arm64|ARM64)$" AND
        NOT OBELISK_LLVM_PREBUILT_SHA256)
   # LLVM's official Windows archive omits MLIR. Use one pinned set of
   # upstream conda-forge binaries, including the LLD development libraries.
