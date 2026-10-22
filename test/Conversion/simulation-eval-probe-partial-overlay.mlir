@@ -5,17 +5,22 @@
 // freshly written `high` field folds to false, and the 16-bit upper-half store
 // is overlaid on `count + 1` instead of reloading state. Neither predicate may
 // publish a speculative update, so each loads the count once and contains no
-// store or call.
+// store or call. The two-state copy stores only the value plane of `packed`,
+// so the known-path predicate also requires its unknown plane to be clear.
 
 // CHECK-LABEL: llvm.func @work.__obelisk_eval_body_0.__obelisk_path_known_0(
 // CHECK-DAG: %[[UPPER:.*]] = llvm.mlir.constant(2147483648 : i62)
 // CHECK-DAG: %[[MISMATCH:.*]] = llvm.mlir.constant(false)
 // CHECK-DAG: %[[LIMIT:.*]] = llvm.mlir.constant(66036 : i32)
+// CHECK-DAG: %[[UNKNOWN:.*]] = llvm.mlir.addressof @__obelisk_state_unknown
 // CHECK-NOT: llvm.{{store|call}}
 // CHECK: %[[OLD:.*]] = llvm.load
 // CHECK-NOT: llvm.{{load|store|call}}
 // CHECK: %[[NEXT:.*]] = llvm.add %[[OLD]],
-// CHECK-NOT: llvm.{{load|store|call}}
+// CHECK-NOT: llvm.{{store|call}}
+// CHECK: %[[PLANE:.*]] = llvm.getelementptr %[[UNKNOWN]][8]
+// CHECK-NEXT: llvm.load %[[PLANE]]
+// CHECK-NOT: llvm.{{store|call}}
 // CHECK: llvm.cond_br %[[MISMATCH]],
 // CHECK-NOT: llvm.{{load|store|call}}
 // CHECK: llvm.zext %[[NEXT]] : i32 to i62

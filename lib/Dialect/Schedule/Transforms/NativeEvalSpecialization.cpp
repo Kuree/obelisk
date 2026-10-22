@@ -1403,6 +1403,18 @@ LogicalResult materializeEvalTwoStateVariants(
     for (Block &sourceBlock : source.getBody()) {
       builder.setInsertionPointToEnd(mapping.lookup(&sourceBlock));
       for (Operation &operation : sourceBlock) {
+        // The two-state copy stores only the value plane of a blocking write,
+        // so the unknown plane it leaves behind must already be zero. A path
+        // guard replaces the owner's entry proof; read each target it writes,
+        // which may still hold X (IEEE 1800-2023 6.8, Table 6-7: a 4-state
+        // variable starts at 'x), so the known path below covers it.
+        if (auto store = dyn_cast<sim::SimRefStoreOp>(operation);
+            store && trackKnownState && hotProbeBlocks.contains(&sourceBlock) &&
+            !sourceLocals.isLocalAccess(store) &&
+            detail::containsLogic(store.getValue().getType()))
+          sim::SimRefLoadOp::create(builder, store.getLoc(),
+                                    store.getValue().getType(),
+                                    mapping.lookup(store.getReference()));
         // Probes observe control flow without executing source statements.
         // Count a line only in the selected body or its cold callback.
         if (isa<sim::SimCoveragePointHitOp>(operation) ||
