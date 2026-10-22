@@ -17,6 +17,7 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
@@ -943,6 +944,11 @@ private:
   void emitControlLeaves(size_t first, ::mlir::Location location);
   ::mlir::InFlightDiagnostic unsupported(::mlir::Operation *op);
   void recordImplicitWrite(::mlir::Value value);
+  /// A view of bits [offset, offset + width) of a packed declaration whose
+  /// packed scalar type is `scalar`, created at the current insertion point.
+  ::mlir::Value createReadWindowView(::mlir::Value reference,
+                                     ::mlir::Type scalar, uint64_t offset,
+                                     uint64_t width);
   void ensureVirtualInterfaceInventory();
   ::mlir::FailureOr<::mlir::Value>
   lowerVirtualInterfaceSignal(::mlir::Value interface, ::mlir::StringRef member,
@@ -1159,7 +1165,18 @@ private:
   /// Lowering code whose reads add no implicit sensitivity, such as the
   /// action blocks of an immediate assertion in always_comb (9.2.2.2.1).
   bool sensitivityExcluded = false;
-  ::llvm::SetVector<::mlir::Value> *observedWrites = nullptr;
+  /// Provenance bit windows [offset, offset + width) accessed through a
+  /// declaration-level reference; a whole or dynamic access records the full
+  /// span as width UINT64_MAX. always_comb and always_latch compare the bits
+  /// they read and write by longest static prefix (IEEE 1800-2023 9.2.2.2.1,
+  /// 11.5.3).
+  using ReferenceWindows =
+      ::llvm::SmallVector<std::pair<uint64_t, uint64_t>, 1>;
+  ::llvm::MapVector<::mlir::Value, ReferenceWindows> *observedWrites = nullptr;
+  ::llvm::DenseMap<::mlir::Value, ReferenceWindows> sensitivityReadWindows;
+  /// Set while lowering the root of a constant selection, which records its
+  /// own read window instead of the whole reference.
+  bool selectionRecordsReadWindow = false;
   ::mlir::Operation *topLevelWildcardControl = nullptr;
   ::mlir::Operation *topLevelAlwaysControl = nullptr;
   ::mlir::Operation *activeSampledClock = nullptr;

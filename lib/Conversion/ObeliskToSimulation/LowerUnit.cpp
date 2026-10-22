@@ -947,8 +947,11 @@ void UnitLowering::recordSensitivity(Value value) {
   if (observedDependencies)
     observedDependencies->insert(value);
   if (auto argument = dyn_cast<BlockArgument>(value);
-      argument && argument.getOwner() == &function.getBody().front())
+      argument && argument.getOwner() == &function.getBody().front()) {
     sensitivity.insert(value);
+    if (isa<sim::RefType>(value.getType()) && !selectionRecordsReadWindow)
+      sensitivityReadWindows[value].push_back({0, UINT64_MAX});
+  }
 }
 
 void UnitLowering::recordNetViewSensitivity(Value view, Value net) {
@@ -1162,31 +1165,62 @@ void UnitLowering::recordContainerSizeRead(Value container, Location location) {
 }
 
 void UnitLowering::recordImplicitWrite(Value value) {
-  if (!observedWrites)
+  if (!observedWrites || !value)
     return;
-  // Match a write through a constant or dynamic view with reads of the
-  // captured declaration-level reference.
+  // Match a write through a view with reads of the captured declaration-level
+  // reference. A constant view writes its static window (the longest static
+  // prefix, IEEE 1800-2023 11.5.3); a dynamic one may write any bit.
+  std::optional<uint64_t> width = sim::getProvenanceSpan(value.getType());
+  uint64_t offset = 0;
+  bool whole = !width;
   while (value) {
     if (auto extract = value.getDefiningOp<sim::SimRefExtractOp>()) {
-      value = extract.getInput();
-      continue;
-    }
-    if (auto extract = value.getDefiningOp<sim::SimRefDynExtractOp>()) {
+      offset += extract.getLowBit();
       value = extract.getInput();
       continue;
     }
     if (auto extract = value.getDefiningOp<sim::SimRefSubelementOp>()) {
+      Type type = extract.getInput().getType().getElementType();
+      for (int64_t index : extract.getIndices()) {
+        auto child = sim::getAggregateProvenanceSubelement(type, index);
+        if (index < 0 || !child) {
+          whole = true;
+          break;
+        }
+        offset += child->first;
+        type = sim::getAggregateElementType(type, index);
+      }
+      value = extract.getInput();
+      continue;
+    }
+    if (auto extract = value.getDefiningOp<sim::SimRefDynExtractOp>()) {
+      whole = true;
       value = extract.getInput();
       continue;
     }
     if (auto extract = value.getDefiningOp<sim::SimRefArrayElementOp>()) {
+      whole = true;
       value = extract.getInput();
       continue;
     }
     break;
   }
   if (value && isa<sim::RefType>(value.getType()))
-    observedWrites->insert(value);
+    (*observedWrites)[value].push_back(
+        whole ? std::pair<uint64_t, uint64_t>{0, UINT64_MAX}
+              : std::pair<uint64_t, uint64_t>{offset, *width});
+}
+
+Value UnitLowering::createReadWindowView(Value reference, Type scalar,
+                                         uint64_t offset, uint64_t width) {
+  MLIRContext *context = function.getContext();
+  Type window = isa<sim::LogicType>(scalar)
+                    ? Type(sim::LogicType::get(context, width))
+                    : Type(IntegerType::get(context, width));
+  return sim::SimRefExtractOp::create(builder, function.getLoc(),
+                                      sim::RefType::get(context, window),
+                                      reference,
+                                      builder.getI64IntegerAttr(offset));
 }
 
 FailureOr<Value> UnitLowering::bindObserver(
@@ -6756,8 +6790,8 @@ LogicalResult UnitLowering::lowerRoots(ArrayRef<Operation *> roots) {
   auto primitive =
       ::obelisk::schedule::get<::obelisk::schedule::Field::PrimitiveName>(
           function);
-  llvm::SetVector<Value> implicitProcessWrites;
-  llvm::SetVector<Value> *savedWrites = observedWrites;
+  llvm::MapVector<Value, ReferenceWindows> implicitProcessWrites;
+  auto *savedWrites = observedWrites;
   llvm::SetVector<Value> implicitProcessDependencies;
   llvm::SetVector<Value> *savedDependencies = observedDependencies;
   bool excludesWrittenSensitivity = entryKind == sim::EntryKind::AlwaysComb ||
@@ -6896,14 +6930,63 @@ LogicalResult UnitLowering::lowerRoots(ArrayRef<Operation *> roots) {
     cf::BranchOp::create(builder, function.getLoc(), loopHeader);
     return success();
   }
-  // IEEE 1800-2017 9.2.2.2.1 excludes any expression also written by an
+  // IEEE 1800-2023 9.2.2.2.1 excludes any expression also written by an
   // always_comb (and, by 9.2.2.3, always_latch) from implicit sensitivity.
+  // Expressions are compared by longest static prefix (11.5.3), and 9.2.2.2
+  // lets another process assign an element whose prefix does not overlap:
+  // reading `w[0]` while writing `w[1]` keeps watching `w[0]`. A packed
+  // declaration keeps a view of each read window the block does not write;
+  // any other written declaration is excluded whole, as before.
   for (Value read : virtualInterfaceReadSensitivity)
     sensitivity.insert(read);
   for (Value written : virtualInterfaceWrittenSensitivity)
-    implicitProcessWrites.insert(written);
-  for (Value written : implicitProcessWrites)
-    sensitivity.remove(written);
+    implicitProcessWrites[written].push_back({0, UINT64_MAX});
+  for (auto &[written, writes] : implicitProcessWrites) {
+    if (!sensitivity.remove(written))
+      continue;
+    auto reference = dyn_cast<sim::RefType>(written.getType());
+    std::optional<unsigned> packedWidth =
+        reference ? sim::getPackedWidth(reference.getElementType())
+                  : std::nullopt;
+    auto reads = sensitivityReadWindows.find(written);
+    if (!packedWidth || reads == sensitivityReadWindows.end())
+      continue;
+    // Merge the read and written windows within the declaration, then keep
+    // the read bits no write covers.
+    auto merged = [&](const ReferenceWindows &windows) {
+      SmallVector<std::pair<uint64_t, uint64_t>> spans;
+      for (auto [offset, width] : windows)
+        if (offset < *packedWidth)
+          spans.push_back(
+              {offset, std::min<uint64_t>(*packedWidth, width == UINT64_MAX
+                                                            ? *packedWidth
+                                                            : offset + width)});
+      llvm::sort(spans);
+      SmallVector<std::pair<uint64_t, uint64_t>> result;
+      for (auto span : spans)
+        if (!result.empty() && span.first <= result.back().second)
+          result.back().second = std::max(result.back().second, span.second);
+        else
+          result.push_back(span);
+      return result;
+    };
+    auto covered = merged(writes);
+    Type scalar = sim::getPackedScalarType(reference.getElementType());
+    for (auto [begin, end] : merged(reads->second)) {
+      for (auto [writeBegin, writeEnd] : covered) {
+        if (writeEnd <= begin || writeBegin >= end)
+          continue;
+        if (writeBegin > begin) {
+          sensitivity.insert(createReadWindowView(written, scalar, begin,
+                                                  writeBegin - begin));
+        }
+        begin = std::max(begin, writeEnd);
+      }
+      if (begin < end)
+        sensitivity.insert(
+            createReadWindowView(written, scalar, begin, end - begin));
+    }
+  }
 
   // Managed fields and dynamic containers have mutation identities distinct
   // from the declaration-level reference that owns their current handle.
