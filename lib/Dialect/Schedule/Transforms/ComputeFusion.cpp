@@ -2,6 +2,7 @@
 
 #include "ComputeFusion.h"
 #include "obelisk/Analysis/ActivationIdempotenceAnalysis.h"
+#include "obelisk/Analysis/DPIEffectAnalysis.h"
 #include "obelisk/Analysis/SimulationEffectAnalysis.h"
 #include "llvm/ADT/TypeSwitch.h"
 
@@ -350,10 +351,13 @@ CombinationalFusionAnalysis::CombinationalFusionAnalysis(
   unsupported = !graph || graph.getVpi() == schedule::ComputeVPIMode::Full;
   if (!graph)
     return;
+  // A DPI call reaches the design only through context exports (IEEE
+  // 1800-2023 35.5.1.3, 35.5.3).
+  unsupported |= analysis::DPIEffectAnalysis(design).anyCallMayAccessDesign();
   design.walk([&](Operation *op) {
-    unsupported |= isa<sim::SimDPICallOp, sim::SimOverrideOp,
-                       sim::SimReleaseOverrideOp, sim::SimDynamicOverrideOp,
-                       sim::SimProcessControlOp, sim::SimControlDisableOp>(op);
+    unsupported |= isa<sim::SimOverrideOp, sim::SimReleaseOverrideOp,
+                       sim::SimDynamicOverrideOp, sim::SimProcessControlOp,
+                       sim::SimControlDisableOp>(op);
   });
   if (unsupported)
     return;
@@ -1379,7 +1383,7 @@ computeNBATransientObservers(sim::SimDesignOp design, bool guardedVPI) {
       }
     }
   });
-  design.walk([&](Operation *op) { complete &= !isa<sim::SimDPICallOp>(op); });
+  complete &= !analysis::DPIEffectAnalysis(design).anyCallMayAccessDesign();
   if (!complete)
     return std::nullopt;
 

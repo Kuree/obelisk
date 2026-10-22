@@ -29,6 +29,7 @@ add_mlir_library(ObeliskSimulationAnalysis
   NativeStateLayoutAnalysis.cpp
   NativeStorageLayout.cpp
   NetConnectivityAnalysis.cpp
+  DPIEffectAnalysis.cpp
   PrivateStorageAnalysis.cpp
   SimulationCopyProcessAnalysis.cpp
   SimulationEffectAnalysis.cpp

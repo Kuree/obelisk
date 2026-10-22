@@ -78,6 +78,7 @@
 #include "obelisk/Analysis/ActivationMemoryAnalysis.h"
 #include "obelisk/Analysis/ActivationPhaseAnalysis.h"
 #include "obelisk/Analysis/ClockInferenceAnalysis.h"
+#include "obelisk/Analysis/DPIEffectAnalysis.h"
 #include "obelisk/Analysis/HandleDataflowAnalysis.h"
 #include "obelisk/Analysis/NativeStateLayoutAnalysis.h"
 #include "obelisk/Dialect/Native/NativeDialect.h"
@@ -866,12 +867,15 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
   auto reject = [&](StringRef reason) { ++rejections[reason]; };
 
   // Force, procedural continuous assignment and foreign code can update or
-  // observe any root outside the scheduler regions modeled below.
-  bool unsupportedDesign = false;
+  // observe any root outside the scheduler regions modeled below. Foreign
+  // code reaches the design only through context exports (IEEE 1800-2023
+  // 35.5.1.3, 35.5.3).
+  bool unsupportedDesign =
+      analysis::DPIEffectAnalysis(design).anyCallMayAccessDesign();
   design.walk([&](Operation *operation) {
     unsupportedDesign |=
         isa<sim::SimOverrideOp, sim::SimDynamicOverrideOp,
-            sim::SimReleaseOverrideOp, sim::SimDPICallOp>(operation);
+            sim::SimReleaseOverrideOp>(operation);
   });
   auto bail = [&](StringRef reason) {
     if (report)

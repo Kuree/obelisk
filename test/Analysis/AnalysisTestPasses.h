@@ -10,6 +10,7 @@ void registerActivationMemoryAnalysisTestPass();
 void registerActivationPhaseAnalysisTestPass();
 void registerBytecodeImageTestPass();
 void registerClockInferenceAnalysisTestPass();
+void registerDPIEffectAnalysisTestPass();
 void registerClassDispatchAnalysisTestPass();
 void registerCombinationalDependencyAnalysisTestPass();
 void registerCoverageSchemaTestPass();

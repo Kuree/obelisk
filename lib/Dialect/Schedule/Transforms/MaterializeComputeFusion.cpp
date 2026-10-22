@@ -8,6 +8,7 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Passes.h"
 #include "obelisk/Analysis/BoundedLoopAnalysis.h"
+#include "obelisk/Analysis/DPIEffectAnalysis.h"
 #include "obelisk/Analysis/LocalStorageAnalysis.h"
 #include "obelisk/Analysis/NBAInfluenceAnalysis.h"
 #include "obelisk/Analysis/SSAValueAnalysis.h"
@@ -4325,11 +4326,13 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   // immutable driver-to-net index while deriving fresh per-body value facts.
   analysis::HandleDataflowAnalysis provenance(design);
   DenseSet<uint64_t> controlTargets;
-  bool foreignControl = false;
+  // Foreign code can reach a named block only through a context export
+  // (IEEE 1800-2023 35.5.3); a transparent export closure disables nothing.
+  bool foreignControl =
+      analysis::DPIEffectAnalysis(design).anyCallMayAccessDesign();
   design.walk([&](Operation *operation) {
     if (auto disable = dyn_cast<sim::SimControlDisableOp>(operation))
       controlTargets.insert(disable.getTargetId());
-    foreignControl |= isa<sim::SimDPICallOp>(operation);
     // Export capability is not a foreign call. An external invocation enters
     // at a runtime boundary, where canonical actors retain these scopes; it
     // cannot interleave with a closed zero-time evaluator activation.

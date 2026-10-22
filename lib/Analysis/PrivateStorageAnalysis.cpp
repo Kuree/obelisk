@@ -1,4 +1,5 @@
 #include "obelisk/Analysis/PrivateStorageAnalysis.h"
+#include "obelisk/Analysis/DPIEffectAnalysis.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/CallInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -20,12 +21,13 @@ PrivateStorageAnalysis::PrivateStorageAnalysis(sim::SimDesignOp design) {
     if (!function.isExternal())
       snapshots.try_emplace(function, handles.analyze(function));
   DenseSet<uint64_t> escaped;
-  bool foreign = false;
+  // Foreign code reaches design storage only through context exports (IEEE
+  // 1800-2023 35.5.1.3, 35.5.3).
+  bool foreign = DPIEffectAnalysis(design).anyCallMayAccessDesign();
   SymbolTableCollection symbols;
   for (auto function : design.getOps<sim::SimFuncOp>()) {
     const auto &facts = snapshots[function];
     function.walk([&](Operation *op) {
-      foreign |= isa<sim::SimDPICallOp>(op);
       if (auto call = dyn_cast<sim::SimCallOp>(op)) {
         auto callee = symbols.lookupSymbolIn<sim::SimFuncOp>(
             design, call.getCalleeAttr());
