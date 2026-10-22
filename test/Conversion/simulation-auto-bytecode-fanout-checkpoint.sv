@@ -1,14 +1,16 @@
 // RUN: obelisk -emit-slang %s | obelisk-opt --test-obelisk-native-backend='scheduler=auto timing=true' -o %t.mlir 2> %t.trace
 // RUN: FileCheck %s --check-prefix=TRACE < %t.trace
-// RUN: FileCheck %s --implicit-check-not='llvm.call @obelisk_rt_v1_scheduler_static_transition' < %t.mlir
+// RUN: FileCheck %s < %t.mlir
 
-// A bytecode fanout owner makes Auto discard its partial eval island. Direct
-// state stores must then publish transitions through the generic scheduler.
 // The clocked process forks a new process on each edge (IEEE 1800-2023 9.3.2
 // join_none); a spawn without static multiplicity keeps its block in
-// bytecode.
-// TRACE: partial eval disabled: bytecode fanout owner actor=2 continuation=12
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_signal_transition(
+// bytecode. Only that process goes to the lower tier: every activation
+// reaches the generic scheduler at a runtime checkpoint, and the rest of the
+// design keeps Auto's generated eval island.
+// TRACE-NOT: partial eval disabled
+// TRACE: obelisk eval executor inventory: tier1=1 tier2=2 runtime_checkpoints=1
+// TRACE-NOT: partial eval disabled
+// CHECK: llvm.func @__obelisk_eval_dispatch_v1
 
 module native_partial_auto_fallback_bytecode_fanout;
   logic clk = 0;

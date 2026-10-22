@@ -451,14 +451,19 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     onlyConcurrentColdBoundaries = false;
     result.reasons.emplace_back(reason);
   };
+  // Bytecode blocks that are not exact cold boundaries.
+  DenseSet<Block *> uncertifiedBlocks;
   auto requireBytecodeFragment = [&](Operation *operation, StringRef reason,
                                      bool certifiedCold = false) {
-    if (!certifiedCold && !isConcurrentColdActor(operation))
+    bool uncertified = !certifiedCold && !isConcurrentColdActor(operation);
+    if (uncertified)
       onlyConcurrentColdBoundaries = false;
     result.reasons.emplace_back(reason);
     auto function = operation->getParentOfType<sim::SimFuncOp>();
     if (!function || !operation->getBlock())
       return;
+    if (uncertified)
+      uncertifiedBlocks.insert(operation->getBlock());
     noteReason(blockReasons[operation->getBlock()], internReason(reason));
     auto &fragments = result.bytecodeFragments[function.getOperation()];
     if (!llvm::is_contained(fragments, operation->getBlock()))
@@ -753,7 +758,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     // observers in the publication cohort. Keep every non-root overlapping
     // writer activation behind a generic checkpoint; otherwise a generated
     // island could publish and advance time without waking the observer.
-    if (!result.runtimeObservedWriterActors.insert(function.getOperation())
+    if (!result.runtimeCheckpointActors.insert(function.getOperation())
              .second)
       continue;
     for (Block &owned : function.getBody())
@@ -1412,6 +1417,32 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       continue;
     if (result.actorSlots.try_emplace(function.getOperation(), slot).second)
       ++slot;
+  }
+  // An actor that keeps its slot but has an uncertified bytecode fragment
+  // would leave generated fanout into it without an executor, and the whole
+  // design would fall back to the generic scheduler. Keep only that actor on
+  // the lower tier instead: like a runtime-observed writer, every activation
+  // goes to the generic scheduler at an exact checkpoint, where the runtime
+  // keeps its process identity (for example the deferred assertion queue that
+  // a resume flushes, IEEE 1800-2023 16.4.2), and the rest of the design
+  // keeps the generated plan.
+  SmallVector<sim::SimFuncOp> checkpointActors;
+  for (const auto &[operation, blocks] : result.bytecodeFragments) {
+    auto function = dyn_cast<sim::SimFuncOp>(operation);
+    if (function && result.actorSlots.contains(operation) &&
+        function.getEntryKind() != sim::EntryKind::RootInitializer &&
+        !result.runtimeCheckpointActors.contains(operation) &&
+        llvm::any_of(blocks, [&](Block *block) {
+          return uncertifiedBlocks.contains(block);
+        }))
+      checkpointActors.push_back(function);
+  }
+  for (sim::SimFuncOp function : checkpointActors) {
+    result.runtimeCheckpointActors.insert(function.getOperation());
+    for (Block &owned : function.getBody())
+      requireBytecodeFragment(owned.getTerminator(),
+                              "bytecode fragment in a slotted actor",
+                              /*certifiedCold=*/true);
   }
   result.eligible = !result.actorSlots.empty();
   result.fullyEligible = result.eligible && result.reasons.empty();

@@ -8,10 +8,12 @@
 
 // Each clock edge forks a new process (IEEE 1800-2023 9.3.2 join_none), so the
 // spawn has no static multiplicity and the clocked process keeps its spawning
-// block in bytecode. The partial eval island then has no generated executor
-// for that continuation. Auto must decline the island before packed lowering
-// emits static NBA staging; the late owner check could only report "partial
-// eval ownership failed after static NBA lowering".
+// block in bytecode. Only that process moves to the lower tier as a runtime
+// checkpoint actor; Auto keeps the generated eval island for the rest of the
+// design, and the result matches the generic scheduler. The checkpoint
+// actor's two NBAs to `b` stage into one static accumulator; the replaced
+// value is still an update event (IEEE 1800-2023 4.4.2.4, 9.4.2), so
+// `@(b)` wakes on every edge although `b` ends each step unchanged.
 module native_partial_bytecode_fanout_owner;
   logic clk = 0;
   logic en = 1;
@@ -36,5 +38,6 @@ module native_partial_bytecode_fanout_owner;
 endmodule
 
 // TIER: native eligibility: eligible=1 fully_eligible=0 cost_effective=1
-// TIER: partial eval disabled: bytecode fanout owner
+// TIER-NOT: partial eval disabled
+// TIER: obelisk eval executor inventory: {{.*}} runtime_checkpoints=1
 // CHECK: b=0 b_changes=4 n=4

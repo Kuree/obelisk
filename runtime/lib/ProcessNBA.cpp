@@ -486,6 +486,11 @@ static obelisk_rt_status schedulerNBA(
           size_t word = static_cast<size_t>(destination / 64);
           unsigned shift = static_cast<unsigned>(destination % 64);
           uint64_t lowMask = sourceMask << shift;
+          // IEEE 1800-2023 4.4.2.4, 9.4.2: a later NBA from the same region
+          // replacing a staged bit is still an update event for change waits.
+          recordStaticNBATransient(accumulator, word, lowMask,
+                                   packedValue << shift,
+                                   packedUnknown << shift);
           accumulator.value[word] =
               (accumulator.value[word] & ~lowMask) | (packedValue << shift);
           accumulator.unknown[word] =
@@ -493,6 +498,9 @@ static obelisk_rt_status schedulerNBA(
           accumulator.writeMask[word] |= lowMask;
           if (shift != 0 && bitWidth > 64 - shift) {
             uint64_t highMask = sourceMask >> (64 - shift);
+            recordStaticNBATransient(accumulator, word + 1, highMask,
+                                     packedValue >> (64 - shift),
+                                     packedUnknown >> (64 - shift));
             accumulator.value[word + 1] =
                 (accumulator.value[word + 1] & ~highMask) |
                 (packedValue >> (64 - shift));
@@ -521,9 +529,15 @@ static obelisk_rt_status schedulerNBA(
           for (uint64_t source = first; source < last; ++source) {
             uint64_t destination =
                 static_cast<uint64_t>(static_cast<__int128>(offset) + source);
-            setByteBit(accValue, destination, sourceBit(value, source));
-            setByteBit(accUnknown, destination,
-                       unknownPlane && sourceBit(unknown, source));
+            bool bitValue = sourceBit(value, source);
+            bool bitUnknown = unknownPlane && sourceBit(unknown, source);
+            unsigned shift = static_cast<unsigned>(destination % 64);
+            recordStaticNBATransient(accumulator, destination / 64,
+                                     uint64_t{1} << shift,
+                                     uint64_t{bitValue} << shift,
+                                     uint64_t{bitUnknown} << shift);
+            setByteBit(accValue, destination, bitValue);
+            setByteBit(accUnknown, destination, bitUnknown);
             setByteBit(accMask, destination, true);
           }
         }

@@ -113,9 +113,12 @@ public:
   getBytecodeFragments() const {
     return bytecodeFragments;
   }
+  /// Actors that keep a static slot but hand every activation to the generic
+  /// scheduler at an exact checkpoint: writers of runtime-observed sources,
+  /// and actors with a bytecode fragment the generated plan cannot reach.
   const llvm::DenseSet<mlir::Operation *> &
-  getRuntimeObservedWriterActors() const {
-    return runtimeObservedWriterActors;
+  getRuntimeCheckpointActors() const {
+    return runtimeCheckpointActors;
   }
   const llvm::DenseSet<mlir::Operation *> &getRuntimeOwnedFanoutActors() const {
     return runtimeOwnedFanoutActors;
@@ -140,7 +143,7 @@ private:
   llvm::DenseMap<mlir::Operation *, uint32_t> actorSlots;
   llvm::DenseMap<mlir::Operation *, mlir::SmallVector<mlir::Block *>>
       bytecodeFragments;
-  llvm::DenseSet<mlir::Operation *> runtimeObservedWriterActors;
+  llvm::DenseSet<mlir::Operation *> runtimeCheckpointActors;
   llvm::DenseSet<mlir::Operation *> runtimeOwnedFanoutActors;
   llvm::DenseSet<mlir::Operation *> negativeTimingFanoutActors;
 };

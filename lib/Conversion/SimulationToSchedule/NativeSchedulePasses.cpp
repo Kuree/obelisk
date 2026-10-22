@@ -144,7 +144,7 @@ LogicalResult NativePipelineAnalysis::planActors() {
     // coroutine rewrites. Input IR cannot forge this internal certificate: it
     // is cleared above and recreated only after the exact commit audit.
     if (analysis::isNegativeTimingDelayCommit(function) ||
-        aotEligibility.getRuntimeObservedWriterActors().contains(function))
+        aotEligibility.getRuntimeCheckpointActors().contains(function))
       native::mark<native::RuntimePublicationCertified>(function);
   }
   if (runtime::has<runtime::BytecodeImage>(module)) {
@@ -157,12 +157,12 @@ LogicalResult NativePipelineAnalysis::planActors() {
           missingBytecode(function))
         return function->emitError(
             "native fallback requires retained bytecode");
-    for (Operation *function : aotEligibility.getRuntimeObservedWriterActors())
+    for (Operation *function : aotEligibility.getRuntimeCheckpointActors())
       if (missingBytecode(function))
         return function->emitError(
             "runtime checkpoint requires retained bytecode");
   }
-  for (Operation *operation : aotEligibility.getRuntimeObservedWriterActors()) {
+  for (Operation *operation : aotEligibility.getRuntimeCheckpointActors()) {
     auto function = dyn_cast_if_present<sim::SimFuncOp>(operation);
     IntegerAttr codeUnit =
         function ? function.getCodeUnitIdAttr() : IntegerAttr{};

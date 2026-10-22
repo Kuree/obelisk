@@ -114,7 +114,7 @@ void pruneNativeFunctions(sim::SimDesignOp design,
       retain(function);
     bool needsFallback =
         native.getBytecodeFragments().contains(function) ||
-        native.getRuntimeObservedWriterActors().contains(function);
+        native.getRuntimeCheckpointActors().contains(function);
     function.walk([&](Operation *op) {
       needsFallback |=
           isa<sim::SimTaskCallOp>(op) || sim::isColdRuntimeCheckpoint(op);
