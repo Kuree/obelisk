@@ -624,9 +624,19 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
           module, *stateLayout, aotEligibility.getActorSlots(), *clocks);
     }
     llvm::SmallPtrSet<Operation *, 8> mixedTierBodies;
+    // Fanout entries by actor slot and layout bounds by handle, so each actor
+    // visits only its own entries.
+    DenseMap<uint32_t, SmallVector<const obelisk_rt_static_fanout_entry *>>
+        entriesBySlot;
+    for (const obelisk_rt_static_fanout_entry &entry : staticFanoutPlan.entries)
+      entriesBySlot[entry.actor_slot].push_back(&entry);
+    DenseMap<uint64_t, uint64_t> boundOffsets;
+    for (const auto &bound : stateLayout->bounds)
+      boundOffsets.try_emplace(bound.handleID, bound.offset);
     if (metadataDesign)
       metadataDesign.walk([&](sim::SimFuncOp actor) {
-        if (!aotActorSlotFor(actor))
+        std::optional<uint32_t> slot = aotActorSlotFor(actor);
+        if (!slot)
           return;
         auto body =
             ::obelisk::schedule::get<::obelisk::schedule::Field::EvalBody>(
@@ -646,20 +656,16 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
             });
             bool periodicIngress = false;
             bool nonPeriodicIngress = false;
-            for (const auto &entry : staticFanoutPlan.entries)
-              if (entry.actor_slot == *aotActorSlotFor(actor)) {
-                auto bound =
-                    llvm::find_if(stateLayout->bounds, [&](const auto &b) {
-                      return b.handleID == entry.static_state;
-                    });
-                bool periodic =
-                    bound != stateLayout->bounds.end() &&
-                    entry.bit_width == 1 &&
-                    stateLayout->hasClockTickBound(
-                        entry.static_state, bound->offset + entry.low_bit);
-                periodicIngress |= periodic;
-                nonPeriodicIngress |= !periodic;
-              }
+            for (const obelisk_rt_static_fanout_entry *entry :
+                 entriesBySlot.lookup(*slot)) {
+              auto offset = boundOffsets.find(entry->static_state);
+              bool periodic =
+                  offset != boundOffsets.end() && entry->bit_width == 1 &&
+                  stateLayout->hasClockTickBound(
+                      entry->static_state, offset->second + entry->low_bit);
+              periodicIngress |= periodic;
+              nonPeriodicIngress |= !periodic;
+            }
             clockedBodies.push_back(suspensions == 1 && edgeActivation &&
                                     periodicIngress && !nonPeriodicIngress);
             auto bytecode = aotEligibility.getBytecodeFragments().find(
