@@ -664,8 +664,11 @@ struct ObeliskSimSimplifyBodiesPass
       promotePrivateReductions(design);
       promotePrivateAggregates(design);
     }
+    // Promotion and forwarding rewrite storage and function bodies, never
+    // drivers or nets, so the driver index above still serves every function.
     for (auto function : design.getBody().front().getOps<sim::SimFuncOp>()) {
-      analysis::forwardSourceMemoryLoads(function, canonicalWrites);
+      analysis::forwardSourceMemoryLoads(function, canonicalWrites,
+                                         /*canForward=*/{}, &provenance);
       LogicBitAnalysis bits(function);
       analysis::DemandedBitAnalysis demanded(function);
       SmallVector<Operation *> constants;

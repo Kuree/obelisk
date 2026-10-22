@@ -149,6 +149,9 @@ LogicalResult materializeEvalTwoStateVariants(
   });
   if (!enabled || !design)
     return success();
+  // Variant materialization rewrites function bodies only, so one driver
+  // index serves every source.
+  analysis::HandleDataflowAnalysis designHandles(design);
   // Selecting the Eval architecture does not change the language's state
   // domain. Two-state variants still require the same inductive closure proof
   // as Auto and are selected only after their canonical unknown plane clears.
@@ -402,7 +405,7 @@ LogicalResult materializeEvalTwoStateVariants(
       return true;
     };
     for (sim::SimFuncOp source : sources) {
-      auto handles = analysis::HandleDataflowAnalysis(source).analyze(source);
+      auto handles = designHandles.analyze(source);
       analysis::AccessFootprintAnalysis footprints(source, handles);
       const auto &provenance = handles.facts;
       llvm::SmallDenseSet<PhysicalRange, 8> localRanges;
@@ -1079,7 +1082,7 @@ LogicalResult materializeEvalTwoStateVariants(
     // conservatively aliasing. No speculative state overlay is needed when
     // all reads are disjoint, or when the publication is terminal.
     analysis::LocalStorageAnalysis sourceLocals(source);
-    auto provenance = analysis::deriveHandleFacts(source);
+    auto provenance = designHandles.derive(source);
     using ProbeRange = std::pair<uint64_t, uint64_t>;
     DenseMap<Value, std::optional<ProbeRange>> probeRanges;
     DenseMap<Value, std::optional<ProbeRange>> boundedProbeRanges;

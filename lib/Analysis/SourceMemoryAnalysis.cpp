@@ -125,9 +125,12 @@ private:
   DominanceInfo &dominance;
 };
 } // namespace
-SourceMemoryAnalysis::SourceMemoryAnalysis(sim::SimFuncOp function,
-                                           bool canonicalWrites) {
-  auto handles = HandleDataflowAnalysis(function).analyze(function);
+SourceMemoryAnalysis::SourceMemoryAnalysis(
+    sim::SimFuncOp function, bool canonicalWrites,
+    const HandleDataflowAnalysis *designHandles) {
+  auto handles = designHandles
+                     ? designHandles->analyze(function)
+                     : HandleDataflowAnalysis(function).analyze(function);
   DenseMap<Value, Range> ranges;
   auto collect = [&](Value reference) {
     Type type = cast<sim::RefType>(reference.getType()).getElementType();
@@ -265,8 +268,9 @@ SourceMemoryAnalysis::SourceMemoryAnalysis(sim::SimFuncOp function,
 }
 uint64_t
 forwardSourceMemoryLoads(sim::SimFuncOp function, bool canonicalWrites,
-                         llvm::function_ref<bool(Operation *)> canForward) {
-  SourceMemoryAnalysis memory(function, canonicalWrites);
+                         llvm::function_ref<bool(Operation *)> canForward,
+                         const HandleDataflowAnalysis *designHandles) {
+  SourceMemoryAnalysis memory(function, canonicalWrites, designHandles);
   DominanceInfo dominance(function);
   SmallVector<sim::SimRefLoadOp> loads;
   function.walk([&](sim::SimRefLoadOp load) { loads.push_back(load); });

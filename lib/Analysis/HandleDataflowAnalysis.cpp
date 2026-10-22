@@ -563,11 +563,12 @@ HandleDataflowResult
 HandleDataflowAnalysis::analyze(sim::SimFuncOp function) const {
   if (function.isExternal() || function.getBody().empty())
     return HandleDataflowResult();
-  bool hasHandles = false, dynamicSelectors = false;
+  bool hasHandles = false, dynamicSelectors = false, driverHandles = false;
   llvm::hash_code shape = 0;
   auto inspect = [&](Value value) {
     hasHandles |=
         resourceKind(value.getType()) != schedule::ComputeResourceKind::Unknown;
+    driverHandles |= isa<sim::DriverType>(value.getType());
   };
   function.walk([&](Operation *op) {
     shape = llvm::hash_combine(shape, op->getName().getAsOpaquePointer());
@@ -586,7 +587,12 @@ HandleDataflowAnalysis::analyze(sim::SimFuncOp function) const {
   });
   if (!hasHandles)
     return HandleDataflowResult();
-  HandleRevision revision{OperationFingerPrint(function), shape, driverDigest};
+  // A function without driver handles never reads the driver map. Key it as
+  // the function constructor does, so every design index shares its result.
+  static const uint64_t noDriverDigest =
+      HandleDataflowAnalysis(sim::SimDesignOp()).driverDigest;
+  HandleRevision revision{OperationFingerPrint(function), shape,
+                          driverHandles ? driverDigest : noDriverDigest};
   HandleResultCache &cache = getHandleResultCache();
   if (auto cached = cache.lookup(function, revision))
     return *cached;

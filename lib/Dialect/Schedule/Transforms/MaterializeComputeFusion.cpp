@@ -1256,6 +1256,7 @@ struct PrivateStaticAccessIndex {
 uint64_t localizeActivationStorage(
     sim::SimFuncOp function, sim::SimFuncOp canonical,
     const PrivateStaticAccessIndex &accessIndex,
+    const analysis::HandleDataflowAnalysis &designHandles,
     DenseMap<Operation *, analysis::HandleFacts> &watchFacts) {
   // Ordinary function calls cannot suspend. A callee that reaches a candidate
   // through its own capture or a reference operand makes that root shared in
@@ -1331,8 +1332,7 @@ uint64_t localizeActivationStorage(
   if (candidates.empty())
     return 0;
 
-  analysis::HandleDataflowAnalysis handles(function);
-  analysis::ActivationMemoryAnalysis activation(function, handles);
+  analysis::ActivationMemoryAnalysis activation(function, designHandles);
   if (!activation.isValid())
     return 0;
   // A later process instantiation can execute the canonical initial path
@@ -1368,7 +1368,7 @@ uint64_t localizeActivationStorage(
       ++storeCounts[range.root];
   for (const auto &range : activation.getRepeatedWrites())
     repeated.insert(range.root);
-  auto facts = handles.derive(function);
+  auto facts = designHandles.derive(function);
   uint64_t localized = 0;
   DenseSet<uint64_t> forwardOnly;
   for (uint64_t root : candidates) {
@@ -1388,7 +1388,7 @@ uint64_t localizeActivationStorage(
       for (const auto &[owner, references] : watched->second) {
         auto [it, inserted] = watchFacts.try_emplace(owner);
         if (inserted)
-          it->second = analysis::deriveHandleFacts(cast<sim::SimFuncOp>(owner));
+          it->second = designHandles.derive(cast<sim::SimFuncOp>(owner));
         for (Value reference : references) {
           auto fact = it->second.find(reference);
           if (fact == it->second.end() || !fact->second.descriptor ||
@@ -1515,7 +1515,8 @@ uint64_t localizeActivationStorage(
           auto root = resolveStorageRoot(
               cast<sim::SimRefLoadOp>(operation).getReference());
           return root && forwardOnly.contains(*root);
-        });
+        },
+        &designHandles);
   }
   return localized;
 }
@@ -1526,6 +1527,9 @@ uint64_t localizePrivateEvalStorage(sim::SimDesignOp design) {
     return 0;
   SymbolTable symbols(design);
   DenseMap<Operation *, analysis::HandleFacts> watchFacts;
+  // Localization rewrites function bodies only, so one driver index serves
+  // every eval body.
+  analysis::HandleDataflowAnalysis designHandles(design);
   uint64_t localized = 0;
   for (sim::SimFuncOp canonical :
        design.getBody().front().getOps<sim::SimFuncOp>())
@@ -1534,7 +1538,7 @@ uint64_t localizePrivateEvalStorage(sim::SimDesignOp design) {
           function &&
           schedule::has<schedule::Field::EvalBorrowedCaptures>(function))
         localized += localizeActivationStorage(function, canonical, accessIndex,
-                                               watchFacts);
+                                               designHandles, watchFacts);
   return localized;
 }
 

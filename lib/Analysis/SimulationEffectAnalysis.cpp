@@ -67,11 +67,17 @@ public:
   using DataFlowAnalysis::DataFlowAnalysis;
   LogicalResult initialize(Operation *root) override {
     SymbolTableCollection symbols;
+    // Index each design's drivers once rather than once per function.
+    DenseMap<Operation *, std::unique_ptr<HandleDataflowAnalysis>> designs;
     root->walk([&](sim::SimFuncOp function) {
       auto &summary = local[function];
       if (function.isExternal())
         summary.effects = allEffects;
-      auto handleResult = HandleDataflowAnalysis(function).analyze(function);
+      auto design = function->getParentOfType<sim::SimDesignOp>();
+      auto &index = designs[design];
+      if (!index)
+        index = std::make_unique<HandleDataflowAnalysis>(design);
+      auto handleResult = index->analyze(function);
       const auto &handles = handleResult.facts;
       function.walk([&](Operation *op) {
         if (op == function || !handleResult.isExecutable(op->getBlock()) ||

@@ -325,6 +325,9 @@ void ObeliskSimInlinePass::runOnOperation() {
   DenseMap<Operation *, uint64_t> callerCurrentCosts = callerBaselines;
   uint64_t currentDesignCost = designBaseline;
   DenseMap<Operation *, analysis::HandleFacts> provenanceCache;
+  // Inlining rewrites function bodies only, so one driver index serves every
+  // caller.
+  std::optional<analysis::HandleDataflowAnalysis> designHandles;
   DenseMap<Operation *, uint64_t> regionCostCache;
   DenseMap<Operation *, bool> leafCache;
   llvm::DenseSet<uint64_t> selectedInlineIDs;
@@ -507,7 +510,9 @@ void ObeliskSimInlinePass::runOnOperation() {
       if (cached == provenanceCache.end())
         cached = provenanceCache
                      .try_emplace(caller.getOperation(),
-                                  analysis::deriveHandleFacts(caller))
+                                  (designHandles ? *designHandles
+                                                 : designHandles.emplace(design))
+                                      .derive(caller))
                      .first;
       const analysis::HandleFacts &actuals = cached->second;
       Block &entry = callee.getBody().front();

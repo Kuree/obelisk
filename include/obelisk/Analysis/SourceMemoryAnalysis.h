@@ -11,6 +11,7 @@ namespace obelisk::sim {
 class SimFuncOp;
 }
 namespace obelisk::analysis {
+class HandleDataflowAnalysis;
 /// Dense must-value analysis over source-ordered reference accesses. Equal
 /// values survive CFG joins; may-alias writes, calls, observers, suspensions,
 /// overrides and external boundaries kill the relevant snapshot. Canonical
@@ -28,7 +29,10 @@ public:
     mlir::Value aggregate;
     mlir::OpFoldResult offset;
   };
-  SourceMemoryAnalysis(sim::SimFuncOp function, bool canonicalWrites = false);
+  /// \p designHandles, when given, indexes the function's design, so a
+  /// caller visiting many functions indexes the design once.
+  SourceMemoryAnalysis(sim::SimFuncOp function, bool canonicalWrites = false,
+                       const HandleDataflowAnalysis *designHandles = nullptr);
   mlir::Value getForwarded(mlir::Operation *load) const {
     return forwarded.lookup(load);
   }
@@ -61,6 +65,7 @@ private:
 /// caller has proved. Return the number of forwarded loads.
 uint64_t forwardSourceMemoryLoads(
     sim::SimFuncOp function, bool canonicalWrites,
-    llvm::function_ref<bool(mlir::Operation *)> canForward = {});
+    llvm::function_ref<bool(mlir::Operation *)> canForward = {},
+    const HandleDataflowAnalysis *designHandles = nullptr);
 } // namespace obelisk::analysis
 #endif
