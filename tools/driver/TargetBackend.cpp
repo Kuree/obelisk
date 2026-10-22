@@ -79,6 +79,9 @@
 #include <chrono>
 #include <memory>
 #include <mutex>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 #include <optional>
 #include <system_error>
 
@@ -255,6 +258,16 @@ std::unique_ptr<TargetBackend> createTargetBackend(TargetKind target) {
 }
 
 namespace {
+
+// Return pages freed by a discarded IR representation to the system before
+// the parallel backend phase. glibc keeps them in the freeing thread's arena,
+// where partition workers, which allocate from their own arenas, cannot reuse
+// them; the whole design's MLIR would otherwise stay resident at peak.
+void releaseFreedHeapPages() {
+#if defined(__GLIBC__)
+  malloc_trim(0);
+#endif
+}
 
 OptimizationLevel getLLVMOptLevel(uint32_t level) {
   switch (level) {
@@ -1376,6 +1389,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
   // designs retain both complete IR representations through the peak-memory
   // backend phase.
   module.getBody()->clear();
+  releaseFreedHeapPages();
   llvmModule->setTargetTriple(Triple(backend->getTriple()));
   llvmModule->setDataLayout(targetMachine->createDataLayout());
   if (failed(addVPIStartupLifecycle(*llvmModule, options.vpi,
@@ -1523,6 +1537,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
         partitionTargets.push_back(std::move(workerTarget));
       }
       llvmModule.reset();
+      releaseFreedHeapPages();
       markBackendTiming("partition serialization and ThinLTO target creation");
 
       ThreadPoolStrategy strategy =
@@ -1641,6 +1656,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
         partitionTargets.push_back(std::move(workerTarget));
       }
       llvmModule.reset();
+      releaseFreedHeapPages();
       if (options.timing)
         errs() << "obelisk backend timing: partition bitcode serialization: "
                << bitcodeSerializationSeconds << " s\n";
