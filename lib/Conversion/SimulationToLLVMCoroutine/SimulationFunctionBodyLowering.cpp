@@ -315,7 +315,18 @@ lowerNativeFunctionBody(Operation *root, NativeReturnLowering returnLowering,
   FrozenRewritePatternSet frozenPatterns(std::move(patterns));
   if (::obelisk::schedule::has<
           ::obelisk::schedule::Field::EvalPathKnownPredicate>(root)) {
-    if (failed(applyPatternsGreedily(root, frozenPatterns)))
+    // Region simplification of a long chain of case-item tests can need more
+    // rounds than the driver allows. That only leaves a less simplified
+    // predicate; the rewrites above are what lowering requires.
+    (void)applyPatternsGreedily(root, frozenPatterns);
+    WalkResult remaining = root->walk([&](Operation *operation) {
+      return isa<sim::SimCallOp, schedule::NativeSpawnOp>(operation) ||
+                     (returnLowering != NativeReturnLowering::None &&
+                      isa<sim::SimReturnOp>(operation))
+                 ? WalkResult::interrupt()
+                 : WalkResult::advance();
+    });
+    if (remaining.wasInterrupted())
       return root->emitError("native function-body rewrite failed");
   } else {
     // The native process frame analysis refers to the original CFG. Avoid the
