@@ -29,6 +29,8 @@
 #include <optional>
 #include <tuple>
 
+#include <deque>
+#include <numeric>
 using namespace mlir;
 
 namespace obelisk {
@@ -1208,40 +1210,38 @@ ValueFactProgram::ValueFactProgram(sim::SimDesignOp design)
         boundaries[index] = mayFourState(StateDomainReason::FunctionEntry);
 }
 
-FailureOr<DenseMap<Value, StateDomainFact>>
-computeValueFacts(const ValueFactProgram &program,
-                  const RootSet &assumedKnownRoots) {
-  sim::SimDesignOp design = program.design;
-  const auto &functions = program.functions;
-  const auto &summaries = program.summaries;
-  const auto &calleeIndex = program.calleeIndex;
-  const auto &callers = program.callers;
-  auto formalBoundaries = program.formalBoundaries;
-  auto resultBoundaries = program.resultBoundaries;
-  SmallVector<LocalFacts> locals;
-  locals.reserve(summaries.size());
-  for (const FunctionSummary &summary : summaries)
-    locals.push_back(initializeLocalFacts(summary));
+/// The boundary and per-function fixed point of the value facts under a set
+/// of roots assumed known. Dropping assumed roots only raises facts, so
+/// resuming from the previous fixed point reaches the one a solve from bottom
+/// would; only the functions the dropped roots reach are solved again.
+class ValueFactSolver {
+public:
+  ValueFactSolver(const ValueFactProgram &program, RootSet assumedKnownRoots)
+      : program(program), assumedKnownRoots(std::move(assumedKnownRoots)),
+        formalBoundaries(program.formalBoundaries),
+        resultBoundaries(program.resultBoundaries) {}
 
-  // Solve boundary facts serially with a deterministic function worklist.
-  // Local facts are retained between visits, so each fact only moves upward
-  // through the finite lattice even across recursive call/spawn cycles.
-  // Callees come first: a caller visited after its callees' result
-  // boundaries have settled is usually propagated once, where index order
-  // would propagate a large kernel again for every callee it has.
-  std::deque<unsigned> worklist;
-  SmallVector<bool> queued(functions.size(), false);
-  auto enqueue = [&](unsigned function) {
-    if (queued[function])
-      return;
-    queued[function] = true;
-    worklist.push_back(function);
-  };
-  {
+  /// Solves every function from bottom.
+  void solve() {
+    const auto &summaries = program.summaries;
+    locals.clear();
+    locals.reserve(summaries.size());
+    for (const FunctionSummary &summary : summaries)
+      locals.push_back(initializeLocalFacts(summary));
+    finalLocals.clear();
+    finalLocals.resize(summaries.size());
+    queued.assign(summaries.size(), false);
+
+    // Solve boundary facts serially with a deterministic function worklist.
+    // Local facts are retained between visits, so each fact only moves upward
+    // through the finite lattice even across recursive call/spawn cycles.
+    // Callees come first: a caller visited after its callees' result
+    // boundaries have settled is usually propagated once, where index order
+    // would propagate a large kernel again for every callee it has.
     enum : uint8_t { New, Active, Done };
-    SmallVector<uint8_t> state(functions.size(), New);
+    SmallVector<uint8_t> state(summaries.size(), New);
     SmallVector<std::pair<unsigned, unsigned>> stack;
-    for (unsigned root = 0; root != functions.size(); ++root) {
+    for (unsigned root = 0; root != summaries.size(); ++root) {
       if (state[root] != New)
         continue;
       state[root] = Active;
@@ -1266,77 +1266,171 @@ computeValueFacts(const ValueFactProgram &program,
         stack.pop_back();
       }
     }
+    runWorklist(nullptr);
+    SmallVector<unsigned> all(summaries.size());
+    std::iota(all.begin(), all.end(), 0u);
+    finalize(all);
   }
 
-  while (!worklist.empty()) {
-    unsigned function = worklist.front();
-    worklist.pop_front();
-    queued[function] = false;
-
-    propagateFunction(summaries[function], formalBoundaries[function],
-                      resultBoundaries, calleeIndex, assumedKnownRoots,
-                      locals[function]);
-
-    for (auto [result, fact] : llvm::enumerate(locals[function].results)) {
-      sim::SimFuncOp current = functions[function];
-      if (!hasUnknownPlane(current.getFunctionType().getResult(result)) ||
-          !updateBoundary(resultBoundaries[function][result], fact,
-                          fact.reason))
-        continue;
-      for (unsigned caller : callers[function])
-        enqueue(caller);
+  /// Drops `rejected` from the assumed-known roots and solves again the
+  /// functions that read them and every function their changes reach.
+  /// `changed` receives those functions in index order.
+  void reject(const RootSet &rejected, SmallVectorImpl<unsigned> &changed) {
+    if (readers.empty())
+      indexReaders();
+    SmallVector<unsigned> start;
+    for (RootKey root : rejected) {
+      assumedKnownRoots.erase(root);
+      auto found = readers.find(root);
+      if (found != readers.end())
+        llvm::append_range(start, found->second);
     }
+    llvm::sort(start);
+    start.erase(std::unique(start.begin(), start.end()), start.end());
+    for (unsigned function : start)
+      enqueue(function);
+    DenseSet<unsigned> visited;
+    runWorklist(&visited);
+    changed.assign(visited.begin(), visited.end());
+    llvm::sort(changed);
+    finalize(changed);
+  }
 
-    for (const InvocationSummary &invocation :
-         summaries[function].invocations) {
-      if (!invocation.callee)
-        continue;
-      StateDomainReason reason = invocation.spawn
-                                     ? StateDomainReason::SpawnActual
-                                     : StateDomainReason::CallActual;
-      for (auto [index, operand] :
-           llvm::enumerate(getInvocationOperands(invocation.operation))) {
-        if (index >= formalBoundaries[*invocation.callee].size() ||
-            !hasUnknownPlane(operand.getType()))
+  const DenseMap<Value, StateDomainFact> &getFacts() const { return facts; }
+  DenseMap<Value, StateDomainFact> takeFacts() { return std::move(facts); }
+
+private:
+  void enqueue(unsigned function) {
+    if (queued[function])
+      return;
+    queued[function] = true;
+    worklist.push_back(function);
+  }
+
+  void runWorklist(DenseSet<unsigned> *visited) {
+    const auto &summaries = program.summaries;
+    while (!worklist.empty()) {
+      unsigned function = worklist.front();
+      worklist.pop_front();
+      queued[function] = false;
+      if (visited)
+        visited->insert(function);
+
+      propagateFunction(summaries[function], formalBoundaries[function],
+                        resultBoundaries, program.calleeIndex,
+                        assumedKnownRoots, locals[function]);
+
+      for (auto [result, fact] : llvm::enumerate(locals[function].results)) {
+        sim::SimFuncOp current = program.functions[function];
+        if (!hasUnknownPlane(current.getFunctionType().getResult(result)) ||
+            !updateBoundary(resultBoundaries[function][result], fact,
+                            fact.reason))
           continue;
-        StateDomainFact actual =
-            lookupLocalFact(locals[function].values, operand);
-        if (updateBoundary(formalBoundaries[*invocation.callee][index], actual,
-                           reason))
-          enqueue(*invocation.callee);
+        for (unsigned caller : program.callers[function])
+          enqueue(caller);
+      }
+
+      for (const InvocationSummary &invocation :
+           summaries[function].invocations) {
+        if (!invocation.callee)
+          continue;
+        StateDomainReason reason = invocation.spawn
+                                       ? StateDomainReason::SpawnActual
+                                       : StateDomainReason::CallActual;
+        for (auto [index, operand] :
+             llvm::enumerate(getInvocationOperands(invocation.operation))) {
+          if (index >= formalBoundaries[*invocation.callee].size() ||
+              !hasUnknownPlane(operand.getType()))
+            continue;
+          StateDomainFact actual =
+              lookupLocalFact(locals[function].values, operand);
+          if (updateBoundary(formalBoundaries[*invocation.callee][index],
+                             actual, reason))
+            enqueue(*invocation.callee);
+        }
       }
     }
   }
 
-  auto resolveBottom = [](StateDomainFact &fact) {
-    if (fact.domain == StateDomain::Bottom)
-      fact = mayFourState(StateDomainReason::Unresolved);
-  };
-  for (auto &boundaries : formalBoundaries)
-    for (StateDomainFact &fact : boundaries)
-      resolveBottom(fact);
-  for (auto &boundaries : resultBoundaries)
-    for (StateDomainFact &fact : boundaries)
-      resolveBottom(fact);
-
-  SmallVector<LocalFacts> finalLocals(functions.size());
-  parallelFor(design.getContext(), 0, summaries.size(), [&](size_t index) {
-    finalLocals[index] = initializeLocalFacts(summaries[index]);
-    propagateFunction(summaries[index], formalBoundaries[index],
-                      resultBoundaries, calleeIndex, assumedKnownRoots,
-                      finalLocals[index]);
-  });
-
-  DenseMap<Value, StateDomainFact> facts;
-  for (LocalFacts &local : finalLocals)
-    for (auto [value, fact] : local.values) {
-      if (!local.reachable.empty() &&
-          !local.reachable.contains(value.getParentBlock()))
-        fact = twoState(StateDomainReason::InfeasibleCFG);
-      resolveBottom(fact);
-      facts.try_emplace(value, fact);
+  /// Recomputes the published facts of `functions` from settled boundaries,
+  /// where an unresolved boundary is conservatively four-state.
+  void finalize(ArrayRef<unsigned> functions) {
+    auto resolveBottom = [](StateDomainFact &fact) {
+      if (fact.domain == StateDomain::Bottom)
+        fact = mayFourState(StateDomainReason::Unresolved);
+    };
+    auto resolvedFormals = formalBoundaries;
+    auto resolvedResults = resultBoundaries;
+    for (auto &boundaries : resolvedFormals)
+      for (StateDomainFact &fact : boundaries)
+        resolveBottom(fact);
+    for (auto &boundaries : resolvedResults)
+      for (StateDomainFact &fact : boundaries)
+        resolveBottom(fact);
+    for (unsigned function : functions)
+      for (const auto &entry : finalLocals[function].values)
+        facts.erase(entry.first);
+    sim::SimDesignOp design = program.design;
+    parallelFor(design.getContext(), 0, functions.size(),
+                [&](size_t position) {
+                  unsigned index = functions[position];
+                  finalLocals[index] =
+                      initializeLocalFacts(program.summaries[index]);
+                  propagateFunction(program.summaries[index],
+                                    resolvedFormals[index], resolvedResults,
+                                    program.calleeIndex, assumedKnownRoots,
+                                    finalLocals[index]);
+                });
+    for (unsigned function : functions) {
+      const LocalFacts &local = finalLocals[function];
+      for (auto [value, fact] : local.values) {
+        if (!local.reachable.empty() &&
+            !local.reachable.contains(value.getParentBlock()))
+          fact = twoState(StateDomainReason::InfeasibleCFG);
+        resolveBottom(fact);
+        facts.try_emplace(value, fact);
+      }
     }
-  return facts;
+  }
+
+  /// Functions whose loads and net reads consult each root.
+  void indexReaders() {
+    for (auto [index, summary] : llvm::enumerate(program.summaries))
+      for (Operation *operation : summary.operations) {
+        Value handle;
+        if (auto load = dyn_cast<sim::SimRefLoadOp>(operation))
+          handle = load.getReference();
+        else if (auto read = dyn_cast<sim::SimNetReadOp>(operation))
+          handle = read.getNet();
+        else
+          continue;
+        auto root = summary.provenance.find(handle);
+        if (root == summary.provenance.end() || !root->second.descriptor)
+          continue;
+        auto &functions = readers[getRootKey(root->second.resource,
+                                             *root->second.descriptor)];
+        if (functions.empty() || functions.back() != index)
+          functions.push_back(index);
+      }
+  }
+
+  const ValueFactProgram &program;
+  RootSet assumedKnownRoots;
+  SmallVector<SmallVector<StateDomainFact>> formalBoundaries;
+  SmallVector<SmallVector<StateDomainFact>> resultBoundaries;
+  SmallVector<LocalFacts> locals, finalLocals;
+  std::deque<unsigned> worklist;
+  SmallVector<bool> queued;
+  DenseMap<Value, StateDomainFact> facts;
+  DenseMap<RootKey, SmallVector<unsigned>> readers;
+};
+
+FailureOr<DenseMap<Value, StateDomainFact>>
+computeValueFacts(const ValueFactProgram &program,
+                  const RootSet &assumedKnownRoots) {
+  ValueFactSolver solver(program, assumedKnownRoots);
+  solver.solve();
+  return solver.takeFacts();
 }
 
 FailureOr<DenseMap<Value, StateDomainFact>>
@@ -1507,7 +1601,6 @@ StateDomainAnalysis::computeInductiveOnly(const ValueFactProgram &program) {
       candidates.erase(getRootKey(schedule::ComputeResourceKind::Net, member));
   }
 
-  DenseMap<Value, StateDomainFact> facts;
   struct RootWrite {
     Value destination;
     Value value;
@@ -1516,6 +1609,7 @@ StateDomainAnalysis::computeInductiveOnly(const ValueFactProgram &program) {
     std::optional<RootKey> root;
     schedule::ComputeResourceKind resource =
         schedule::ComputeResourceKind::Unknown;
+    unsigned function = 0;
   };
   SmallVector<RootWrite> writes;
   llvm::SmallDenseSet<unsigned, 8> opaqueWriteResources;
@@ -1627,24 +1721,37 @@ StateDomainAnalysis::computeInductiveOnly(const ValueFactProgram &program) {
       }
     });
     for (RootWrite &write : llvm::drop_begin(writes, firstWrite)) {
+      write.function = static_cast<unsigned>(&summary - &program.summaries[0]);
       write.root = getConcreteRoot(write.destination, summary.provenance);
       auto found = summary.provenance.find(write.destination);
       if (found != summary.provenance.end())
         write.resource = found->second.resource;
     }
   }
+  // Each wave rejects the candidates some write may leave four-state. Writes
+  // whose function and copied root kept their facts keep their verdict, and
+  // a root they would reject is gone already, so a wave checks only the
+  // writes its rejections reach.
+  SmallVector<SmallVector<unsigned>> writesOf(program.summaries.size());
+  DenseMap<RootKey, SmallVector<unsigned>> copiesOf;
+  for (auto [index, write] : llvm::enumerate(writes)) {
+    writesOf[write.function].push_back(index);
+    if (write.copiedRoot)
+      copiesOf[*write.copiedRoot].push_back(index);
+  }
+  SmallVector<unsigned> pendingWrites(writes.size());
+  std::iota(pendingWrites.begin(), pendingWrites.end(), 0u);
+  ValueFactSolver solver(program, candidates);
+  solver.solve();
   while (true) {
-    FailureOr<DenseMap<Value, StateDomainFact>> solved =
-        computeValueFacts(program, candidates);
-    if (failed(solved))
-      return failure();
-    facts = std::move(*solved);
+    const DenseMap<Value, StateDomainFact> &facts = solver.getFacts();
     RootSet rejected;
     bool rejectAllResources = false;
     llvm::SmallDenseSet<unsigned, 8> rejectedResources;
     rejectedResources.insert(opaqueWriteResources.begin(),
                              opaqueWriteResources.end());
-    for (const RootWrite &write : writes) {
+    for (unsigned index : pendingWrites) {
+      const RootWrite &write = writes[index];
       if ((write.value &&
            getValueFact(facts, write.value).domain == StateDomain::TwoState) ||
           write.copyKnown ||
@@ -1667,9 +1774,20 @@ StateDomainAnalysis::computeInductiveOnly(const ValueFactProgram &program) {
       break;
     for (RootKey root : rejected)
       candidates.erase(root);
+    SmallVector<unsigned> changed;
+    solver.reject(rejected, changed);
+    pendingWrites.clear();
+    for (unsigned function : changed)
+      llvm::append_range(pendingWrites, writesOf[function]);
+    for (RootKey root : rejected)
+      if (auto found = copiesOf.find(root); found != copiesOf.end())
+        llvm::append_range(pendingWrites, found->second);
+    llvm::sort(pendingWrites);
+    pendingWrites.erase(std::unique(pendingWrites.begin(), pendingWrites.end()),
+                        pendingWrites.end());
   }
 
-  DenseMap<Value, StateDomainFact> guardedFacts = std::move(facts);
+  DenseMap<Value, StateDomainFact> guardedFacts = solver.takeFacts();
 
   SmallVector<InductiveStateRoot> inductiveRoots;
   inductiveRoots.reserve(candidates.size());
