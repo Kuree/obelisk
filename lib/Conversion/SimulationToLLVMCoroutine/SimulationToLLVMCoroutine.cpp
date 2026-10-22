@@ -3908,8 +3908,6 @@ public:
     }
     markTiming("serial runtime conversion");
 
-    RewritePatternSet patterns(&getContext());
-    populateSimulationCoroutineBodyToLLVMPatterns(converter, patterns);
     if (failed(verify(module)))
       return signalPassFailure();
     SmallVector<schedule::NativeObserverOp> deadObservers;
@@ -3919,20 +3917,39 @@ public:
     });
     for (auto observer : deadObservers)
       observer.erase();
-    FrozenRewritePatternSet frozenPatterns(std::move(patterns));
 
     // Publish LLVM function shells before body workers run. Their physical
     // signatures are already fixed; converted calls must resolve to LLVM
     // symbols even while sibling bodies have not yet been converted.
-    ConversionTarget signatureTarget(getContext());
+    {
+      RewritePatternSet shellPatterns(&getContext());
+      populateFuncToLLVMFuncOpConversionPattern(converter, shellPatterns);
+      ConversionTarget shellTarget(getContext());
+      shellTarget.addIllegalOp<func::FuncOp>();
+      shellTarget.markUnknownOpDynamicallyLegal(
+          [](Operation *) { return true; });
+      if (failed(applyPartialConversion(module, shellTarget,
+                                        std::move(shellPatterns))))
+        return signalPassFailure();
+    }
     // Calls and returns must change with their function shells: func.return
     // has a func.func parent constraint, and func.call verifies a func.func
-    // callee. Leave a verifiable module at this public stage boundary.
-    signatureTarget.addIllegalDialect<func::FuncDialect>();
-    signatureTarget.markUnknownOpDynamicallyLegal(
-        [](Operation *) { return true; });
-    if (failed(applyPartialConversion(module, signatureTarget, frozenPatterns)))
-      return signalPassFailure();
+    // callee. Leave a verifiable module at this public stage boundary. Every
+    // symbol now exists and this step adds or removes none, so call lookups
+    // share one symbol table instead of scanning the module per call.
+    {
+      SymbolTableCollection symbolTables;
+      RewritePatternSet patterns(&getContext());
+      populateSimulationCoroutineBodyToLLVMPatterns(converter, patterns,
+                                                    &symbolTables);
+      ConversionTarget signatureTarget(getContext());
+      signatureTarget.addIllegalDialect<func::FuncDialect>();
+      signatureTarget.markUnknownOpDynamicallyLegal(
+          [](Operation *) { return true; });
+      if (failed(applyPartialConversion(module, signatureTarget,
+                                        std::move(patterns))))
+        return signalPassFailure();
+    }
     markTiming("function ABI conversion");
 
     // Publish the immutable ABI inputs at the module barrier. The nested
