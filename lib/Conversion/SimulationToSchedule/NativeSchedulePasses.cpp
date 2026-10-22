@@ -968,11 +968,28 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
           continuations.end());
     }
   }
+  if (useAOT) {
+    FailureOr<SmallVector<NativePeriodicClock>> clocks =
+        buildNativePeriodicClockPlan(module, *stateLayout,
+                                     aotEligibility.getActorSlots());
+    if (failed(clocks))
+      return failure();
+    periodicClocks = std::move(*clocks);
+    FailureOr<SmallVector<NativePeriodicAlias>> aliases =
+        buildNativePeriodicAliasPlan(module, *stateLayout,
+                                     aotEligibility.getActorSlots(),
+                                     periodicClocks);
+    if (failed(aliases))
+      return failure();
+    periodicAliases = std::move(*aliases);
+  }
   // A partial Auto island needs a generated executor for every fanout entry.
   // A continuation that reaches a bytecode block has none unless it is a
-  // runtime checkpoint. Detect that here: once packed lowering has emitted
-  // static NBA staging, the late owner check can no longer fall back.
+  // runtime checkpoint, and a coordinator left without any executor cannot be
+  // materialized. Detect both here: once packed lowering has emitted static
+  // NBA staging, the late owner check can no longer fall back.
   bool bytecodeFanoutOwner = false;
+  bool executorDemand = false;
   if (useAOT && nativeScheduler == schedule::NativeSchedulerMode::Auto &&
       !aotEligibility.isFullyEligible() && staticFanoutPlan.exact) {
     llvm::DenseMap<uint32_t, sim::SimFuncOp> actorsBySlot;
@@ -984,10 +1001,10 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
     // The coordinator drains a finite initial loop that carries repeat state
     // before entering the periodic loop, so such a bootstrap needs no
     // executor when a periodic clock exists (see isFiniteInitialBootstrap).
-    std::optional<bool> hasPeriodicClock;
-    auto finiteInitialBootstrap =
-        [&](sim::SimFuncOp actor, uint32_t continuation) -> FailureOr<bool> {
-      if (actor.getEntryKind() != sim::EntryKind::Initial)
+    auto finiteInitialBootstrap = [&](sim::SimFuncOp actor,
+                                      uint32_t continuation) {
+      if (periodicClocks.empty() ||
+          actor.getEntryKind() != sim::EntryKind::Initial)
         return false;
       bool loopCarried = false;
       actor.walk([&](Operation *operation) {
@@ -1004,29 +1021,24 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
             operation->getNumSuccessors() == 1)
           loopCarried |= operation->getSuccessor(0)->getNumArguments() != 0;
       });
-      if (!loopCarried)
-        return false;
-      if (!hasPeriodicClock) {
-        FailureOr<SmallVector<NativePeriodicClock>> clocks =
-            buildNativePeriodicClockPlan(module, *stateLayout,
-                                         aotEligibility.getActorSlots());
-        if (failed(clocks))
-          return failure();
-        hasPeriodicClock = !clocks->empty();
-      }
-      return *hasPeriodicClock;
+      return loopCarried;
     };
     for (const obelisk_rt_static_fanout_entry &entry :
          staticFanoutPlan.entries) {
+      // The periodic loop forwards an alias entry itself (see
+      // isNativePeriodicAliasEntry).
+      if (isNativePeriodicAliasEntry(*stateLayout, periodicAliases, entry))
+        continue;
       sim::SimFuncOp actor = actorsBySlot.lookup(entry.actor_slot);
-      if (!actor)
+      if (!actor) {
+        executorDemand = true;
         continue;
-      FailureOr<bool> bootstrap =
-          finiteInitialBootstrap(actor, entry.continuation);
-      if (failed(bootstrap))
-        return failure();
-      if (*bootstrap)
+      }
+      if (finiteInitialBootstrap(actor, entry.continuation))
         continue;
+      // IEEE 1800-2023 4.5: Reactive actors may remain runtime owners.
+      if (actor.getHomeRegion() != sim::EventRegion::Reactive)
+        executorDemand = true;
       auto bytecode = aotBytecodeContinuations.find(actor.getOperation());
       IntegerAttr codeUnit = actor.getCodeUnitIdAttr();
       if (bytecode == aotBytecodeContinuations.end() ||
@@ -1041,12 +1053,14 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
                      << " continuation=" << entry.continuation << '\n';
       break;
     }
+    if (!bytecodeFanoutOwner && !executorDemand && detailedTiming)
+      llvm::errs() << "partial eval disabled: no generated executor\n";
   }
   // The packed NBA lowering below emits references to generated schedule
   // globals. Decide a partial Auto fallback before that irreversible rewrite.
   if (nativeScheduler == schedule::NativeSchedulerMode::Auto &&
       !aotEligibility.isFullyEligible() &&
-      (!staticFanoutPlan.exact || bytecodeFanoutOwner)) {
+      (!staticFanoutPlan.exact || bytecodeFanoutOwner || !executorDemand)) {
     useAOT = false;
     // The exact transition set belongs to the discarded eval fanout plan.
     // Generic scheduling must check direct-state writes for transitions again.
@@ -1058,24 +1072,12 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
     cleanSuperstep = false;
     staticEvalIsland = false;
     aotBytecodeContinuations.clear();
+    periodicClocks.clear();
+    periodicAliases.clear();
   }
-  if (useAOT) {
-    FailureOr<SmallVector<NativePeriodicClock>> clocks =
-        buildNativePeriodicClockPlan(module, *stateLayout,
-                                     aotEligibility.getActorSlots());
-    if (failed(clocks))
-      return failure();
-    periodicClocks = std::move(*clocks);
-    FailureOr<SmallVector<NativePeriodicAlias>> aliases =
-        buildNativePeriodicAliasPlan(module, *stateLayout,
-                                     aotEligibility.getActorSlots(),
-                                     periodicClocks);
-    if (failed(aliases))
-      return failure();
-    periodicAliases = std::move(*aliases);
+  if (useAOT)
     stateLayout->clockFacts = buildNativeClockInferencePlan(
         module, *stateLayout, aotEligibility.getActorSlots(), periodicClocks);
-  }
   // Auto selects the generated eval form after the closed-world slot and
   // fanout proofs exist. A periodic clock enables run-until compression;
   // clockless designs retain calendar ownership in the trusted AOT node loop

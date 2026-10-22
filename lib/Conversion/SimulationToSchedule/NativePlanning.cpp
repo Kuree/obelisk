@@ -1116,6 +1116,26 @@ buildNativeThreeTierPlan(ModuleOp module,
   return result;
 }
 
+bool isNativePeriodicAliasEntry(const NativeStateLayout &stateLayout,
+                                ArrayRef<NativePeriodicAlias> periodicAliases,
+                                const obelisk_rt_static_fanout_entry &entry) {
+  return llvm::any_of(periodicAliases, [&](const NativePeriodicAlias &alias) {
+    if (alias.getSourceStaticState() != entry.static_state ||
+        alias.getForwardingActorSlot() != entry.actor_slot ||
+        alias.getForwardingContinuation() != entry.continuation)
+      return false;
+    auto bound = llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
+      return candidate.handleID == entry.static_state;
+    });
+    if (bound == stateLayout.bounds.end() ||
+        alias.getSourceBitOffset() < bound->offset)
+      return false;
+    uint64_t localBit = alias.getSourceBitOffset() - bound->offset;
+    return entry.low_bit <= localBit &&
+           localBit - entry.low_bit < entry.bit_width;
+  });
+}
+
 FailureOr<NativeEvalOwnershipPlan>
 buildNativeEvalOwnershipPlan(ModuleOp module,
                              const NativeStateLayout &stateLayout,
@@ -1125,25 +1145,6 @@ buildNativeEvalOwnershipPlan(ModuleOp module,
   NativeEvalOwnershipPlan result;
   result.fanoutOwners.reserve(fanoutPlan.entries.size());
   result.periodicFanoutOwners.reserve(fanoutPlan.entries.size());
-
-  auto isPeriodicAlias = [&](const obelisk_rt_static_fanout_entry &entry) {
-    return llvm::any_of(periodicAliases, [&](const NativePeriodicAlias &alias) {
-      if (alias.getSourceStaticState() != entry.static_state ||
-          alias.getForwardingActorSlot() != entry.actor_slot ||
-          alias.getForwardingContinuation() != entry.continuation)
-        return false;
-      auto bound =
-          llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
-            return candidate.handleID == entry.static_state;
-          });
-      if (bound == stateLayout.bounds.end() ||
-          alias.getSourceBitOffset() < bound->offset)
-        return false;
-      uint64_t localBit = alias.getSourceBitOffset() - bound->offset;
-      return entry.low_bit <= localBit &&
-             localBit - entry.low_bit < entry.bit_width;
-    });
-  };
 
   auto fragmentsFor = [&](const obelisk_rt_static_fanout_entry &entry) {
     auto fragments =
@@ -1194,7 +1195,7 @@ buildNativeEvalOwnershipPlan(ModuleOp module,
   }
 
   for (const obelisk_rt_static_fanout_entry &entry : fanoutPlan.entries) {
-    if (isPeriodicAlias(entry)) {
+    if (isNativePeriodicAliasEntry(stateLayout, periodicAliases, entry)) {
       NativeEvalFanoutOwner owner{NativeEvalFanoutOwnerKind::PeriodicAlias,
                                   UINT32_MAX};
       result.fanoutOwners.push_back(owner);

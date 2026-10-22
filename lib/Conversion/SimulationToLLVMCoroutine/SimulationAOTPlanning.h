@@ -327,6 +327,12 @@ mlir::FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
 mlir::FailureOr<NativeThreeTierPlan>
 buildNativeThreeTierPlan(mlir::ModuleOp module,
                          const NativeStateLayout &stateLayout);
+/// True when the periodic clock plan forwards `entry` itself, so the generated
+/// eval coordinator needs no executor for it.
+bool isNativePeriodicAliasEntry(
+    const NativeStateLayout &stateLayout,
+    mlir::ArrayRef<NativePeriodicAlias> periodicAliases,
+    const obelisk_rt_static_fanout_entry &entry);
 mlir::FailureOr<NativeEvalOwnershipPlan> buildNativeEvalOwnershipPlan(
     mlir::ModuleOp module, const NativeStateLayout &stateLayout,
     const NativeStaticFanoutPlan &fanoutPlan,

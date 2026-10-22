@@ -2,11 +2,22 @@
 // RUN: obelisk -O3 --vpi=off --mlir-timing %s %t.o -o %t.aot 2> %t.timing
 // RUN: FileCheck %s --check-prefix=PLAN < %t.timing
 // RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.aot 2>&1 | FileCheck %s
+// RUN: obelisk -O3 --vpi=full --mlir-timing %s %t.o -o %t.full 2> %t.full.timing
+// RUN: FileCheck %s --check-prefix=FULL < %t.full.timing
+// RUN: %t.full | FileCheck %s --check-prefix=FULL-OUT
 
 // IEEE 1800-2023 35.5.3: a context import may call any export. This export
 // reads no design state and VPI is off, so the process calling the imports
 // stays in the native AOT plan, and native lowering, after rewrites that
 // drop compute-graph effect summaries, admits the same actors as planning.
+// With writable VPI the import may reach any design state, so its process is
+// withheld; every remaining fanout entry is the periodic clock's own alias,
+// leaving a generated coordinator nothing to execute. Auto must choose the
+// generic scheduler before packed NBA lowering instead of failing later.
+
+// FULL: partial eval disabled: no generated executor
+// FULL-NOT: error
+// FULL-OUT: count=9
 
 // PLAN-NOT: withheld actor
 // PLAN: obelisk native eligibility: eligible=1 fully_eligible=1
