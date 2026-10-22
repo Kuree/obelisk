@@ -202,19 +202,14 @@ using detail::prepareSuspendableProcess;
 using detail::stableProcessID;
 using detail::threadProcessStateThroughCFG;
 
-LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
-  if (!::obelisk::schedule::has<::obelisk::schedule::Field::EvalGenerated>(
-          module))
-    return success();
-  // Verification does not mutate symbols. Build the index once instead of
-  // scanning the module for each edge in the generated call closure.
-  SymbolTable symbols(module);
-  bool writableEval = llvm::any_of(
-      module.getOps<LLVM::LLVMFuncOp>(), [](LLVM::LLVMFuncOp function) {
-        return function.getSymName().starts_with("__obelisk_eval_write_guard_");
-      });
-  constexpr auto allowedCalleesAttr =
-      ::obelisk::schedule::Field::EvalAllowedCallees;
+// Runtime calls admitted to a generated eval activation's call closure.
+// None executes actors, suspends, or advances time, so the activation and its
+// route bodies retain them; any other runtime call is a checkpoint leaf.
+bool isEvalClosureRuntimeCall(LLVM::CallOp call, LLVM::LLVMFuncOp function,
+                              ModuleOp module) {
+  std::optional<StringRef> callee = call.getCallee();
+  if (!callee)
+    return false;
   // This query only reads the scheduler's priority-handoff latch.  Generated
   // coordinators use it to leave the hot closure before a Reactive
   // concurrent-disable observer runs; it cannot mutate or re-enter the
@@ -232,6 +227,77 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
   // re-enter the scheduler, or alter design state, so worker-lane eval bodies
   // may retain it as an explicit observable side effect.
   constexpr StringLiteral coveragePointHit = "obelisk_rt_v1_coverage_point_hit";
+  // This read-only dependency/override query cannot execute HDL or
+  // mutate readiness. Only full VPI emits these scheduling guards;
+  // off/read retain their original generated execution paths.
+  if (*callee == "obelisk_rt_v1_static_specialization_guard" &&
+      function.getSymName().starts_with("__obelisk_eval_write_guard_"))
+    return true;
+  if (*callee == prioritySignalQuery || *callee == strengthResolveQuery ||
+      *callee == coveragePointHit ||
+      // A value helper's post-call termination poll only reads the
+      // context's finish latch. It cannot execute actors, publish
+      // state, advance time or request termination itself.
+      *callee == "obelisk_rt_v1_scheduler_termination_requested" ||
+      // Generated run_until updates the canonical scheduler time
+      // before dispatch. This query only reads that same timestamp.
+      *callee == "obelisk_rt_v1_scheduler_time" ||
+      *callee == "obelisk_rt_v1_eval_display" ||
+      // Cold allocation of private generated NBA storage. This never
+      // executes actors, changes design state or re-enters scheduling.
+      *callee == "obelisk_rt_v1_eval_nba_reserve" ||
+      // The reserve failure block latches an error and returns from
+      // the activation. It cannot schedule or execute an actor.
+      *callee == "obelisk_rt_v1_scheduler_fail" ||
+      // Exact proof-state publication over compiler-verified tables.
+      // The helper cannot allocate, execute actors, access canonical
+      // state, advance time, or re-enter the scheduler.
+      *callee == "obelisk_rt_v1_native_promotion_invalidate_ranges" ||
+      *callee == "obelisk_rt_v1_native_promotion_recheck_ranges" ||
+      // The unknown summary's rescan reads the generated unknown
+      // plane and clears summary bits; marking only sets them.
+      // Neither executes actors, publishes, or re-enters scheduling.
+      *callee == "obelisk_rt_v1_native_state_refresh_unknown_summary" ||
+      *callee == "obelisk_rt_v1_native_state_mark_unknown")
+    return true;
+  // LRM 4.6(a), 9.4.2: the hybrid calendar's bounded publication
+  // bridge preserves the source actor identity and delivers waits
+  // without executing actors or advancing time. Its actor/root are
+  // fixed by the installed generated plan; scheduling stays outside
+  // this non-suspending activation.
+  if (*callee == "obelisk_rt_v1_scheduler_static_transition_owned" &&
+      ::obelisk::schedule::has<::obelisk::schedule::Field::EvalRuntimeCalendar>(
+          module) &&
+      call.getArgOperands().size() == 9 &&
+      call.getArgOperands()[1].getDefiningOp<LLVM::ConstantOp>() &&
+      call.getArgOperands()[2].getDefiningOp<LLVM::ConstantOp>())
+    return true;
+  // IEEE 1800-2023 4.5, 9.4.2: a root whose runtime observers are
+  // all runtime-routed static fanout waits keeps the same bridge in
+  // any calendar. Periodic handoff declines while such a wait is
+  // live and a shared calendar drains it in every slot, so a
+  // delivered waiter always runs in this time slot.
+  if ((*callee == "obelisk_rt_v1_scheduler_static_transition_owned" ||
+       *callee == "obelisk_rt_v1_scheduler_static_transition") &&
+      ::obelisk::schedule::has<
+          ::obelisk::schedule::Field::EvalRuntimeRoutedPublication>(call))
+    return true;
+  return false;
+}
+
+LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
+  if (!::obelisk::schedule::has<::obelisk::schedule::Field::EvalGenerated>(
+          module))
+    return success();
+  // Verification does not mutate symbols. Build the index once instead of
+  // scanning the module for each edge in the generated call closure.
+  SymbolTable symbols(module);
+  bool writableEval = llvm::any_of(
+      module.getOps<LLVM::LLVMFuncOp>(), [](LLVM::LLVMFuncOp function) {
+        return function.getSymName().starts_with("__obelisk_eval_write_guard_");
+      });
+  constexpr auto allowedCalleesAttr =
+      ::obelisk::schedule::Field::EvalAllowedCallees;
   SmallVector<LLVM::LLVMFuncOp> pending;
   llvm::SmallPtrSet<Operation *, 32> visited;
   bool verified = true;
@@ -275,61 +341,7 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
           }
         }
         if (callee->starts_with("obelisk_rt_")) {
-          // This read-only dependency/override query cannot execute HDL or
-          // mutate readiness. Only full VPI emits these scheduling guards;
-          // off/read retain their original generated execution paths.
-          if (*callee == "obelisk_rt_v1_static_specialization_guard" &&
-              function.getSymName().starts_with("__obelisk_eval_write_guard_"))
-            return WalkResult::advance();
-          if (*callee == prioritySignalQuery ||
-              *callee == strengthResolveQuery || *callee == coveragePointHit ||
-              // A value helper's post-call termination poll only reads the
-              // context's finish latch. It cannot execute actors, publish
-              // state, advance time or request termination itself.
-              *callee == "obelisk_rt_v1_scheduler_termination_requested" ||
-              // Generated run_until updates the canonical scheduler time
-              // before dispatch. This query only reads that same timestamp.
-              *callee == "obelisk_rt_v1_scheduler_time" ||
-              *callee == "obelisk_rt_v1_eval_display" ||
-              // Cold allocation of private generated NBA storage. This never
-              // executes actors, changes design state or re-enters scheduling.
-              *callee == "obelisk_rt_v1_eval_nba_reserve" ||
-              // The reserve failure block latches an error and returns from
-              // the activation. It cannot schedule or execute an actor.
-              *callee == "obelisk_rt_v1_scheduler_fail" ||
-              // Exact proof-state publication over compiler-verified tables.
-              // The helper cannot allocate, execute actors, access canonical
-              // state, advance time, or re-enter the scheduler.
-              *callee == "obelisk_rt_v1_native_promotion_invalidate_ranges" ||
-              *callee == "obelisk_rt_v1_native_promotion_recheck_ranges" ||
-              // The unknown summary's rescan reads the generated unknown
-              // plane and clears summary bits; marking only sets them.
-              // Neither executes actors, publishes, or re-enters scheduling.
-              *callee == "obelisk_rt_v1_native_state_refresh_unknown_summary" ||
-              *callee == "obelisk_rt_v1_native_state_mark_unknown")
-            return WalkResult::advance();
-          // LRM 4.6(a), 9.4.2: the hybrid calendar's bounded publication
-          // bridge preserves the source actor identity and delivers waits
-          // without executing actors or advancing time. Its actor/root are
-          // fixed by the installed generated plan; scheduling stays outside
-          // this non-suspending activation.
-          if (*callee == "obelisk_rt_v1_scheduler_static_transition_owned" &&
-              ::obelisk::schedule::has<
-                  ::obelisk::schedule::Field::EvalRuntimeCalendar>(module) &&
-              call.getArgOperands().size() == 9 &&
-              call.getArgOperands()[1].getDefiningOp<LLVM::ConstantOp>() &&
-              call.getArgOperands()[2].getDefiningOp<LLVM::ConstantOp>())
-            return WalkResult::advance();
-          // IEEE 1800-2023 4.5, 9.4.2: a root whose runtime observers are
-          // all runtime-routed static fanout waits keeps the same bridge in
-          // any calendar. Periodic handoff declines while such a wait is
-          // live and a shared calendar drains it in every slot, so a
-          // delivered waiter always runs in this time slot.
-          if ((*callee == "obelisk_rt_v1_scheduler_static_transition_owned" ||
-               *callee == "obelisk_rt_v1_scheduler_static_transition") &&
-              ::obelisk::schedule::has<
-                  ::obelisk::schedule::Field::EvalRuntimeRoutedPublication>(
-                  call))
+          if (isEvalClosureRuntimeCall(call, function, module))
             return WalkResult::advance();
           call.emitError("generated eval hot closure calls runtime symbol ")
               << *callee << " in " << function.getSymName();
@@ -2523,14 +2535,12 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   auto fractureCheckpoints = [&](LLVM::LLVMFuncOp function) {
     llvm::MapVector<Block *, Operation *> checkpointBlocks;
     function.walk([&](LLVM::CallOp call) {
+      // Keep every call the eval call closure admits, e.g. the unknown
+      // summary refresh of a gated known-activation copy. Only the
+      // remaining runtime calls are checkpoint leaves.
       if (std::optional<StringRef> callee = call.getCallee();
           callee && callee->starts_with("obelisk_rt_") &&
-          *callee != "obelisk_rt_v1_coverage_point_hit" &&
-          *callee != "obelisk_rt_v1_scheduler_termination_requested" &&
-          *callee != "obelisk_rt_v1_scheduler_time" &&
-          *callee != "obelisk_rt_v1_eval_display" &&
-          *callee != "obelisk_rt_v1_eval_nba_reserve" &&
-          *callee != "obelisk_rt_v1_scheduler_fail")
+          !isEvalClosureRuntimeCall(call, function, module))
         checkpointBlocks.try_emplace(call->getBlock(), call.getOperation());
     });
     if (checkpointBlocks.empty())
