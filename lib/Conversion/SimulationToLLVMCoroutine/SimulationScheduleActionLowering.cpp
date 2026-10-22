@@ -156,16 +156,21 @@ void materializeNativeScheduleActions(Operation *operation, bool coalesce,
   SmallVector<schedule::NativeTransitionOp> transitions;
   SmallVector<schedule::NativeReadyCommitOp> commits;
   SmallVector<schedule::NativeReadyReadOp> reads;
-  if (!preserveReadiness) {
-    operation->walk(
-        [&](schedule::NativeReadyUpdateOp op) { updates.push_back(op); });
-    operation->walk(
-        [&](schedule::NativeReadyCommitOp op) { commits.push_back(op); });
-    operation->walk(
-        [&](schedule::NativeReadyReadOp op) { reads.push_back(op); });
-  }
-  operation->walk(
-      [&](schedule::NativeTransitionOp op) { transitions.push_back(op); });
+  // One walk of the whole module collects every kind in its own walk order.
+  operation->walk([&](Operation *op) {
+    if (auto transition = dyn_cast<schedule::NativeTransitionOp>(op)) {
+      transitions.push_back(transition);
+      return;
+    }
+    if (preserveReadiness)
+      return;
+    if (auto update = dyn_cast<schedule::NativeReadyUpdateOp>(op))
+      updates.push_back(update);
+    else if (auto commit = dyn_cast<schedule::NativeReadyCommitOp>(op))
+      commits.push_back(commit);
+    else if (auto read = dyn_cast<schedule::NativeReadyReadOp>(op))
+      reads.push_back(read);
+  });
   if (!transitions.empty()) {
     auto module = dyn_cast<ModuleOp>(operation);
     if (!module)
