@@ -24,6 +24,7 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/InliningUtils.h"
 
+#include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -237,6 +238,54 @@ LogicalResult SimTimeFromRealOp::verify() {
   if (!getScaleAttr().getValue().urem(getQuantumAttr().getValue()).isZero())
     return emitOpError("tick quantum must divide the tick scale");
   return success();
+}
+
+// A constant integral delay (IEEE 1800-2023 9.4.1) scales to constant ticks.
+// The input is already normalized; a product beyond the time range is left
+// to the dynamic path, which the frontend proves unreachable.
+OpFoldResult SimTimeScaleOp::fold(FoldAdaptor adaptor) {
+  auto input = dyn_cast_or_null<IntegerAttr>(adaptor.getInput());
+  if (!input)
+    return {};
+  bool overflow = false;
+  APInt ticks = input.getValue().umul_ov(
+      APInt(input.getValue().getBitWidth(), getScale()), overflow);
+  if (overflow || ticks.isNegative())
+    return {};
+  return IntegerAttr::get(IntegerType::get(getContext(), 64), ticks);
+}
+
+// A constant delay such as `#(cycle_time_p / 2.0)` (IEEE 1800-2023 9.4.1) is
+// rounded to the time precision (3.14.1) once. Fold it exactly as the native
+// lowering and the bytecode intrinsic evaluate it, so every tier schedules the
+// same tick.
+OpFoldResult SimTimeFromRealOp::fold(FoldAdaptor adaptor) {
+  auto input = dyn_cast_or_null<FloatAttr>(adaptor.getInput());
+  if (!input)
+    return {};
+  using llvm::APFloat;
+  uint64_t scale = getScale();
+  uint64_t quantum = getQuantum();
+  APFloat value = input.getValue();
+  if (!(value >= APFloat::getZero(value.getSemantics())))
+    value = APFloat::getZero(value.getSemantics());
+  value.multiply(APFloat(static_cast<double>(scale) /
+                         static_cast<double>(quantum)),
+                 APFloat::rmNearestTiesToEven);
+  value.add(APFloat(0.5), APFloat::rmNearestTiesToEven);
+  uint64_t maximumSteps = UINT64_MAX / quantum;
+  uint64_t steps = maximumSteps;
+  if (value.isFinite() && value < APFloat(0x1p64)) {
+    llvm::APSInt integer(64, /*isUnsigned=*/true);
+    bool exact = false;
+    value.convertToInteger(integer, APFloat::rmTowardZero, &exact);
+    steps = std::min(integer.getZExtValue(), maximumSteps);
+  }
+  uint64_t ticks = steps * quantum;
+  // Time constants are nonnegative i64 values.
+  if (ticks > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+    return {};
+  return IntegerAttr::get(IntegerType::get(getContext(), 64), ticks);
 }
 
 LogicalResult SimEventTriggerOp::verify() {

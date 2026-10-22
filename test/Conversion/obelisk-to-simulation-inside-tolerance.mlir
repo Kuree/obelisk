@@ -78,6 +78,8 @@ module attributes {coverage.language_version = 2023 : i32} {
 
 
 // CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-DAG: %[[PERCENT:.*]] = arith.constant 2.500000e+01 : f64
+// CHECK-DAG: %[[HUNDRED:.*]] = arith.constant 1.000000e+02 : f64
 // CHECK: %[[P:.*]] = simulation.ref.load %arg2
 // CHECK: %[[A:.*]] = simulation.ref.load %arg1
 // CHECK-DAG: %[[LOW:.*]] = arith.subi %[[A]], %c1_i32
@@ -92,9 +94,8 @@ module attributes {coverage.language_version = 2023 : i32} {
 // CHECK: simulation.ref.store %[[X]] to %arg3
 
 // CHECK: %[[CENTER:.*]] = simulation.real.from_integer %{{.*}} signed = true : i32 -> f64
-// CHECK: %[[PERCENT:.*]] = simulation.real.from_integer %c25_i32
 // CHECK: %[[PRODUCT:.*]] = arith.mulf %[[CENTER]], %[[PERCENT]]
-// CHECK: %[[REAL_STEP:.*]] = arith.divf %[[PRODUCT]], %cst
+// CHECK: %[[REAL_STEP:.*]] = arith.divf %[[PRODUCT]], %[[HUNDRED]]
 // CHECK: %[[BITS:.*]] = arith.bitcast %[[REAL_STEP]] : f64 to i64
 // CHECK: %[[TRUNCATED:.*]] = arith.bitcast %{{.*}} : i64 to f64
 // CHECK: %[[STEP:.*]] = simulation.real.to_integer %[[TRUNCATED]] signed = true : i32

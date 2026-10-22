@@ -5292,6 +5292,7 @@ def SimTimeFromRealOp : SimOp<"time.from_real", [Pure]> {
   let results = (outs SimTimeType:$result);
   let assemblyFormat = "$input `by` $scale `quantum` $quantum attr-dict";
   let hasVerifier = 1;
+  let hasFolder = 1;
 }
 
 def SimRealFromIntegerOp : SimOp<"real.from_integer", [Pure]> {
@@ -5304,6 +5305,7 @@ def SimRealFromIntegerOp : SimOp<"real.from_integer", [Pure]> {
   let results = (outs AnyFloat:$result);
   let assemblyFormat =
       "$input `signed` `=` $is_signed attr-dict `:` type($input) `->` type($result)";
+  let hasFolder = 1;
 }
 
 def SimRealToIntegerOp : SimOp<"real.to_integer", [Pure]> {
@@ -5328,6 +5330,7 @@ def SimTimeScaleOp : SimOp<"time.scale", [Pure]> {
   let assemblyFormat = [{$input `by` $scale `signed` `=` $is_signed attr-dict
     `:` type($input)}];
   let hasVerifier = 1;
+  let hasFolder = 1;
 }
 
 def SimTimeAddOp

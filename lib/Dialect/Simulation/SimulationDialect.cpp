@@ -975,6 +975,12 @@ Operation *ObeliskSimulationDialect::materializeConstant(OpBuilder &builder,
       return nullptr;
     return SimTimeConstantOp::create(builder, location, type, ticks);
   }
+  if (auto real = dyn_cast<FloatType>(type)) {
+    auto attr = dyn_cast<FloatAttr>(value);
+    if (!attr || attr.getType() != real)
+      return nullptr;
+    return arith::ConstantOp::create(builder, location, real, attr);
+  }
   // Integer-valued folders in this dialect materialize ordinary builtin
   // constants rather than introducing another simulation-specific constant.
   if (auto integer = dyn_cast<IntegerType>(type)) {

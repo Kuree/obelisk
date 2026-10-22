@@ -93,7 +93,7 @@ module attributes {coverage.language_version = 2023 : i32} {
 
 
 // CHECK-LABEL: simulation.func private @unit_0(
-// CHECK: %[[NEVER:.*]] = simulation.time.scale %c9223372036854775807_i64 by 1
+// CHECK: %[[NEVER:.*]] = simulation.time.constant 9223372036854775807{{$}}
 // CHECK: simulation.suspend.delay %[[NEVER]]
 // CHECK: %[[N:.*]] = simulation.ref.load %arg1 : !simulation.ref<i32>
 // CHECK: %[[N64:.*]] = arith.extsi %[[N]] : i32 to i64

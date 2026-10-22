@@ -92,10 +92,11 @@ module {
 // the declared two-tick path delay.
 // CHECK-LABEL: simulation.func private @unit_0
 // CHECK: %[[ACTIVE:.+]] = simulation.logic.case_difference_mask
-// CHECK: %[[TICKS:.+]] = arith.constant {{.*}} 2 : i64
-// CHECK: %[[DELAY:.+]] = simulation.time.scale %[[TICKS]]
+// CHECK: %[[RISE:.+]] = simulation.time.constant 2
+// CHECK: %[[FALL:.+]] = simulation.time.constant 2
+// CHECK: %[[OFF:.+]] = simulation.time.constant 2
 // CHECK: simulation.driver.drive_inertial_path
 // CHECK-SAME: active %[[ACTIVE]]
-// CHECK-SAME: after[%[[DELAY]], %[[DELAY]], %[[DELAY]]]
+// CHECK-SAME: after[%[[RISE]], %[[FALL]], %[[OFF]]]
 // CHECK: simulation.suspend.any
 // CHECK-NOT: obelisk.sv.

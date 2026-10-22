@@ -294,6 +294,19 @@ OpFoldResult SimLogicConstantOp::fold(FoldAdaptor adaptor) {
                         {adaptor.getValueAttr(), adaptor.getUnknownAttr()});
 }
 
+// IEEE 1800-2023 6.12 represents real values as IEEE Std 754 doubles, so an
+// integer converts with round-to-nearest-even and overflows to infinity.
+OpFoldResult SimRealFromIntegerOp::fold(FoldAdaptor adaptor) {
+  auto input = dyn_cast_or_null<IntegerAttr>(adaptor.getInput());
+  auto type = dyn_cast<FloatType>(getType());
+  if (!input || !type)
+    return {};
+  llvm::APFloat value(type.getFloatSemantics());
+  value.convertFromAPInt(input.getValue(), getIsSigned(),
+                         llvm::APFloat::rmNearestTiesToEven);
+  return FloatAttr::get(type, value);
+}
+
 OpFoldResult SimLogicFromBitsOp::fold(FoldAdaptor adaptor) {
   auto input = dyn_cast_or_null<IntegerAttr>(adaptor.getInput());
   if (!input)

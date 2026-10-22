@@ -32,9 +32,9 @@ module {
   }
 }
 
-// CHECK-NOT: arith.constant 4 : i64
-// CHECK: %[[SELECTED:.*]] = arith.constant 5 : i64
-// CHECK-NOT: arith.constant 6 : i64
-// CHECK: %[[DELAY:.*]] = simulation.time.scale %[[SELECTED]] by 1 signed = false : i64
+// The selected constant delay folds to its ticks (9.4.1).
+// CHECK-NOT: {{arith|simulation.time}}.constant 4
+// CHECK: %[[DELAY:.*]] = simulation.time.constant 5{{$}}
+// CHECK-NOT: {{arith|simulation.time}}.constant 6
 // CHECK: simulation.suspend.delay %[[DELAY]]
 // CHECK-NOT: obelisk.sv.
