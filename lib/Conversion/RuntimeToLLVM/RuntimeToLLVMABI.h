@@ -6,6 +6,11 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Support/LLVM.h"
 
+#include "llvm/ADT/StringMap.h"
+
+#include <memory>
+#include <mutex>
+
 namespace llvm {
 class DataLayout;
 }
@@ -21,6 +26,15 @@ struct ABIAlignments {
   unsigned argument = 0;
   unsigned environment = 0;
   unsigned action = 0;
+};
+
+/// Runtime entry points of one module, by symbol name. The runtime-call
+/// patterns share it, so each name is looked up in the module once instead of
+/// once per call.
+struct RuntimeDeclarations {
+  std::mutex mutex;
+  mlir::Operation *module = nullptr;
+  llvm::StringMap<mlir::Operation *> symbols;
 };
 
 struct ABITypes {
@@ -46,6 +60,9 @@ struct ABITypes {
   mlir::Type bytecodeServiceSite;
   ABIAlignments alignments;
   const llvm::DataLayout &layout;
+  /// Shared by every copy made from one pattern population.
+  std::shared_ptr<RuntimeDeclarations> declarations =
+      std::make_shared<RuntimeDeclarations>();
 };
 
 mlir::FailureOr<ABIAlignments>

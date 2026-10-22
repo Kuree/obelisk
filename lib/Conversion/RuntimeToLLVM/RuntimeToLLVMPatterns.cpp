@@ -158,10 +158,9 @@ LLVM::LLVMFunctionType getFunctionType(runtime::RuntimeCall call,
   return LLVM::LLVMFunctionType::get(result, arguments, false);
 }
 
-FailureOr<LLVM::LLVMFuncOp>
-getOrCreateDeclaration(Operation *anchor, runtime::RuntimeCall call,
-                       ConversionPatternRewriter &rewriter,
-                       const ABITypes &abi) {
+FailureOr<LLVM::LLVMFuncOp> getOrCreateDeclaration(Operation *anchor,
+                                                   runtime::RuntimeCall call,
+                                                   const ABITypes &abi) {
   ModuleOp module = anchor->getParentOfType<ModuleOp>();
   StringRef name = runtime::getRuntimeSymbol(call);
   if (call == runtime::RuntimeCall::Display &&
@@ -169,7 +168,16 @@ getOrCreateDeclaration(Operation *anchor, runtime::RuntimeCall call,
           anchor))
     name = "obelisk_rt_v1_eval_display";
   LLVM::LLVMFunctionType expected = getFunctionType(call, abi);
-  if (Operation *existing = SymbolTable::lookupSymbolIn(module, name)) {
+  RuntimeDeclarations &declared = *abi.declarations;
+  std::lock_guard<std::mutex> lock(declared.mutex);
+  if (declared.module != module.getOperation()) {
+    declared.module = module.getOperation();
+    declared.symbols.clear();
+  }
+  Operation *&existing = declared.symbols[name];
+  if (!existing)
+    existing = SymbolTable::lookupSymbolIn(module, name);
+  if (existing) {
     auto function = dyn_cast<LLVM::LLVMFuncOp>(existing);
     if (!function || function.getFunctionType() != expected) {
       anchor->emitOpError() << "runtime symbol @" << name
@@ -189,13 +197,15 @@ getOrCreateDeclaration(Operation *anchor, runtime::RuntimeCall call,
     }
     return function;
   }
-  OpBuilder::InsertionGuard guard(rewriter);
-  rewriter.setInsertionPointToStart(module.getBody());
+  // Not through the conversion rewriter: a declaration outlives a rolled-back
+  // pattern, so the cached entry stays valid.
+  OpBuilder builder(module.getBody(), module.getBody()->begin());
   auto function =
-      LLVM::LLVMFuncOp::create(rewriter, anchor->getLoc(), name, expected);
+      LLVM::LLVMFuncOp::create(builder, anchor->getLoc(), name, expected);
   if (runtime::isColdRuntimeCall(call))
     function.setPassthroughAttr(
-        rewriter.getArrayAttr({rewriter.getStringAttr("cold")}));
+        builder.getArrayAttr({builder.getStringAttr("cold")}));
+  existing = function;
   return function;
 }
 
@@ -967,7 +977,7 @@ public:
              << "cannot lower a runtime call nested in a concurrent region "
                 "with function-entry ABI scratch storage";
     FailureOr<LLVM::LLVMFuncOp> declaration =
-        getOrCreateDeclaration(operation, call, rewriter, abi);
+        getOrCreateDeclaration(operation, call, abi);
     if (failed(declaration))
       return failure();
     Location location = operation->getLoc();
