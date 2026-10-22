@@ -105,10 +105,8 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   }
   bool shouldDumpCoverage = hasCoverage && coveragePersistenceMask != 0;
   bool hasDesignBytecode = false;
-  uint64_t executionFlags = 0;
   if (runtime::has<runtime::ExecutionFlagSet>(module)) {
     runtime::ExecutionFlags flags = runtime::getExecutionFlags(module);
-    executionFlags = static_cast<uint32_t>(flags);
     hasDesignBytecode = runtime::bitEnumContainsAll(
         flags, runtime::ExecutionFlags::HasBytecode);
   }
@@ -118,10 +116,12 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   // source-order publication image even after generated stores run ahead.
   // Keep that image for observation-capable designs. A closed eval design
   // without those readers can let all tiers address the generated storage.
+  // A DPI export runs in its importing caller's call chain (IEEE 1800-2023
+  // 35.5.3) and must see that caller's stores, which the shared storage
+  // already holds; it needs no separate image.
   bool sharedNativeState = hasExecution && useAOT && directEval &&
                            stateLayout.bitCount && !hasObserver &&
-                           !hasCoverage &&
-                           !(executionFlags & OBELISK_RT_EXECUTION_DPI_EXPORTS);
+                           !hasCoverage;
   uint64_t linePointCount = 0;
   uint64_t toggleBitCount = 0;
   if (hasCoverage) {

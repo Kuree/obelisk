@@ -2596,8 +2596,7 @@ obelisk_rt_v1_native_state_bind_shared(obelisk_rt_context *context,
   ContextMutexLock lock(context);
   if (!context->execution || context->execution->observer_count ||
       context->vpiObservationDemand ||
-      (context->execution->flags & (OBELISK_RT_EXECUTION_DPI_EXPORTS |
-                                    OBELISK_RT_EXECUTION_COVERAGE_SCHEMA)) ||
+      (context->execution->flags & OBELISK_RT_EXECUTION_COVERAGE_SCHEMA) ||
       context->nativeStateValue || context->nativeSchedulePlan ||
       !context->nativeStaticStates.empty() ||
       !context->scheduledProcesses.empty())

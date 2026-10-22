@@ -5681,12 +5681,11 @@ TEST(Scheduler, SharedPlanesKeepInitializersTailAndKnownnessNotifications) {
   std::array<uint64_t, 2> unknown{0, UINT64_MAX};
   auto *v = reinterpret_cast<uint8_t *>(value.data());
   auto *u = reinterpret_cast<uint8_t *>(unknown.data());
-  for (uint32_t flags : {OBELISK_RT_EXECUTION_DPI_EXPORTS,
-                         OBELISK_RT_EXECUTION_COVERAGE_SCHEMA}) {
-    execution.flags = flags;
-    EXPECT_EQ(obelisk_rt_v1_native_state_bind_shared(context, v, u, 67),
-              OBELISK_RT_INVALID_LIFECYCLE);
-  }
+  // A DPI export shares the image (IEEE 1800-2023 35.5.3); a coverage
+  // schema keeps its own.
+  execution.flags = OBELISK_RT_EXECUTION_COVERAGE_SCHEMA;
+  EXPECT_EQ(obelisk_rt_v1_native_state_bind_shared(context, v, u, 67),
+            OBELISK_RT_INVALID_LIFECYCLE);
   execution.flags = 0;
   execution.observer_count = 1;
   EXPECT_EQ(obelisk_rt_v1_native_state_bind_shared(context, v, u, 67),
