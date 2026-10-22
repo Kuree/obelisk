@@ -49,6 +49,11 @@ materializeGeneratedNBAAccumulators(ModuleOp module,
         LLVM::LLVMArrayType::get(builder.getI64Type(), count), false,
         LLVM::Linkage::External, name, Attribute{}, 8);
   }
+  // A two-state eval copy that stages an unknown NBA payload records it in
+  // the step evidence when packed staging lowers (IEEE 1800-2023 10.4.2).
+  if (llvm::any_of(plan.generatedAccumulators,
+                   [](const std::string &name) { return !name.empty(); }))
+    materializeEvalStepFourStateGlobals(module, words);
   for (StringRef name : plan.generatedAccumulators) {
     if (name.empty())
       continue;
@@ -66,6 +71,28 @@ materializeGeneratedNBAAccumulators(ModuleOp module,
         LLVM::ZeroOp::create(builder, location, storageType));
   }
   return success();
+}
+
+void materializeEvalStepFourStateGlobals(ModuleOp module, uint64_t taintWords) {
+  OpBuilder builder(module.getContext());
+  Location location = module.getLoc();
+  builder.setInsertionPointToStart(module.getBody());
+  if (!module.lookupSymbol(evalStepFourStateFallbackName))
+    LLVM::GlobalOp::create(builder, location, builder.getI8Type(), false,
+                           LLVM::Linkage::Internal,
+                           evalStepFourStateFallbackName,
+                           builder.getI8IntegerAttr(0), 1);
+  if (taintWords == 0 || module.lookupSymbol(evalStepFourStateNBARootsName))
+    return;
+  Type taintType = LLVM::LLVMArrayType::get(builder.getI64Type(), taintWords);
+  auto taint = LLVM::GlobalOp::create(
+      builder, location, taintType, false, LLVM::Linkage::Internal,
+      evalStepFourStateNBARootsName, Attribute{}, 8);
+  Block *initializer = new Block;
+  taint.getInitializerRegion().push_back(initializer);
+  builder.setInsertionPointToStart(initializer);
+  LLVM::ReturnOp::create(builder, location,
+                         LLVM::ZeroOp::create(builder, location, taintType));
 }
 
 } // namespace obelisk::detail

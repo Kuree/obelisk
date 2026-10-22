@@ -1184,10 +1184,6 @@ FailureOr<bool> makeNativeEvalPlan(
   constexpr StringLiteral runtimeNBACommitName =
       "__obelisk_aot_runtime_nba_commit_v1";
   constexpr StringLiteral nbaKnownName = "__obelisk_eval_nba_known_v1";
-  constexpr StringLiteral evalStepFourStateFallbackName =
-      "__obelisk_eval_step_four_state_fallback_v1";
-  constexpr StringLiteral evalStepFourStateNBARootsName =
-      "__obelisk_eval_step_four_state_nba_roots_v1";
   constexpr StringLiteral evalFastNBARootsName =
       "__obelisk_eval_fast_nba_roots_v1";
   constexpr StringLiteral periodicTerminationName =
@@ -1231,21 +1227,10 @@ FailureOr<bool> makeNativeEvalPlan(
   LLVM::ReturnOp::create(builder, location,
                          LLVM::ZeroOp::create(builder, location, pointer));
 
-  builder.setInsertionPointToStart(module.getBody());
-  (void)LLVM::GlobalOp::create(
-      builder, location, builder.getI8Type(), false, LLVM::Linkage::Internal,
-      evalStepFourStateFallbackName, builder.getI8IntegerAttr(0), 1);
+  // Packed NBA staging may already have created the step evidence globals.
+  materializeEvalStepFourStateGlobals(module, nbaTaintWordCount);
   if (nbaTaintWordCount != 0) {
     Type taintType = LLVM::LLVMArrayType::get(i64, nbaTaintWordCount);
-    builder.setInsertionPointToStart(module.getBody());
-    auto taint = LLVM::GlobalOp::create(
-        builder, location, taintType, false, LLVM::Linkage::Internal,
-        evalStepFourStateNBARootsName, Attribute{}, 8);
-    Block *initializer = new Block;
-    taint.getInitializerRegion().push_back(initializer);
-    builder.setInsertionPointToStart(initializer);
-    LLVM::ReturnOp::create(builder, location,
-                           LLVM::ZeroOp::create(builder, location, taintType));
     builder.setInsertionPointToStart(module.getBody());
     auto fastRoots = LLVM::GlobalOp::create(
         builder, location, taintType, false, LLVM::Linkage::Internal,

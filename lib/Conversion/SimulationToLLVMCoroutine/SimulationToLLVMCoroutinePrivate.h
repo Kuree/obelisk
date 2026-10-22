@@ -88,6 +88,16 @@ inline constexpr llvm::StringLiteral evalCheckpointMutableStateName =
     "__obelisk_eval_checkpoint_mutable_state_v1";
 inline constexpr llvm::StringLiteral evalDispatchName =
     "__obelisk_eval_dispatch_v1";
+// Per-step evidence that an activation staged four-state NBA data: the byte
+// selects the four-state commit, the bit array names the staged roots.
+inline constexpr llvm::StringLiteral evalStepFourStateFallbackName =
+    "__obelisk_eval_step_four_state_fallback_v1";
+inline constexpr llvm::StringLiteral evalStepFourStateNBARootsName =
+    "__obelisk_eval_step_four_state_nba_roots_v1";
+/// Create the step evidence globals unless they exist: a zero byte and, for a
+/// nonzero `taintWords`, a zeroed array of that many root-bit words.
+void materializeEvalStepFourStateGlobals(mlir::ModuleOp module,
+                                         uint64_t taintWords);
 inline constexpr auto evalRuntimeNBARequiredAttr =
     ::obelisk::schedule::Field::EvalRuntimeNbaRequired;
 inline constexpr auto evalRuntimeNBAFallbackAttr =

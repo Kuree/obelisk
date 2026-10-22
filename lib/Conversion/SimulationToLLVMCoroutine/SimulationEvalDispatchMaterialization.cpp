@@ -26,10 +26,6 @@ using namespace mlir;
 namespace obelisk::detail {
 namespace {
 
-constexpr StringLiteral evalStepFourStateFallbackName =
-    "__obelisk_eval_step_four_state_fallback_v1";
-constexpr StringLiteral evalStepFourStateNBARootsName =
-    "__obelisk_eval_step_four_state_nba_roots_v1";
 constexpr StringLiteral evalFastNBARootsName =
     "__obelisk_eval_fast_nba_roots_v1";
 constexpr StringLiteral promotionPendingMaskName =

@@ -1162,6 +1162,52 @@ public:
         unknown = widen(adaptor.getValue()[1]);
       if (inductiveTwoStateAccess)
         unknown = llvmConstant(rewriter, location, i64, 0);
+      // A two-state eval copy normally stages known values, and the two-state
+      // NBA commits replace staged unknown data with zero. A payload that is
+      // not inductively two-state can still compute X/Z (a ?: join, a case
+      // default, x/0, an out-of-range read), and the update must store exactly
+      // that value (IEEE 1800-2023 10.4.2, 4.4.2.4). When this activation
+      // stages unknown bits, send its step to the four-state commit and mark
+      // the root so it is not committed as fast two-state data.
+      if (!inductiveTwoStateAccess && !generatedAccumulator.empty() &&
+          adaptor.getValue().size() == 2 && function &&
+          ::obelisk::schedule::has<
+              ::obelisk::schedule::Field::EvalInductiveTwoState>(function)) {
+        Block *head = rewriter.getInsertionBlock();
+        Block *continuation =
+            rewriter.splitBlock(head, rewriter.getInsertionPoint());
+        Block *staged = rewriter.createBlock(head->getParent(),
+                                             continuation->getIterator());
+        recordStaticSpecializationCFGBlocks(rewriter, head, 2);
+        rewriter.setInsertionPointToEnd(head);
+        Value hasUnknown = arith::CmpIOp::create(
+            rewriter, location, arith::CmpIPredicate::ne, unknown,
+            llvmConstant(rewriter, location, i64, 0));
+        cf::CondBranchOp::create(rewriter, location, hasUnknown, staged,
+                                 ValueRange{}, continuation, ValueRange{});
+        rewriter.setInsertionPointToEnd(staged);
+        LLVM::StoreOp::create(
+            rewriter, location,
+            llvmConstant(rewriter, location, rewriter.getI8Type(), 1),
+            LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                      evalStepFourStateFallbackName),
+            1);
+        Value roots = byteGEP(
+            rewriter, location,
+            LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                      evalStepFourStateNBARootsName),
+            uint64_t{staticRoot->second / 64} * sizeof(uint64_t));
+        Value marked = LLVM::LoadOp::create(rewriter, location, i64, roots, 8);
+        LLVM::StoreOp::create(
+            rewriter, location,
+            arith::OrIOp::create(
+                rewriter, location, marked,
+                llvmConstant(rewriter, location, i64,
+                             uint64_t{1} << (staticRoot->second % 64))),
+            roots, 8);
+        cf::BranchOp::create(rewriter, location, continuation);
+        rewriter.setInsertionPointToStart(continuation);
+      }
       Value value = widen(adaptor.getValue().front());
       uint32_t homeRegion =
           function ? getRuntimeEventRegion(function.getHomeRegion())
