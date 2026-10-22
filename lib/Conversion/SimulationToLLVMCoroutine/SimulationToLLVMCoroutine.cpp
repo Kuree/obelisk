@@ -248,7 +248,9 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
     WalkResult result = function.walk([&](LLVM::CallOp call) {
       SmallVector<FlatSymbolRefAttr> targets;
       if (std::optional<StringRef> callee = call.getCallee()) {
-        if (function.getSymName() == detail::evalDispatchName && writableEval &&
+        // Owner code may sit in a coordinator segment function.
+        if (function.getSymName().starts_with(detail::evalDispatchName) &&
+            writableEval &&
             *callee == "obelisk_rt_v1_scheduler_execute_aot_actor" &&
             call.getArgOperands().size() == 2 &&
             call.getArgOperands()[1].getDefiningOp<LLVM::ConstantOp>())

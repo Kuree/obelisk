@@ -19,6 +19,8 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringMap.h"
 
+#include <map>
+
 using namespace mlir;
 
 namespace obelisk::detail {
@@ -198,10 +200,10 @@ materializeNativeEvalDispatch(ModuleOp module,
   auto combinedIngress = [&] {
     return maskedOwnerWords(builder, location, ingressAddress(), allOwners);
   };
-  auto ownerWritableClean = [&](unsigned owner) -> Value {
-    return LLVM::CallOp::create(
-               builder, location, TypeRange{builder.getI1Type()},
-               writeGuards[owner], ValueRange{fastEntry->getArgument(1)})
+  auto ownerWritableClean = [&](unsigned owner, Value context) -> Value {
+    return LLVM::CallOp::create(builder, location,
+                                TypeRange{builder.getI1Type()},
+                                writeGuards[owner], ValueRange{context})
         .getResult();
   };
   auto clearIngressMask = [&](const APInt &mask, Value condition = Value{}) {
@@ -262,9 +264,9 @@ materializeNativeEvalDispatch(ModuleOp module,
                                              uint64_t{1} << (record.bit % 64))),
           llvmConstant(builder, location, i64, 0));
       if (plan.writableVPI)
-        coordinatorPending =
-            arith::AndIOp::create(builder, location, coordinatorPending,
-                                  ownerWritableClean(recordIndex));
+        coordinatorPending = arith::AndIOp::create(
+            builder, location, coordinatorPending,
+            ownerWritableClean(recordIndex, fastEntry->getArgument(1)));
       for (unsigned word = 0; word != ready.size(); ++word) {
         uint64_t members = ownerMaskWord(subsumed, word);
         if (!members)
@@ -363,6 +365,89 @@ materializeNativeEvalDispatch(ModuleOp module,
                ? StringRef(plan.rankedGroupExecutors[index])
                : StringRef{};
   };
+  // Records whose subsumption mask contains each owner bit, computed once:
+  // scanning every record per owner is quadratic in the owner count.
+  SmallVector<SmallVector<unsigned, 1>> supersedingRecords(ownerCount);
+  for (auto [parent, parentRecord] : llvm::enumerate(mergedFragments)) {
+    const APInt &members = ownerSubsumptionMasks[parent];
+    if (!allowedOwnerMask[parentRecord.bit] || members.isZero())
+      continue;
+    for (unsigned word = 0; word != members.getNumWords(); ++word)
+      for (uint64_t bits = members.getRawData()[word]; bits; bits &= bits - 1)
+        supersedingRecords[word * 64 + llvm::countr_zero(bits)].push_back(
+            parent);
+  }
+  // Where one owner's execution continues: dispatch the next ready owner,
+  // fail with its status, or stop the generated loop.
+  struct OwnerTargets {
+    Region *body;
+    Value context;
+    Value fourStateFallback;
+    Block *dispatch;
+    Block *failed;
+    Block *stopped;
+  };
+  const OwnerTargets coordinatorTargets{&fastCoordinator.getBody(),
+                                        fastEntry->getArgument(1),
+                                        fourStateFallback,
+                                        dispatch,
+                                        failed,
+                                        stopped};
+  // Owner execution code is linear in the owners that share no ranked group.
+  // A cyclic island can hold tens of thousands of them, and one coordinator
+  // body of that size can neither be divided among backend partitions nor
+  // pass through superlinear LLVM transforms. Beyond one segment, emit them
+  // in bounded segment functions that return OK to continue dispatch, or the
+  // status for the coordinator to return.
+  constexpr unsigned segmentShift = 9;
+  unsigned directOwners = 0;
+  for (auto [recordIndex, record] : llvm::enumerate(mergedFragments))
+    directOwners += !executors[recordIndex].empty() &&
+                    allowedOwnerMask[record.bit] &&
+                    rankedExecutor(recordIndex).empty();
+  const bool segmented = directOwners > (1u << segmentShift);
+  struct Segment {
+    LLVM::LLVMFuncOp function;
+    OwnerTargets targets;
+    SmallVector<APInt> cases;
+    SmallVector<Block *> destinations;
+  };
+  std::map<uint64_t, Segment> segments;
+  auto segmentFor = [&](uint64_t index) -> Segment & {
+    auto [found, inserted] = segments.try_emplace(index);
+    Segment &segment = found->second;
+    if (!inserted)
+      return segment;
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToEnd(module.getBody());
+    segment.function = LLVM::LLVMFuncOp::create(
+        builder, location,
+        (Twine(functionName) + ".segment_" + Twine(index)).str(),
+        LLVM::LLVMFunctionType::get(i32, {pointer, i64, pointer}, false));
+    Block *entry = segment.function.addEntryBlock(builder);
+    Block *resume = new Block, *segmentFailed = new Block,
+          *segmentStopped = new Block;
+    segmentFailed->addArgument(i32, location);
+    segment.function.getBody().push_back(resume);
+    segment.function.getBody().push_back(segmentFailed);
+    segment.function.getBody().push_back(segmentStopped);
+    builder.setInsertionPointToStart(resume);
+    LLVM::ReturnOp::create(builder, location,
+                           llvmConstant(builder, location, i32, OBELISK_RT_OK));
+    builder.setInsertionPointToStart(segmentFailed);
+    LLVM::ReturnOp::create(builder, location, segmentFailed->getArgument(0));
+    builder.setInsertionPointToStart(segmentStopped);
+    LLVM::ReturnOp::create(
+        builder, location,
+        llvmConstant(builder, location, i32, OBELISK_RT_TIER_UNAVAILABLE));
+    segment.targets = {&segment.function.getBody(),
+                       entry->getArgument(0),
+                       entry->getArgument(2),
+                       resume,
+                       segmentFailed,
+                       segmentStopped};
+    return segment;
+  };
   llvm::StringMap<Block *> rankedEntries;
   for (auto [recordIndex, record] : llvm::enumerate(mergedFragments)) {
     if (executors[recordIndex].empty())
@@ -407,29 +492,38 @@ materializeNativeEvalDispatch(ModuleOp module,
       destinationOperands.push_back(ValueRange{});
       continue;
     }
+    // Owners above one segment execute in their segment function.
+    Segment *segment =
+        segmented ? &segmentFor(record.bit >> segmentShift) : nullptr;
+    const OwnerTargets &targets =
+        segment ? segment->targets : coordinatorTargets;
     Block *execute = new Block;
-    fastCoordinator.getBody().push_back(execute);
-    cases.push_back(APInt(64, record.bit));
-    destinations.push_back(execute);
-    destinationOperands.push_back(ValueRange{});
+    targets.body->push_back(execute);
+    if (segment) {
+      segment->cases.push_back(APInt(64, record.bit));
+      segment->destinations.push_back(execute);
+    } else {
+      cases.push_back(APInt(64, record.bit));
+      destinations.push_back(execute);
+      destinationOperands.push_back(ValueRange{});
+    }
     builder.setInsertionPointToStart(execute);
     if (readyLayout.hasCache()) {
-      APInt superseding(ownerCount, 0);
-      for (auto [parent, parentRecord] : llvm::enumerate(mergedFragments))
-        if (allowedOwnerMask[parentRecord.bit] &&
-            ownerSubsumptionMasks[parent][record.bit])
-          superseding.setBit(parentRecord.bit);
+      APInt superseding;
+      if (!supersedingRecords[record.bit].empty()) {
+        superseding = APInt(ownerCount, 0);
+        for (unsigned parent : supersedingRecords[record.bit])
+          superseding.setBit(mergedFragments[parent].bit);
+      }
       if (plan.writableVPI) {
         Value parents = llvmConstant(builder, location, i64, 0);
-        for (auto [parent, parentRecord] : llvm::enumerate(mergedFragments)) {
-          if (!superseding[parentRecord.bit])
-            continue;
+        for (unsigned parent : supersedingRecords[record.bit]) {
           Value pending = maskedOwnerWords(
               builder, location, ingressAddress(),
-              APInt::getOneBitSet(ownerCount, parentRecord.bit));
+              APInt::getOneBitSet(ownerCount, mergedFragments[parent].bit));
           pending = arith::SelectOp::create(
-              builder, location, ownerWritableClean(parent), pending,
-              llvmConstant(builder, location, i64, 0));
+              builder, location, ownerWritableClean(parent, targets.context),
+              pending, llvmConstant(builder, location, i64, 0));
           parents = arith::OrIOp::create(builder, location, parents, pending);
         }
         // The ordinary normalization below must not drop exact work when its
@@ -439,13 +533,13 @@ materializeNativeEvalDispatch(ModuleOp module,
             builder, location, arith::CmpIPredicate::ne, parents,
             llvmConstant(builder, location, i64, 0));
         Block *skip = new Block, *uncovered = new Block;
-        fastCoordinator.getBody().push_back(skip);
-        fastCoordinator.getBody().push_back(uncovered);
+        targets.body->push_back(skip);
+        targets.body->push_back(uncovered);
         cf::CondBranchOp::create(builder, location, covered, skip, ValueRange{},
                                  uncovered, ValueRange{});
         builder.setInsertionPointToStart(skip);
         clearIngressMask(APInt::getOneBitSet(ownerCount, record.bit));
-        cf::BranchOp::create(builder, location, dispatch);
+        cf::BranchOp::create(builder, location, targets.dispatch);
         builder.setInsertionPointToStart(uncovered);
       }
       if (!superseding.isZero()) {
@@ -460,23 +554,23 @@ materializeNativeEvalDispatch(ModuleOp module,
             llvmConstant(builder, location, i64, 0));
         Block *skip = new Block;
         Block *uncovered = new Block;
-        fastCoordinator.getBody().push_back(skip);
-        fastCoordinator.getBody().push_back(uncovered);
+        targets.body->push_back(skip);
+        targets.body->push_back(uncovered);
         cf::CondBranchOp::create(builder, location, covered, skip, ValueRange{},
                                  uncovered, ValueRange{});
         builder.setInsertionPointToStart(skip);
         clearIngressMask(APInt::getOneBitSet(ownerCount, record.bit));
-        cf::BranchOp::create(builder, location, dispatch);
+        cf::BranchOp::create(builder, location, targets.dispatch);
         builder.setInsertionPointToStart(uncovered);
       }
     }
     if (plan.writableVPI) {
       Block *clean = new Block, *fine = new Block;
-      fastCoordinator.getBody().push_back(clean);
-      fastCoordinator.getBody().push_back(fine);
+      targets.body->push_back(clean);
+      targets.body->push_back(fine);
       cf::CondBranchOp::create(builder, location,
-                               ownerWritableClean(recordIndex), clean,
-                               ValueRange{}, fine, ValueRange{});
+                               ownerWritableClean(recordIndex, targets.context),
+                               clean, ValueRange{}, fine, ValueRange{});
       builder.setInsertionPointToStart(fine);
       // Consume only this activation. Exact existing ingress is retained;
       // clock-only full sweeps seed the original clock-triggered fine entries.
@@ -486,26 +580,27 @@ materializeNativeEvalDispatch(ModuleOp module,
         updateOwnerMask(builder, location, ingressAddress(),
                         plan.ownerFineIngress[recordIndex], /*clear=*/false, {},
                         &readyLayout);
-        cf::BranchOp::create(builder, location, dispatch);
+        cf::BranchOp::create(builder, location, targets.dispatch);
       } else {
         LLVM::StoreOp::create(
             builder, location,
             llvmConstant(builder, location, builder.getI1Type(), 1),
-            fourStateFallback, 1);
+            targets.fourStateFallback, 1);
         if (ownerMayTaintNBA(recordIndex))
           markOwnerNBATaint(recordIndex);
         Value status =
-            LLVM::CallOp::create(builder, location, TypeRange{i32},
-                                 "obelisk_rt_v1_scheduler_execute_aot_actor",
-                                 ValueRange{fastEntry->getArgument(1),
-                                            llvmConstant(builder, location, i32,
+            LLVM::CallOp::create(
+                builder, location, TypeRange{i32},
+                "obelisk_rt_v1_scheduler_execute_aot_actor",
+                ValueRange{targets.context, llvmConstant(builder, location, i32,
                                                          record.actor_slot)})
                 .getResult();
         Value ok = arith::CmpIOp::create(
             builder, location, arith::CmpIPredicate::eq, status,
             llvmConstant(builder, location, i32, OBELISK_RT_OK));
-        cf::CondBranchOp::create(builder, location, ok, dispatch, ValueRange{},
-                                 failed, ValueRange{status});
+        cf::CondBranchOp::create(builder, location, ok, targets.dispatch,
+                                 ValueRange{}, targets.failed,
+                                 ValueRange{status});
       }
       builder.setInsertionPointToStart(clean);
     }
@@ -526,7 +621,7 @@ materializeNativeEvalDispatch(ModuleOp module,
       LLVM::StoreOp::create(
           builder, location,
           llvmConstant(builder, location, builder.getI1Type(), 1),
-          fourStateFallback, 1);
+          targets.fourStateFallback, 1);
       if (ownerMayTaintNBA(recordIndex))
         markOwnerNBATaint(recordIndex);
     }
@@ -557,10 +652,10 @@ materializeNativeEvalDispatch(ModuleOp module,
       Block *executeTwoState = new Block;
       Block *executeJoin = new Block;
       executeJoin->addArgument(i32, location);
-      fastCoordinator.getBody().push_back(checkPromotion);
-      fastCoordinator.getBody().push_back(executeFourState);
-      fastCoordinator.getBody().push_back(executeTwoState);
-      fastCoordinator.getBody().push_back(executeJoin);
+      targets.body->push_back(checkPromotion);
+      targets.body->push_back(executeFourState);
+      targets.body->push_back(executeTwoState);
+      targets.body->push_back(executeJoin);
       cf::CondBranchOp::create(builder, location, selectedPromotionPending,
                                checkPromotion, ValueRange{}, executeTwoState,
                                ValueRange{});
@@ -577,14 +672,14 @@ materializeNativeEvalDispatch(ModuleOp module,
       LLVM::StoreOp::create(
           builder, location,
           llvmConstant(builder, location, builder.getI1Type(), 1),
-          fourStateFallback, 1);
+          targets.fourStateFallback, 1);
       if (ownerMayTaintNBA(recordIndex))
         markOwnerNBATaint(recordIndex);
       Value fourStateStatus =
           LLVM::CallOp::create(
               builder, location, TypeRange{i32},
               SymbolRefAttr::get(context, executors[recordIndex]),
-              ValueRange{fastEntry->getArgument(1)})
+              ValueRange{targets.context})
               .getResult();
       cf::BranchOp::create(builder, location, executeJoin,
                            ValueRange{fourStateStatus});
@@ -593,7 +688,7 @@ materializeNativeEvalDispatch(ModuleOp module,
           LLVM::CallOp::create(
               builder, location, TypeRange{i32},
               SymbolRefAttr::get(context, mergedTwoStateExecutors[recordIndex]),
-              ValueRange{fastEntry->getArgument(1)})
+              ValueRange{targets.context})
               .getResult();
       ::obelisk::schedule::set<
           ::obelisk::schedule::Field::EvalProvenTwoStateCall>(
@@ -606,7 +701,7 @@ materializeNativeEvalDispatch(ModuleOp module,
       executeStatus = LLVM::CallOp::create(
                           builder, location, TypeRange{i32},
                           SymbolRefAttr::get(context, executors[recordIndex]),
-                          ValueRange{fastEntry->getArgument(1)})
+                          ValueRange{targets.context})
                           .getResult();
     }
     if (!convergenceOwner)
@@ -646,21 +741,23 @@ materializeNativeEvalDispatch(ModuleOp module,
          ::obelisk::schedule::has<schedule::metadata::evalInfallible>(
              twoStateExecutor));
     if (infallible && !mayTerminate) {
-      cf::BranchOp::create(builder, location, dispatch);
+      cf::BranchOp::create(builder, location, targets.dispatch);
       continue;
     }
     if (!mayTerminate) {
-      cf::CondBranchOp::create(builder, location, executeOK, dispatch,
-                               ValueRange{}, failed, ValueRange{executeStatus});
+      cf::CondBranchOp::create(builder, location, executeOK, targets.dispatch,
+                               ValueRange{}, targets.failed,
+                               ValueRange{executeStatus});
       continue;
     }
     Block *checkTermination = new Block;
     Block *loadTermination = new Block;
-    fastCoordinator.getBody().push_back(checkTermination);
+    targets.body->push_back(checkTermination);
     if (loadTermination)
-      fastCoordinator.getBody().push_back(loadTermination);
+      targets.body->push_back(loadTermination);
     cf::CondBranchOp::create(builder, location, executeOK, checkTermination,
-                             ValueRange{}, failed, ValueRange{executeStatus});
+                             ValueRange{}, targets.failed,
+                             ValueRange{executeStatus});
     builder.setInsertionPointToStart(checkTermination);
     Value terminationAddress =
         LLVM::LoadOp::create(builder, location, pointer,
@@ -672,20 +769,67 @@ materializeNativeEvalDispatch(ModuleOp module,
     Value noTerminationAddress = LLVM::ICmpOp::create(
         builder, location, LLVM::ICmpPredicate::eq, terminationAddress,
         LLVM::ZeroOp::create(builder, location, pointer));
-    cf::CondBranchOp::create(builder, location, noTerminationAddress, dispatch,
-                             ValueRange{}, loadTermination, ValueRange{});
+    cf::CondBranchOp::create(builder, location, noTerminationAddress,
+                             targets.dispatch, ValueRange{}, loadTermination,
+                             ValueRange{});
     builder.setInsertionPointToStart(loadTermination);
     Value termination =
         LLVM::LoadOp::create(builder, location, i32, terminationAddress, 4);
     Value stopping = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::ne, termination,
         llvmConstant(builder, location, i32, 0));
-    cf::CondBranchOp::create(builder, location, stopping, stopped, ValueRange{},
-                             dispatch, ValueRange{});
+    cf::CondBranchOp::create(builder, location, stopping, targets.stopped,
+                             ValueRange{}, targets.dispatch, ValueRange{});
+  }
+  Block *otherOwner = stopped;
+  if (segmented) {
+    // A segmented owner bit selects its segment; the segment's own switch
+    // stops on a bit that names no owner, exactly as the coordinator does.
+    otherOwner = new Block;
+    fastCoordinator.getBody().push_back(otherOwner);
+    SmallVector<APInt> segmentCases;
+    SmallVector<Block *> segmentCalls;
+    for (auto &[index, segment] : segments) {
+      builder.setInsertionPointToEnd(&segment.function.getBody().front());
+      LLVM::SwitchOp::create(
+          builder, location, segment.function.getArgument(1),
+          segment.targets.stopped, ValueRange{}, segment.cases,
+          segment.destinations,
+          SmallVector<ValueRange>(segment.cases.size(), ValueRange{}),
+          ArrayRef<int32_t>{});
+      // Infallible owners never branch to the failure exit. Do not leave an
+      // unreachable block for later lowering to skip.
+      for (Block *exit : {segment.targets.dispatch, segment.targets.failed})
+        if (exit->hasNoPredecessors())
+          exit->erase();
+      Block *call = new Block;
+      fastCoordinator.getBody().push_back(call);
+      builder.setInsertionPointToStart(call);
+      Value status = LLVM::CallOp::create(builder, location, segment.function,
+                                          ValueRange{fastEntry->getArgument(1),
+                                                     bit, fourStateFallback})
+                         .getResult();
+      Value ok = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, status,
+          llvmConstant(builder, location, i32, OBELISK_RT_OK));
+      cf::CondBranchOp::create(builder, location, ok, dispatch, ValueRange{},
+                               failed, ValueRange{status});
+      segmentCases.push_back(APInt(64, index));
+      segmentCalls.push_back(call);
+    }
+    builder.setInsertionPointToStart(otherOwner);
+    Value segmentIndex = arith::ShRUIOp::create(
+        builder, location, bit,
+        llvmConstant(builder, location, i64, segmentShift));
+    LLVM::SwitchOp::create(
+        builder, location, segmentIndex, stopped, ValueRange{}, segmentCases,
+        segmentCalls,
+        SmallVector<ValueRange>(segmentCases.size(), ValueRange{}),
+        ArrayRef<int32_t>{});
   }
   builder.setInsertionPointToEnd(switchBlock);
-  LLVM::SwitchOp::create(builder, location, bit, stopped, ValueRange{}, cases,
-                         destinations, destinationOperands,
+  LLVM::SwitchOp::create(builder, location, bit, otherOwner, ValueRange{},
+                         cases, destinations, destinationOperands,
                          ArrayRef<int32_t>{});
 
   auto emitReturns = [&] {
