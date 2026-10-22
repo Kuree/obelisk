@@ -320,6 +320,17 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
               call.getArgOperands()[1].getDefiningOp<LLVM::ConstantOp>() &&
               call.getArgOperands()[2].getDefiningOp<LLVM::ConstantOp>())
             return WalkResult::advance();
+          // IEEE 1800-2023 4.5, 9.4.2: a root whose runtime observers are
+          // all runtime-routed static fanout waits keeps the same bridge in
+          // any calendar. Periodic handoff declines while such a wait is
+          // live and a shared calendar drains it in every slot, so a
+          // delivered waiter always runs in this time slot.
+          if ((*callee == "obelisk_rt_v1_scheduler_static_transition_owned" ||
+               *callee == "obelisk_rt_v1_scheduler_static_transition") &&
+              ::obelisk::schedule::has<
+                  ::obelisk::schedule::Field::EvalRuntimeRoutedPublication>(
+                  call))
+            return WalkResult::advance();
           call.emitError("generated eval hot closure calls runtime symbol ")
               << *callee << " in " << function.getSymName();
           return WalkResult::interrupt();

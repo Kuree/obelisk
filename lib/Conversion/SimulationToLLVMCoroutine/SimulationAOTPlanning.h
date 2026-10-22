@@ -44,6 +44,9 @@ struct NativeStaticFanoutPlan {
   llvm::DenseMap<std::pair<uint32_t, uint32_t>, llvm::SmallVector<uint32_t>>
       fragments;
   llvm::DenseSet<uint32_t> runtimeTransitionStates;
+  // Members of runtimeTransitionStates whose only runtime observers are
+  // static fanout entries left without a generated owner.
+  llvm::DenseSet<uint32_t> runtimeRoutedTransitionStates;
   bool exact = false;
 };
 

@@ -242,6 +242,11 @@ void materializeNativeScheduleActions(Operation *operation, bool coalesce,
                    transition.getNewValue(), transition.getNewUnknown()});
     if (auto owner = transition.getSourceOwnerAttr())
       schedule::set<schedule::Field::EvalSourceOwner>(call, owner);
+    if (auto routed =
+            schedule::get<schedule::Field::EvalRuntimeRoutedPublication>(
+                transition))
+      schedule::set<schedule::Field::EvalRuntimeRoutedPublication>(call,
+                                                                   routed);
     transition.erase();
   }
 }

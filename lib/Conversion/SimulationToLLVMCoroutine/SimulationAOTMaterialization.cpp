@@ -1739,6 +1739,11 @@ FailureOr<bool> makeNativeEvalPlan(
       std::optional<uint64_t> bitWidth = call.getWidth();
       bool hasRuntimeOwnedObserver =
           staticFanoutPlan.runtimeTransitionStates.contains(*staticState);
+      if (staticFanoutPlan.runtimeRoutedTransitionStates.contains(
+              *staticState))
+        ::obelisk::schedule::set<
+            ::obelisk::schedule::Field::EvalRuntimeRoutedPublication>(
+            call, UnitAttr::get(context));
       if (hasRuntimeOwnedObserver && physicalSourceOwner)
         ownedPublications.emplace_back(call, physicalSourceOwner->first);
       OpBuilder transitionBuilder(call);
@@ -2030,11 +2035,16 @@ FailureOr<bool> makeNativeEvalPlan(
           call.getOldUnknown(),
           call.getNewValue(),
           call.getNewUnknown()};
-      LLVM::CallOp::create(
+      auto owned = LLVM::CallOp::create(
           publication, call.getLoc(), TypeRange{},
           SymbolRefAttr::get(context,
                              "obelisk_rt_v1_scheduler_static_transition_owned"),
           arguments);
+      if (auto routed = ::obelisk::schedule::get<
+              ::obelisk::schedule::Field::EvalRuntimeRoutedPublication>(call))
+        ::obelisk::schedule::set<
+            ::obelisk::schedule::Field::EvalRuntimeRoutedPublication>(owned,
+                                                                      routed);
       call.erase();
     }
 

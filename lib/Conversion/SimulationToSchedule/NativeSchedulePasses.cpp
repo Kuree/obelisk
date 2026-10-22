@@ -1268,6 +1268,19 @@ LogicalResult NativePipelineAnalysis::planOwnership() {
     if (failed(ownership))
       return failure();
     evalOwnership = std::move(*ownership);
+    // IEEE 1800-2023 9.4.2: an entry without a generated owner keeps a
+    // runtime-routed wait, for example a testbench loop that carries
+    // plusarg state. A generated writer of its root (a forwarded clock copy)
+    // must publish through the runtime transition bridge, as for any other
+    // runtime observer; a generated ready bit cannot resume that waiter.
+    for (auto [entryIndex, entry] : llvm::enumerate(staticFanoutPlan.entries))
+      if (entryIndex < evalOwnership.fanoutOwners.size() &&
+          evalOwnership.fanoutOwners[entryIndex].kind ==
+              NativeEvalFanoutOwnerKind::Runtime &&
+          staticFanoutPlan.runtimeTransitionStates.insert(entry.static_state)
+              .second)
+        staticFanoutPlan.runtimeRoutedTransitionStates.insert(
+            entry.static_state);
     // Exact unfused actor/continuation ownership is resolved against the
     // current static-fanout plan. Transfer that plan's current-generation
     // fragment coverage to the direct body so downstream closure/SCC

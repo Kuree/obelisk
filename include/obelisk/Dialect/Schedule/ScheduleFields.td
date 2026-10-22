@@ -137,6 +137,11 @@ def EvalRuntimeNbaFallback : ScheduleField<"EvalRuntimeNbaFallback", "schedule.e
     "::mlir::UnitAttr">;
 def EvalRuntimeNbaRequired : ScheduleField<"EvalRuntimeNbaRequired", "schedule.eval.runtime_nba_required",
     "::mlir::UnitAttr">;
+// The published root's runtime observers are all runtime-routed static fanout
+// waits. Periodic handoff declines while one is live; a shared calendar drains
+// them in every slot.
+def EvalRuntimeRoutedPublication : ScheduleField<"EvalRuntimeRoutedPublication", "schedule.eval.runtime_routed_publication",
+    "::mlir::UnitAttr">;
 def EvalSegmentHelpers : ScheduleField<"EvalSegmentHelpers", "schedule.eval.segment_helpers",
     "::mlir::ArrayAttr">;
 def EvalSelectedTwoState : ScheduleField<"EvalSelectedTwoState", "schedule.eval.selected_two_state",
