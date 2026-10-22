@@ -114,8 +114,9 @@ module attributes {native.debug_timing} {
 
 // `late` waits on `inner`, a copy of `port`, itself a copy of `clk` (23.3.3).
 // It runs after both copies and always reads the new `port`. In a kernel that
-// waits on `clk`, the copy into `port` may not have run yet (4.7), so no
-// member may read any root of its clock class.
+// waits on `clk`, the copy into `port` may not have run yet (4.7), so a
+// process that reads any root of its clock class stays out of the kernel.
+// `count` alone still forms one, and its NBA becomes a store.
 
 !bit = !simulation.logic<1>
 !byte = !simulation.logic<8>
@@ -179,11 +180,16 @@ module attributes {native.debug_timing} {
       simulation.suspend.change %port to ^body : !bitref
     }
     // CHECK-LABEL: simulation.design @alias_reader
-    // CHECK-NOT: __obelisk_clocked
-    // CHECK: simulation.func private @count
+    // CHECK: simulation.spawn @__obelisk_clocked_0_1_0
+    // CHECK: simulation.spawn @late
+    // CHECK-NOT: simulation.func private @count
     // CHECK: simulation.func private @late
-    // REPORT-NOT: obelisk clocked kernel:
-    // REPORT: obelisk clocked kernel rejection: member accesses its clock = 1
+    // CHECK: simulation.nba.enqueue
+    // CHECK: simulation.func private @__obelisk_clocked_0_1_0
+    // CHECK-NOT: simulation.nba.enqueue
+    // CHECK: simulation.ref.store
+    // REPORT: obelisk clocked kernel: __obelisk_clocked_0_1_0 members=1 eligible=1
+    // REPORT-NEXT: obelisk clocked kernel rejection: member accesses its clock = 1
     simulation.func private @count(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %a: !byteref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 4 : i64} {
       cf.br ^wait
     ^wait:

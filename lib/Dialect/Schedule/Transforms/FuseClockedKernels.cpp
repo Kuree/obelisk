@@ -1468,6 +1468,30 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
   std::vector<Plan> plans;
   for (auto &[key, members] : groups) {
     uint64_t classRoot = key.first;
+    // A member that accesses any root of its clock class could observe a
+    // copy that has not run yet when the kernel starts. It stays a process of
+    // its own, which the root planning below treats like any non-member.
+    {
+      DenseSet<uint64_t> aliasRoots{classRoot};
+      if (auto found = classMembers.find(classRoot);
+          found != classMembers.end())
+        aliasRoots.insert(found->second.begin(), found->second.end());
+      for (const Member &member : members) {
+        aliasRoots.insert(member.clock);
+        aliasRoots.insert(member.clockChain.begin(), member.clockChain.end());
+      }
+      auto isAlias = [&](uint64_t root) { return aliasRoots.contains(root); };
+      size_t count = members.size();
+      llvm::erase_if(members, [&](const Member &member) {
+        return llvm::any_of(member.reads, isAlias) ||
+               llvm::any_of(member.writes, isAlias) ||
+               llvm::any_of(member.nbaWrites, isAlias);
+      });
+      if (count != members.size())
+        rejections["member accesses its clock"] += count - members.size();
+      if (members.empty())
+        continue;
+    }
     DenseSet<StringAttr> memberNames;
     DenseSet<Operation *> memberFunctions;
     for (Member &member : members) {
@@ -1895,25 +1919,6 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
           (clockVotes[member.clock] == clockVotes[members[waitMember].clock] &&
            member.clock < members[waitMember].clock))
         waitMember = index;
-    // A member that accesses any root of its clock class could observe a
-    // copy that has not run yet when the kernel starts.
-    DenseSet<uint64_t> aliasRoots(clockRoots.begin(), clockRoots.end());
-    if (llvm::any_of(members, [&](const Member &member) {
-          return llvm::any_of(member.reads,
-                              [&](uint64_t root) {
-                                return aliasRoots.contains(root);
-                              }) ||
-                 llvm::any_of(member.writes,
-                              [&](uint64_t root) {
-                                return aliasRoots.contains(root);
-                              }) ||
-                 llvm::any_of(member.nbaWrites, [&](uint64_t root) {
-                   return aliasRoots.contains(root);
-                 });
-        })) {
-      reject("member accesses its clock");
-      continue;
-    }
     // The kernel exists to store NBAs directly; without an eligible root the
     // existing per-instance process fusion is left in place.
     if (eligibleRoots.empty())
