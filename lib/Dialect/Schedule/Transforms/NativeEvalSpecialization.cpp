@@ -1310,11 +1310,14 @@ LogicalResult materializeEvalTwoStateVariants(
         supported = false;
         return;
       }
+      // The current time (IEEE 1800-2023 20.3.1) cannot change within one
+      // activation, so a dry run reads the value the activation itself sees.
       if (isa<sim::SimRefLoadOp, sim::SimNetReadOp, sim::SimReturnOp,
               sim::SimNBAEnqueueOp, sim::SimDisplayOp, sim::SimFinishOp,
               sim::SimStopOp, sim::SimFatalOp, sim::SimErrorOp,
               sim::SimProgramExitOp, sim::SimTerminationRequestedOp,
-              sim::SimStatusCheckOp, cf::BranchOp, cf::CondBranchOp>(operation))
+              sim::SimStatusCheckOp, sim::SimTimeNowOp, cf::BranchOp,
+              cf::CondBranchOp>(operation))
         return;
       if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
         if (isPureValueHelper(
@@ -1568,7 +1571,7 @@ LogicalResult materializeEvalTwoStateVariants(
       }
       if (isa<sim::SimRefLoadOp, sim::SimNetReadOp, sim::SimReturnOp,
               sim::SimNBAEnqueueOp, sim::SimTerminationRequestedOp,
-              cf::BranchOp, cf::CondBranchOp>(operation))
+              sim::SimTimeNowOp, cf::BranchOp, cf::CondBranchOp>(operation))
         return;
       if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
         if (isPureValueHelper(

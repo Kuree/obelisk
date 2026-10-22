@@ -7,6 +7,8 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 #include "obelisk/Dialect/Schedule/Transforms/NativeTransforms.h"
 #include "obelisk/Dialect/Schedule/Transforms/Passes.h"
 
@@ -60,6 +62,37 @@ LogicalResult NativePipelineAnalysis::specializeEval() {
                                              aotActorSlotsByCodeUnit)))
     return failure();
   markTiming("schedule ranks, roots, and two-state variants");
+
+  // An owner that keeps an unguarded runtime leaf cannot join a generated
+  // eval closure (see planOwnership). In a partial Auto design the remaining
+  // fallback is the generic scheduler, which is still possible here: packed
+  // lowering has not yet emitted static NBA staging.
+  if (nativeScheduler == schedule::NativeSchedulerMode::Auto && evalScheduler &&
+      !aotEligibility.isFullyEligible()) {
+    sim::SimFuncOp unsupported;
+    metadataDesign.walk([&](sim::SimFuncOp function) {
+      if (::obelisk::schedule::has<
+              schedule::metadata::evalUnsupportedCheckpointOwner>(function))
+        unsupported = function;
+      return unsupported ? WalkResult::interrupt() : WalkResult::advance();
+    });
+    if (unsupported) {
+      if (detailedTiming)
+        llvm::errs() << "partial eval disabled: an eval owner keeps an "
+                        "unguarded runtime leaf in "
+                     << unsupported.getSymName() << '\n';
+      useAOT = false;
+      evalScheduler = false;
+      stateLayout->transitionHandlesExact = false;
+      stateLayout->transitionHandles.clear();
+      staticControl = false;
+      staticFanout = false;
+      staticNBA = false;
+      cleanSuperstep = false;
+      staticEvalIsland = false;
+      aotBytecodeContinuations.clear();
+    }
+  }
 
   return success();
 }
