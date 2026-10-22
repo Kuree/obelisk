@@ -29,12 +29,15 @@ public:
 
   /// Whether `call` may access or control design state through foreign code.
   bool mayAccessDesign(sim::SimDPICallOp call) const;
-  /// Whether some DPI call of the design may.
+  /// Whether `call` may do so through an export, ignoring VPI.
+  bool mayReachDesignThroughExports(sim::SimDPICallOp call) const;
+  /// Whether some DPI call of the design may access design state.
   bool anyCallMayAccessDesign() const { return opaqueCalls; }
   /// Whether every export closure is transparent in the sense above.
-  bool exportsAreTransparent() const { return transparentContext; }
+  bool exportsAreTransparent() const { return transparentExports; }
 
 private:
+  bool transparentExports = false;
   bool transparentContext = false;
   bool opaqueCalls = false;
 };

@@ -69,7 +69,7 @@ DPIEffectAnalysis::DPIEffectAnalysis(sim::SimDesignOp design) {
     if (dpi::has<dpi::Export>(function))
       pending.push_back(function);
   llvm::DenseSet<Operation *> visited;
-  bool transparent = vpiOff;
+  bool transparent = true;
   while (transparent && !pending.empty()) {
     sim::SimFuncOp function = pending.pop_back_val();
     if (!visited.insert(function).second)
@@ -94,7 +94,8 @@ DPIEffectAnalysis::DPIEffectAnalysis(sim::SimDesignOp design) {
       }
     });
   }
-  transparentContext = transparent;
+  transparentExports = transparent;
+  transparentContext = vpiOff && transparent;
   design.walk([&](sim::SimDPICallOp call) {
     opaqueCalls |= mayAccessDesign(call);
   });
@@ -102,6 +103,11 @@ DPIEffectAnalysis::DPIEffectAnalysis(sim::SimDesignOp design) {
 
 bool DPIEffectAnalysis::mayAccessDesign(sim::SimDPICallOp call) const {
   return call.getIsContext() && !transparentContext;
+}
+
+bool DPIEffectAnalysis::mayReachDesignThroughExports(
+    sim::SimDPICallOp call) const {
+  return call.getIsContext() && !transparentExports;
 }
 
 } // namespace obelisk::analysis

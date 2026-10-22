@@ -7,6 +7,7 @@
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 
+#include "obelisk/Analysis/DPIEffectAnalysis.h"
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -546,6 +547,17 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     rejectPlan("missing compute-graph metadata");
     return result;
   }
+  DPIEffectAnalysis dpiEffects(design);
+  // IEEE 1800-2023 35.5.3: a context import may write design state through
+  // an export or VPI. The effects of a noncontext import calling VPI are
+  // unpredictable, yet the runtime admits them. A VPI write must land at a
+  // scheduler boundary, so with writable VPI every DPI call stays
+  // runtime-owned; VPI reads leave state untouched.
+  bool vpiWritable =
+      design.getComputeGraphAttr().getVpi() == schedule::ComputeVPIMode::Full;
+  auto dpiCallMayReenter = [&](sim::SimDPICallOp call) {
+    return vpiWritable || dpiEffects.mayReachDesignThroughExports(call);
+  };
   llvm::StringMap<sim::SimFuncOp> functionsByName;
   for (Operation &operation : design.getBody().front())
     if (auto function = dyn_cast<sim::SimFuncOp>(operation))
@@ -1095,8 +1107,10 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
           if (sim::isSuspensionOp(operation) ||
               isa<sim::SimSpawnOp, sim::SimClassVirtualTaskCallOp,
                   sim::SimControlEnterOp, sim::SimControlDisableOp,
-                  sim::SimProcessControlOp, sim::SimDPICallOp>(operation)) {
+                  sim::SimProcessControlOp>(operation)) {
             plain = false;
+          } else if (auto call = dyn_cast<sim::SimDPICallOp>(operation)) {
+            plain = !dpiCallMayReenter(call);
           } else if (auto call = dyn_cast<sim::SimTaskCallOp>(operation)) {
             sim::SimFuncOp callee = lookupFunction(call.getCallee());
             plain = callee && nonSuspendingTasks.contains(callee.getOperation());
@@ -1152,9 +1166,16 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       // scheduler under runtime ownership until generated AOT plans have a
       // transactional actor suspend/resume/kill protocol.
       rejectPlan("process control requires generic ordering");
-    } else if (isa<sim::SimDPICallOp>(operation)) {
-      requireBytecodeFragment(operation, "DPI reentrancy is present");
-      excludeBytecodeActor(operation);
+    } else if (auto call = dyn_cast<sim::SimDPICallOp>(operation)) {
+      // An import whose exports cannot reach design state (IEEE 1800-2023
+      // 35.5.1.3, 35.5.3; see DPIEffectAnalysis) neither suspends (35.5.1.5)
+      // nor writes anything the compute graph does not already see through
+      // its operands and results, so it runs inside the native activation
+      // like a call.
+      if (dpiCallMayReenter(call)) {
+        requireBytecodeFragment(operation, "DPI reentrancy is present");
+        excludeBytecodeActor(operation);
+      }
     } else if (isa<sim::SimDynamicOverrideOp>(operation)) {
       // Dynamic override ownership can retire a detached evaluator process.
       // Keep the scheduler fully runtime-owned until generated plans expose a
