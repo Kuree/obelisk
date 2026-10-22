@@ -2711,9 +2711,18 @@ void UnitLowering::emitRuntimeMessage(Location location, StringRef severity,
 }
 
 // Unsized numeric literals whose most-significant four-state bit is unknown
-// fill that bit through a wider context (IEEE 1800-2017 5.7.1).
-static bool fillsWidenedUnknown(Operation *source, Type targetType) {
+// fill that bit through a wider context, and an unbased unsized literal ('0,
+// '1, 'x, 'z) fills it with its only bit whatever its value (IEEE 1800-2023
+// 5.7.1). Slang sizes such a literal to its context except under a cast to an
+// enum, which converts its operand to the base type (6.24.1, 6.19.4): the
+// conversion widens the self-determined literal, so `e_t'('1)` is all ones.
+static bool fillsWidened(Operation *source, Type targetType) {
   std::optional<unsigned> sourceWidth = getUnsizedUnknownFillWidth(source);
+  if (!sourceWidth && isa<semantic::SVUnbasedUnsizedIntegerLiteralOp>(source))
+    if (FailureOr<Type> type = getNormalizedSemanticType(source);
+        succeeded(type))
+      if (Type scalar = sim::getPackedScalarType(*type))
+        sourceWidth = sim::getPackedWidth(scalar);
   if (!sourceWidth)
     return false;
   Type targetScalar = sim::getPackedScalarType(targetType);
@@ -2756,7 +2765,7 @@ FailureOr<Value> UnitLowering::lowerContextDeterminedExpression(Operation *op) {
   bool signedConversion = sim::getPackedScalarType((*input).getType())
                               ? isSignedNode(op)
                               : isSignedNode(children.front());
-  signedConversion |= fillsWidenedUnknown(children.front(), *target);
+  signedConversion |= fillsWidened(children.front(), *target);
   return convert(*input, *target, signedConversion, getSemanticLocation(op),
                  isSignedNode(op));
 }
@@ -3157,7 +3166,7 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
       }
     }
     bool sourceSigned = isSignedNode(children.front()) ||
-                        fillsWidenedUnknown(children.front(), *target);
+                        fillsWidened(children.front(), *target);
     return convert(*input, *target, sourceSigned, getSemanticLocation(op),
                    isSignedNode(op));
   }
