@@ -2717,6 +2717,17 @@ void latchSchedulerErrorUnlocked(obelisk_rt_context *context) noexcept {
   context->schedulerFinishStatus = OBELISK_RT_FATAL;
 }
 
+/// The status of a scheduler step that returns before the simulation ends.
+/// An error latched by $error (IEEE 1800-2023 20.10) is only the final exit
+/// status and does not stop the simulation, so a step reports it once a
+/// finish has been requested and is otherwise OK.
+static obelisk_rt_status
+midSimulationStatusUnlocked(const obelisk_rt_context *context) noexcept {
+  return context->schedulerFinishRequested.load(std::memory_order_relaxed)
+             ? context->schedulerFinishStatus
+             : OBELISK_RT_OK;
+}
+
 void enterFinalPhaseUnlocked(obelisk_rt_context *context) noexcept {
   context->schedulerRunningFinals = true;
   uint32_t pending = 1;
@@ -3394,7 +3405,7 @@ idleCurrentSlotResult(obelisk_rt_context *context,
   if (options.stopBeforeNBA)
     return OBELISK_RT_OK;
   refreshNativeStaticSpecializationFastUnlocked(context);
-  return context->schedulerFinishStatus;
+  return midSimulationStatusUnlocked(context);
 }
 } // namespace
 
@@ -5716,14 +5727,14 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         if (context->nativeScheduleStopAtCleanBoundary &&
             nativeAOTTransientBoundaryClean(context)) {
           context->nativeScheduleCleanBoundaryReached = true;
-          return context->schedulerFinishStatus;
+          return midSimulationStatusUnlocked(context);
         }
         // A control-only arbitration step is bounded by the generated node
         // selected by its caller. If no earlier design task or NBA exists,
         // return without consuming the next calendar entry so that caller
         // can execute that node directly.
         if (context->nativeScheduleControlOnly || options.currentSlotOnly)
-          return context->schedulerFinishStatus;
+          return midSimulationStatusUnlocked(context);
         std::optional<uint64_t> nextTime;
         auto considerTime = [&](uint64_t candidate) {
           if (candidate > context->schedulerTime &&
