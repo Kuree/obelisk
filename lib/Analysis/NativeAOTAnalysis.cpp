@@ -1037,6 +1037,11 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   module.walk(
       [&](sim::SimSpawnOp spawn) { ++totalSpawnCounts[spawn.getCallee()]; });
   SmallVector<sim::SimFuncOp> staticNestedActors;
+  // Evaluators of epoch-guarded deferred reports (IEEE 1800-2023 16.4.1,
+  // 12.4.2.1). They run only when a report is queued, as runtime processes
+  // in the Observed or Postponed region, and leave the rest of the design
+  // eligible.
+  DenseSet<Operation *> reportEvaluators;
   auto isStaticPersistentMonitorSpawn = [&](sim::SimSpawnOp spawn,
                                             sim::SimFuncOp owner,
                                             sim::SimFuncOp target) {
@@ -1062,6 +1067,25 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
         return;
       }
       bool concurrentCold = target && isConcurrentColdActor(target);
+      if (sim::isDeferredReportSpawn(spawn) &&
+          llvm::any_of(spawn.getOperands(), [](Value operand) {
+            auto enqueue = operand.getDefiningOp<sim::SimDeferredEnqueueOp>();
+            return enqueue &&
+                   sim::has<sim::metadata::DeferredEpochStorage>(enqueue);
+          })) {
+        // IEEE 1800-2023 16.4.1: a pending deferred assertion report runs its
+        // evaluator in the Observed, Reactive or Postponed region. Starting it
+        // is a cold runtime leaf of the spawning activation (see
+        // isColdRuntimeCheckpoint), like an immediate $error; the evaluator
+        // itself stays a runtime process. The report's flush epoch (16.4.2)
+        // lets the spawning process resume without the runtime seeing it.
+        if (target) {
+          excludeDynamicActor(target.getOperation(),
+                              "deferred assertion report");
+          reportEvaluators.insert(target.getOperation());
+        }
+        return;
+      }
       if (isNegativeTimingDelayMonitorSpawn(spawn, target)) {
         // IEEE 1800-2017 31.9.1 transport commits must execute their first
         // calendar suspension before generated run-until may advance time.
@@ -1141,7 +1165,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     if ((function.getEntryKind() == sim::EntryKind::Task &&
          !nonSuspendingTasks.contains(function.getOperation())) ||
         (function.getEntryKind() == sim::EntryKind::Fork &&
-         !llvm::is_contained(staticNestedActors, function))) {
+         !llvm::is_contained(staticNestedActors, function) &&
+         !reportEvaluators.contains(function.getOperation()))) {
       result.reasons.emplace_back("task, await, or join control is present");
       onlyConcurrentColdBoundaries &= isColdActor(function);
       excludeDynamicActor(function.getOperation(),

@@ -340,6 +340,8 @@ using AssertionCoverageReport =
     ObeliskSimulationDialect::AssertionCoverageReportAttrHelper;
 using DefaultAssertionFailure =
     ObeliskSimulationDialect::DefaultAssertionFailureAttrHelper;
+using DeferredEpochStorage =
+    ObeliskSimulationDialect::DeferredEpochStorageAttrHelper;
 using DeferredEvaluator = ObeliskSimulationDialect::DeferredEvaluatorAttrHelper;
 using DeferredResult = ObeliskSimulationDialect::DeferredResultAttrHelper;
 using EmptyAntecedentNonoverlap =

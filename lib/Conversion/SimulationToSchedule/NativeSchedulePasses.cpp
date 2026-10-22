@@ -511,9 +511,22 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
                      !stateLayout->nbaHandles.contains(decoded.id)));
           };
           current.walk([&](Operation *operation) {
-            if (!hotFor(current).canExecute(operation))
+            // File I/O (IEEE 1800-2023 21.3) and value change dumps (21.7)
+            // operate on runtime-owned descriptor tables and dump state. A
+            // cold block of the body still runs inline on its four-state
+            // route, so these need the runtime wherever they occur.
+            bool requiresRuntime = isa<
+                sim::SimFileOpenMCDOp, sim::SimFileOpenOp, sim::SimFileCloseOp,
+                sim::SimFileFlushOp, sim::SimFileGetcOp, sim::SimFileUngetcOp,
+                sim::SimFileGetlineOp, sim::SimFileReadPackedOp,
+                sim::SimFileEofOp, sim::SimFileSeekOp, sim::SimFileTellOp,
+                sim::SimFileRewindOp, sim::SimDumpOpenOp,
+                sim::SimDumpOpenStringOp, sim::SimDumpTimescaleOp,
+                sim::SimDumpVarsOp, sim::SimDumpAllOp, sim::SimDumpControlOp,
+                sim::SimDumpLimitOp, sim::SimDumpFlushOp, sim::SimDumpPortsOp,
+                sim::SimDumpPortsControlOp>(operation);
+            if (!requiresRuntime && !hotFor(current).canExecute(operation))
               return;
-            bool requiresRuntime = false;
             // Dynamic stores without a direct-lowering certificate use
             // the bounded, override-aware runtime plane API. Preserve the
             // complete source activation at a checkpoint (IEEE
@@ -529,21 +542,6 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
                          sim::SimManagedLoadOp, sim::SimManagedStoreOp,
                          sim::SimManagedBitsDynStoreOp,
                          sim::SimClassDirectCallOp, sim::SimClassVirtualCallOp>(
-                         operation))
-              requiresRuntime = true;
-            // File I/O (IEEE 1800-2023 21.3) and value change dumps (21.7)
-            // operate on runtime-owned descriptor tables and dump state.
-            else if (isa<sim::SimFileOpenMCDOp, sim::SimFileOpenOp,
-                         sim::SimFileCloseOp, sim::SimFileFlushOp,
-                         sim::SimFileGetcOp, sim::SimFileUngetcOp,
-                         sim::SimFileGetlineOp, sim::SimFileReadPackedOp,
-                         sim::SimFileEofOp, sim::SimFileSeekOp,
-                         sim::SimFileTellOp, sim::SimFileRewindOp,
-                         sim::SimDumpOpenOp, sim::SimDumpOpenStringOp,
-                         sim::SimDumpTimescaleOp, sim::SimDumpVarsOp,
-                         sim::SimDumpAllOp, sim::SimDumpControlOp,
-                         sim::SimDumpLimitOp, sim::SimDumpFlushOp,
-                         sim::SimDumpPortsOp, sim::SimDumpPortsControlOp>(
                          operation))
               requiresRuntime = true;
             else if (auto store = dyn_cast<sim::SimRefStoreOp>(operation))

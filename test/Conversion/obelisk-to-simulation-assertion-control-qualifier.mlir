@@ -46,7 +46,15 @@ module {
   }
 }
 
+// The violation is checked under the control state, then reported from the
+// Observed region (IEEE 1800-2023 12.4.2.1), so the warning text lives in the
+// report's evaluator.
+// CHECK-LABEL: simulation.func private @unit_0.violation.
+// CHECK: simulation.bytes.constant "{{.*}}unique if violation: no match"
+// CHECK: simulation.assert.deferred_mature
+// CHECK-LABEL: simulation.func private @unit_0(
 // CHECK: simulation.assert.control {{.*}} action <off> assertion [[ID:[0-9]+]]
 // CHECK: %[[ENABLED:.*]] = simulation.assert.enabled {{.*}} assertion [[ID]]
 // CHECK: cf.cond_br %[[ENABLED]]
-// CHECK: simulation.bytes.constant "{{.*}}unique if violation: no match"
+// CHECK: simulation.assert.deferred_enqueue {{[0-9]+}} {simulation.assertion_control_target_id = [[ID]] : i64
+// CHECK: simulation.spawn @unit_0.violation.

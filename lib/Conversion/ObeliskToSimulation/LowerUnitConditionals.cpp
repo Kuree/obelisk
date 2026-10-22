@@ -226,6 +226,17 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
       if (auto targetID = sim::get<sim::metadata::AssertionControlTargetId>(op))
         sim::set<sim::metadata::AssertionControlTargetId>(enqueue, targetID);
       Value ticket = enqueue;
+      // IEEE 1800-2023 16.4.2: the report stays pending only until the
+      // process reaches a flush point, which advances its epoch.
+      auto epochStorage = sim::get<sim::metadata::DeferredEpochStorage>(op);
+      Value capturedEpoch;
+      if (epochStorage && ownsDeferredAssertionEpoch()) {
+        deferredAssertionEpoch = epochStorage.getValue().getZExtValue();
+        sim::set<sim::metadata::DeferredEpochStorage>(enqueue, epochStorage);
+        deferredEpochEnqueues.push_back(enqueue);
+        capturedEpoch = armDeferredAssertionEpoch(builder, location, context,
+                                                  *deferredAssertionEpoch);
+      }
 
       llvm::StringMap<Value> previousValues;
       llvm::StringSet<> newlyBoundValues;
@@ -347,6 +358,8 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
       if (reportActionEnabled)
         inputTypes.push_back(builder.getI1Type());
       inputTypes.push_back(builder.getI64Type());
+      if (capturedEpoch)
+        inputTypes.push_back(builder.getI32Type());
       evaluator.setFunctionType(
           FunctionType::get(function.getContext(), inputTypes, TypeRange{}));
       Block &entry = evaluator.getBody().front();
@@ -356,6 +369,9 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
             entry.addArgument(builder.getI1Type(), location);
       BlockArgument reportTicket =
           entry.addArgument(builder.getI64Type(), location);
+      BlockArgument reportEpoch;
+      if (capturedEpoch)
+        reportEpoch = entry.addArgument(builder.getI32Type(), location);
       SmallVector<Attribute> argumentAttrs;
       if (ArrayAttr attrs = evaluator.getArgAttrsAttr())
         llvm::append_range(argumentAttrs, attrs);
@@ -370,6 +386,8 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
       if (reportActionEnabled)
         callback->second.push_back(reportActionEnabled);
       callback->second.push_back(ticket);
+      if (capturedEpoch)
+        callback->second.push_back(capturedEpoch);
 
       Block *body = entry.splitBlock(entry.begin());
       Block *stale = new Block;
@@ -377,6 +395,16 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
       OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
       Value current = sim::SimDeferredMatureOp::create(
           entryBuilder, location, entryBuilder.getI1Type(), reportTicket);
+      if (reportEpoch) {
+        Value epoch = loadDeferredAssertionEpoch(entryBuilder, location,
+                                                 entry.getArgument(0),
+                                                 *deferredAssertionEpoch);
+        Value unflushed =
+            arith::CmpIOp::create(entryBuilder, location,
+                                  arith::CmpIPredicate::eq, epoch, reportEpoch);
+        current =
+            arith::AndIOp::create(entryBuilder, location, current, unflushed);
+      }
       if (capturedActionEnabled)
         current = arith::AndIOp::create(entryBuilder, location, current,
                                         capturedActionEnabled);
@@ -1073,17 +1101,133 @@ void UnitLowering::emitQualifierWarning(
                          ": warning: " + qualifierName + " " + statementKind +
                          " violation: " + reason)
                             .str();
-  Value text =
-      sim::SimBytesConstantOp::create(builder, location, message).getResult();
-  Value descriptor = arith::ConstantOp::create(
-      builder, location, builder.getI32Type(),
-      builder.getI32IntegerAttr(static_cast<int32_t>(0x80000002u)));
   StringAttr scope = sim::get<sim::metadata::HierarchicalName>(function);
   IntegerAttr multiplier = sim::get<sim::metadata::DelayScale>(function);
-  sim::SimDisplayOp::create(
-      builder, location, function.getBody().front().getArgument(0), descriptor,
-      ValueRange{text}, true, sim::Radix::Decimal, ArrayRef<int32_t>{0}, scope,
-      StringAttr{}, multiplier, IntegerAttr{});
+  auto emitReport = [&](OpBuilder &reportBuilder, Value context) {
+    Value text =
+        sim::SimBytesConstantOp::create(reportBuilder, location, message)
+            .getResult();
+    Value descriptor = arith::ConstantOp::create(
+        reportBuilder, location, reportBuilder.getI32Type(),
+        reportBuilder.getI32IntegerAttr(static_cast<int32_t>(0x80000002u)));
+    sim::SimDisplayOp::create(reportBuilder, location, context, descriptor,
+                              ValueRange{text}, true, sim::Radix::Decimal,
+                              ArrayRef<int32_t>{0}, scope, StringAttr{},
+                              multiplier, IntegerAttr{});
+  };
+  Value context = function.getBody().front().getArgument(0);
+  auto epochStorage = sim::get<sim::metadata::DeferredEpochStorage>(statement);
+  if (!epochStorage || !ownsDeferredAssertionEpoch()) {
+    emitReport(builder, context);
+  } else {
+    // IEEE 1800-2023 12.4.2.1: the violation is detected now, but its report
+    // waits on the process's queue until the Observed region, and a flush
+    // point (a resumption) discards it. The evaluator matures it there.
+    deferredAssertionEpoch = epochStorage.getValue().getZExtValue();
+    auto nodeAttr = statement->getAttrOfType<IntegerAttr>("node_id");
+    uint64_t node = nodeAttr ? nodeAttr.getValue().getZExtValue() : 0;
+    uint64_t ordinal = nextForkOrdinal++;
+    std::string identity = (function.getSymName() + ".$violation." +
+                            Twine(node) + "." + Twine(ordinal))
+                               .str();
+    auto enqueue = sim::SimDeferredEnqueueOp::create(
+        builder, location,
+        builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+    if (auto targetID =
+            sim::get<sim::metadata::AssertionControlTargetId>(statement))
+      sim::set<sim::metadata::AssertionControlTargetId>(enqueue, targetID);
+    sim::set<sim::metadata::DeferredEpochStorage>(enqueue, epochStorage);
+    deferredEpochEnqueues.push_back(enqueue);
+    Value capturedEpoch = armDeferredAssertionEpoch(builder, location, context,
+                                                    *deferredAssertionEpoch);
+
+    auto design = function->getParentOfType<sim::SimDesignOp>();
+    uint64_t parentID = function.getCodeUnitId().value_or(0);
+    uint64_t scopeID = 0;
+    std::string parentHierarchy = function.getSymName().str();
+    for (sim::SimCodeUnitDeclOp declaration :
+         design.getBody().front().getOps<sim::SimCodeUnitDeclOp>())
+      if (declaration.getId() == parentID) {
+        scopeID = declaration.getScopeId();
+        parentHierarchy = declaration.getHierarchicalName().str();
+        break;
+      }
+    std::string hierarchy = (Twine(parentHierarchy) + ".$violation." +
+                             Twine(node) + "." + Twine(ordinal))
+                                .str();
+    uint64_t codeUnitID = stableCodeUnitID(identity + ".report");
+    OpBuilder outlineBuilder(function);
+    sim::SimCodeUnitDeclOp::create(
+        outlineBuilder, location, codeUnitID, scopeID, sim::EntryKind::Fork,
+        outlineBuilder.getStringAttr(hierarchy),
+        outlineBuilder.getStringAttr("violation report"),
+        outlineBuilder.getUnitAttr());
+    SmallVector<NamedAttribute> attributes{
+        sim::named<sim::metadata::Bindings>(outlineBuilder.getArrayAttr({})),
+        outlineBuilder.getNamedAttr(
+            "code_unit_id", outlineBuilder.getI64IntegerAttr(codeUnitID)),
+        outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
+        outlineBuilder.getNamedAttr(
+            "home_region",
+            sim::EventRegionAttr::get(function.getContext(),
+                                      sim::EventRegion::Observed)),
+        outlineBuilder.getNamedAttr(
+            "domain", sim::ExecutionDomainAttr::get(
+                          function.getContext(), sim::ExecutionDomain::Design)),
+        sim::named<sim::metadata::HierarchicalName>(
+            outlineBuilder.getStringAttr(hierarchy))};
+    for (StringRef name : {sim::metadata::DelayScale::getNameStr(),
+                           sim::metadata::DelayQuantum::getNameStr()})
+      if (Attribute attribute = function->getAttr(name))
+        attributes.push_back(outlineBuilder.getNamedAttr(name, attribute));
+    Type ticketType = builder.getI64Type();
+    Type epochType = builder.getI32Type();
+    SmallVector<DictionaryAttr> argumentAttrs{
+        captureMetadata(outlineBuilder, sim::CaptureKind::Context),
+        captureMetadata(outlineBuilder, sim::CaptureKind::Formal),
+        captureMetadata(outlineBuilder, sim::CaptureKind::Formal)};
+    auto evaluator = sim::SimFuncOp::create(
+        outlineBuilder, location,
+        (function.getSymName() + ".violation." + Twine(node) + "." +
+         Twine(ordinal))
+            .str(),
+        FunctionType::get(function.getContext(),
+                          {context.getType(), ticketType, epochType},
+                          TypeRange{}),
+        sim::EntryKind::Fork, attributes, argumentAttrs);
+    SymbolTable::setSymbolVisibility(evaluator,
+                                     SymbolTable::Visibility::Private);
+    // A report is canceled by its ticket and epoch, not by named-scope
+    // control of the process that queued it.
+    ::obelisk::schedule::set<::obelisk::schedule::Field::DetachedControls>(
+        evaluator, builder.getUnitAttr());
+    Block &entry = evaluator.getBody().front();
+    Block *report = new Block;
+    Block *done = new Block;
+    evaluator.getBody().push_back(report);
+    evaluator.getBody().push_back(done);
+    OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
+    Value matured = sim::SimDeferredMatureOp::create(
+        entryBuilder, location, entryBuilder.getI1Type(), entry.getArgument(1));
+    Value unflushed = arith::CmpIOp::create(
+        entryBuilder, location, arith::CmpIPredicate::eq,
+        loadDeferredAssertionEpoch(entryBuilder, location, entry.getArgument(0),
+                                   *deferredAssertionEpoch),
+        entry.getArgument(2));
+    cf::CondBranchOp::create(
+        entryBuilder, location,
+        arith::AndIOp::create(entryBuilder, location, matured, unflushed),
+        report, ValueRange{}, done, ValueRange{});
+    OpBuilder reportBuilder = OpBuilder::atBlockEnd(report);
+    emitReport(reportBuilder, entry.getArgument(0));
+    sim::SimReturnOp::create(reportBuilder, location, ValueRange{});
+    OpBuilder doneBuilder = OpBuilder::atBlockEnd(done);
+    sim::SimReturnOp::create(doneBuilder, location, ValueRange{});
+    sim::mark<sim::metadata::Lowered>(evaluator);
+    sim::SimSpawnOp::create(builder, location, evaluator.getSymNameAttr(),
+                            ValueRange{context, enqueue, capturedEpoch},
+                            ArrayAttr{}, ArrayAttr{});
+  }
   if (controlResume) {
     emitBranch(controlResume);
     setCurrent(controlResume);

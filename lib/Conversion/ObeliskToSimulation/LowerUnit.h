@@ -975,6 +975,35 @@ private:
   /// The procedural assertion queue epoch of this process (IEEE 1800-2023
   /// 16.14.6); pending instances queued under an older epoch do not mature.
   ::mlir::Value proceduralAssertionEpoch;
+  /// Storage of this process's deferred assertion epoch (IEEE 1800-2023
+  /// 16.4.2), and the report enqueues it guards.
+  ::std::optional<uint64_t> deferredAssertionEpoch;
+  ::llvm::SmallVector<::mlir::Operation *> deferredEpochEnqueues;
+  ::mlir::Value loadDeferredAssertionEpoch(::mlir::OpBuilder &builder,
+                                           ::mlir::Location location,
+                                           ::mlir::Value context,
+                                           uint64_t storage);
+  /// Whether this function is the procedure that owns its deferred report
+  /// epoch: a fork branch or subroutine has other flush points.
+  bool ownsDeferredAssertionEpoch() {
+    switch (function.getEntryKind()) {
+    case sim::EntryKind::Initial:
+    case sim::EntryKind::Final:
+    case sim::EntryKind::Always:
+    case sim::EntryKind::AlwaysComb:
+    case sim::EntryKind::AlwaysFF:
+    case sim::EntryKind::AlwaysLatch:
+      return true;
+    default:
+      return false;
+    }
+  }
+  /// Mark a report pending on the epoch (its low bit) and return the value
+  /// the report captures.
+  ::mlir::Value armDeferredAssertionEpoch(::mlir::OpBuilder &builder,
+                                          ::mlir::Location location,
+                                          ::mlir::Value context,
+                                          uint64_t storage);
   /// Suspensions whose resumption is no procedural assertion flush point,
   /// although they wait on an event: an expect statement's completion.
   ::llvm::SmallPtrSet<::mlir::Operation *, 2> nonFlushingSuspensions;

@@ -256,6 +256,10 @@ def ObeliskSimulationDialect : Dialect {
     // coverage success.
     "::mlir::UnitAttr":$assertion_coverage_report,
     "::mlir::UnitAttr":$default_assertion_failure,
+    // Storage of the activation epoch that a process advances at each
+    // deferred assertion flush point (IEEE 1800-2023 16.4.2). On a deferred
+    // assertion and on the enqueue of its pending report.
+    "::mlir::IntegerAttr":$deferred_epoch_storage,
     "::mlir::UnitAttr":$deferred_evaluator,
     "::mlir::BoolAttr":$deferred_result,
     "::mlir::UnitAttr":$empty_antecedent_nonoverlap,

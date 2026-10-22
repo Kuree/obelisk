@@ -1544,7 +1544,8 @@ obelisk_rt_v1_scheduler_handoff_pending(obelisk_rt_context *context) {
     return 1;
   ContextMutexLock lock(context);
   return context->schedulerStatus != OBELISK_RT_OK ||
-                 obelisk_rt_covergroup_strobes_pending_unlocked(context)
+                 obelisk_rt_covergroup_strobes_pending_unlocked(context) ||
+                 obelisk_rt_generated_deferred_reports_pending(context)
              ? 1
              : 0;
 }
@@ -3339,7 +3340,8 @@ bool runtimeSlotWorkPendingUnlocked(const obelisk_rt_context *context) {
          context->nativeScheduleExternalWritePending ||
          !context->nativeScheduleTransientDirtyRoots.empty() ||
          !context->nativeSchedulePersistentDirtyRoots.empty() ||
-         obelisk_rt_covergroup_strobes_pending_unlocked(context);
+         obelisk_rt_covergroup_strobes_pending_unlocked(context) ||
+         obelisk_rt_generated_deferred_reports_pending(context);
 }
 
 // IEEE 1800-2023 4.5: execute_region runs a region only while it holds

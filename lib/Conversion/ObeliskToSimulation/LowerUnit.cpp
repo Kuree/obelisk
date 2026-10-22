@@ -5327,14 +5327,41 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   return materializeProceduralAssertionFlushPoints();
 }
 
-/// IEEE 1800-2023 16.14.6.2: a process reaches a procedural assertion flush
-/// point when it resumes from an event control or wait statement, when an
-/// always_comb or always_latch resumes on a dependency, and when its
-/// outermost scope is disabled (16.14.6.4). Advance the queue epoch on every
-/// such edge, so a pending instance queued before it does not mature. A
-/// delay, a join, and a blocking task call do not flush the queue.
+Value UnitLowering::loadDeferredAssertionEpoch(OpBuilder &builder,
+                                               Location location, Value context,
+                                               uint64_t storage) {
+  Type type = builder.getI32Type();
+  Value epoch = sim::SimContextStorageOp::create(
+      builder, location, sim::RefType::get(builder.getContext(), type), context,
+      storage);
+  return sim::SimRefLoadOp::create(builder, location, type, epoch);
+}
+
+Value UnitLowering::armDeferredAssertionEpoch(OpBuilder &builder,
+                                              Location location, Value context,
+                                              uint64_t storage) {
+  Type type = builder.getI32Type();
+  Value epoch = sim::SimContextStorageOp::create(
+      builder, location, sim::RefType::get(builder.getContext(), type), context,
+      storage);
+  Value current = sim::SimRefLoadOp::create(builder, location, type, epoch);
+  Value armed = arith::OrIOp::create(
+      builder, location, current,
+      arith::ConstantOp::create(builder, location, type,
+                                builder.getI32IntegerAttr(1)));
+  sim::SimRefStoreOp::create(builder, location, armed, epoch);
+  return armed;
+}
+
+/// IEEE 1800-2023 16.14.6.2 and 16.4.2: a process reaches a procedural or
+/// deferred assertion flush point when it resumes from an event control or
+/// wait statement, when an always_comb or always_latch resumes on a
+/// dependency, and when its outermost scope is disabled (16.14.6.4, 16.4.4).
+/// Advance each queue epoch on every such edge, so a pending report queued
+/// before it does not mature. A delay, a join, and a blocking task call do
+/// not flush the queue.
 LogicalResult UnitLowering::materializeProceduralAssertionFlushPoints() {
-  if (!proceduralAssertionEpoch)
+  if (!proceduralAssertionEpoch && !deferredAssertionEpoch)
     return success();
   auto emitFlush = [&](OpBuilder &flushBuilder, Location location,
                        Value queue) {
@@ -5346,9 +5373,32 @@ LogicalResult UnitLowering::materializeProceduralAssertionFlushPoints() {
     Value next = arith::AddIOp::create(flushBuilder, location, epoch, one);
     sim::SimRefStoreOp::create(flushBuilder, location, next, queue);
   };
+  // A pending report sets the epoch's low bit (armDeferredAssertionEpoch); a
+  // flush advances an odd epoch to the next even value. Most resumptions find
+  // no report and only test the bit.
+  auto deferredEpochReference = [&](OpBuilder &flushBuilder,
+                                    Location location) -> Value {
+    Value context = function.getBody().front().getArgument(0);
+    return sim::SimContextStorageOp::create(
+        flushBuilder, location,
+        sim::RefType::get(function.getContext(), flushBuilder.getI32Type()),
+        context, *deferredAssertionEpoch);
+  };
+  auto emitDeferredFlush = [&](OpBuilder &flushBuilder, Location location) {
+    Type type = flushBuilder.getI32Type();
+    Value storage = deferredEpochReference(flushBuilder, location);
+    Value epoch =
+        sim::SimRefLoadOp::create(flushBuilder, location, type, storage);
+    Value one = arith::ConstantOp::create(flushBuilder, location, type,
+                                          flushBuilder.getI32IntegerAttr(1));
+    Value armed = arith::AndIOp::create(flushBuilder, location, epoch, one);
+    Value next = arith::AddIOp::create(flushBuilder, location, epoch, armed);
+    sim::SimRefStoreOp::create(flushBuilder, location, next, storage);
+  };
   // Flushes on the edge to `successor` alone; its block may have other
   // predecessors.
-  auto flushEdge = [&](Operation *terminator, unsigned successor) {
+  auto flushEdge = [&](Operation *terminator, unsigned successor,
+                       bool procedural) {
     Location location = terminator->getLoc();
     Block *target = terminator->getSuccessor(successor);
     Block *flush = new Block;
@@ -5356,30 +5406,72 @@ LogicalResult UnitLowering::materializeProceduralAssertionFlushPoints() {
     for (BlockArgument argument : target->getArguments())
       flush->addArgument(argument.getType(), argument.getLoc());
     OpBuilder flushBuilder = OpBuilder::atBlockEnd(flush);
-    emitFlush(flushBuilder, location, proceduralAssertionEpoch);
+    if (procedural)
+      emitFlush(flushBuilder, location, proceduralAssertionEpoch);
+    if (deferredAssertionEpoch) {
+      Type type = flushBuilder.getI32Type();
+      Value storage = deferredEpochReference(flushBuilder, location);
+      Value epoch =
+          sim::SimRefLoadOp::create(flushBuilder, location, type, storage);
+      Value one = arith::ConstantOp::create(flushBuilder, location, type,
+                                            flushBuilder.getI32IntegerAttr(1));
+      Value armed = arith::CmpIOp::create(
+          flushBuilder, location, arith::CmpIPredicate::ne,
+          arith::AndIOp::create(flushBuilder, location, epoch, one),
+          arith::ConstantOp::create(flushBuilder, location, type,
+                                    flushBuilder.getI32IntegerAttr(0)));
+      Block *bump = new Block;
+      function.getBody().getBlocks().insert(target->getIterator(), bump);
+      cf::CondBranchOp::create(flushBuilder, location, armed, bump,
+                               ValueRange{}, target, flush->getArguments());
+      flushBuilder.setInsertionPointToStart(bump);
+      Value next = arith::AddIOp::create(flushBuilder, location, epoch, one);
+      sim::SimRefStoreOp::create(flushBuilder, location, next, storage);
+    }
     cf::BranchOp::create(flushBuilder, location, target, flush->getArguments());
     terminator->setSuccessor(flush, successor);
   };
-  SmallVector<Operation *> resumptions;
+  SmallVector<std::pair<Operation *, bool>> resumptions;
   function.walk([&](Operation *operation) {
-    if (isa<sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp,
+    if (nonFlushingSuspensions.contains(operation))
+      return;
+    bool procedural =
+        proceduralAssertionEpoch &&
+        isa<sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp,
             sim::SimSuspendEdgeIffOp, sim::SimSuspendLevelOp,
             sim::SimSuspendAnyOp, sim::SimSuspendEventOp,
-            sim::SimSuspendEventOrderOp, sim::SimSuspendObserveOp>(operation) &&
-        !nonFlushingSuspensions.contains(operation))
-      resumptions.push_back(operation);
+            sim::SimSuspendEventOrderOp, sim::SimSuspendObserveOp>(operation);
+    // The same resumptions as the runtime's deferred report flush, including
+    // a clocking event and wait fork (9.6.1).
+    bool deferred =
+        deferredAssertionEpoch &&
+        isa<sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp,
+            sim::SimSuspendEdgeIffOp, sim::SimSuspendLevelOp,
+            sim::SimSuspendAnyOp, sim::SimSuspendClockSetOp,
+            sim::SimSuspendEventOp, sim::SimSuspendEventOrderOp,
+            sim::SimSuspendObserveOp, sim::SimSuspendChildrenOp>(operation);
+    if (procedural || deferred)
+      resumptions.push_back({operation, procedural});
   });
-  for (Operation *suspension : resumptions)
-    flushEdge(suspension, 0);
+  for (auto [suspension, procedural] : resumptions)
+    flushEdge(suspension, 0, procedural);
   // The queue would have to outlive every suspension of the activation for
   // its resumption after another process disables it.
-  if (externallyDisabledOutermostScope)
+  if (externallyDisabledOutermostScope && proceduralAssertionEpoch)
     return emitError(getSemanticLocation(externallyDisabledOutermostScope))
            << "procedural concurrent assertions are not executable yet in an "
               "outermost named block that another process disables";
+  // Such a disable flushes the deferred queue (16.4.4) in a process that only
+  // the runtime can observe. Keep these reports on its process queue.
+  if (externallyDisabledOutermostScope)
+    for (Operation *enqueue : deferredEpochEnqueues)
+      sim::remove<sim::metadata::DeferredEpochStorage>(enqueue);
   for (Operation *disable : outermostScopeDisables) {
     OpBuilder flushBuilder(disable);
-    emitFlush(flushBuilder, disable->getLoc(), proceduralAssertionEpoch);
+    if (proceduralAssertionEpoch)
+      emitFlush(flushBuilder, disable->getLoc(), proceduralAssertionEpoch);
+    if (deferredAssertionEpoch)
+      emitDeferredFlush(flushBuilder, disable->getLoc());
   }
   return success();
 }

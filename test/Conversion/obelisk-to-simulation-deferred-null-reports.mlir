@@ -10,18 +10,35 @@
 //     assert #0 (a | b);                       // node 22: null pass action
 //   end
 
+// The process advances a private epoch on every resume, a flush point
+// (16.4.2); each report captures it, and its evaluator matures only while the
+// epoch is unchanged. A native activation resumes without the runtime seeing
+// it, so the runtime's own process queue flush alone cannot cancel a report.
+
+// CHECK: simulation.storage.decl [[EPOCH:[0-9]+]] in 1 : i32 design hierarchy "deferred_reports.$deferred_epoch_9"
 // CHECK-NOT: simulation.func private @unit_0.fork.12.{{[0-9]+}}.0(
 // CHECK-NOT: simulation.func private @unit_0.fork.17.{{[0-9]+}}.1(
 // CHECK-NOT: simulation.func private @unit_0.fork.22.{{[0-9]+}}.0(
+// CHECK-LABEL: simulation.func private @unit_0.fork.12.{{[0-9]+}}.1(
+// CHECK: %[[CURRENT:.*]] = simulation.assert.deferred_mature
+// CHECK-NEXT: %[[REF:.*]] = simulation.context.storage %arg0[[[EPOCH]]]
+// CHECK-NEXT: %[[NOW:.*]] = simulation.ref.load %[[REF]]
+// CHECK-NEXT: %[[SAME:.*]] = arith.cmpi eq, %[[NOW]], %arg3
+// CHECK-NEXT: arith.andi %[[CURRENT]], %[[SAME]]
 // CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: ^bb1:
+// CHECK-NEXT: %[[FLUSH:.*]] = simulation.context.storage %arg0[[[EPOCH]]]
+// CHECK-NEXT: %[[OLD:.*]] = simulation.ref.load %[[FLUSH]]
+// CHECK: %[[NEXT:.*]] = arith.addi %[[OLD]]
+// CHECK-NEXT: simulation.ref.store %[[NEXT]] to %[[FLUSH]]
+// CHECK: simulation.assert.deferred_enqueue {{[0-9]+}} {simulation.deferred_epoch_storage = [[EPOCH]] : i64}
+// CHECK: simulation.spawn @unit_0.fork.12.{{[0-9]+}}.1(
 // CHECK: simulation.assert.deferred_enqueue
-// CHECK-NEXT: simulation.spawn @unit_0.fork.12.{{[0-9]+}}.1(
+// CHECK: simulation.spawn @unit_0.fork.17.{{[0-9]+}}.0(
 // CHECK: simulation.assert.deferred_enqueue
-// CHECK-NEXT: simulation.spawn @unit_0.fork.17.{{[0-9]+}}.0(
-// CHECK: simulation.assert.deferred_enqueue
-// CHECK-NEXT: simulation.spawn @unit_0.fork.22.{{[0-9]+}}.1(
+// CHECK: simulation.spawn @unit_0.fork.22.{{[0-9]+}}.1(
 // CHECK-NOT: simulation.assert.deferred_enqueue
-// CHECK: simulation.suspend
+// CHECK: simulation.suspend.any {{.*}} to ^bb1
 
 module attributes {coverage.language_version = 2023 : i32} {
   obelisk.sv.symbol.definition @s0.deferred_reports attributes {definition_kind = 0 : i32, hierarchical_name = "deferred_reports", name = "deferred_reports", node_id = 0 : i64} {

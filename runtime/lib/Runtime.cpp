@@ -678,6 +678,7 @@ static void resetDeferredImmediateReportsForTime(obelisk_rt_context *context) {
   context->deferredImmediateReports.clear();
   context->deferredImmediateProcessReports.clear();
   context->deferredImmediateAssertionReports.clear();
+  context->generatedDeferredReports = 0;
   context->deferredImmediateTime = context->schedulerTime;
 }
 
@@ -686,6 +687,9 @@ static void eraseDeferredImmediateReportUnlocked(obelisk_rt_context *context,
   auto report = context->deferredImmediateReports.find(ticket);
   if (report == context->deferredImmediateReports.end())
     return;
+  if (report->second.logicalProcess == 0 &&
+      context->generatedDeferredReports != 0)
+    --context->generatedDeferredReports;
   if (report->second.assertion != 0) {
     auto assertion = context->deferredImmediateAssertionReports.find(
         report->second.assertion);
@@ -894,13 +898,17 @@ extern "C" uint64_t obelisk_rt_v1_deferred_enqueue_for_assertion(
     return 0;
   OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    if (context->activeLogicalProcessToken == 0)
-      return 0;
+    // IEEE 1800-2023 16.4.1: the report belongs to the executing process. A
+    // generated activation runs outside any runtime process; its report
+    // carries a compiler-maintained flush epoch instead (16.4.2), so it is
+    // queued under no process and only a kill or a new time step cancels it.
     resetDeferredImmediateReportsForTime(context);
     uint64_t ticket = context->nextDeferredImmediateTicket++;
     if (ticket == 0)
       ticket = context->nextDeferredImmediateTicket++;
     uint64_t logicalProcess = context->activeLogicalProcessToken;
+    if (logicalProcess == 0)
+      ++context->generatedDeferredReports;
     context->deferredImmediateReports.emplace(
         ticket, obelisk_rt_context::DeferredImmediateReport{logicalProcess,
                                                             assertionID});

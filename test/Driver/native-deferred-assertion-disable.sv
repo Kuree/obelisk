@@ -27,5 +27,5 @@ endmodule
 
 // Assertion labels remain stable identities rather than dynamic named-block
 // activations, and every deferred ticket carries its label's prepared ID.
-// IR-COUNT-3: simulation.assert.deferred_enqueue {{[0-9]+}} {simulation.assertion_control_target_id = {{[1-9][0-9]*}} : i64}
+// IR-COUNT-3: simulation.assert.deferred_enqueue {{[0-9]+}} {simulation.assertion_control_target_id = {{[1-9][0-9]*}} : i64
 // IR-NOT: simulation.control.enter

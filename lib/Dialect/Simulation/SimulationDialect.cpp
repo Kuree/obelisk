@@ -78,10 +78,19 @@ bool returnsToScheduler(Operation *operation) {
              SimSuspendForeverOp>(operation);
 }
 
+bool isDeferredReportSpawn(SimSpawnOp spawn) {
+  return llvm::any_of(spawn.getOperands(), [](Value operand) {
+    return operand.getDefiningOp<SimDeferredEnqueueOp>() != nullptr;
+  });
+}
+
 bool isColdRuntimeCheckpoint(Operation *operation) {
+  if (auto spawn = dyn_cast<SimSpawnOp>(operation))
+    return isDeferredReportSpawn(spawn);
   return isa<SimFinishOp, SimStopOp, SimFatalOp, SimProgramExitOp, SimErrorOp,
              SimStatusCheckOp, SimDisplayOp, SimSampledReadOp,
-             SimSampledHistoryOp, SimClockedSampleReadOp>(operation);
+             SimSampledHistoryOp, SimClockedSampleReadOp,
+             SimDeferredEnqueueOp>(operation);
 }
 
 bool isStartupEntryKind(EntryKind kind) {
@@ -647,7 +656,8 @@ static const llvm::StringMap<discardable::PayloadCheck> &declarations() {
       metadata::ConsequentEndOfSimulationStrength,
       metadata::ConsequentFirstMatchEquivalence,
       metadata::CoverSequencePerMatch, metadata::DefaultAssertionFailure,
-      metadata::DeferredEvaluator, metadata::DeferredResult,
+      metadata::DeferredEpochStorage, metadata::DeferredEvaluator,
+      metadata::DeferredResult,
       metadata::EmptyAntecedentNonoverlap, metadata::EndOfSimulationStrength,
       metadata::ExpectBoundedAlternatives, metadata::ExpectBoundedBranching,
       metadata::ExpectBoundedHorizon, metadata::ExpectBoundedStateWords,

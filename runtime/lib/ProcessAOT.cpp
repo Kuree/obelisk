@@ -2562,6 +2562,7 @@ obelisk_rt_v1_scheduler_run_aot(obelisk_rt_context *context) {
     return context->nativeScheduleExternalWritePending ||
            context->nativeScheduleDirtyRootsPresent ||
            obelisk_rt_covergroup_strobes_pending_unlocked(context) ||
+           obelisk_rt_generated_deferred_reports_pending(context) ||
            context->vpiObservationDemand || anyOverride(context->forceMask) ||
            anyOverride(context->assignMask);
   };

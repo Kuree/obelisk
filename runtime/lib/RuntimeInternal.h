@@ -2537,6 +2537,11 @@ struct obelisk_rt_context {
     uint64_t assertion = 0;
   };
   uint64_t nextDeferredImmediateTicket = 1;
+  // Pending reports queued by a generated activation, which runs outside any
+  // runtime process. Their evaluators run in this time slot's Observed or
+  // Postponed region, so a generated loop must hand the slot to the runtime
+  // before it advances time (IEEE 1800-2023 4.5, 16.4.1).
+  uint64_t generatedDeferredReports = 0;
   std::unordered_map<uint64_t, DeferredImmediateReport>
       deferredImmediateReports;
   std::unordered_map<uint64_t, std::unordered_set<uint64_t>>
@@ -3462,6 +3467,10 @@ inline bool obelisk_rt_resume_flushes_deferred_reports(uint32_t suspendKind) {
   default:
     return false;
   }
+}
+inline bool
+obelisk_rt_generated_deferred_reports_pending(const obelisk_rt_context *context) {
+  return context->generatedDeferredReports != 0;
 }
 bool obelisk_rt_cancel_deferred_immediate_assertion_unlocked(
     obelisk_rt_context *context, uint64_t assertion,

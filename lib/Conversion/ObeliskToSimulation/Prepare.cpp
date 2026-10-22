@@ -2803,6 +2803,69 @@ void ObeliskSimPreparePass::runOnOperation() {
   });
   if (invalid)
     return abort();
+  // IEEE 1800-2023 16.4.1-16.4.2: pending deferred assertion reports belong
+  // to the executing process, and its flush points discard them. A generated
+  // schedule resumes a process without the runtime seeing it, so a procedure
+  // with a deferred assertion advances a private epoch at each flush point;
+  // a report matures only while the epoch it captured is current.
+  // Unique, unique0 and priority violation reports follow the same queue and
+  // flush points (12.4.2.1).
+  llvm::DenseMap<Operation *, uint64_t> deferredEpochs;
+  semanticRoot.walk([&](Operation *statement) {
+    if (invalid)
+      return;
+    auto immediate =
+        dyn_cast<semantic::SVImmediateAssertionStatementOp>(statement);
+    semantic::SVUniquePriorityCheck check =
+        semantic::SVUniquePriorityCheck::None;
+    if (auto conditional =
+            dyn_cast<semantic::SVConditionalStatementOp>(statement))
+      check = conditional.getCheckKind();
+    else if (auto caseStatement =
+                 dyn_cast<semantic::SVCaseStatementOp>(statement))
+      check = caseStatement.getCheckKind();
+    else if (auto pattern =
+                 dyn_cast<semantic::SVPatternCaseStatementOp>(statement))
+      check = pattern.getCheckKind();
+    if (!(immediate && immediate.getIsDeferred()) &&
+        check == semantic::SVUniquePriorityCheck::None)
+      return;
+    auto procedure =
+        statement->getParentOfType<semantic::SVProceduralBlockSymbolOp>();
+    auto node = procedure ? procedure->getAttrOfType<IntegerAttr>("node_id")
+                          : IntegerAttr{};
+    if (!node)
+      return;
+    auto [entry, inserted] = deferredEpochs.try_emplace(procedure, 0);
+    if (inserted) {
+      std::string path = (getHierarchyName(procedure) + ".$deferred_epoch_" +
+                          Twine(node.getValue().getZExtValue()))
+                             .str();
+      if (descriptors.count(path) || nextStorageId == UINT64_MAX) {
+        emitError(getSemanticLocation(procedure))
+            << "deferred assertion epoch has no unique storage";
+        invalid = true;
+        return;
+      }
+      Type type = builder.getI32Type();
+      DescriptorInfo epoch{DescriptorInfo::Kind::Storage, nextStorageId++,
+                           getScopeId(procedure), type,
+                           sim::NetResolutionKind::Wire};
+      epoch.rootType = type;
+      descriptors[path] = epoch;
+      entry->second = epoch.id;
+      sim::SimStorageDeclOp::create(
+          builder, getSemanticLocation(procedure), epoch.id, epoch.scopeId,
+          type, sim::Lifetime::Design, builder.getStringAttr(path),
+          builder.getStringAttr("__obelisk_deferred_epoch"),
+          schedule::ComputeObservabilityKindAttr{},
+          sim::VPITypeSemanticsAttr{});
+    }
+    sim::set<sim::metadata::DeferredEpochStorage>(
+        statement, builder.getI64IntegerAttr(entry->second));
+  });
+  if (invalid)
+    return abort();
   SmallVector<NegativeTimingDelayedTerminalPlan> negativeTimingTerminals;
   Type i64 = builder.getI64Type();
   for (semantic::SVClassTypeOp classType : classSources)

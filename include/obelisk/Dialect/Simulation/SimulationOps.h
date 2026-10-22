@@ -103,10 +103,16 @@ bool isSuspensionOp(::mlir::Operation *operation);
 /// mailbox or semaphore operations may continue without a scheduler pass.
 bool returnsToScheduler(::mlir::Operation *operation);
 
+/// Whether a spawn starts the evaluator of a pending deferred assertion
+/// report: it carries the ticket of a deferred enqueue (IEEE 1800-2023
+/// 16.4.1).
+bool isDeferredReportSpawn(SimSpawnOp spawn);
+
 /// Whether an operation is a cold exit to the runtime from generated
-/// combinational evaluation: a status, termination, or output effect, or a
-/// read of runtime-owned sampled history. A generated eval closure takes a
-/// checkpoint before its block instead of calling the runtime.
+/// combinational evaluation: a status, termination, or output effect, a read
+/// of runtime-owned sampled history, or a pending deferred assertion report.
+/// A generated eval closure takes a checkpoint before its block instead of
+/// calling the runtime.
 bool isColdRuntimeCheckpoint(::mlir::Operation *operation);
 
 /// Whether a process is startup infrastructure that must reach its first
