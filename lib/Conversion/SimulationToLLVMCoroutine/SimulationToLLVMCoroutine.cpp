@@ -234,6 +234,7 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
   constexpr StringLiteral coveragePointHit = "obelisk_rt_v1_coverage_point_hit";
   SmallVector<LLVM::LLVMFuncOp> pending;
   llvm::SmallPtrSet<Operation *, 32> visited;
+  bool verified = true;
   for (LLVM::LLVMFuncOp function : module.getOps<LLVM::LLVMFuncOp>()) {
     if (!::obelisk::schedule::has<schedule::metadata::evalCallClosureRoot>(
             function))
@@ -366,10 +367,11 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
       }
       return WalkResult::advance();
     });
-    if (result.wasInterrupted())
-      return failure();
+    // Report the first violation of every function in the closure, not only
+    // of the first one.
+    verified &= !result.wasInterrupted();
   }
-  return success();
+  return success(verified);
 }
 
 /// The (actor, continuation) pairs whose wait schedules the resumption into

@@ -531,6 +531,21 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
                          sim::SimClassDirectCallOp, sim::SimClassVirtualCallOp>(
                          operation))
               requiresRuntime = true;
+            // File I/O (IEEE 1800-2023 21.3) and value change dumps (21.7)
+            // operate on runtime-owned descriptor tables and dump state.
+            else if (isa<sim::SimFileOpenMCDOp, sim::SimFileOpenOp,
+                         sim::SimFileCloseOp, sim::SimFileFlushOp,
+                         sim::SimFileGetcOp, sim::SimFileUngetcOp,
+                         sim::SimFileGetlineOp, sim::SimFileReadPackedOp,
+                         sim::SimFileEofOp, sim::SimFileSeekOp,
+                         sim::SimFileTellOp, sim::SimFileRewindOp,
+                         sim::SimDumpOpenOp, sim::SimDumpOpenStringOp,
+                         sim::SimDumpTimescaleOp, sim::SimDumpVarsOp,
+                         sim::SimDumpAllOp, sim::SimDumpControlOp,
+                         sim::SimDumpLimitOp, sim::SimDumpFlushOp,
+                         sim::SimDumpPortsOp, sim::SimDumpPortsControlOp>(
+                         operation))
+              requiresRuntime = true;
             else if (auto store = dyn_cast<sim::SimRefStoreOp>(operation))
               requiresRuntime =
                   isa<sim::StringType>(store.getValue().getType()) ||
