@@ -552,27 +552,189 @@ planNativeModuleSplit(llvm::Module &module, const NativePartitionPlan &plan) {
                                std::move(nativeObjectGroups)};
 }
 
+// Declares, on first use, a global that a cloned partition definition
+// references but does not own. CloneModule instead declares every symbol of
+// the source module in every partition and deletes the unused ones afterwards,
+// which costs O(partitions * whole-program symbols) for a large design.
+class PartitionDeclarationMaterializer final : public ValueMaterializer {
+public:
+  PartitionDeclarationMaterializer(llvm::Module &partition,
+                                   ValueToValueMapTy &mapping)
+      : partition(partition), mapping(mapping) {}
+
+  llvm::Value *materialize(llvm::Value *value) override {
+    auto *global = dyn_cast<llvm::GlobalValue>(value);
+    if (!global)
+      return nullptr;
+    llvm::GlobalValue *declaration;
+    if (global->getValueType()->isFunctionTy()) {
+      llvm::Function *function = llvm::Function::Create(
+          cast<llvm::FunctionType>(global->getValueType()),
+          llvm::GlobalValue::ExternalLinkage, global->getAddressSpace(),
+          global->getName(), &partition);
+      if (auto *source = dyn_cast<llvm::Function>(global)) {
+        function->copyAttributesFrom(source);
+        // A personality belongs to a definition, not to this declaration.
+        function->setPersonalityFn(nullptr);
+      }
+      declaration = function;
+    } else {
+      auto *source = dyn_cast<llvm::GlobalVariable>(global);
+      auto *variable = new llvm::GlobalVariable(
+          partition, global->getValueType(), source && source->isConstant(),
+          llvm::GlobalValue::ExternalLinkage, nullptr, global->getName(),
+          nullptr, global->getThreadLocalMode(), global->getAddressSpace());
+      if (source)
+        variable->copyAttributesFrom(source);
+      declaration = variable;
+    }
+    // An alias or another partition's definition is an external reference
+    // here; a source declaration keeps its own linkage, e.g. extern_weak.
+    declaration->setLinkage(isa<llvm::GlobalObject>(global) &&
+                                    global->isDeclaration()
+                                ? global->getLinkage()
+                                : llvm::GlobalValue::ExternalLinkage);
+    mapping[global] = declaration;
+    if (auto *object = dyn_cast<llvm::GlobalObject>(global)) {
+      SmallVector<std::pair<unsigned, llvm::MDNode *>, 1> attachments;
+      object->getAllMetadata(attachments);
+      for (auto [kind, node] : attachments)
+        cast<llvm::GlobalObject>(declaration)
+            ->addMetadata(kind,
+                          *MapMetadata(node, mapping, RF_None, nullptr, this));
+    }
+    return declaration;
+  }
+
+private:
+  llvm::Module &partition;
+  ValueToValueMapTy &mapping;
+};
+
+void copyPartitionComdat(llvm::GlobalObject *destination,
+                         const llvm::GlobalObject *source) {
+  const llvm::Comdat *comdat = source->getComdat();
+  if (!comdat)
+    return;
+  llvm::Comdat *copy =
+      destination->getParent()->getOrInsertComdat(comdat->getName());
+  copy->setSelectionKind(comdat->getSelectionKind());
+  destination->setComdat(copy);
+}
+
+// Clones the definitions assigned to `group`, declaring only the globals they
+// reference (see PartitionDeclarationMaterializer).
 std::unique_ptr<llvm::Module>
 cloneNativeModulePartition(llvm::Module &module,
                            const NativeModuleSplitPlan &plan, unsigned group) {
-  ValueToValueMapTy mapping;
-  std::unique_ptr<llvm::Module> result =
-      CloneModule(module, mapping, [&](const llvm::GlobalValue *value) {
-        auto found = plan.assignments.find(value);
-        return found != plan.assignments.end() && found->second == group;
-      });
-  // CloneModule keeps a declaration for every definition rejected by the
-  // predicate. A UVM module has tens of thousands of symbols, so retaining
-  // that complete inventory in every shard makes the ThinLTO combined index
-  // scale as O(shards * whole-program symbols). Keep only declarations that
-  // the selected definitions actually reference.
-  for (llvm::GlobalValue &value :
-       llvm::make_early_inc_range(result->global_values()))
-    if (value.isDeclaration() && value.use_empty())
-      value.eraseFromParent();
-  result->setModuleIdentifier(
+  auto result = std::make_unique<llvm::Module>(
       (Twine(module.getModuleIdentifier()) + ".partition." + Twine(group))
-          .str());
+          .str(),
+      module.getContext());
+  result->setSourceFileName(module.getSourceFileName());
+  result->setDataLayout(module.getDataLayout());
+  result->setTargetTriple(module.getTargetTriple());
+  result->setModuleInlineAsm(module.getModuleInlineAsm());
+  ValueToValueMapTy mapping;
+  PartitionDeclarationMaterializer materializer(*result, mapping);
+  auto selected = [&](const llvm::GlobalValue &value) {
+    auto found = plan.assignments.find(&value);
+    return found != plan.assignments.end() && found->second == group;
+  };
+
+  // Create every owned definition before cloning a body or initializer, so
+  // references among them map to definitions rather than declarations.
+  SmallVector<const llvm::GlobalVariable *> variables;
+  SmallVector<const llvm::Function *> functions;
+  SmallVector<const llvm::GlobalAlias *> aliases;
+  SmallVector<const llvm::GlobalIFunc *> ifuncs;
+  for (const llvm::GlobalVariable &source : module.globals()) {
+    if (!selected(source))
+      continue;
+    auto *variable = new llvm::GlobalVariable(
+        *result, source.getValueType(), source.isConstant(),
+        source.getLinkage(), nullptr, source.getName(), nullptr,
+        source.getThreadLocalMode(), source.getAddressSpace());
+    variable->copyAttributesFrom(&source);
+    mapping[&source] = variable;
+    variables.push_back(&source);
+  }
+  for (const llvm::Function &source : module) {
+    if (!selected(source))
+      continue;
+    llvm::Function *function = llvm::Function::Create(
+        source.getFunctionType(), source.getLinkage(), source.getAddressSpace(),
+        source.getName(), result.get());
+    function->copyAttributesFrom(&source);
+    mapping[&source] = function;
+    functions.push_back(&source);
+  }
+  for (const llvm::GlobalAlias &source : module.aliases()) {
+    if (!selected(source))
+      continue;
+    llvm::GlobalAlias *alias = llvm::GlobalAlias::create(
+        source.getValueType(), source.getAddressSpace(), source.getLinkage(),
+        source.getName(), result.get());
+    alias->copyAttributesFrom(&source);
+    mapping[&source] = alias;
+    aliases.push_back(&source);
+  }
+  for (const llvm::GlobalIFunc &source : module.ifuncs()) {
+    if (!selected(source))
+      continue;
+    llvm::GlobalIFunc *ifunc = llvm::GlobalIFunc::create(
+        source.getValueType(), source.getAddressSpace(), source.getLinkage(),
+        source.getName(), nullptr, result.get());
+    ifunc->copyAttributesFrom(&source);
+    mapping[&source] = ifunc;
+    ifuncs.push_back(&source);
+  }
+
+  for (const llvm::GlobalVariable *source : variables) {
+    auto *variable = cast<llvm::GlobalVariable>(mapping[source]);
+    SmallVector<std::pair<unsigned, llvm::MDNode *>, 1> attachments;
+    source->getAllMetadata(attachments);
+    for (auto [kind, node] : attachments)
+      variable->addMetadata(
+          kind, *MapMetadata(node, mapping, RF_None, nullptr, &materializer));
+    if (source->hasInitializer())
+      variable->setInitializer(MapValue(source->getInitializer(), mapping,
+                                        RF_None, nullptr, &materializer));
+    copyPartitionComdat(variable, source);
+  }
+  for (const llvm::Function *source : functions) {
+    auto *function = cast<llvm::Function>(mapping[source]);
+    auto argument = function->arg_begin();
+    for (const llvm::Argument &sourceArgument : source->args()) {
+      argument->setName(sourceArgument.getName());
+      mapping[&sourceArgument] = &*argument++;
+    }
+    SmallVector<llvm::ReturnInst *, 8> returns;
+    CloneFunctionInto(function, source, mapping,
+                      CloneFunctionChangeType::ClonedModule, returns, "",
+                      nullptr, nullptr, &materializer);
+    if (source->hasPersonalityFn())
+      function->setPersonalityFn(MapValue(source->getPersonalityFn(), mapping,
+                                          RF_None, nullptr, &materializer));
+    copyPartitionComdat(function, source);
+  }
+  for (const llvm::GlobalAlias *source : aliases)
+    if (const llvm::Constant *aliasee = source->getAliasee())
+      cast<llvm::GlobalAlias>(mapping[source])
+          ->setAliasee(
+              MapValue(aliasee, mapping, RF_None, nullptr, &materializer));
+  for (const llvm::GlobalIFunc *source : ifuncs)
+    if (const llvm::Constant *resolver = source->getResolver())
+      cast<llvm::GlobalIFunc>(mapping[source])
+          ->setResolver(
+              MapValue(resolver, mapping, RF_None, nullptr, &materializer));
+  for (const llvm::NamedMDNode &source : module.named_metadata()) {
+    llvm::NamedMDNode *node =
+        result->getOrInsertNamedMetadata(source.getName());
+    for (const llvm::MDNode *operand : source.operands())
+      node->addOperand(
+          MapMetadata(operand, mapping, RF_None, nullptr, &materializer));
+  }
   return result;
 }
 
@@ -1623,12 +1785,17 @@ LogicalResult emitTargetOutput(ModuleOp module,
       double bitcodeSerializationSeconds = 0.0;
       std::vector<std::unique_ptr<TargetMachine>> partitionTargets;
       partitionTargets.reserve(splitPlan->groups.size());
+      double cloneSeconds = 0.0;
       for (auto [index, group] : llvm::enumerate(splitPlan->groups)) {
+        auto cloneStart = std::chrono::steady_clock::now();
         std::unique_ptr<llvm::Module> partition =
             cloneNativeModulePartition(*llvmModule, *splitPlan, group);
         SmallVector<char, 0> storage;
         raw_svector_ostream stream(storage);
         auto serializationStart = std::chrono::steady_clock::now();
+        cloneSeconds +=
+            std::chrono::duration<double>(serializationStart - cloneStart)
+                .count();
         WriteBitcodeToFile(*partition, stream);
         bitcodeSerializationSeconds +=
             std::chrono::duration<double>(std::chrono::steady_clock::now() -
@@ -1657,9 +1824,12 @@ LogicalResult emitTargetOutput(ModuleOp module,
       }
       llvmModule.reset();
       releaseFreedHeapPages();
-      if (options.timing)
+      if (options.timing) {
+        errs() << "obelisk backend timing: partition cloning: " << cloneSeconds
+               << " s\n";
         errs() << "obelisk backend timing: partition bitcode serialization: "
                << bitcodeSerializationSeconds << " s\n";
+      }
       markBackendTiming("partition serialization and target creation");
 
       ThreadPoolStrategy strategy =
