@@ -684,7 +684,6 @@ LogicalResult materializeEvalTwoStateVariants(
       bool closureKnownPreserving = true;
       bool closureRuntimeFree = true;
       bool closureCheckpointSafe = true;
-      bool explicitUnknownNBA = false;
       bool alwaysUnknownNBA = false;
       for (size_t index = 0; index != closure.size(); ++index) {
         sim::SimFuncOp function = closure[index];
@@ -711,17 +710,6 @@ LogicalResult materializeEvalTwoStateVariants(
               dominatesReturns &= dominance.dominates(nba, returnOp);
             });
             alwaysUnknownNBA |= hasReturn && dominatesReturns;
-          }
-          SmallVector<Value> pending{nba.getValue()};
-          llvm::SmallPtrSet<Operation *, 16> examined;
-          while (!pending.empty()) {
-            Operation *op = pending.pop_back_val().getDefiningOp();
-            if (!op || !examined.insert(op).second)
-              continue;
-            if (auto constant = dyn_cast<sim::SimLogicConstantOp>(op))
-              explicitUnknownNBA |= !constant.getUnknown().isZero();
-            else if (!isa<sim::SimRefLoadOp, sim::SimNetReadOp>(op))
-              llvm::append_range(pending, op->getOperands());
           }
         });
         function.walk([&](sim::SimCallOp call) {
@@ -779,12 +767,12 @@ LogicalResult materializeEvalTwoStateVariants(
             ::obelisk::schedule::Field::EvalConditionallyTwoState>(
             source, UnitAttr::get(module.getContext()));
       }
-      // A pure activation can explicitly stage X/Z and read that register
-      // on another. Its inductive ranges alone cannot guard the read after
-      // the X/Z commit. Use the same generated CFG predicate as checkpoint
-      // owners, so only reads reached by this activation constrain promotion.
-      bool knownOnlyPath =
-          closureRuntimeFree && !closureKnownPreserving && explicitUnknownNBA;
+      // A pure activation can stage X/Z through an NBA (IEEE 1800-2023
+      // 10.4.2) and read that register on another. Its staging site sends
+      // that step to the four-state NBA commit, whose unknown-plane store
+      // publishes promotion invalidation for the root's range, so no path
+      // predicate is needed on each activation.
+      bool knownOnlyPath = false;
       // A reset can stage known NBA values without reading the old state on
       // that path. Admit that activation before the whole owner's range is
       // known, using the executable SSA/CFG probe rather than a signal name or
