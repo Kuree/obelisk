@@ -84,6 +84,65 @@ public:
   };
   using Copies = llvm::DenseMap<uint64_t, Copy>;
 
+  /// What one block contributes to the solve, from its own function and the
+  /// compute graph. A block's phases are constant: they change only across
+  /// suspensions, so solves over activations are over blocks.
+  struct BlockInfo {
+    /// How the terminator carries the block's activation to its successors.
+    enum class Transfer : uint8_t {
+      /// No suspension: the successor continues the same activation.
+      Plain,
+      /// A task call: the same activation unless the callee suspends.
+      TaskCall,
+      /// A positive constant delay, a zero (or negative) constant delay, or a
+      /// variable delay.
+      Positive,
+      Zero,
+      Variable,
+      /// Never resumes.
+      Forever,
+      /// Resumes when one of `watched` changes.
+      Watch,
+      /// Resumes when the event `watched` holds is triggered.
+      Event,
+      /// Any other suspension, or a wait on an unresolved handle.
+      Unknown,
+    };
+    /// How a write updates its root relative to the writer's phases.
+    enum class Update : uint8_t { Same, AfterNBA, Any };
+
+    Transfer transfer = Transfer::Plain;
+    mlir::Operation *terminator = nullptr;
+    llvm::SmallVector<uint64_t, 1> watched;
+    /// Neighbors over executable CFG edges: a branch on constant operands
+    /// takes only the selected edge.
+    llvm::SmallVector<mlir::Block *, 2> predecessors, successors;
+    /// Functions the block's spawns and task calls start, and the task-call
+    /// terminator's callee.
+    llvm::SmallVector<mlir::StringAttr, 1> spawnNames, taskCallNames;
+    llvm::SmallVector<mlir::Operation *, 1> spawns, taskCalls;
+    mlir::StringAttr calleeName;
+    mlir::Operation *callee = nullptr;
+    bool calleeSuspends = false;
+    /// The terminator returns; `returns` also needs a task some modeled call
+    /// enters.
+    bool isReturn = false, returns = false;
+    /// Reachable from the function entry over executable edges.
+    bool reachable = false;
+    /// The block has a compute-graph fragment, whose effects follow.
+    bool hasEffects = false;
+    /// Roots changed by blocking writes, drives and NBAs, with how each
+    /// update relates to the writer's phases; `anyRoot` when unresolved.
+    llvm::SmallVector<std::pair<uint64_t, Update>, 2> writes;
+    /// Roots changed by blocking writes and drives or triggered, which wake
+    /// waiters in the writer's phase; `anyRoot` when unresolved.
+    llvm::SmallVector<uint64_t, 2> wakes;
+    /// (destination, source) of the function's proven copies.
+    llvm::SmallVector<std::pair<uint64_t, uint64_t>, 1> copies;
+  };
+  /// Root key standing for every root an unresolved write may update.
+  static constexpr uint64_t anyRoot = ~uint64_t{0};
+
   /// `design` must carry its verified compute graph.
   ActivationPhaseAnalysis(sim::SimDesignOp design,
                           const HandleDataflowAnalysis &handles);
@@ -114,6 +173,10 @@ public:
   bool taskSuspends(mlir::StringAttr task) const;
   /// The compute-graph effects of one block, or null without a fragment.
   mlir::ArrayAttr getFragmentEffects(mlir::Block *block) const;
+  /// The summary of a block of a defined function, or null.
+  const BlockInfo *getBlockInfo(mlir::Block *block) const;
+  /// Every summarized block.
+  const llvm::DenseMap<mlir::Block *, BlockInfo> &getBlockInfos() const;
 
   struct Shared;
 

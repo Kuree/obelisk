@@ -581,26 +581,9 @@ private:
   const SymbolTable &symbols;
 };
 
-/// Whether a program point may execute after a deferred kernel, within a
-/// phase the kernel runs in and before that phase's NBA region.
-class AfterLattice final : public dataflow::AbstractDenseLattice {
-public:
-  using AbstractDenseLattice::AbstractDenseLattice;
-  ChangeResult join(bool more) {
-    if (after || !more)
-      return ChangeResult::NoChange;
-    after = true;
-    return ChangeResult::Change;
-  }
-  ChangeResult join(const AbstractDenseLattice &rhs) override {
-    return join(static_cast<const AfterLattice &>(rhs).after);
-  }
-  void print(raw_ostream &os) const override { os << after; }
-  bool after = false;
-};
-
-/// Whether a root may change, or a process or task may start or return,
-/// after a deferred kernel within its phase.
+/// Whether a block's activations may run, a root may change, or a process or
+/// task may start or return after a deferred kernel within its phase, before
+/// that phase's NBA region.
 class AfterState final : public AnalysisState {
 public:
   using AnalysisState::AnalysisState;
@@ -647,12 +630,11 @@ public:
 /// in a later slot. Other kernels of the phase are deferred as well, so they
 /// may run after it. Zero and variable delays, waits on unresolved roots and
 /// waits this analysis does not model are conservatively after it.
-class PostKernelAnalysis final
-    : public dataflow::DenseForwardDataFlowAnalysis<AfterLattice> {
+class PostKernelAnalysis final : public DataFlowAnalysis {
 public:
+  using BlockInfo = analysis::ActivationPhaseAnalysis::BlockInfo;
   struct Config {
     Operation *design;
-    const SymbolTable &symbols;
     const analysis::ActivationPhaseAnalysis &phases;
     analysis::ActivationPhaseAnalysis::Phases kernel;
     sim::SimFuncOp rootInitializer;
@@ -664,167 +646,126 @@ public:
     SmallVector<uint64_t> changed;
   };
   PostKernelAnalysis(DataFlowSolver &solver, const Config &config)
-      : DenseForwardDataFlowAnalysis(solver), config(config) {
+      : DataFlowAnalysis(solver), config(config) {
     registerAnchorKind<AfterRoot>();
     registerAnchorKind<AfterEntry>();
   }
-  LogicalResult initialize(Operation *top) override {
+  LogicalResult initialize(Operation *) override {
     for (uint64_t root : config.changed)
-      propagateIfChanged(rootState(root), rootState(root)->set());
-    return DenseForwardDataFlowAnalysis::initialize(top);
-  }
-  LogicalResult visitOperation(Operation *op, const AfterLattice &before,
-                               AfterLattice *after) override {
-    propagateIfChanged(after, after->join(before.after));
-    auto function = op->getParentOfType<sim::SimFuncOp>();
-    if (!before.after || !function || config.members.contains(function))
-      return success();
-    auto mark = [&](AfterState *state) {
-      propagateIfChanged(state, state->set());
-    };
-    if (auto spawn = dyn_cast<sim::SimSpawnOp>(op)) {
-      if (auto callee = lookup(spawn.getCalleeAttr().getAttr()))
-        mark(entryState(callee, /*returns=*/false));
-    } else if (auto call = dyn_cast<sim::SimTaskCallOp>(op)) {
-      if (auto callee = lookup(call.getCalleeAttr().getAttr()))
-        mark(entryState(callee, /*returns=*/false));
-    } else if (isa<sim::SimReturnOp>(op)) {
-      mark(entryState(function, /*returns=*/true));
-    }
-    if (op != op->getBlock()->getTerminator())
-      return success();
-    // Blocking writes and event triggers of this activation, including the
-    // summaries of what it calls, wake waiters in the same phase.
-    ArrayAttr effects = config.phases.getFragmentEffects(op->getBlock());
-    if (!effects)
-      return success();
-    for (auto effect : effects.getAsRange<schedule::ComputeEffectAttr>()) {
-      schedule::ComputeEffectKind kind = effect.getEffect();
-      if (effect.getTarget() == schedule::ComputeTargetKind::Local ||
-          (kind != schedule::ComputeEffectKind::Write &&
-           kind != schedule::ComputeEffectKind::Drive &&
-           kind != schedule::ComputeEffectKind::Trigger))
-        continue;
-      std::optional<SmallVector<uint64_t>> roots =
-          config.phases.getEffectRoots(function.getSymNameAttr(), effect);
-      if (!roots) {
-        mark(rootState(AfterRoot::anyRoot));
-        continue;
-      }
-      for (uint64_t root : *roots)
-        mark(rootState(root));
-    }
+      mark(rootState(root));
+    for (auto &[block, info] : config.phases.getBlockInfos())
+      visitBlock(block, info);
     return success();
   }
-  void visitBlockTransfer(Block *block, ProgramPoint *point, Block *predecessor,
-                          const AfterLattice &before,
-                          AfterLattice *after) override {
-    auto function = dyn_cast<sim::SimFuncOp>(block->getParentOp());
-    if (!function || config.members.contains(function))
-      return;
-    auto join = [&](bool more) {
-      propagateIfChanged(after, after->join(more));
-    };
-    Operation *terminator = predecessor->getTerminator();
-    if (!sim::isSuspensionOp(terminator)) {
-      join(before.after);
-      return;
-    }
-    if (auto call = dyn_cast<sim::SimTaskCallOp>(terminator)) {
-      StringAttr callee = call.getCalleeAttr().getAttr();
-      if (!config.phases.taskSuspends(callee)) {
-        join(before.after);
-        return;
-      }
-      auto task = lookup(callee);
-      join(!task || getOrCreateFor<AfterState>(
-                        point, getLatticeAnchor<AfterEntry>(
-                                   std::make_pair(task.getOperation(), 1u)))
-                        ->after);
-      return;
-    }
-    if (!config.phases.getPhases(block).meets(config.kernel))
-      return;
-    if (config.otherKernelWaits.contains(terminator)) {
-      join(true);
-      return;
-    }
-    if (auto delay = dyn_cast<sim::SimSuspendDelayOp>(terminator)) {
-      auto constant = delay.getDelay().getDefiningOp<sim::SimTimeConstantOp>();
-      join(!constant || constant.getValue() == 0);
-      return;
-    }
-    if (isa<sim::SimSuspendForeverOp>(terminator))
-      return;
-    SmallVector<Value> watched;
-    if (auto edge = dyn_cast<sim::SimSuspendEdgeOp>(terminator))
-      watched.push_back(edge.getWatched());
-    else if (auto change = dyn_cast<sim::SimSuspendChangeOp>(terminator))
-      watched.push_back(change.getWatched());
-    else if (auto any = dyn_cast<sim::SimSuspendAnyOp>(terminator))
-      llvm::append_range(watched, any.getWatched());
-    else if (auto edge = dyn_cast<sim::SimSuspendEdgeIffOp>(terminator))
-      watched.push_back(edge.getWatched());
-    else if (auto level = dyn_cast<sim::SimSuspendLevelOp>(terminator))
-      watched.push_back(level.getWatched());
-    else if (auto event = dyn_cast<sim::SimSuspendEventOp>(terminator))
-      watched.push_back(event.getEvent());
-    else {
-      join(true);
-      return;
-    }
-    bool woken = changedFor(point, AfterRoot::anyRoot);
-    for (Value value : watched) {
-      std::optional<uint64_t> root = config.phases.getRoot(function, value);
-      woken |= !root || changedFor(point, *root);
-    }
-    join(woken);
+  LogicalResult visit(ProgramPoint *point) override {
+    if (!point->isBlockStart())
+      return success();
+    if (const BlockInfo *info = config.phases.getBlockInfo(point->getBlock()))
+      visitBlock(point->getBlock(), *info);
+    return success();
   }
-  void setToEntryState(AfterLattice *lattice) override {
-    auto *point = dyn_cast_if_present<ProgramPoint *>(lattice->getAnchor());
-    Block *block = point ? point->getBlock() : nullptr;
-    auto function = block ? dyn_cast<sim::SimFuncOp>(block->getParentOp())
-                          : sim::SimFuncOp{};
-    // Plain functions run inside their callers, whose fragments carry their
-    // effects; static initialization precedes every slot.
-    if (!function || function == config.rootInitializer ||
-        config.members.contains(function) ||
-        function.getEntryKind() == sim::EntryKind::Function)
-      return;
-    if (!config.phases.isModeledStart(function.getSymNameAttr())) {
-      propagateIfChanged(
-          lattice,
-          lattice->join(config.phases.getPhases(block).meets(config.kernel)));
-      return;
-    }
-    propagateIfChanged(
-        lattice,
-        lattice->join(getOrCreateFor<AfterState>(
-                          point, getLatticeAnchor<AfterEntry>(std::make_pair(
-                                     function.getOperation(), 0u)))
-                          ->after));
-  }
-  void visitCallControlFlowTransfer(CallOpInterface call,
-                                    dataflow::CallControlFlowAction action,
-                                    const AfterLattice &before,
-                                    AfterLattice *after) override {
-    // Spawns and calls are not interprocedural edges here: process and task
-    // entries are modeled by their anchors, plain calls by fragment effects.
-    (void)action;
-    (void)visitOperation(call, before, after);
+  /// Whether `block`'s activations may run after the kernel.
+  static bool isAfter(DataFlowSolver &solver, Block *block) {
+    const auto *state =
+        solver.lookupState<AfterState>(solver.getProgramPointBefore(block));
+    return state && state->after;
   }
 
 private:
-  sim::SimFuncOp lookup(StringAttr name) {
-    return config.symbols.lookup<sim::SimFuncOp>(name);
+  /// A block's activations run after the kernel if its entry or some
+  /// executable edge into it does; then its starts, returns and the blocking
+  /// writes and event triggers of its fragment, including the summaries of
+  /// what it calls, wake what they reach in the same phase.
+  void visitBlock(Block *block, const BlockInfo &info) {
+    auto function = cast<sim::SimFuncOp>(block->getParentOp());
+    if (config.members.contains(function))
+      return;
+    ProgramPoint *point = getProgramPointBefore(block);
+    bool after = false;
+    if (block->isEntryBlock())
+      after = entryAfter(function, block, point);
+    else
+      for (Block *predecessor : info.predecessors)
+        after = after || transfer(predecessor, block, point);
+    auto *state = getOrCreate<AfterState>(point);
+    if (after)
+      mark(state);
+    if (!state->after)
+      return;
+    for (Operation *callee : info.spawns)
+      mark(entryState(callee, /*returns=*/false));
+    for (Operation *callee : info.taskCalls)
+      mark(entryState(callee, /*returns=*/false));
+    if (info.isReturn)
+      mark(entryState(function, /*returns=*/true));
+    if (info.hasEffects)
+      for (uint64_t root : info.wakes)
+        mark(rootState(root));
   }
+
+  bool entryAfter(sim::SimFuncOp function, Block *block, ProgramPoint *point) {
+    // Plain functions run inside their callers, whose fragments carry their
+    // effects; static initialization precedes every slot.
+    if (function == config.rootInitializer ||
+        function.getEntryKind() == sim::EntryKind::Function)
+      return false;
+    if (!config.phases.isModeledStart(function.getSymNameAttr()))
+      return config.phases.getPhases(block).meets(config.kernel);
+    return getOrCreateFor<AfterState>(
+               point, getLatticeAnchor<AfterEntry>(
+                          std::make_pair(function.getOperation(), 0u)))
+        ->after;
+  }
+
+  /// Whether `predecessor`'s terminator enters `block` after the kernel.
+  bool transfer(Block *predecessor, Block *block, ProgramPoint *point) {
+    const BlockInfo &from = *config.phases.getBlockInfo(predecessor);
+    using Transfer = BlockInfo::Transfer;
+    if (from.transfer == Transfer::Plain ||
+        (from.transfer == Transfer::TaskCall && !from.calleeSuspends))
+      return getOrCreateFor<AfterState>(point,
+                                        getProgramPointBefore(predecessor))
+          ->after;
+    if (from.transfer == Transfer::TaskCall)
+      return !from.callee ||
+             getOrCreateFor<AfterState>(
+                 point, getLatticeAnchor<AfterEntry>(
+                            std::make_pair(from.callee, 1u)))
+                 ->after;
+    if (!config.phases.getPhases(block).meets(config.kernel))
+      return false;
+    if (config.otherKernelWaits.contains(from.terminator))
+      return true;
+    switch (from.transfer) {
+    case Transfer::Positive:
+    case Transfer::Forever:
+      return false;
+    case Transfer::Zero:
+    case Transfer::Variable:
+    case Transfer::Unknown:
+      return true;
+    case Transfer::Watch:
+    case Transfer::Event: {
+      bool woken = changedFor(point, AfterRoot::anyRoot);
+      for (uint64_t root : from.watched)
+        woken = woken || changedFor(point, root);
+      return woken;
+    }
+    case Transfer::Plain:
+    case Transfer::TaskCall:
+      break;
+    }
+    llvm_unreachable("handled above");
+  }
+
+  void mark(AfterState *state) { propagateIfChanged(state, state->set()); }
   AfterState *rootState(uint64_t root) {
     return getOrCreate<AfterState>(
         getLatticeAnchor<AfterRoot>(std::make_pair(root, config.design)));
   }
-  AfterState *entryState(sim::SimFuncOp function, bool returns) {
+  AfterState *entryState(Operation *function, bool returns) {
     return getOrCreate<AfterState>(getLatticeAnchor<AfterEntry>(
-        std::make_pair(function.getOperation(), unsigned{returns})));
+        std::make_pair(function, unsigned{returns})));
   }
   bool changedFor(ProgramPoint *point, uint64_t root) {
     return getOrCreateFor<AfterState>(
@@ -1594,17 +1535,15 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
     // run after it. The window analysis covers the whole design, so it runs
     // only when deferral could store more roots (see below).
     PostKernelAnalysis::Config windowConfig{
-        design.getOperation(), symbols,         phases, kernelPhases,
-        rootInitializer,       memberFunctions, {},     {}};
+        design.getOperation(), phases, kernelPhases, rootInitializer,
+        memberFunctions,       {},     {}};
     DataFlowSolver window(DataFlowConfig().setInterprocedural(false));
     auto isAfter = [&](StringAttr name, uint32_t index) {
       auto function = symbols.lookup<sim::SimFuncOp>(name);
       Block *block = function ? blockAt(function, index) : nullptr;
       if (!block)
         return true;
-      const auto *state =
-          window.lookupState<AfterLattice>(window.getProgramPointBefore(block));
-      return state && state->after;
+      return PostKernelAnalysis::isAfter(window, block);
     };
     auto changedIn = [&](DataFlowSolver &solver, uint64_t root) {
       for (uint64_t key : {root, AfterRoot::anyRoot}) {
@@ -1625,16 +1564,16 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
       // write. The window below places them after it as well, which covers
       // their accesses, writers and finishes.
       bool inactiveShared = false;
-      design.walk([&](sim::SimSuspendDelayOp delay) {
-        auto function = delay->getParentOfType<sim::SimFuncOp>();
-        if (!function || memberFunctions.contains(function))
-          return;
-        auto constant =
-            delay.getDelay().getDefiningOp<sim::SimTimeConstantOp>();
-        if (!constant || constant.getValue() == 0)
-          inactiveShared |=
-              phases.getPhases(delay.getContinuation()).meets(kernelPhases);
-      });
+      for (auto &[block, info] : phases.getBlockInfos()) {
+        using Transfer = analysis::ActivationPhaseAnalysis::BlockInfo::Transfer;
+        if ((info.transfer != Transfer::Zero &&
+             info.transfer != Transfer::Variable) ||
+            memberFunctions.contains(block->getParentOp()))
+          continue;
+        auto delay = cast<sim::SimSuspendDelayOp>(info.terminator);
+        inactiveShared |=
+            phases.getPhases(delay.getContinuation()).meets(kernelPhases);
+      }
       if (inactiveShared) {
         if (llvm::any_of(members, [](const Member &member) {
               return member.unresolvedRead;
@@ -1643,11 +1582,9 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
         // Without kernel updates, the window holds exactly what Inactive
         // events start or wake in the phase, plus what it cannot model.
         PostKernelAnalysis::Config inactiveConfig{
-            design.getOperation(), symbols,         phases, kernelPhases,
-            rootInitializer,       memberFunctions, {},     {}};
+            design.getOperation(), phases, kernelPhases, rootInitializer,
+            memberFunctions,       {},     {}};
         DataFlowSolver inactive(DataFlowConfig().setInterprocedural(false));
-        inactive.load<dataflow::DeadCodeAnalysis>();
-        inactive.load<dataflow::SparseConstantPropagation>();
         inactive.load<PostKernelAnalysis>(inactiveConfig);
         if (failed(inactive.initializeAndRun(design)))
           return "post-kernel analysis";
@@ -1668,8 +1605,6 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
         if (member.unresolvedUpdate)
           windowConfig.changed.push_back(AfterRoot::anyRoot);
       }
-      window.load<dataflow::DeadCodeAnalysis>();
-      window.load<dataflow::SparseConstantPropagation>();
       window.load<PostKernelAnalysis>(windowConfig);
       if (failed(window.initializeAndRun(design)))
         return "post-kernel analysis";
