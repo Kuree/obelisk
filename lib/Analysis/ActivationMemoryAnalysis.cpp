@@ -33,6 +33,9 @@ using DependencyMode = ActivationMemoryAnalysis::DependencyMode;
 // Cache the mask by immutable type; most scalar/packed types need no mask.
 class LogicalLanes {
 public:
+  /// Above this many logical lanes a type keeps every provenance lane, as an
+  /// unrepresentable mask does.
+  static constexpr size_t maximumLogicalLanes = 1024;
   ArrayRef<Range> get(Type type) {
     auto array = dyn_cast<sim::UnpackedArrayType>(type);
     auto record = dyn_cast<sim::UnpackedStructType>(type);
@@ -48,15 +51,30 @@ public:
       APInt mask = getLogicalStorageMask(type);
       if (mask.isAllOnes())
         return {};
-      unsigned cursor = 0;
-      while (!mask.isZero()) {
-        unsigned low = mask.countr_zero();
-        mask.lshrInPlace(low);
-        cursor += low;
-        unsigned length = mask.countr_one();
-        entry->second->push_back({0, cursor, length});
-        mask.lshrInPlace(length);
-        cursor += length;
+      // Scan words rather than shifting the whole mask once per lane, which
+      // is quadratic in the width of a large padded array.
+      ArrayRef<uint64_t> words(mask.getRawData(), mask.getNumWords());
+      uint64_t total = mask.getBitWidth();
+      auto next = [&](uint64_t from, bool ones) {
+        for (uint64_t word = from / 64; word < words.size(); ++word) {
+          uint64_t bits = ones ? words[word] : ~words[word];
+          if (word == from / 64)
+            bits &= ~uint64_t(0) << (from % 64);
+          if (bits)
+            return std::min(total, word * 64 + llvm::countr_zero(bits));
+        }
+        return total;
+      };
+      for (uint64_t low = next(0, true); low < total;) {
+        uint64_t high = next(low, false);
+        // Each lane is a separate relation at every node that touches the
+        // type. Past the cap, the padding precision is not worth that cost.
+        if (entry->second->size() == maximumLogicalLanes) {
+          entry->second->clear();
+          return {};
+        }
+        entry->second->push_back({0, low, high - low});
+        low = next(high, true);
       }
     }
     return *entry->second;
