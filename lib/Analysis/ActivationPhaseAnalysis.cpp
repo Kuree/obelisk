@@ -4,11 +4,11 @@
 #include "obelisk/Analysis/ActivationMemoryAnalysis.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 
-#include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
-#include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
-#include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/IR/Threading.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "llvm/Support/Format.h"
 
 using namespace mlir;
@@ -27,26 +27,8 @@ void printPhases(raw_ostream &os, Phases phases) {
      << llvm::format_hex(phases.later, 10);
 }
 
-/// Phases of the running activation at a program point.
-class PhaseLattice final : public dataflow::AbstractDenseLattice {
-public:
-  using AbstractDenseLattice::AbstractDenseLattice;
-  ChangeResult merge(Phases more) {
-    Phases next = phases | more;
-    if (next == phases)
-      return ChangeResult::NoChange;
-    phases = next;
-    return ChangeResult::Change;
-  }
-  ChangeResult join(const AbstractDenseLattice &rhs) override {
-    return merge(static_cast<const PhaseLattice &>(rhs).phases);
-  }
-  void print(raw_ostream &os) const override { printPhases(os, phases); }
-  Phases phases;
-};
-
-/// Phases attached to a generic anchor: root changes, process or task
-/// starts, and task returns.
+/// Phases attached to an anchor: a block's activations, root changes,
+/// process or task starts, and task returns.
 class PhaseState final : public AnalysisState {
 public:
   using AnalysisState::AnalysisState;
@@ -87,6 +69,54 @@ public:
   Location getLoc() const override { return getValue()->getLoc(); }
   void print(raw_ostream &os) const override { os << "returns of a task"; }
 };
+
+/// What one block contributes to the phase solve. A block's phases are
+/// constant: they change only across suspensions, so the solve is over
+/// blocks, not program points. Built from the block's own function and the
+/// immutable design facts, for every function in parallel.
+struct BlockSummary {
+  /// How the terminator carries the block's phases to its successors.
+  enum class Transfer : uint8_t {
+    /// No suspension: the successor continues the same activation.
+    Plain,
+    /// A task call: the same activation unless the callee suspends.
+    TaskCall,
+    /// A positive constant delay, a zero (or negative) constant delay, or a
+    /// variable delay.
+    Positive,
+    Zero,
+    Variable,
+    /// Never resumes.
+    Forever,
+    /// Resumes when one of `watched` changes.
+    Watch,
+    /// Any other suspension, or a wait on an unresolved handle.
+    Unknown,
+  };
+  /// How a write updates its root relative to the writer's phases.
+  enum class Update : uint8_t { Same, AfterNBA, Any };
+
+  Transfer transfer = Transfer::Plain;
+  SmallVector<uint64_t, 1> watched;
+  /// Predecessors over executable CFG edges.
+  SmallVector<Block *, 2> predecessors;
+  /// Callees of spawns and task calls, and the task-call terminator's
+  /// callee, resolved after the parallel build.
+  SmallVector<StringAttr, 1> spawnNames, taskCallNames;
+  SmallVector<Operation *, 1> spawns, taskCalls;
+  StringAttr calleeName;
+  Operation *callee = nullptr;
+  bool calleeSuspends = false;
+  /// A return of a task some modeled call enters.
+  bool returns = false;
+  /// Reachable from the function entry over executable edges.
+  bool reachable = false;
+  /// The block has a compute-graph fragment, whose effects follow.
+  bool hasEffects = false;
+  SmallVector<std::pair<uint64_t, Update>, 2> writes;
+  /// (destination, source) of the function's proven copies.
+  SmallVector<std::pair<uint64_t, uint64_t>, 1> copies;
+};
 } // namespace
 
 /// Immutable design facts shared by the solver and the queries.
@@ -112,6 +142,7 @@ struct ActivationPhaseAnalysis::Shared {
   /// Copy processes, by name, to the destination and source they connect.
   DenseMap<StringAttr, SmallVector<std::pair<uint64_t, uint64_t>>> copies;
   ActivationPhaseAnalysis::Copies copyRoots;
+  DenseMap<Block *, BlockSummary> summaries;
 
   Shared(sim::SimDesignOp design, const HandleDataflowAnalysis &handles)
       : design(design), handles(handles), symbols(design) {}
@@ -213,166 +244,151 @@ bool isWriteEffect(schedule::ComputeEffectKind kind) {
          kind == schedule::ComputeEffectKind::NBA;
 }
 
-class PhaseDataflow final
-    : public dataflow::DenseForwardDataFlowAnalysis<PhaseLattice> {
+/// Phases of blocks, roots, process starts and task returns. Each block
+/// anchors one PhaseState: its activations' phases, the join over its
+/// executable predecessors of the terminator transfers; the entry block's
+/// come from the process start. A visit applies the block's spawns, task
+/// calls, returns and fragment writes with the block's phases.
+class PhaseBlocks final : public DataFlowAnalysis {
 public:
-  PhaseDataflow(DataFlowSolver &solver,
-                const ActivationPhaseAnalysis::Shared &shared)
-      : DenseForwardDataFlowAnalysis(solver), shared(shared) {
+  PhaseBlocks(DataFlowSolver &solver,
+              const ActivationPhaseAnalysis::Shared &shared)
+      : DataFlowAnalysis(solver), shared(shared) {
     registerAnchorKind<RootAnchor>();
     registerAnchorKind<EntryAnchor>();
     registerAnchorKind<ReturnAnchor>();
   }
 
-  LogicalResult visitOperation(Operation *op, const PhaseLattice &before,
-                               PhaseLattice *after) override {
-    propagateIfChanged(after, after->merge(before.phases));
-    auto function = op->getParentOfType<sim::SimFuncOp>();
-    if (!function)
-      return success();
-    bool initializer = function == shared.rootInitializer;
-    if (auto spawn = dyn_cast<sim::SimSpawnOp>(op)) {
-      // The root initializer starts every process at time zero.
-      Phases start = initializer ? Phases{firstPhase, 0} : before.phases;
-      if (auto callee = shared.symbols.lookup<sim::SimFuncOp>(
-              spawn.getCalleeAttr().getAttr()))
-        propagateIfChanged(entryState(callee),
-                           entryState(callee)->merge(start));
-      return success();
-    }
-    if (before.phases.empty())
-      return success();
-    if (auto call = dyn_cast<sim::SimTaskCallOp>(op)) {
-      if (auto callee = shared.symbols.lookup<sim::SimFuncOp>(
-              call.getCalleeAttr().getAttr()))
-        propagateIfChanged(entryState(callee),
-                           entryState(callee)->merge(before.phases));
-    }
-    if (isa<sim::SimReturnOp>(op) &&
-        shared.taskCalls.count(function.getSymNameAttr())) {
-      auto *returns = getOrCreate<PhaseState>(
-          getLatticeAnchor<ReturnAnchor>(function.getOperation()));
-      propagateIfChanged(returns, returns->merge(before.phases));
-    }
-    if (op != op->getBlock()->getTerminator())
-      return success();
-    // A block's phases are constant: they change only across suspensions.
-    // Apply the fragment's effects, including callee summaries, once here.
-    auto index = shared.blockIndices.find(op->getBlock());
-    if (index == shared.blockIndices.end())
-      return success();
-    auto effects =
-        shared.fragmentEffects.find({function.getSymNameAttr(), index->second});
-    if (effects == shared.fragmentEffects.end())
-      return success();
-    auto copied = shared.copies.find(function.getSymNameAttr());
-    if (copied != shared.copies.end()) {
-      for (auto [destination, source] : copied->second) {
-        Phases sourceChanges =
-            changes(source, getProgramPointAfter(op), /*withUnknown=*/false);
-        auto *state = rootState(destination);
-        propagateIfChanged(state, state->merge(sourceChanges));
-      }
-    }
-    for (auto effect :
-         effects->second.getAsRange<schedule::ComputeEffectAttr>()) {
-      if (!isWriteEffect(effect.getEffect()) ||
-          effect.getTarget() == schedule::ComputeTargetKind::Local)
-        continue;
-      if (copied != shared.copies.end() &&
-          effect.getTarget() == schedule::ComputeTargetKind::Descriptor &&
-          llvm::any_of(copied->second, [&](auto pair) {
-            return ActivationMemoryAnalysis::getRoot(effect.getResource(),
-                                                     effect.getDescriptor()) ==
-                   pair.first;
-          }))
-        continue;
-      Phases updates = before.phases;
-      if (effect.getEffect() == schedule::ComputeEffectKind::NBA)
-        updates = effect.getDeferred()
-                      ? Phases::any()
-                      : ActivationPhaseAnalysis::afterNBA(updates);
-      std::optional<SmallVector<uint64_t>> roots =
-          shared.effectRoots(function.getSymNameAttr(), effect);
-      SmallVector<uint64_t> targets =
-          roots ? *roots : SmallVector<uint64_t>{anyRoot};
-      for (uint64_t root : targets) {
-        auto *state = rootState(root);
-        propagateIfChanged(state, state->merge(updates));
-      }
-    }
+  LogicalResult initialize(Operation *) override {
+    for (auto &[block, summary] : shared.summaries)
+      visitBlock(block, summary);
     return success();
   }
 
-  void visitBlockTransfer(Block *block, ProgramPoint *point, Block *predecessor,
-                          const PhaseLattice &before,
-                          PhaseLattice *after) override {
-    Operation *terminator = predecessor->getTerminator();
-    if (!terminator || !sim::isSuspensionOp(terminator)) {
-      propagateIfChanged(after, after->merge(before.phases));
-      return;
-    }
-    if (before.phases.empty())
-      return;
-    if (auto call = dyn_cast<sim::SimTaskCallOp>(terminator)) {
-      // A task without suspensions returns within the caller's activation.
-      StringAttr callee = call.getCalleeAttr().getAttr();
-      Phases phases = before.phases;
-      if (shared.suspends(callee)) {
-        auto function = shared.symbols.lookup<sim::SimFuncOp>(callee);
-        phases = function ? getOrCreateFor<PhaseState>(
-                                point, getLatticeAnchor<ReturnAnchor>(
-                                           function.getOperation()))
-                                ->phases
-                          : Phases::any();
-      }
-      propagateIfChanged(after, after->merge(phases));
-      return;
-    }
-    propagateIfChanged(
-        after, after->merge(resumePhases(terminator, point, before.phases)));
+  LogicalResult visit(ProgramPoint *point) override {
+    if (!point->isBlockStart())
+      return success();
+    auto found = shared.summaries.find(point->getBlock());
+    if (found != shared.summaries.end())
+      visitBlock(found->first, found->second);
+    return success();
   }
 
-  void setToEntryState(PhaseLattice *lattice) override {
-    auto *point = dyn_cast_if_present<ProgramPoint *>(lattice->getAnchor());
-    Block *block = point ? point->getBlock() : nullptr;
-    auto function = block ? dyn_cast<sim::SimFuncOp>(block->getParentOp())
-                          : sim::SimFuncOp{};
-    if (!function) {
-      propagateIfChanged(lattice, lattice->merge(Phases::any()));
-      return;
-    }
+private:
+  void visitBlock(Block *block, const BlockSummary &summary) {
+    ProgramPoint *point = getProgramPointBefore(block);
+    auto function = cast<sim::SimFuncOp>(block->getParentOp());
+    Phases incoming;
+    if (block->isEntryBlock())
+      incoming = entryPhases(function, point);
+    else
+      for (Block *predecessor : summary.predecessors)
+        incoming = incoming | transfer(predecessor, point);
+    auto *state = getOrCreate<PhaseState>(point);
+    propagateIfChanged(state, state->merge(incoming));
+    apply(function, point, summary, state->phases);
+  }
+
+  Phases entryPhases(sim::SimFuncOp function, ProgramPoint *point) {
     // Static initialization precedes every time slot.
     if (function == shared.rootInitializer)
-      return;
+      return {};
     if (!shared.modeledStarts.contains(function.getSymNameAttr())) {
       // Plain functions run inside their callers, whose fragments carry
       // their effects; any other entry is unconstrained.
       if (function.getEntryKind() != sim::EntryKind::Function)
-        propagateIfChanged(lattice, lattice->merge(Phases::any()));
-      return;
+        return Phases::any();
+      return {};
     }
-    Phases start =
-        getOrCreateFor<PhaseState>(
-            point, getLatticeAnchor<EntryAnchor>(function.getOperation()))
+    return getOrCreateFor<PhaseState>(
+               point, getLatticeAnchor<EntryAnchor>(function.getOperation()))
+        ->phases;
+  }
+
+  /// Phases with which `predecessor`'s terminator enters a successor.
+  /// Nothing returns to time zero after leaving it.
+  Phases transfer(Block *predecessor, ProgramPoint *point) {
+    const BlockSummary &from = shared.summaries.find(predecessor)->second;
+    Phases waiting =
+        getOrCreateFor<PhaseState>(point, getProgramPointBefore(predecessor))
             ->phases;
-    propagateIfChanged(lattice, lattice->merge(start));
+    using Transfer = BlockSummary::Transfer;
+    if (from.transfer == Transfer::Plain)
+      return waiting;
+    if (waiting.empty())
+      return {};
+    PhaseSet atZero = waiting.zero ? anyPhase : 0;
+    switch (from.transfer) {
+    case Transfer::Plain:
+      return waiting;
+    case Transfer::TaskCall:
+      // A task without suspensions returns within the caller's activation.
+      if (!from.calleeSuspends)
+        return waiting;
+      if (!from.callee)
+        return Phases::any();
+      return getOrCreateFor<PhaseState>(
+                 point, getLatticeAnchor<ReturnAnchor>(from.callee))
+          ->phases;
+    case Transfer::Positive:
+      return {0, firstPhase};
+    // A zero delay stays in its slot; a variable one may also leave it.
+    case Transfer::Zero:
+      return {atZero, waiting.later ? anyPhase : 0};
+    case Transfer::Variable:
+    case Transfer::Unknown:
+      return {atZero, anyPhase};
+    case Transfer::Forever:
+      return {};
+    case Transfer::Watch: {
+      Phases triggers;
+      for (uint64_t root : from.watched)
+        triggers = triggers | changes(root, point);
+      // A wait made in a later slot cannot observe a time-zero change.
+      return {waiting.zero ? triggers.zero : 0, triggers.later};
+    }
+    }
+    llvm_unreachable("unknown phase transfer");
   }
 
-  void visitCallControlFlowTransfer(CallOpInterface call,
-                                    dataflow::CallControlFlowAction action,
-                                    const PhaseLattice &before,
-                                    PhaseLattice *after) override {
-    // Spawns and calls are not interprocedural edges here: process and task
-    // entries are modeled by their anchors, plain calls by fragment effects.
-    (void)action;
-    (void)visitOperation(call, before, after);
+  void apply(sim::SimFuncOp function, ProgramPoint *point,
+             const BlockSummary &summary, Phases phases) {
+    // The root initializer starts every process at time zero.
+    Phases start = function == shared.rootInitializer
+                       ? (summary.reachable ? Phases{firstPhase, 0} : Phases{})
+                       : phases;
+    if (!start.empty())
+      for (Operation *callee : summary.spawns)
+        propagateIfChanged(entryState(callee), entryState(callee)->merge(start));
+    if (phases.empty())
+      return;
+    for (Operation *callee : summary.taskCalls)
+      propagateIfChanged(entryState(callee), entryState(callee)->merge(phases));
+    if (summary.returns) {
+      auto *returns = getOrCreate<PhaseState>(
+          getLatticeAnchor<ReturnAnchor>(function.getOperation()));
+      propagateIfChanged(returns, returns->merge(phases));
+    }
+    if (!summary.hasEffects)
+      return;
+    for (auto [destination, source] : summary.copies) {
+      auto *state = rootState(destination);
+      propagateIfChanged(
+          state, state->merge(changes(source, point, /*withUnknown=*/false)));
+    }
+    for (auto [root, update] : summary.writes) {
+      Phases updates = phases;
+      if (update == BlockSummary::Update::AfterNBA)
+        updates = ActivationPhaseAnalysis::afterNBA(updates);
+      else if (update == BlockSummary::Update::Any)
+        updates = Phases::any();
+      auto *state = rootState(root);
+      propagateIfChanged(state, state->merge(updates));
+    }
   }
 
-private:
-  PhaseState *entryState(sim::SimFuncOp function) {
-    return getOrCreate<PhaseState>(
-        getLatticeAnchor<EntryAnchor>(function.getOperation()));
+  PhaseState *entryState(Operation *function) {
+    return getOrCreate<PhaseState>(getLatticeAnchor<EntryAnchor>(function));
   }
   PhaseState *rootState(uint64_t root) {
     return getOrCreate<PhaseState>(getLatticeAnchor<RootAnchor>(
@@ -389,48 +405,148 @@ private:
           phases | getOrCreateFor<PhaseState>(point, anchor(anyRoot))->phases;
     return phases;
   }
-  /// Phases of the activation a suspension resumes, given the phases of the
-  /// activation that suspends. Nothing returns to time zero after leaving it.
-  Phases resumePhases(Operation *suspend, ProgramPoint *point, Phases waiting) {
-    PhaseSet atZero = waiting.zero ? anyPhase : 0;
-    if (auto delay = dyn_cast<sim::SimSuspendDelayOp>(suspend)) {
-      auto constant = delay.getDelay().getDefiningOp<sim::SimTimeConstantOp>();
-      if (constant && constant.getValue() > 0)
-        return {0, firstPhase};
-      // A zero delay stays in its slot; a variable one may also leave it.
-      if (constant)
-        return {atZero, waiting.later ? anyPhase : 0};
-      return {atZero, anyPhase};
-    }
-    if (isa<sim::SimSuspendForeverOp>(suspend))
-      return {};
-    SmallVector<Value> watched;
-    if (auto edge = dyn_cast<sim::SimSuspendEdgeOp>(suspend))
-      watched.push_back(edge.getWatched());
-    else if (auto change = dyn_cast<sim::SimSuspendChangeOp>(suspend))
-      watched.push_back(change.getWatched());
-    else if (auto any = dyn_cast<sim::SimSuspendAnyOp>(suspend))
-      llvm::append_range(watched, any.getWatched());
-    else if (auto edge = dyn_cast<sim::SimSuspendEdgeIffOp>(suspend))
-      watched.push_back(edge.getWatched());
-    else if (auto level = dyn_cast<sim::SimSuspendLevelOp>(suspend))
-      watched.push_back(level.getWatched());
-    else
-      return {atZero, anyPhase};
-    auto function = suspend->getParentOfType<sim::SimFuncOp>();
-    Phases triggers;
-    for (Value value : watched) {
-      std::optional<uint64_t> root = shared.rootOf(function, value);
-      if (!root)
-        return {atZero, anyPhase};
-      triggers = triggers | changes(*root, point);
-    }
-    // A wait made in a later slot cannot observe a time-zero change.
-    return {waiting.zero ? triggers.zero : 0, triggers.later};
-  }
 
   const ActivationPhaseAnalysis::Shared &shared;
 };
+
+/// Successors of `block` over executable edges. A branch whose constant
+/// operands select one successor takes only that edge, as
+/// DeadCodeAnalysis decides from constant operands.
+SmallVector<Block *, 2> executableSuccessors(Block &block) {
+  Operation *terminator = block.getTerminator();
+  SmallVector<Block *, 2> successors;
+  if (auto branch = dyn_cast<BranchOpInterface>(terminator)) {
+    SmallVector<Attribute> operands;
+    for (Value operand : terminator->getOperands()) {
+      Attribute constant;
+      operands.push_back(matchPattern(operand, m_Constant(&constant))
+                             ? constant
+                             : Attribute{});
+    }
+    if (Block *only = branch.getSuccessorForOperands(operands)) {
+      successors.push_back(only);
+      return successors;
+    }
+  }
+  llvm::append_range(successors, terminator->getSuccessors());
+  return successors;
+}
+
+/// One function's block summaries and, when it needs them, its handle facts.
+struct FunctionSummary {
+  sim::SimFuncOp function;
+  std::optional<HandleFacts> facts;
+  std::vector<std::pair<Block *, BlockSummary>> blocks;
+};
+
+/// Summarizes `function` reading only its own body and immutable design
+/// facts, so functions summarize in parallel.
+void summarize(const ActivationPhaseAnalysis::Shared &shared,
+               FunctionSummary &result) {
+  sim::SimFuncOp function = result.function;
+  StringAttr name = function.getSymNameAttr();
+  auto factsOf = [&]() -> const HandleFacts & {
+    if (!result.facts)
+      result.facts = shared.handles.derive(function);
+    return *result.facts;
+  };
+  // Copy matching and task-formal resolution read these functions' facts.
+  sim::EntryKind kind = function.getEntryKind();
+  if (kind == sim::EntryKind::Continuous || kind == sim::EntryKind::PortInput ||
+      kind == sim::EntryKind::PortOutput ||
+      !function.getBody().getOps<sim::SimTaskCallOp>().empty())
+    (void)factsOf();
+  auto rootOf = [&](Value value) -> std::optional<uint64_t> {
+    const HandleFacts &known = factsOf();
+    auto found = known.find(value);
+    if (found == known.end() || !found->second.descriptor)
+      return std::nullopt;
+    return ActivationMemoryAnalysis::getRoot(found->second.resource,
+                                             *found->second.descriptor);
+  };
+
+  DenseMap<Block *, unsigned> positions;
+  for (Block &block : function.getBody()) {
+    positions[&block] = result.blocks.size();
+    result.blocks.push_back({&block, BlockSummary{}});
+  }
+  SmallVector<SmallVector<Block *, 2>> successors;
+  successors.reserve(result.blocks.size());
+  bool tasked = shared.taskCalls.count(name);
+  for (auto &[block, summary] : result.blocks) {
+    for (Operation &operation : *block) {
+      if (auto spawn = dyn_cast<sim::SimSpawnOp>(operation))
+        summary.spawnNames.push_back(spawn.getCalleeAttr().getAttr());
+      else if (auto call = dyn_cast<sim::SimTaskCallOp>(operation))
+        summary.taskCallNames.push_back(call.getCalleeAttr().getAttr());
+    }
+    Operation *terminator = block->getTerminator();
+    summary.returns = tasked && isa<sim::SimReturnOp>(terminator);
+    if (auto index = shared.blockIndices.find(block);
+        index != shared.blockIndices.end())
+      summary.hasEffects =
+          shared.fragmentEffects.count({name, index->second});
+    successors.push_back(executableSuccessors(*block));
+
+    using Transfer = BlockSummary::Transfer;
+    if (!sim::isSuspensionOp(terminator)) {
+      summary.transfer = Transfer::Plain;
+    } else if (auto call = dyn_cast<sim::SimTaskCallOp>(terminator)) {
+      summary.transfer = Transfer::TaskCall;
+      summary.calleeName = call.getCalleeAttr().getAttr();
+    } else if (auto delay = dyn_cast<sim::SimSuspendDelayOp>(terminator)) {
+      auto constant = delay.getDelay().getDefiningOp<sim::SimTimeConstantOp>();
+      summary.transfer = !constant                ? Transfer::Variable
+                         : constant.getValue() > 0 ? Transfer::Positive
+                                                   : Transfer::Zero;
+    } else if (isa<sim::SimSuspendForeverOp>(terminator)) {
+      summary.transfer = Transfer::Forever;
+    } else {
+      SmallVector<Value> watched;
+      if (auto edge = dyn_cast<sim::SimSuspendEdgeOp>(terminator))
+        watched.push_back(edge.getWatched());
+      else if (auto change = dyn_cast<sim::SimSuspendChangeOp>(terminator))
+        watched.push_back(change.getWatched());
+      else if (auto any = dyn_cast<sim::SimSuspendAnyOp>(terminator))
+        llvm::append_range(watched, any.getWatched());
+      else if (auto edge = dyn_cast<sim::SimSuspendEdgeIffOp>(terminator))
+        watched.push_back(edge.getWatched());
+      else if (auto level = dyn_cast<sim::SimSuspendLevelOp>(terminator))
+        watched.push_back(level.getWatched());
+      summary.transfer = watched.empty() ? Transfer::Unknown : Transfer::Watch;
+      for (Value value : watched) {
+        std::optional<uint64_t> root = rootOf(value);
+        if (!root) {
+          summary.transfer = Transfer::Unknown;
+          summary.watched.clear();
+          break;
+        }
+        summary.watched.push_back(*root);
+      }
+    }
+  }
+  for (auto [position, entry] : llvm::enumerate(result.blocks))
+    for (Block *successor : successors[position])
+      if (auto found = positions.find(successor); found != positions.end())
+        result.blocks[found->second].second.predecessors.push_back(
+            entry.first);
+  // Executability of the root initializer's blocks decides its spawns.
+  if (!result.blocks.empty()) {
+    SmallVector<unsigned> pending{0};
+    result.blocks.front().second.reachable = true;
+    while (!pending.empty()) {
+      unsigned position = pending.pop_back_val();
+      for (Block *successor : successors[position]) {
+        auto found = positions.find(successor);
+        if (found == positions.end() ||
+            result.blocks[found->second].second.reachable)
+          continue;
+        result.blocks[found->second].second.reachable = true;
+        pending.push_back(found->second);
+      }
+    }
+  }
+}
 } // namespace
 
 namespace {
@@ -559,13 +675,82 @@ ActivationPhaseAnalysis::ActivationPhaseAnalysis(
   for (auto &[name, modeled] : starts)
     if (modeled)
       facts.modeledStarts.insert(name);
+
+  // Each function's blocks summarize from its own body; the solve below
+  // joins them across processes through roots, starts and returns.
+  std::vector<FunctionSummary> functions;
+  for (sim::SimFuncOp function :
+       design.getBody().front().getOps<sim::SimFuncOp>())
+    if (!function.isExternal())
+      functions.emplace_back().function = function;
+  parallelForEach(design.getContext(), functions,
+                  [&](FunctionSummary &function) {
+                    summarize(facts, function);
+                  });
+  for (FunctionSummary &function : functions) {
+    if (function.facts)
+      facts.facts[function.function.getSymNameAttr()] =
+          std::move(*function.facts);
+    for (auto &[block, summary] : function.blocks)
+      facts.summaries[block] = std::move(summary);
+  }
   findCopies(facts);
+
+  for (auto &[block, summary] : facts.summaries) {
+    auto function = cast<sim::SimFuncOp>(block->getParentOp());
+    StringAttr name = function.getSymNameAttr();
+    auto lookup = [&](StringAttr callee) -> Operation * {
+      return facts.symbols.lookup<sim::SimFuncOp>(callee);
+    };
+    for (StringAttr callee : summary.spawnNames)
+      if (Operation *found = lookup(callee))
+        summary.spawns.push_back(found);
+    for (StringAttr callee : summary.taskCallNames)
+      if (Operation *found = lookup(callee))
+        summary.taskCalls.push_back(found);
+    if (summary.calleeName) {
+      summary.calleeSuspends = facts.suspends(summary.calleeName);
+      summary.callee = lookup(summary.calleeName);
+    }
+    if (!summary.hasEffects)
+      continue;
+    // The fragment's effects, including callee summaries. A copy process's
+    // write to its destination follows its source instead.
+    auto copied = facts.copies.find(name);
+    if (copied != facts.copies.end())
+      summary.copies.assign(copied->second.begin(), copied->second.end());
+    ArrayAttr effects =
+        facts.fragmentEffects.lookup({name, facts.blockIndices.lookup(block)});
+    for (auto effect : effects.getAsRange<schedule::ComputeEffectAttr>()) {
+      if (!isWriteEffect(effect.getEffect()) ||
+          effect.getTarget() == schedule::ComputeTargetKind::Local)
+        continue;
+      if (copied != facts.copies.end() &&
+          effect.getTarget() == schedule::ComputeTargetKind::Descriptor &&
+          llvm::any_of(copied->second, [&](auto pair) {
+            return ActivationMemoryAnalysis::getRoot(effect.getResource(),
+                                                     effect.getDescriptor()) ==
+                   pair.first;
+          }))
+        continue;
+      auto update = BlockSummary::Update::Same;
+      if (effect.getEffect() == schedule::ComputeEffectKind::NBA)
+        update = effect.getDeferred() ? BlockSummary::Update::Any
+                                      : BlockSummary::Update::AfterNBA;
+      std::optional<SmallVector<uint64_t>> roots =
+          facts.effectRoots(name, effect);
+      if (!roots) {
+        summary.writes.push_back({anyRoot, update});
+        continue;
+      }
+      for (uint64_t root : *roots)
+        summary.writes.push_back({root, update});
+    }
+  }
 
   solver = std::make_unique<DataFlowSolver>(
       DataFlowConfig().setInterprocedural(false));
-  solver->load<dataflow::DeadCodeAnalysis>();
-  solver->load<dataflow::SparseConstantPropagation>();
-  solver->load<PhaseDataflow>(facts);
+  solver->load<PhaseBlocks>(facts);
   valid = succeeded(solver->initializeAndRun(design));
 }
 
@@ -605,7 +790,7 @@ ActivationPhaseAnalysis::getPhases(Block *block) const {
   if (!valid || !block)
     return Phases::any();
   const auto *state =
-      solver->lookupState<PhaseLattice>(solver->getProgramPointBefore(block));
+      solver->lookupState<PhaseState>(solver->getProgramPointBefore(block));
   return state ? state->phases : Phases{};
 }
 

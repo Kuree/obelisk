@@ -17,9 +17,11 @@ namespace obelisk::analysis {
 /// p-th. Inactive passes stay in their phase because the Inactive region is
 /// moved to Active before the NBA region.
 ///
-/// This dense forward analysis computes, for every block of every process and
-/// task, the phases in which it may execute, and for every storage or net root
-/// the phases in which it may change:
+/// This forward analysis computes, for every block of every process and task,
+/// the phases in which it may execute, and for every storage or net root the
+/// phases in which it may change. A block's phases are constant, so the
+/// solve is over blocks: each function's blocks are summarized from its own
+/// body (in parallel), and the solver joins them across processes:
 ///   - the root initializer starts each process at time zero, in phase 1;
 ///     a process started by another activation (fork) and a task called by
 ///     one start in the phases of that activation;

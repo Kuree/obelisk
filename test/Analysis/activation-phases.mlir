@@ -332,3 +332,52 @@ module {
     // CHECK: s2 changes {-|1}
   }
 }
+
+// -----
+
+// A branch on a constant takes only the selected edge, as DeadCodeAnalysis
+// decides from constant operands: the untaken block never runs, its write
+// changes nothing, and the root initializer's untaken spawn starts nothing.
+
+!bit = !simulation.logic<1>
+!ref = !simulation.ref<!bit>
+module {
+  simulation.design @dead {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !bit design
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.code_unit.decl 2 in 0 initial hierarchy "gen"
+    simulation.code_unit.decl 3 in 0 initial hierarchy "ghost"
+    simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
+      %q = simulation.context.storage %ctx[0] : !ref
+      %false = arith.constant false
+      %p0 = simulation.spawn @gen(%ctx, %q) : !simulation.context, !ref -> !simulation.process
+      cf.cond_br %false, ^spawn, ^done
+    ^spawn:
+      %p1 = simulation.spawn @ghost(%ctx) : !simulation.context -> !simulation.process
+      cf.br ^done
+    ^done:
+      simulation.return
+    }
+    // CHECK-LABEL: phases dead valid=1
+    // CHECK: @gen: ^0{1|-} ^1{-|-} ^2{1|-} ^3{-|1}
+    simulation.func @gen(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %q: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
+      %false = arith.constant false
+      %one = simulation.logic.constant true, false : !bit
+      %delay = simulation.time.constant 2
+      cf.cond_br %false, ^never, ^later
+    ^never:
+      simulation.ref.store %one to %q : !bit, !ref
+      simulation.return
+    ^later:
+      simulation.suspend.delay %delay to ^after
+    ^after:
+      simulation.return
+    }
+    // CHECK: @ghost: ^0{-|-}
+    simulation.func @ghost(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 3 : i64} {
+      simulation.return
+    }
+    // CHECK: s0 changes {-|-}
+  }
+}
