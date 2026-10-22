@@ -3749,10 +3749,16 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         // A periodic checkpoint can leave other coincident owners pending,
         // too. Its drain must return to the generated checkpoint trampoline
         // before executing those owners, regardless of calendar ownership.
+        // IEEE 1800-2023 4.7, 9.2.2.2, 9.4.2: generated fanout inside the
+        // coordinator wakes owners without inspecting their coroutines, so
+        // an owner whose first activation has not yet reached its wait could
+        // run as if resumed. Let every never-started actor take that first
+        // activation (a legal Active order) before the coordinator runs.
         deferredEvalIngress =
             options.returnGeneratedIngress || options.stopBeforeNBA ||
             ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
-             !context->nativeStaticEvalIslandCertified);
+             !context->nativeStaticEvalIslandCertified) ||
+            obelisk_rt_unstarted_actor_pending(context, 0);
         if (!deferredEvalIngress) {
           auto coordinator = plan->timeslot_coordinator;
           if (!coordinator)
