@@ -11,6 +11,7 @@
 #include "obelisk/Analysis/NativeStorageLayout.h"
 #include "obelisk/Analysis/RangeSet.h"
 #include "obelisk/Analysis/SSAValueAnalysis.h"
+#include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/SimulationEffectAnalysis.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/ADT/MapVector.h"
@@ -48,34 +49,15 @@ public:
       // An unrepresentable mask conservatively keeps every provenance lane.
       if (!width || !*width || *width > UINT_MAX)
         return {};
-      APInt mask = getLogicalStorageMask(type);
-      if (mask.isAllOnes())
+      // Each lane is a separate relation at every node that touches the
+      // type. Past the cap, the padding precision is not worth that cost.
+      auto runs = getLogicalStorageRuns(type, maximumLogicalLanes);
+      if (!runs || (runs->size() == 1 && runs->front().first == 0 &&
+                    runs->front().second ==
+                        *getSimulationStorageBitWidth(type)))
         return {};
-      // Scan words rather than shifting the whole mask once per lane, which
-      // is quadratic in the width of a large padded array.
-      ArrayRef<uint64_t> words(mask.getRawData(), mask.getNumWords());
-      uint64_t total = mask.getBitWidth();
-      auto next = [&](uint64_t from, bool ones) {
-        for (uint64_t word = from / 64; word < words.size(); ++word) {
-          uint64_t bits = ones ? words[word] : ~words[word];
-          if (word == from / 64)
-            bits &= ~uint64_t(0) << (from % 64);
-          if (bits)
-            return std::min(total, word * 64 + llvm::countr_zero(bits));
-        }
-        return total;
-      };
-      for (uint64_t low = next(0, true); low < total;) {
-        uint64_t high = next(low, false);
-        // Each lane is a separate relation at every node that touches the
-        // type. Past the cap, the padding precision is not worth that cost.
-        if (entry->second->size() == maximumLogicalLanes) {
-          entry->second->clear();
-          return {};
-        }
-        entry->second->push_back({0, low, high - low});
-        low = next(high, true);
-      }
+      for (auto [low, laneWidth] : *runs)
+        entry->second->push_back({0, low, laneWidth});
     }
     return *entry->second;
   }

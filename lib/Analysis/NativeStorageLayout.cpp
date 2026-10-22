@@ -96,6 +96,66 @@ llvm::APInt getLogicalStorageMask(Type type) {
   return getStorageMask(type, false);
 }
 
+namespace {
+
+/// Appends the logical runs of `type` placed at `base` to `runs`, merging a
+/// run that starts where the previous one ends. Returns false past `limit`.
+bool appendLogicalRuns(Type type, uint64_t base, size_t limit,
+                       SmallVectorImpl<std::pair<uint64_t, uint64_t>> &runs) {
+  auto append = [&](uint64_t low, uint64_t width) {
+    if (!width)
+      return true;
+    if (!runs.empty() && runs.back().first + runs.back().second == low) {
+      runs.back().second += width;
+      return true;
+    }
+    runs.push_back({low, width});
+    return runs.size() <= limit;
+  };
+  if (auto array = dyn_cast<sim::UnpackedArrayType>(type);
+      array && array.getLayout()) {
+    uint64_t stride = *sim::getArrayElementStorageStride(type);
+    uint64_t count = sim::getAggregateNumElements(type);
+    SmallVector<std::pair<uint64_t, uint64_t>> element;
+    if (!appendLogicalRuns(array.getElementType(), 0, limit, element))
+      return false;
+    if (element.size() == 1 && element.front().first == 0 &&
+        element.front().second == stride)
+      return append(base, *getSimulationStorageBitWidth(type));
+    for (uint64_t index = 0; index != count; ++index)
+      for (auto [low, width] : element)
+        if (!append(base + index * stride + low, width))
+          return false;
+    return true;
+  }
+  if (auto record = dyn_cast<sim::UnpackedStructType>(type);
+      record && record.getLayout()) {
+    SmallVector<std::pair<uint64_t, uint64_t>> fields;
+    for (unsigned i = 0; i != sim::getAggregateNumElements(type); ++i)
+      if (!appendLogicalRuns(
+              sim::getAggregateElementType(type, i),
+              sim::getAggregateProvenanceSubelement(type, i)->first, limit,
+              fields))
+        return false;
+    llvm::sort(fields);
+    for (auto [low, width] : fields)
+      if (!append(base + low, width))
+        return false;
+    return true;
+  }
+  return append(base, *getSimulationStorageBitWidth(type));
+}
+
+} // namespace
+
+std::optional<SmallVector<std::pair<uint64_t, uint64_t>>>
+getLogicalStorageRuns(Type type, size_t limit) {
+  SmallVector<std::pair<uint64_t, uint64_t>> runs;
+  if (!appendLogicalRuns(type, 0, limit, runs))
+    return std::nullopt;
+  return runs;
+}
+
 bool hasMemberDefaults(Type type) {
   // A container or class handle owns its elements elsewhere; only fixed
   // storage carries its members' defaults inline.

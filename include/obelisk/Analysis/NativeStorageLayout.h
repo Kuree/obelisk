@@ -5,8 +5,11 @@
 
 #include "obelisk/Dialect/Simulation/SimulationAttrs.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/LLVMContext.h"
+
+#include <optional>
 
 namespace obelisk::analysis {
 
@@ -37,6 +40,12 @@ llvm::APInt getDefaultUnknownMask(mlir::Type type);
 
 /// Bits belonging to language values, excluding target ABI padding.
 llvm::APInt getLogicalStorageMask(mlir::Type type);
+
+/// The maximal runs of getLogicalStorageMask as (low bit, width), in order,
+/// or nullopt past `limit` runs. The work is bounded by `limit`, not by the
+/// width of the type.
+std::optional<llvm::SmallVector<std::pair<uint64_t, uint64_t>>>
+getLogicalStorageRuns(mlir::Type type, size_t limit);
 
 /// The storage planes of a type's default value (IEEE 1800-2023 Table 6-7 and
 /// Table 7-1). Unlike getDefaultUnknownMask, which only marks four-state
