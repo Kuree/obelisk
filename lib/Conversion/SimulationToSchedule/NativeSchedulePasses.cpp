@@ -392,6 +392,29 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
         for (const auto &bit : component)
           runtimeObservedNets.insert(bit.net);
     }
+    bool hasObserver = false;
+    bool hasInactiveDelay = false;
+    metadataDesign.walk([&](sim::SimFuncOp function) {
+      hasObserver |= function.getEntryKind() == sim::EntryKind::Observer;
+    });
+    metadataDesign.walk([&](sim::SimSuspendDelayOp delay) {
+      auto constant = delay.getDelay().getDefiningOp<sim::SimTimeConstantOp>();
+      hasInactiveDelay |= !constant || constant.getValue() == 0;
+    });
+    runtime::ExecutionFlags flags = runtime::getExecutionFlags(module);
+    // IEEE 1800-2023 4.4, 4.6, 9.4.2: a runtime clock consumer prevents
+    // exclusive calendar ownership, not execution of an independent closure.
+    // The writer checkpoints below retain every required runtime publication;
+    // final call-closure verification certifies the remaining generated work.
+    // A coordinator currently drains its NBA queue as one transaction. A
+    // zero/dynamic delay could require an intervening Inactive region, so
+    // retain the original runtime path for those designs (LRM 4.4-4.5).
+    bool runtimeCalendar =
+        staticEvalIsland && staticFanoutPlan.exact && !hasObserver &&
+        !hasInactiveDelay &&
+        !runtime::bitEnumContainsAny(
+            flags, runtime::ExecutionFlags::DPIExports |
+                       runtime::ExecutionFlags::CoverageSchema);
     DenseMap<Operation *, bool> runtimeStateFunctions;
     DenseMap<Operation *, Operation *> runtimeStateOperations;
     DenseMap<Operation *, std::unique_ptr<analysis::NativeHotPathReachability>>
@@ -473,7 +496,10 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
             // LRM 4.6(a), 9.4.2: a bounded, non-suspending activation can
             // publish under its compiler-resolved actor identity. Shared
             // helpers without that identity still retain their checkpoint.
-            bool ownedPublication = staticEvalIsland && current == function &&
+            // The publication only wakes the runtime waiter; the runtime must
+            // also own the calendar so that waiter runs in this time slot
+            // (4.5). A generated run-until loop could advance time first.
+            bool ownedPublication = runtimeCalendar && current == function &&
                                     width && *width <= 64;
             return handle != handles.end() &&
                    obelisk_rt_stable_handle_decode(handle->second, &decoded) &&
@@ -557,28 +583,7 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
         }
       }
     });
-    bool hasObserver = false;
-    bool hasInactiveDelay = false;
-    metadataDesign.walk([&](sim::SimFuncOp function) {
-      hasObserver |= function.getEntryKind() == sim::EntryKind::Observer;
-    });
-    metadataDesign.walk([&](sim::SimSuspendDelayOp delay) {
-      auto constant = delay.getDelay().getDefiningOp<sim::SimTimeConstantOp>();
-      hasInactiveDelay |= !constant || constant.getValue() == 0;
-    });
-    runtime::ExecutionFlags flags = runtime::getExecutionFlags(module);
-    // IEEE 1800-2023 4.4, 4.6, 9.4.2: a runtime clock consumer prevents
-    // exclusive calendar ownership, not execution of an independent closure.
-    // The writer checkpoints above retain every required runtime publication;
-    // final call-closure verification certifies the remaining generated work.
-    // A coordinator currently drains its NBA queue as one transaction. A
-    // zero/dynamic delay could require an intervening Inactive region, so
-    // retain the original runtime path for those designs (LRM 4.4-4.5).
-    if (staticEvalIsland && staticFanoutPlan.exact && !hasObserver &&
-        !hasInactiveDelay &&
-        !runtime::bitEnumContainsAny(
-            flags, runtime::ExecutionFlags::DPIExports |
-                       runtime::ExecutionFlags::CoverageSchema))
+    if (runtimeCalendar)
       ::obelisk::schedule::set<::obelisk::schedule::Field::EvalRuntimeCalendar>(
           module, UnitAttr::get(module.getContext()));
   }
