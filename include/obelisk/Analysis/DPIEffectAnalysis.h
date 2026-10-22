@@ -23,9 +23,17 @@ namespace obelisk::analysis {
 /// transparent when VPI is off and every export closure touches only its own
 /// locals and arguments, never suspends (35.5.1.5), and neither controls
 /// processes nor uses scheduler, heap, random, or coverage state.
+///
+/// Export transparency is judged from the compute graph's effect summaries.
+/// Building the graph records it on the design (`record`), and later
+/// instances use that record, so every pass sees the same answer after
+/// rewrites drop summaries.
 class DPIEffectAnalysis {
 public:
   explicit DPIEffectAnalysis(sim::SimDesignOp design);
+
+  /// Record export transparency on `design` from its current summaries.
+  static void record(sim::SimDesignOp design);
 
   /// Whether `call` may access or control design state through foreign code.
   bool mayAccessDesign(sim::SimDPICallOp call) const;

@@ -46,7 +46,11 @@ def DPIDialect : Dialect {
     "::mlir::StringAttr":$export_bridge_symbol,
     "::mlir::StringAttr":$export_body_symbol,
     // Module: some scope exports a subroutine.
-    "::mlir::UnitAttr":$has_exports
+    "::mlir::UnitAttr":$has_exports,
+    // Design: every export closure touches only its own locals and
+    // arguments. Recorded with the compute graph's effect summaries, which
+    // later rewrites may drop.
+    "::mlir::BoolAttr":$transparent_exports
   );
 }
 

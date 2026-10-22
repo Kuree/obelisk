@@ -31,6 +31,7 @@ using ABIHash = DPIDialect::AbiHashAttrHelper;
 using ExportBridgeSymbol = DPIDialect::ExportBridgeSymbolAttrHelper;
 using ExportBodySymbol = DPIDialect::ExportBodySymbolAttrHelper;
 using HasExports = DPIDialect::HasExportsAttrHelper;
+using TransparentExports = DPIDialect::TransparentExportsAttrHelper;
 
 using discardable::get;
 using discardable::has;

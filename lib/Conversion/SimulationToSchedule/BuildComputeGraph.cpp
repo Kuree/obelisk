@@ -10,6 +10,7 @@
 #include "obelisk/Conversion/SimulationToSchedule/ComputeGraph.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
+#include "obelisk/Analysis/DPIEffectAnalysis.h"
 #include "obelisk/Analysis/SimulationVPIAnalysis.h"
 #include "obelisk/Conversion/SimulationToSchedule.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -236,6 +237,7 @@ void ObeliskSimBuildComputeGraphPass::runOnOperation() {
 
   for (auto [function, summary] : derived->effectSummaries)
     cast<sim::SimFuncOp>(function).setEffectSummaryAttr(summary);
+  analysis::DPIEffectAnalysis::record(design);
   for (auto [function, abi] : derived->fragmentAbis)
     cast<sim::SimFuncOp>(function).setFragmentAbiAttr(abi);
   for (auto [operation, site] : derived->continuations)

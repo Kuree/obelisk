@@ -41,6 +41,9 @@ bool touchesOnlyLocals(sim::SimFuncOp function) {
 }
 
 bool isTransparentOperation(Operation *operation) {
+  // A call is judged by its callee, which the closure walk visits.
+  if (isa<sim::SimCallOp>(operation))
+    return true;
   if (sim::isSuspensionOp(operation) ||
       isa<sim::SimSpawnOp, sim::SimProcessControlOp, sim::SimControlDisableOp,
           sim::SimDPICallOp, sim::SimTaskCallOp, sim::SimClassDirectCallOp,
@@ -49,7 +52,7 @@ bool isTransparentOperation(Operation *operation) {
     return false;
   auto interface = dyn_cast<MemoryEffectOpInterface>(operation);
   if (!interface)
-    return isa<sim::SimCallOp>(operation) || operation->getNumRegions() == 0 ||
+    return operation->getNumRegions() == 0 ||
            operation->hasTrait<OpTrait::IsTerminator>();
   SmallVector<MemoryEffects::EffectInstance> effects;
   interface.getEffects(effects);
@@ -58,11 +61,9 @@ bool isTransparentOperation(Operation *operation) {
   });
 }
 
-} // namespace
-
-DPIEffectAnalysis::DPIEffectAnalysis(sim::SimDesignOp design) {
-  schedule::ComputeGraphAttr graph = design.getComputeGraphAttr();
-  bool vpiOff = graph && graph.getVpi() == schedule::ComputeVPIMode::Off;
+/// Whether every export closure of `design` is transparent, judged from the
+/// compute graph's effect summaries.
+bool exportClosuresAreTransparent(sim::SimDesignOp design) {
   SymbolTable symbols(design);
   SmallVector<sim::SimFuncOp> pending;
   for (sim::SimFuncOp function : design.getOps<sim::SimFuncOp>())
@@ -94,8 +95,25 @@ DPIEffectAnalysis::DPIEffectAnalysis(sim::SimDesignOp design) {
       }
     });
   }
-  transparentExports = transparent;
-  transparentContext = vpiOff && transparent;
+  return transparent;
+}
+
+} // namespace
+
+void DPIEffectAnalysis::record(sim::SimDesignOp design) {
+  dpi::set<dpi::TransparentExports>(
+      design, BoolAttr::get(design.getContext(),
+                            exportClosuresAreTransparent(design)));
+}
+
+DPIEffectAnalysis::DPIEffectAnalysis(sim::SimDesignOp design) {
+  schedule::ComputeGraphAttr graph = design.getComputeGraphAttr();
+  bool vpiOff = graph && graph.getVpi() == schedule::ComputeVPIMode::Off;
+  if (BoolAttr recorded = dpi::get<dpi::TransparentExports>(design))
+    transparentExports = recorded.getValue();
+  else
+    transparentExports = exportClosuresAreTransparent(design);
+  transparentContext = vpiOff && transparentExports;
   design.walk([&](sim::SimDPICallOp call) {
     opaqueCalls |= mayAccessDesign(call);
   });

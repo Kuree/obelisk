@@ -35,7 +35,8 @@ LogicalResult DPIDialect::verifyOperationAttribute(Operation *operation,
                               Pure, Context, ImportId, ExportId, CIdentifier,
                               ScopeId, ABISignature, AggregateLayouts,
                               LogicalInputs, ElidedInputs, ABIHash,
-                              ExportBridgeSymbol, ExportBodySymbol, HasExports>(
+                              ExportBridgeSymbol, ExportBodySymbol, HasExports,
+                              TransparentExports>(
               operation, attribute)))
     return failure();
   StringRef name = attribute.getName().strref();
