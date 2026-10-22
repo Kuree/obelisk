@@ -1357,19 +1357,39 @@ obelisk_rt_v1_process_spawn(obelisk_rt_context *context,
   return token;
 }
 
-extern "C" void obelisk_rt_v1_process_spawn_batch(
+extern "C" obelisk_rt_status obelisk_rt_v1_process_spawn_batch(
     obelisk_rt_context *context,
-    const obelisk_rt_process_spawn_entry_v1 *entries, uint32_t count) {
+    const obelisk_rt_process_spawn_entry_v1 *entries, const void *captures,
+    uint32_t count) {
   if (!context || (count && !entries)) {
     obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
-    return;
+    return OBELISK_RT_INVALID_ARGUMENT;
   }
   // Match the original sequence of calls, including after a failed spawn.
   // scheduler_fail retains the first error; later calls retain their ownership
   // and process-token effects until normal scheduler cleanup.
-  for (uint32_t index = 0; index != count; ++index)
-    obelisk_rt_v1_process_spawn(context, entries[index].plan,
-                                entries[index].captures);
+  for (uint32_t index = 0; index != count; ++index) {
+    const obelisk_rt_process_spawn_entry_v1 &entry = entries[index];
+    uint64_t activation = 0;
+    if (entry.initialization_scope) {
+      obelisk_rt_status status = obelisk_rt_v1_random_initialization_enter(
+          context, entry.initialization_scope, &activation);
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
+    obelisk_rt_v1_process_spawn(
+        context, entry.plan,
+        captures ? static_cast<const uint8_t *>(captures) +
+                       entry.capture_offset
+                 : nullptr);
+    if (entry.initialization_scope) {
+      obelisk_rt_status status =
+          obelisk_rt_v1_random_initialization_leave(context, activation);
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
+  }
+  return OBELISK_RT_OK;
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(

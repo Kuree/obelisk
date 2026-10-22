@@ -5084,6 +5084,25 @@ void SimDriverDynExtractOp::getCanonicalizationPatterns(
           context);
 }
 
+// IEEE 1800-2023 18.14.1: only static process creation, static initializers
+// and their randomization calls consume an initialization RNG, and each of
+// those has memory effects.
+LogicalResult
+SimRandomInitializationLeaveOp::canonicalize(SimRandomInitializationLeaveOp op,
+                                             PatternRewriter &rewriter) {
+  auto enter =
+      op.getActivation().getDefiningOp<SimRandomInitializationEnterOp>();
+  if (!enter || enter->getBlock() != op->getBlock() || !enter->hasOneUse())
+    return failure();
+  for (Operation *between = enter->getNextNode(); between != op;
+       between = between->getNextNode())
+    if (!isMemoryEffectFree(between))
+      return failure();
+  rewriter.eraseOp(op);
+  rewriter.eraseOp(enter);
+  return success();
+}
+
 void ObeliskSimulationDialect::getCanonicalizationPatterns(
     RewritePatternSet &results) const {
   results.add<ExtractBitsInsertWithTruncation>(getContext());

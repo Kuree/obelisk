@@ -1160,22 +1160,9 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     if (adaptor.getContext().size() != 1)
       return failure();
-    Value context = adaptor.getContext().front();
-    Value output =
-        entryAlloca(rewriter, op.getLoc(), rewriter.getI64Type(), 1, 8);
-    Value scope = llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(),
-                               op.getScope());
-    Value status =
-        LLVM::CallOp::create(
-            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
-            SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_random_initialization_enter"),
-            ValueRange{context, scope, output})
-            .getResult();
-    reportManagedStatus(rewriter, op.getLoc(), context, status);
-    rewriter.replaceOp(op,
-                       LLVM::LoadOp::create(rewriter, op.getLoc(),
-                                            rewriter.getI64Type(), output, 8));
+    rewriter.replaceOp(op, emitRandomInitializationEnter(
+                               rewriter, op.getLoc(),
+                               adaptor.getContext().front(), op.getScope()));
     return success();
   }
 };
@@ -1190,15 +1177,9 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     if (adaptor.getContext().size() != 1 || adaptor.getActivation().size() != 1)
       return failure();
-    Value context = adaptor.getContext().front();
-    Value status =
-        LLVM::CallOp::create(
-            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
-            SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_random_initialization_leave"),
-            ValueRange{context, adaptor.getActivation().front()})
-            .getResult();
-    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    emitRandomInitializationLeave(rewriter, op.getLoc(),
+                                  adaptor.getContext().front(),
+                                  adaptor.getActivation().front());
     rewriter.eraseOp(op);
     return success();
   }
@@ -2239,6 +2220,34 @@ void populateManagedContainerToLLVMConversionPatterns(
                ClockedSampleUpdateConversion, ClockedSampleReadConversion>(
       converter, context);
   populateManagedAssociativeToLLVMConversionPatterns(patterns, converter);
+}
+
+Value emitRandomInitializationEnter(OpBuilder &builder, Location location,
+                                    Value context, uint64_t scope) {
+  Type i64 = builder.getI64Type();
+  Value output = entryAlloca(builder, location, i64, 1, 8);
+  Value status =
+      LLVM::CallOp::create(
+          builder, location, TypeRange{builder.getI32Type()},
+          SymbolRefAttr::get(builder.getContext(),
+                             "obelisk_rt_v1_random_initialization_enter"),
+          ValueRange{context, llvmConstant(builder, location, i64, scope),
+                     output})
+          .getResult();
+  reportManagedStatus(builder, location, context, status);
+  return LLVM::LoadOp::create(builder, location, i64, output, 8);
+}
+
+void emitRandomInitializationLeave(OpBuilder &builder, Location location,
+                                   Value context, Value activation) {
+  Value status =
+      LLVM::CallOp::create(
+          builder, location, TypeRange{builder.getI32Type()},
+          SymbolRefAttr::get(builder.getContext(),
+                             "obelisk_rt_v1_random_initialization_leave"),
+          ValueRange{context, activation})
+          .getResult();
+  reportManagedStatus(builder, location, context, status);
 }
 
 } // namespace obelisk::detail

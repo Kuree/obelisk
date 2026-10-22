@@ -440,9 +440,8 @@ void declareProcessSpawnRuntimeABI(ModuleOp module) {
 
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_spawn", i64,
                            {pointer, pointer, pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_spawn_batch",
-                           LLVM::LLVMVoidType::get(context),
-                           {pointer, pointer, i32});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_spawn_batch", i32,
+                           {pointer, pointer, pointer, i32});
   getOrDeclareLLVMFunction(module,
                            "obelisk_rt_v1_process_instance_create_for_context",
                            i32, {pointer, pointer, pointer});

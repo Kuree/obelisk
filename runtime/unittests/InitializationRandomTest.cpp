@@ -138,6 +138,63 @@ TEST_F(InitializationRandomTest, StaticRegistrationUsesContainingScope) {
   leave(b);
 }
 
+TEST_F(InitializationRandomTest, SpawnTableRowsBindTheirScopes) {
+  obelisk_rt_process_spawn_plan_v1 plan{
+      &descriptor, 0, nullptr, nullptr, nullptr, 0, 0, UINT32_MAX, 0, 0, 0,
+      0};
+  const obelisk_rt_process_spawn_entry_v1 entries[] = {
+      {&plan, 0, 10}, {&plan, 0, 0}, {&plan, 0, 20}, {&plan, 0, 10}};
+  auto *activeRandom = context->activeRandom;
+  ASSERT_EQ(obelisk_rt_v1_process_spawn_batch(context, entries, nullptr, 4),
+            OBELISK_RT_OK);
+  EXPECT_EQ(context->initializationRandomScopes->activeScope, 0u);
+  EXPECT_TRUE(context->initializationRandomScopes->activations.empty());
+  EXPECT_EQ(context->activeRandom, activeRandom);
+
+  // The same rows as separate enter/spawn/leave sequences.
+  obelisk_rt_context *reference = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&reference), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_context_seed(reference, 9876), OBELISK_RT_OK);
+  for (const auto &entry : entries) {
+    uint64_t activation = 0;
+    if (entry.initialization_scope)
+      ASSERT_EQ(obelisk_rt_v1_random_initialization_enter(
+                    reference, entry.initialization_scope, &activation),
+                OBELISK_RT_OK);
+    EXPECT_NE(obelisk_rt_v1_process_spawn(reference, &plan, nullptr), 0u);
+    if (entry.initialization_scope)
+      ASSERT_EQ(obelisk_rt_v1_random_initialization_leave(reference,
+                                                          activation),
+                OBELISK_RT_OK);
+  }
+  ASSERT_EQ(context->scheduledProcesses.size(), 4u);
+  ASSERT_EQ(reference->scheduledProcesses.size(), 4u);
+  for (size_t index = 0; index != 4; ++index) {
+    const auto &process = context->scheduledProcesses[index];
+    EXPECT_EQ(process.initializationRandomScope,
+              entries[index].initialization_scope);
+    same(process.random, reference->scheduledProcesses[index].random);
+  }
+  same(context->random, reference->random);
+  obelisk_rt_v1_context_destroy(reference);
+}
+
+TEST_F(InitializationRandomTest, SpawnTableStopsAtAFailedBinding) {
+  obelisk_rt_process_spawn_plan_v1 plan{
+      &descriptor, 0, nullptr, nullptr, nullptr, 0, 0, UINT32_MAX, 0, 0, 0,
+      0};
+  const obelisk_rt_process_spawn_entry_v1 entries[] = {{&plan, 0, 10},
+                                                       {&plan, 0, 20}};
+  ASSERT_EQ(obelisk_rt_v1_process_spawn_batch(context, entries, nullptr, 1),
+            OBELISK_RT_OK);
+  context->initializationRandomScopes->nextToken = 0;
+  EXPECT_EQ(obelisk_rt_v1_process_spawn_batch(context, entries + 1, nullptr, 1),
+            OBELISK_RT_OUT_OF_RESOURCES);
+  EXPECT_EQ(context->scheduledProcesses.size(), 1u);
+  EXPECT_EQ(obelisk_rt_v1_process_spawn_batch(nullptr, entries, nullptr, 1),
+            OBELISK_RT_INVALID_ARGUMENT);
+}
+
 TEST_F(InitializationRandomTest,
        DynamicChildrenBorrowTheirRunningParentStream) {
   uint64_t a = enter(10);

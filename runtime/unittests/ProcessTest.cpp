@@ -12505,9 +12505,11 @@ TEST(ProcessSpawn, BatchPreservesCapturesOrderRanksAndFailureOwnership) {
   uint64_t first = 0x123456789abcdef0, second = 0xfedcba9876543210;
   auto invalid = plan;
   invalid.schedule_flags = UINT32_MAX;
+  const uint64_t captures[] = {first, second};
   const obelisk_rt_process_spawn_entry_v1 entries[] = {
-      {&plan, &first}, {&invalid, &first}, {&plan, &second}};
-  obelisk_rt_v1_process_spawn_batch(context, entries, 3);
+      {&plan, 0, 0}, {&invalid, 0, 0}, {&plan, 8, 0}};
+  EXPECT_EQ(obelisk_rt_v1_process_spawn_batch(context, entries, captures, 3),
+            OBELISK_RT_OK);
   EXPECT_EQ(context->schedulerStatus, OBELISK_RT_INVALID_ARGUMENT);
   ASSERT_EQ(context->scheduledProcesses.size(), 2u);
   for (unsigned index = 0; index != 2; ++index) {

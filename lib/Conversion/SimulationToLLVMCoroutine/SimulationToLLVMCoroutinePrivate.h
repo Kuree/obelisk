@@ -333,6 +333,17 @@ void emitNativeStateRetain(mlir::OpBuilder &builder, mlir::Location location,
 mlir::Operation *reportManagedStatus(mlir::OpBuilder &builder,
                                      mlir::Location location,
                                      mlir::Value context, mlir::Value status);
+/// IEEE 1800-2023 18.14.1 initialization RNG binding; returns the activation
+/// token.
+mlir::Value emitRandomInitializationEnter(mlir::OpBuilder &builder,
+                                          mlir::Location location,
+                                          mlir::Value context, uint64_t scope);
+void emitRandomInitializationLeave(mlir::OpBuilder &builder,
+                                   mlir::Location location, mlir::Value context,
+                                   mlir::Value activation);
+/// Moves each initialization binding that encloses exactly one spawn onto
+/// that spawn as native.initialization_scope, and drops empty bindings.
+void foldNativeSpawnInitializationScopes(mlir::ModuleOp module);
 mlir::Value managedObjectPointer(mlir::OpBuilder &builder,
                                  mlir::Location location, mlir::Value handle);
 mlir::Value managedObjectHandle(mlir::OpBuilder &builder,

@@ -40,17 +40,22 @@ module attributes {
   }
 }
 
-// CHECK: llvm.mlir.global internal constant @parent.__obelisk_coro_ramp.__obelisk_spawn_batch_0
+// Rows {plan, capture byte offset, no initialization scope}.
+// CHECK: llvm.mlir.global internal constant @parent.__obelisk_coro_ramp.__obelisk_spawn_batch_0() {{.*}} : !llvm.array<2 x struct<(ptr, i64, i64)>>
 // CHECK: llvm.mlir.addressof @child.__obelisk_spawn_plan
-// CHECK: llvm.mlir.addressof @parent.__obelisk_coro_ramp.__obelisk_spawn_batch_0_captures_0
+// CHECK: llvm.mlir.constant(0 : i64)
+// CHECK: llvm.mlir.constant(0 : i64)
 // CHECK: llvm.mlir.addressof @child.__obelisk_spawn_plan
-// CHECK: llvm.mlir.addressof @parent.__obelisk_coro_ramp.__obelisk_spawn_batch_0_captures_1
-// CHECK: llvm.mlir.global internal constant @parent.__obelisk_coro_ramp.__obelisk_spawn_batch_0_captures_1
-// CHECK: llvm.mlir.constant(29 : i64)
-// CHECK: llvm.mlir.global internal constant @parent.__obelisk_coro_ramp.__obelisk_spawn_batch_0_captures_0
+// CHECK: llvm.mlir.constant(8 : i64)
+// CHECK: llvm.mlir.constant(0 : i64)
+// CHECK: llvm.mlir.global internal constant @parent.__obelisk_coro_ramp.__obelisk_spawn_batch_0_captures() {{.*}} : !llvm.array<2 x i64>
 // CHECK: llvm.mlir.constant(17 : i64)
+// CHECK: llvm.mlir.constant(29 : i64)
 // CHECK-LABEL: llvm.func @parent.__obelisk_coro_ramp
-// CHECK: llvm.call @obelisk_rt_v1_process_spawn_batch
+// CHECK: %[[TABLE:.*]] = llvm.mlir.addressof @parent.__obelisk_coro_ramp.__obelisk_spawn_batch_0 :
+// CHECK: %[[CAPTURES:.*]] = llvm.mlir.addressof @parent.__obelisk_coro_ramp.__obelisk_spawn_batch_0_captures
+// CHECK: llvm.call @obelisk_rt_v1_process_spawn_batch(%{{.*}}, %[[TABLE]], %[[CAPTURES]], %{{.*}})
+// CHECK-NOT: llvm.icmp
 // CHECK-NOT: llvm.call @child.__obelisk_spawn
 // CHECK: llvm.call @obelisk_rt_v1_dump_flush
 // CHECK-COUNT-4: llvm.call @child.__obelisk_spawn

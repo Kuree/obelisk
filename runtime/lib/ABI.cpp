@@ -557,10 +557,10 @@ ABI_OFFSET(obelisk_rt_process_spawn_plan_v1, continuation_count,
 ABI_OFFSET(obelisk_rt_process_spawn_plan_v1, bytecode_continuation_count,
            ABI_PTR(64, 56));
 ABI_OFFSET(obelisk_rt_process_spawn_plan_v1, options, ABI_PTR(68, 60));
-ABI_SIZE_ALIGN(obelisk_rt_process_spawn_entry_v1, ABI_PTR(16, 8),
-               ABI_PTR(8, 4));
+ABI_SIZE_ALIGN(obelisk_rt_process_spawn_entry_v1, 24, 8);
 ABI_OFFSET(obelisk_rt_process_spawn_entry_v1, plan, 0);
-ABI_OFFSET(obelisk_rt_process_spawn_entry_v1, captures, ABI_PTR(8, 4));
+ABI_OFFSET(obelisk_rt_process_spawn_entry_v1, capture_offset, 8);
+ABI_OFFSET(obelisk_rt_process_spawn_entry_v1, initialization_scope, 16);
 ABI_SIZE_ALIGN(obelisk_rt_process_instance_v1, ABI_PTR(104, 80), 8);
 ABI_OFFSET(obelisk_rt_process_instance_v1, descriptor, 0);
 ABI_OFFSET(obelisk_rt_process_instance_v1, allocation, ABI_PTR(8, 4));
@@ -1450,8 +1450,9 @@ ABI_FUNCTION(obelisk_rt_v1_process_spawn,
                           const obelisk_rt_process_spawn_plan_v1 *,
                           const void *));
 ABI_FUNCTION(obelisk_rt_v1_process_spawn_batch,
-             void (*)(obelisk_rt_context *,
-                      const obelisk_rt_process_spawn_entry_v1 *, uint32_t));
+             obelisk_rt_status (*)(obelisk_rt_context *,
+                                   const obelisk_rt_process_spawn_entry_v1 *,
+                                   const void *, uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_process_instance_frame,
              obelisk_rt_status (*)(obelisk_rt_process_instance_v1 *, void **,
                                    uint64_t *));

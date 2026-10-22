@@ -1915,7 +1915,14 @@ def SimRandomInitializationLeaveOp : SimOp<"random.initialization_leave", [
                    MemRead<SimProcessResource>, MemWrite<SimProcessResource>]>
   ]> {
   let summary = "restore the binding preceding initialization RNG entry";
+  let description = [{
+    A binding that encloses no operation with memory effects neither draws
+    from the stream nor creates a process or object, so it consumes no value
+    of the initialization RNG (IEEE 1800-2023 18.14.1) and the enter/leave
+    pair folds away.
+  }];
   let arguments = (ins SimContextType:$context, I64:$activation);
+  let hasCanonicalizeMethod = 1;
 }
 
 def SimRandomNextOp : SimOp<"random.next", [

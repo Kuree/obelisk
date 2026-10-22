@@ -2404,9 +2404,16 @@ typedef struct obelisk_rt_process_spawn_plan_v1 {
   uint32_t options;
 } obelisk_rt_process_spawn_plan_v1;
 
+// One row of a spawn table. Captures live in the table's shared capture blob
+// at capture_offset bytes. A nonzero initialization_scope binds that
+// instance's initialization RNG around the spawn, exactly as an
+// initialization_enter/leave pair around a single spawn would: IEEE 1800-2023
+// 18.14.1 seeds a static process from "the next value from the initialization
+// RNG of the module instance ... containing the thread declaration".
 typedef struct obelisk_rt_process_spawn_entry_v1 {
   const obelisk_rt_process_spawn_plan_v1 *plan;
-  const void *captures;
+  uint64_t capture_offset;
+  uint64_t initialization_scope;
 } obelisk_rt_process_spawn_entry_v1;
 
 // Captures have already been retained by the caller, just as for an ordinary
@@ -2415,9 +2422,13 @@ uint64_t
 obelisk_rt_v1_process_spawn(obelisk_rt_context *context,
                             const obelisk_rt_process_spawn_plan_v1 *plan,
                             const void *captures);
-void obelisk_rt_v1_process_spawn_batch(
+// Spawn failures are reported through scheduler_fail and the remaining rows
+// still spawn, as separate spawn calls would. A failed initialization binding
+// stops the table and is returned to the caller.
+obelisk_rt_status obelisk_rt_v1_process_spawn_batch(
     obelisk_rt_context *context,
-    const obelisk_rt_process_spawn_entry_v1 *entries, uint32_t count);
+    const obelisk_rt_process_spawn_entry_v1 *entries, const void *captures,
+    uint32_t count);
 
 // The runtime owns this record and its allocation. Generated native hooks may
 // read the fixed fields in order to refresh transient pointers before every

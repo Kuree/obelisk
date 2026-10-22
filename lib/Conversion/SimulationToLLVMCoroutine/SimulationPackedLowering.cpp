@@ -287,6 +287,8 @@ LogicalResult lowerPackedSimulationOperations(
   // SelectionDAG instruction selection superlinear. Bytecode has already been
   // frozen before this native-only rewrite.
   fuseWideManagedBitStores(module);
+  // Root spawns bind their owner's initialization RNG per spawn-table row.
+  foldNativeSpawnInitializationScopes(module);
   // Consume the whole-design X/Z proof in the AOT path after suspension
   // threading has reached its final SSA shape. Signatures and canonical frames
   // remain two-plane ABI objects, but proven block arguments, call results,

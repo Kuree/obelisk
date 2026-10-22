@@ -42,6 +42,7 @@ using ObserverWidth = NativeDialect::ObserverWidthAttrHelper;
 using ObserverFourState = NativeDialect::ObserverFourStateAttrHelper;
 using SpawnCaptureOffsets = NativeDialect::SpawnCaptureOffsetsAttrHelper;
 using SpawnCaptureSize = NativeDialect::SpawnCaptureSizeAttrHelper;
+using InitializationScope = NativeDialect::InitializationScopeAttrHelper;
 using MethodArgumentSizes = NativeDialect::MethodArgumentSizesAttrHelper;
 using MethodArgumentRoots = NativeDialect::MethodArgumentRootsAttrHelper;
 using TableWait = NativeDialect::TableWaitAttrHelper;

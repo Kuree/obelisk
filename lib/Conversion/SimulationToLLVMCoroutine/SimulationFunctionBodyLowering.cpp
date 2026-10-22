@@ -14,102 +14,172 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/WalkPatternRewriteDriver.h"
 
+#include <map>
+#include <optional>
+
 using namespace mlir;
 
 namespace obelisk::detail {
 
-// Batch only unused, constant word captures. Automatic handles still have
-// retain/failure calls between spawns, which are boundaries for this scan.
+void foldNativeSpawnInitializationScopes(ModuleOp module) {
+  SmallVector<sim::SimRandomInitializationLeaveOp> leaves;
+  module.walk([&](sim::SimRandomInitializationLeaveOp leave) {
+    leaves.push_back(leave);
+  });
+  PatternRewriter rewriter(module.getContext());
+  for (sim::SimRandomInitializationLeaveOp leave : leaves) {
+    // Fusion removes absorbed spawns but leaves their bindings behind.
+    if (succeeded(
+            sim::SimRandomInitializationLeaveOp::canonicalize(leave, rewriter)))
+      continue;
+    auto enter =
+        leave.getActivation().getDefiningOp<sim::SimRandomInitializationEnterOp>();
+    if (!enter || enter->getBlock() != leave->getBlock() || !enter->hasOneUse())
+      continue;
+    sim::SimSpawnOp spawn;
+    bool single = true;
+    for (Operation *between = enter->getNextNode(); single && between != leave;
+         between = between->getNextNode()) {
+      if (isMemoryEffectFree(between))
+        continue;
+      auto candidate = dyn_cast<sim::SimSpawnOp>(between);
+      single = candidate && !spawn;
+      spawn = candidate;
+    }
+    if (!single || !spawn || spawn.getOperands().empty() ||
+        spawn.getOperands().front() != enter.getContext() ||
+        native::has<native::InitializationScope>(spawn))
+      continue;
+    native::set<native::InitializationScope>(
+        spawn, rewriter.getI64IntegerAttr(enter.getScope()));
+    leave.erase();
+    enter.erase();
+  }
+}
+
+// Batch spawns whose captures are constant words into one spawn table. A row
+// carries the initialization scope that the spawn binds, if any: IEEE
+// 1800-2023 18.14.1 seeds each static process from the initialization RNG of
+// its containing instance, in creation order, so rows keep program order.
+// Automatic handles still have retain/failure calls between spawns, which are
+// boundaries for this scan.
 void materializeNativeSpawnBatches(Operation *root) {
   ModuleOp module = root->getParentOfType<ModuleOp>();
   MLIRContext *context = root->getContext();
   Type pointer = LLVM::LLVMPointerType::get(context);
+  Type i32 = IntegerType::get(context, 32);
   Type i64 = IntegerType::get(context, 64);
-  auto rowType = LLVM::LLVMStructType::getLiteral(context, {pointer, pointer});
+  auto rowType =
+      LLVM::LLVMStructType::getLiteral(context, {pointer, i64, i64});
   SymbolTableCollection symbols;
   unsigned batchID = 0;
   struct Spawn {
     schedule::NativeSpawnOp operation;
     SmallVector<uint64_t> captures;
+    uint64_t scope = 0;
+  };
+  auto scopeOf = [](schedule::NativeSpawnOp spawn) -> uint64_t {
+    auto scope = native::get<native::InitializationScope>(spawn);
+    return scope ? scope.getValue().getZExtValue() : 0;
+  };
+  auto makeRow = [&](Operation &operation) -> std::optional<Spawn> {
+    auto spawn = dyn_cast<schedule::NativeSpawnOp>(operation);
+    auto helper =
+        spawn ? symbols.lookupNearestSymbolFrom<LLVM::LLVMFuncOp>(
+                    spawn, StringAttr::get(
+                               context,
+                               (spawn.getCallee() + ".__obelisk_spawn").str()))
+              : LLVM::LLVMFuncOp{};
+    auto offsets = helper ? native::get<native::SpawnCaptureOffsets>(helper)
+                          : DenseI64ArrayAttr{};
+    auto size =
+        helper ? native::get<native::SpawnCaptureSize>(helper) : IntegerAttr{};
+    if (!spawn || !spawn->use_empty() || !offsets || !size ||
+        spawn->getNumOperands() != offsets.size() + 1 || size.getInt() < 0 ||
+        size.getInt() % 8 != 0)
+      return std::nullopt;
+    Spawn row{spawn, SmallVector<uint64_t>(size.getInt() / 8, 0),
+              scopeOf(spawn)};
+    for (auto [operand, offset] :
+         llvm::zip(spawn->getOperands().drop_front(), offsets.asArrayRef())) {
+      APInt value;
+      if (!operand.getType().isInteger(64) || offset < 0 || offset % 8 ||
+          uint64_t(offset / 8) >= row.captures.size() ||
+          !matchPattern(operand, m_ConstantInt(&value)))
+        return std::nullopt;
+      row.captures[offset / 8] = value.getZExtValue();
+    }
+    return row;
   };
   SmallVector<SmallVector<Spawn>> batches;
+  SmallVector<schedule::NativeSpawnOp> unbatchedScopes;
   for (Region &region : root->getRegions()) {
     for (Block &block : region) {
       SmallVector<Spawn> pending;
       auto flush = [&] {
-        if (pending.size() > 1)
+        if (pending.size() > 1 || (pending.size() == 1 && pending[0].scope))
           batches.push_back(std::move(pending));
         pending.clear();
       };
       for (Operation &operation : block) {
         if (operation.hasTrait<OpTrait::ConstantLike>())
           continue;
-        auto spawn = dyn_cast<schedule::NativeSpawnOp>(operation);
-        auto helper =
-            spawn ? symbols.lookupNearestSymbolFrom<LLVM::LLVMFuncOp>(
-                        spawn,
-                        StringAttr::get(
-                            context,
-                            (spawn.getCallee() + ".__obelisk_spawn").str()))
-                  : LLVM::LLVMFuncOp{};
-        auto offsets = helper ? native::get<native::SpawnCaptureOffsets>(helper)
-                              : DenseI64ArrayAttr{};
-        auto size = helper ? native::get<native::SpawnCaptureSize>(helper)
-                           : IntegerAttr{};
-        if (!spawn || !spawn->use_empty() || !offsets || !size ||
-            spawn->getNumOperands() != offsets.size() + 1 ||
-            size.getInt() < 0 || size.getInt() % 8 != 0) {
+        std::optional<Spawn> row = makeRow(operation);
+        if (!row) {
+          auto spawn = dyn_cast<schedule::NativeSpawnOp>(operation);
+          if (spawn && scopeOf(spawn))
+            unbatchedScopes.push_back(spawn);
           flush();
           continue;
         }
-        Spawn row{spawn, SmallVector<uint64_t>(size.getInt() / 8, 0)};
-        bool eligible = true;
-        for (auto [operand, offset] : llvm::zip(
-                 spawn->getOperands().drop_front(), offsets.asArrayRef())) {
-          APInt value;
-          if (!operand.getType().isInteger(64) || offset < 0 || offset % 8 ||
-              uint64_t(offset / 8) >= row.captures.size() ||
-              !matchPattern(operand, m_ConstantInt(&value))) {
-            eligible = false;
-            break;
-          }
-          row.captures[offset / 8] = value.getZExtValue();
-        }
-        if (!eligible) {
+        if (!pending.empty() && pending.front().operation->getOperand(0) !=
+                                    row->operation->getOperand(0))
           flush();
-          continue;
-        }
-        if (!pending.empty() &&
-            pending.front().operation->getOperand(0) != spawn->getOperand(0))
-          flush();
-        pending.push_back(std::move(row));
+        pending.push_back(std::move(*row));
       }
       flush();
     }
+  }
+  // A spawn the table cannot hold binds its scope around the ordinary call.
+  for (schedule::NativeSpawnOp spawn : unbatchedScopes) {
+    OpBuilder builder(spawn);
+    Value spawnContext = spawn->getOperand(0);
+    Value activation = emitRandomInitializationEnter(
+        builder, spawn.getLoc(), spawnContext, scopeOf(spawn));
+    builder.setInsertionPointAfter(spawn);
+    emitRandomInitializationLeave(builder, spawn.getLoc(), spawnContext,
+                                  activation);
+    native::remove<native::InitializationScope>(spawn);
   }
   for (auto &batch : batches) {
     Location location = batch.front().operation.getLoc();
     std::string base = (SymbolTable::getSymbolName(root).getValue() +
                         ".__obelisk_spawn_batch_" + Twine(batchID++))
                            .str();
-    SmallVector<std::string> captures;
-    for (auto [index, spawn] : llvm::enumerate(batch)) {
-      std::string name = base + "_captures_" + std::to_string(index);
-      auto type = LLVM::LLVMArrayType::get(i64, spawn.captures.size());
-      if (!spawn.captures.empty()) {
-        auto global = makeConstantGlobal(
-            module, location, type, name, LLVM::Linkage::Internal, 8,
-            [&](OpBuilder &builder) {
-              Value value = LLVM::ZeroOp::create(builder, location, type);
-              for (auto [word, bits] : llvm::enumerate(spawn.captures))
-                value = insertValue(builder, location, value,
-                                    llvmConstant(builder, location, i64, bits),
-                                    word);
-              return value;
-            });
-        copyNativePartition(root, global);
-      }
-      captures.push_back(std::move(name));
+    // Rows with equal captures share one blob slice.
+    SmallVector<uint64_t> words;
+    std::map<SmallVector<uint64_t>, uint64_t> slices;
+    SmallVector<uint64_t> offsets;
+    for (const Spawn &spawn : batch) {
+      auto [slice, inserted] = slices.try_emplace(spawn.captures, words.size());
+      if (inserted)
+        llvm::append_range(words, spawn.captures);
+      offsets.push_back(slice->second * 8);
+    }
+    std::string capturesName = base + "_captures";
+    if (!words.empty()) {
+      auto type = LLVM::LLVMArrayType::get(i64, words.size());
+      auto global = makeConstantGlobal(
+          module, location, type, capturesName, LLVM::Linkage::Internal, 8,
+          [&](OpBuilder &builder) {
+            Value value = LLVM::ZeroOp::create(builder, location, type);
+            for (auto [index, bits] : llvm::enumerate(words))
+              value = insertValue(builder, location, value,
+                                  llvmConstant(builder, location, i64, bits),
+                                  index);
+            return value;
+          });
+      copyNativePartition(root, global);
     }
     auto tableType = LLVM::LLVMArrayType::get(rowType, batch.size());
     auto table = makeConstantGlobal(
@@ -125,25 +195,36 @@ void materializeNativeSpawnBatches(Operation *root) {
                     (spawn.operation.getCallee() + ".__obelisk_spawn_plan")
                         .str()),
                 0);
-            if (!spawn.captures.empty())
-              row =
-                  insertValue(builder, location, row,
-                              LLVM::AddressOfOp::create(
-                                  builder, location, pointer, captures[index]),
-                              1);
+            row = insertValue(
+                builder, location, row,
+                llvmConstant(builder, location, i64, offsets[index]), 1);
+            row = insertValue(builder, location, row,
+                              llvmConstant(builder, location, i64, spawn.scope),
+                              2);
             value = insertValue(builder, location, value, row, index);
           }
           return value;
         });
     copyNativePartition(root, table);
     OpBuilder builder(batch.front().operation);
+    Value spawnContext = batch.front().operation->getOperand(0);
     Value address = LLVM::AddressOfOp::create(builder, location, pointer, base);
-    LLVM::CallOp::create(
-        builder, location, TypeRange{},
-        SymbolRefAttr::get(context, "obelisk_rt_v1_process_spawn_batch"),
-        ValueRange{batch.front().operation->getOperand(0), address,
-                   llvmConstant(builder, location, builder.getI32Type(),
-                                batch.size())});
+    Value captures =
+        words.empty()
+            ? Value(LLVM::ZeroOp::create(builder, location, pointer))
+            : Value(LLVM::AddressOfOp::create(builder, location, pointer,
+                                              capturesName));
+    Value status =
+        LLVM::CallOp::create(
+            builder, location, TypeRange{i32},
+            SymbolRefAttr::get(context, "obelisk_rt_v1_process_spawn_batch"),
+            ValueRange{spawnContext, address, captures,
+                       llvmConstant(builder, location, i32, batch.size())})
+            .getResult();
+    // Only an initialization binding can fail the table itself; spawn
+    // failures are reported through scheduler_fail as for separate spawns.
+    if (llvm::any_of(batch, [](const Spawn &spawn) { return spawn.scope; }))
+      reportManagedStatus(builder, location, spawnContext, status);
     for (auto &spawn : batch)
       spawn.operation.erase();
   }
@@ -182,6 +263,9 @@ public:
 
   LogicalResult matchAndRewrite(schedule::NativeSpawnOp operation,
                                 PatternRewriter &rewriter) const override {
+    // Spawn-table materialization owns initialization bindings.
+    if (native::has<native::InitializationScope>(operation))
+      return rewriter.notifyMatchFailure(operation, "unbound spawn scope");
     auto call = LLVM::CallOp::create(
         rewriter, operation.getLoc(), TypeRange{rewriter.getI64Type()},
         SymbolRefAttr::get(rewriter.getContext(),

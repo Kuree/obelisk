@@ -65,6 +65,7 @@ def NativeDialect : Dialect {
     "::mlir::BoolAttr":$observer_four_state,
     "::mlir::DenseI64ArrayAttr":$spawn_capture_offsets,
     "::mlir::IntegerAttr":$spawn_capture_size,
+    "::mlir::IntegerAttr":$initialization_scope,
     "::mlir::DenseI64ArrayAttr":$method_argument_sizes,
     "::mlir::DenseI64ArrayAttr":$method_argument_roots,
     "::mlir::IntegerAttr":$table_wait,
