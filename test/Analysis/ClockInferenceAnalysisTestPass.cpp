@@ -42,17 +42,36 @@ public:
       }
     });
     ClockInferenceAnalysis inference(getOperation(), *layout, seeds);
-    SmallVector<uint64_t> descriptors;
-    for (const auto &entry : layout->storage)
-      descriptors.push_back(entry.first);
-    llvm::sort(descriptors);
-    for (uint64_t descriptor : descriptors) {
-      uint64_t offset = layout->storageOffsets.lookup(descriptor);
-      auto bound = llvm::find_if(layout->bounds, [&](const auto &bound) {
+    auto print = [&](StringRef kind, const llvm::DenseMap<uint64_t, uint64_t>
+                                         &offsets) {
+      SmallVector<uint64_t> descriptors;
+      for (const auto &entry : offsets)
+        descriptors.push_back(entry.first);
+      llvm::sort(descriptors);
+      for (uint64_t descriptor : descriptors)
+        printFact(kind, descriptor, offsets.lookup(descriptor), *layout,
+                  inference);
+    };
+    print("clock", layout->storageOffsets);
+    print("net", layout->netOffsets);
+    markAllAnalysesPreserved();
+  }
+
+  static void printFact(StringRef kind, uint64_t descriptor, uint64_t offset,
+                        const obelisk::analysis::NativeStateLayoutAnalysis
+                            &layout,
+                        const obelisk::analysis::ClockInferenceAnalysis
+                            &inference) {
+    using namespace obelisk::analysis;
+    {
+      auto bound = llvm::find_if(layout.bounds, [&](const auto &bound) {
         return bound.offset == offset;
       });
-      ClockFact fact = inference.lookup({bound->handleID, offset});
-      llvm::errs() << "clock " << descriptor << ": ";
+      if (bound == layout.bounds.end())
+        return;
+      ClockBit bit{bound->handleID, offset};
+      ClockFact fact = inference.lookup(bit);
+      llvm::errs() << kind << " " << descriptor << ": ";
       switch (fact.kind) {
       case ClockFact::Kind::Bottom:
         llvm::errs() << "bottom";
@@ -74,9 +93,14 @@ public:
         llvm::errs() << " domain=" << fact.source.first << ":"
                      << fact.source.second
                      << " half-period=" << fact.halfPeriod;
+      if (fact.inverted)
+        llvm::errs() << " inverted";
+      ClockOrigin origin = inference.getOrigin(bit);
+      if (origin.bit != bit)
+        llvm::errs() << " origin=" << origin.bit.first << ":"
+                     << origin.bit.second << (origin.inverted ? " complement" : "");
       llvm::errs() << '\n';
     }
-    markAllAnalysesPreserved();
   }
 };
 } // namespace

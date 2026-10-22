@@ -14,6 +14,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Threading.h"
 #include "llvm/ADT/SetVector.h"
@@ -24,7 +25,8 @@ namespace obelisk::analysis {
 
 bool ClockFact::operator==(const ClockFact &other) const {
   return kind == other.kind && source == other.source &&
-         halfPeriod == other.halfPeriod && constant == other.constant;
+         halfPeriod == other.halfPeriod && constant == other.constant &&
+         inverted == other.inverted;
 }
 
 ClockFact ClockFact::join(ClockFact lhs, ClockFact rhs) {
@@ -145,7 +147,74 @@ struct Transfer {
   ClockBit source, target;
   Operation *owner;
   bool cadence;
+  bool inverted = false;
+  /// Every value of the target, x and z included, follows the source, so
+  /// edges correspond exactly (IEEE 1800-2023 Table 9-2). A wired-logic,
+  /// pull or charge-storage resolution can replace z.
+  bool exact = true;
 };
+
+using Bound = NativeStateLayoutAnalysis::Bound;
+
+/// The physical range a handle fact may touch: its exact bits, or the whole
+/// root for a dynamic selection.
+std::optional<std::pair<uint64_t, uint64_t>>
+physicalRange(const NativeStateLayoutAnalysis &layout, const HandleFact &fact) {
+  if (!fact.descriptor || !fact.width)
+    return std::nullopt;
+  const auto &offsets = fact.resource == schedule::ComputeResourceKind::Net
+                            ? layout.netOffsets
+                            : layout.storageOffsets;
+  auto offset = offsets.find(*fact.descriptor);
+  if (offset == offsets.end() || fact.low > UINT64_MAX - offset->second)
+    return std::nullopt;
+  return std::make_pair(offset->second + (fact.dynamic ? 0 : fact.low),
+                        fact.dynamic ? fact.rootWidth : fact.width);
+}
+
+const Bound *boundAt(ArrayRef<const Bound *> boundsByOffset, uint64_t bit) {
+  auto end = llvm::upper_bound(
+      boundsByOffset, bit,
+      [](uint64_t bit, const Bound *bound) { return bit < bound->offset; });
+  if (end == boundsByOffset.begin())
+    return nullptr;
+  const Bound *bound = *std::prev(end);
+  return bit - bound->offset < bound->width ? bound : nullptr;
+}
+
+/// A clock copy may apply 0/1-preserving conversions and complements to its
+/// source bit (IEEE 1800-2023 11.4.8: `~` maps 0 and 1 to each other and
+/// x and z to x). Returns the copied value and whether it is complemented.
+std::pair<Value, bool> stripClockTransfer(Value value) {
+  bool inverted = false;
+  while (value) {
+    if (auto convert = value.getDefiningOp<sim::SimLogicFromBitsOp>()) {
+      value = convert.getInput();
+      continue;
+    }
+    if (auto unary = value.getDefiningOp<sim::SimLogicUnaryOp>();
+        unary && unary.isBitwiseNegation()) {
+      inverted = !inverted;
+      value = unary.getInput();
+      continue;
+    }
+    if (auto toggle = value.getDefiningOp<arith::XOrIOp>()) {
+      APInt one;
+      Value other;
+      if (matchPattern(toggle.getRhs(), m_ConstantInt(&one)))
+        other = toggle.getLhs();
+      else if (matchPattern(toggle.getLhs(), m_ConstantInt(&one)))
+        other = toggle.getRhs();
+      if (other && one.getBitWidth() == 1 && one.isOne()) {
+        inverted = !inverted;
+        value = other;
+        continue;
+      }
+    }
+    break;
+  }
+  return {value, inverted};
+}
 
 std::optional<uint8_t> constantBit(Value value) {
   if (auto constant = value.getDefiningOp<sim::SimLogicConstantOp>();
@@ -163,26 +232,17 @@ std::optional<uint8_t> constantBit(Value value) {
 
 ClockInferenceAnalysis::ClockInferenceAnalysis(
     ModuleOp module, const NativeStateLayoutAnalysis &layout,
-    ArrayRef<PeriodicClockSeed> seeds) {
+    ArrayRef<PeriodicClockSeed> seeds)
+    : layout(layout) {
   SmallVector<Transfer> transfers;
   DenseMap<uint32_t, SmallVector<Writer>> writers;
   DenseMap<ClockBit, ClockFact> initialConstants;
-  SmallVector<const NativeStateLayoutAnalysis::Bound *> boundsByOffset;
   for (const auto &bound : layout.bounds)
     if (bound.width)
       boundsByOffset.push_back(&bound);
   llvm::sort(boundsByOffset, [](const auto *lhs, const auto *rhs) {
     return lhs->offset < rhs->offset;
   });
-  auto boundAt = [&](uint64_t bit) -> const NativeStateLayoutAnalysis::Bound * {
-    auto end = llvm::upper_bound(
-        boundsByOffset, bit,
-        [](uint64_t bit, const auto *bound) { return bit < bound->offset; });
-    if (end == boundsByOffset.begin())
-      return nullptr;
-    const auto *bound = *std::prev(end);
-    return bit - bound->offset < bound->width ? bound : nullptr;
-  };
   DenseMap<uint64_t, SmallVector<const NativeStateLayoutAnalysis::Driver *>>
       driversByNet;
   DenseMap<uint64_t, const NativeStateLayoutAnalysis::Net *> netsByID;
@@ -262,39 +322,27 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
            !runtime.contains(function));
       auto range = [&](Value reference) -> std::optional<Writer> {
         auto found = provenance.find(reference);
-        if (found == provenance.end() || !found->second.descriptor ||
-            !found->second.width)
+        if (found == provenance.end())
           return std::nullopt;
-        const auto &p = found->second;
-        const auto &offsets = p.resource == schedule::ComputeResourceKind::Net
-                                  ? layout.netOffsets
-                                  : layout.storageOffsets;
-        auto offset = offsets.find(*p.descriptor);
-        if (offset == offsets.end() || p.low > UINT64_MAX - offset->second)
+        auto r = physicalRange(layout, found->second);
+        if (!r)
           return std::nullopt;
-        return Writer{function.getOperation(),
-                      offset->second + (p.dynamic ? 0 : p.low),
-                      p.dynamic ? p.rootWidth : p.width};
+        return Writer{function.getOperation(), r->first, r->second};
       };
       auto bit = [&](Value reference) -> std::optional<ClockBit> {
         auto p = provenance.find(reference);
-        if (p == provenance.end() || p->second.dynamic)
-          return std::nullopt;
-        auto r = range(reference);
-        if (!r || r->width != 1)
-          return std::nullopt;
-        const auto *bound = boundAt(r->low);
-        return bound ? std::optional<ClockBit>{{bound->handleID, r->low}}
-                     : std::nullopt;
+        return p == provenance.end() ? std::nullopt : getBit(p->second);
       };
       auto recordWriter = [&](Value reference) {
         if (initializer)
           return;
         if (auto r = range(reference))
-          if (const auto *bound = boundAt(r->low))
+          if (const auto *bound = boundAt(boundsByOffset, r->low))
             writers[bound->handleID].push_back(*r);
       };
       Value input, output;
+      std::optional<bool> inverted;
+      bool exact = true;
       Operation *wait = nullptr;
       SmallVector<Value> watched;
       bool pure = true;
@@ -321,11 +369,17 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
               pure &= driver->width == 1 && driver->drivenWidth == 1 &&
                       driver->strength0 != sim::Strength::HighZ &&
                       driver->strength1 != sim::Strength::HighZ;
-            if (const auto *net = netsByID.lookup(*p->second.descriptor))
+            if (const auto *net = netsByID.lookup(*p->second.descriptor)) {
               pure &=
                   llvm::none_of(net->propagationDelays, [](const auto &delay) {
                     return delay.has_value();
                   });
+              exact &= net->resolution == sim::NetResolutionKind::Wire ||
+                       net->resolution == sim::NetResolutionKind::Tri ||
+                       net->resolution == sim::NetResolutionKind::UWire;
+            } else {
+              exact = false;
+            }
           }
         } else if (auto nba = dyn_cast<sim::SimNBAEnqueueOp>(op)) {
           destination = nba.getDestination();
@@ -344,17 +398,20 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
             }
           }
           recordWriter(destination);
-          auto load = value ? value.getDefiningOp<sim::SimRefLoadOp>()
-                            : sim::SimRefLoadOp{};
-          auto read = value ? value.getDefiningOp<sim::SimNetReadOp>()
-                            : sim::SimNetReadOp{};
+          auto [copied, complement] = stripClockTransfer(value);
+          auto load = copied ? copied.getDefiningOp<sim::SimRefLoadOp>()
+                             : sim::SimRefLoadOp{};
+          auto read = copied ? copied.getDefiningOp<sim::SimNetReadOp>()
+                             : sim::SimNetReadOp{};
           Value source = load   ? load.getReference()
                          : read ? read.getNet()
                                 : Value{};
           pure &= source && (!input || bit(input) == bit(source)) &&
-                  (!output || bit(output) == bit(destination));
+                  (!output || bit(output) == bit(destination)) &&
+                  (!inverted || *inverted == complement);
           input = source;
           output = destination;
+          inverted = complement;
         } else if (sim::isSuspensionOp(op)) {
           ++waits;
           wait = op;
@@ -371,7 +428,8 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
                    !isa<sim::SimRefLoadOp, sim::SimNetReadOp,
                         sim::SimContextStorageOp, sim::SimContextDriverOp,
                         sim::SimContextNetOp, sim::SimRefSubelementOp,
-                        arith::ConstantOp, cf::BranchOp>(op))
+                        sim::SimLogicFromBitsOp, sim::SimLogicUnaryOp,
+                        arith::XOrIOp, arith::ConstantOp, cf::BranchOp>(op))
           pure = false;
         // Include other physical writes (copy, overrides, inertial stores,
         // net writes, etc.) in coverage even though they have no clock transfer
@@ -434,7 +492,8 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
           wait->getNumSuccessors() == 1 &&
           wait->getSuccessor(0) == wait->getBlock() && watched.size() == 1 &&
           bit(watched.front()) == source) {
-        transfers.push_back({*source, *target, function.getOperation(), false});
+        transfers.push_back({*source, *target, function.getOperation(), false,
+                             inverted.value_or(false), exact});
         ++copyCount;
       }
       std::optional<ClockBit> cadence;
@@ -511,6 +570,9 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
     facts.try_emplace(transfer.target);
     if (!exclusive(transfer.target, transfer.owner))
       join(transfer.target, {ClockFact::Kind::Unknown});
+    else if (!transfer.cadence && transfer.exact)
+      copies.try_emplace(transfer.target,
+                         ClockOrigin{transfer.source, transfer.inverted});
   }
   for (const auto &seed : seeds) {
     modeled.insert(seed.bit);
@@ -539,12 +601,53 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
       ClockFact fact = lookup(bit);
       if (transfer.cadence && fact.hasTickBound())
         fact.kind = ClockFact::Kind::TickDriven;
+      if (transfer.inverted) {
+        if (fact.kind == ClockFact::Kind::Periodic)
+          fact.inverted = !fact.inverted;
+        else if (fact.kind == ClockFact::Kind::Constant)
+          fact = fact.constant & 2 ? ClockFact{ClockFact::Kind::Unknown}
+                                   : ClockFact{ClockFact::Kind::Constant, {},
+                                               0, uint8_t(fact.constant ^ 1)};
+      }
       // A constant trigger does not imply its consumer's initial output value.
       if (transfer.cadence && fact.kind == ClockFact::Kind::Constant)
         fact = {ClockFact::Kind::Unknown};
       join(transfer.target, fact);
     }
   }
+}
+
+std::optional<ClockOrigin>
+ClockInferenceAnalysis::getCopySource(ClockBit bit) const {
+  auto copy = copies.find(bit);
+  if (copy == copies.end())
+    return std::nullopt;
+  return copy->second;
+}
+
+ClockOrigin ClockInferenceAnalysis::getOrigin(ClockBit bit) const {
+  ClockOrigin origin{bit, false};
+  llvm::DenseSet<ClockBit> visited;
+  while (visited.insert(origin.bit).second) {
+    auto copy = copies.find(origin.bit);
+    if (copy == copies.end())
+      return origin;
+    origin = {copy->second.bit, origin.inverted != copy->second.inverted};
+  }
+  // A copy cycle has no external source.
+  return {bit, false};
+}
+
+std::optional<ClockBit>
+ClockInferenceAnalysis::getBit(const HandleFact &fact) const {
+  if (fact.dynamic)
+    return std::nullopt;
+  auto range = physicalRange(layout, fact);
+  if (!range || range->second != 1)
+    return std::nullopt;
+  const Bound *bound = boundAt(boundsByOffset, range->first);
+  return bound ? std::optional<ClockBit>{{bound->handleID, range->first}}
+               : std::nullopt;
 }
 
 ClockFact ClockInferenceAnalysis::lookup(ClockBit bit) const {

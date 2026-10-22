@@ -77,7 +77,9 @@
 #include "ComputeFusion.h"
 #include "obelisk/Analysis/ActivationMemoryAnalysis.h"
 #include "obelisk/Analysis/ActivationPhaseAnalysis.h"
+#include "obelisk/Analysis/ClockInferenceAnalysis.h"
 #include "obelisk/Analysis/HandleDataflowAnalysis.h"
+#include "obelisk/Analysis/NativeStateLayoutAnalysis.h"
 #include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
@@ -160,6 +162,11 @@ struct Member {
   SmallVector<Operation *> preamble;
   uint64_t clock = 0;
   sim::EdgeKind edge = sim::EdgeKind::Change;
+  /// The root a net clock follows through exact pure copies, whether the
+  /// copies complement it, and every root on that copy chain.
+  uint64_t origin = 0;
+  bool inverted = false;
+  SmallVector<uint64_t, 2> clockChain;
   uint32_t order = UINT32_MAX;
   llvm::DenseSet<uint64_t> reads, nbaWrites, writes;
   /// An update whose root is unresolved.
@@ -1018,7 +1025,114 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
   for (auto &[destination, copy] : phases.getCopies())
     classes.join(copy.source, destination);
 
-  // 2. Clocked members, grouped by clock class and edge.
+  // A clock usually reaches a module as a one-bit net: an input port
+  // connection or a net declaration assignment such as `wire c = ~clk;`.
+  // Each is a continuous assignment (IEEE 1800-2023 10.3.1, 23.3.3) that
+  // updates its net only when the value changes (10.3.2). The clock analysis
+  // follows exact, exclusive pure copies of this kind back to the variable
+  // they all copy, recording whether an odd number of them complement it.
+  std::unique_ptr<analysis::NativeStateLayoutAnalysis> clockLayout;
+  std::unique_ptr<analysis::ClockInferenceAnalysis> clockCopies;
+  DenseMap<uint64_t, uint64_t> clockRootAt;
+  bool clockCopiesComputed = false;
+  auto computeClockCopies = [&] {
+    clockCopiesComputed = true;
+    if (!module)
+      return;
+    // A design the native layout rejects keeps storage clocks only; that
+    // rejection is reported by the backend that needs the layout.
+    FailureOr<analysis::NativeStateLayoutAnalysis> layout;
+    {
+      ScopedDiagnosticHandler quiet(design.getContext(),
+                                    [](Diagnostic &) { return success(); });
+      layout = analysis::NativeStateLayoutAnalysis::compute(module);
+    }
+    if (failed(layout))
+      return;
+    clockLayout =
+        std::make_unique<analysis::NativeStateLayoutAnalysis>(*layout);
+    clockCopies = std::make_unique<analysis::ClockInferenceAnalysis>(
+        module, *clockLayout, ArrayRef<analysis::PeriodicClockSeed>{});
+    // One-bit roots by physical bit. Aliased descriptors share a bit; the
+    // smallest root identifies it deterministically.
+    DenseMap<uint64_t, unsigned> widths;
+    for (const auto &bound : clockLayout->bounds)
+      if (bound.width)
+        widths.try_emplace(bound.offset, bound.width);
+    auto index = [&](const DenseMap<uint64_t, uint64_t> &offsets,
+                     schedule::ComputeResourceKind resource) {
+      for (auto [descriptor, offset] : offsets) {
+        std::optional<uint64_t> root =
+            ActivationMemoryAnalysis::getRoot(resource, descriptor);
+        if (widths.lookup(offset) != 1 || !root)
+          continue;
+        auto [found, inserted] = clockRootAt.try_emplace(offset, *root);
+        if (!inserted)
+          found->second = std::min(found->second, *root);
+      }
+    };
+    index(clockLayout->storageOffsets, schedule::ComputeResourceKind::Storage);
+    index(clockLayout->netOffsets, schedule::ComputeResourceKind::Net);
+  };
+  // Follows a whole one-bit net clock to its origin root.
+  auto resolveNetClock = [&](Value watched, const analysis::HandleFacts &facts,
+                             Member &member) {
+    auto found = facts.find(watched);
+    if (found == facts.end() ||
+        found->second.resource != schedule::ComputeResourceKind::Net ||
+        !found->second.descriptor || found->second.dynamic ||
+        found->second.low != 0 || found->second.width != 1 ||
+        found->second.rootWidth != 1)
+      return false;
+    if (!clockCopiesComputed)
+      computeClockCopies();
+    if (!clockCopies)
+      return false;
+    std::optional<analysis::ClockBit> bit = clockCopies->getBit(found->second);
+    std::optional<uint64_t> clock = ActivationMemoryAnalysis::getRoot(
+        schedule::ComputeResourceKind::Net, *found->second.descriptor);
+    if (!bit || !clock)
+      return false;
+    member.clock = *clock;
+    member.clockChain = {*clock};
+    member.inverted = false;
+    DenseSet<analysis::ClockBit> visited{*bit};
+    while (std::optional<analysis::ClockOrigin> source =
+               clockCopies->getCopySource(*bit)) {
+      auto root = clockRootAt.find(source->bit.second);
+      if (root == clockRootAt.end() || !visited.insert(source->bit).second)
+        return false;
+      bit = source->bit;
+      member.inverted ^= source->inverted;
+      member.clockChain.push_back(root->second);
+    }
+    member.origin = member.clockChain.back();
+    return true;
+  };
+  // The level a clock root holds before its first update: x for 4-state
+  // variables, 0 for 2-state variables (Table 6-7), and z for nets (6.6).
+  // A declaration initializer gives an initial value only that root has.
+  enum InitialLevel : unsigned { Low, High, Unknown, Initialized };
+  DenseMap<uint64_t, Type> storageTypes;
+  for (auto declaration : design.getBody().front().getOps<sim::SimStorageDeclOp>())
+    storageTypes[declaration.getId()] = declaration.getType();
+  auto initialLevel = [&](uint64_t root) -> unsigned {
+    if (root >= ActivationMemoryAnalysis::netRootTag)
+      return Unknown;
+    if (llvm::any_of(writers.lookup(root), [&](const Writer &writer) {
+          return writer.function == rootInitializer.getSymNameAttr();
+        }))
+      return Initialized;
+    Type type = storageTypes.lookup(root);
+    if (isa_and_nonnull<IntegerType>(type))
+      return Low;
+    if (isa_and_nonnull<sim::LogicType>(type))
+      return Unknown;
+    return Initialized;
+  };
+
+  // 2. Clocked members, grouped by clock class, edge, and time-zero
+  // behavior.
   using GroupKey = std::pair<uint64_t, unsigned>;
   llvm::MapVector<GroupKey, std::vector<Member>> groups;
   for (sim::SimFuncOp function :
@@ -1086,14 +1200,27 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
       continue;
     }
     analysis::HandleFacts facts = provenance.derive(function);
-    std::optional<uint64_t> clock = wholeStorageRoot(wait.getWatched(), facts);
-    if (!clock ||
-        !isClockBit(
-            cast<sim::RefType>(wait.getWatched().getType()).getElementType())) {
-      reject("member clock");
-      continue;
+    Type watchedType = wait.getWatched().getType();
+    if (auto ref = dyn_cast<sim::RefType>(watchedType)) {
+      std::optional<uint64_t> clock =
+          wholeStorageRoot(wait.getWatched(), facts);
+      if (!clock || !isClockBit(ref.getElementType())) {
+        reject("member clock");
+        continue;
+      }
+      member.clock = member.origin = *clock;
+    } else {
+      // An edge event of a copy is an edge event of its source (Table 9-2
+      // is symmetric under complement, since `~` maps x and z to x per
+      // Table 11-15); a value change is not (`~z` equals `~x`).
+      auto net = dyn_cast<sim::NetType>(watchedType);
+      if (!net || !isClockBit(net.getElementType()) ||
+          member.edge == sim::EdgeKind::Change ||
+          !resolveNetClock(wait.getWatched(), facts, member)) {
+        reject("member clock");
+        continue;
+      }
     }
-    member.clock = *clock;
     bool native = true;
     uint32_t bodyIndex = 0;
     for (auto [index, block] : llvm::enumerate(function.getBody()))
@@ -1148,7 +1275,32 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
       continue;
     }
     collectPreamble(member);
-    groups[{classes.find(member.clock), static_cast<unsigned>(member.edge)}]
+    // Members are equivalent when their edge events coincide in every time
+    // slot, including the time-zero updates of copies (4.9.1, 23.3.3.3).
+    // Relative to the class, a complemented chain swaps posedge and negedge.
+    // With the class source quiet at time zero (checked per kernel), a
+    // variable keeps its initial level then, while a net copy moves once from
+    // z to its source's value. A posedge there needs a final 1 from a level
+    // other than 1 and a negedge a final 0 from a level other than 0
+    // (Table 9-2), so members agree at time zero when their roots agree on
+    // whether the initial level rules the edge out; any edge needs the level.
+    sim::EdgeKind edge = member.edge;
+    unsigned level = initialLevel(member.clock);
+    if (member.inverted) {
+      if (edge == sim::EdgeKind::Posedge)
+        edge = sim::EdgeKind::Negedge;
+      else if (edge == sim::EdgeKind::Negedge)
+        edge = sim::EdgeKind::Posedge;
+      if (level == Low || level == High)
+        level = level == Low ? High : Low;
+    }
+    unsigned variant = level;
+    if (level != Initialized && edge == sim::EdgeKind::Posedge)
+      variant = level == High;
+    else if (level != Initialized && edge == sim::EdgeKind::Negedge)
+      variant = level == Low;
+    groups[{classes.find(member.origin),
+            static_cast<unsigned>(edge) | variant << 8}]
         .push_back(std::move(member));
   }
 
@@ -1319,20 +1471,46 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
       memberFunctions.insert(member.function);
     }
 
-    // The phases in which this kernel's clock edges occur. Every alias in the
-    // class changes in exactly the phases of the class root.
-    Phases kernelPhases = phases.getChangePhases(classRoot);
-    auto meetsKernel = [&](StringAttr function, uint32_t blockIndex) {
-      return phases.getPhases(function, blockIndex).meets(kernelPhases);
-    };
     SmallVector<uint64_t> clockRoots{classRoot};
     if (auto found = classMembers.find(classRoot); found != classMembers.end())
       llvm::append_range(clockRoots, found->second);
-    for (Member &member : members)
+    // Roots a net clock copy chain updates after its origin. They follow
+    // their source; their own writers are the exclusive copies.
+    DenseSet<uint64_t> netCopies;
+    for (Member &member : members) {
       clockRoots.push_back(member.clock);
+      llvm::append_range(clockRoots, member.clockChain);
+      for (uint64_t root : member.clockChain)
+        if (root != member.origin)
+          netCopies.insert(root);
+    }
     llvm::sort(clockRoots);
     clockRoots.erase(std::unique(clockRoots.begin(), clockRoots.end()),
                      clockRoots.end());
+    // The phases in which this kernel's clock edges occur. Every alias in the
+    // class changes in exactly the phases of the class root. A net copy can
+    // additionally update at its own time-zero evaluation (4.9.1).
+    Phases kernelPhases = phases.getChangePhases(classRoot);
+    if (!netCopies.empty()) {
+      // Net copies are edge-equivalent only while each root changes at most
+      // once per phase. A source that also changes at time zero can change a
+      // copy twice in the phase of that evaluation (z, then its initial value,
+      // then the new one), and a later copy, evaluated after both updates
+      // (10.3.2, 4.7), may never see the middle value.
+      PhaseSet sourceAtZero = 0;
+      for (uint64_t root : clockRoots)
+        if (!netCopies.contains(root))
+          sourceAtZero |= phases.getChangePhases(root).zero;
+      if (sourceAtZero) {
+        reject("net clock source changes at time zero");
+        continue;
+      }
+      for (uint64_t root : clockRoots)
+        kernelPhases = kernelPhases | phases.getChangePhases(root);
+    }
+    auto meetsKernel = [&](StringAttr function, uint32_t blockIndex) {
+      return phases.getPhases(function, blockIndex).meets(kernelPhases);
+    };
 
     // The kernel must run at most once between NBA regions. A second run in
     // the same phase would read its own direct stores, where its NBAs would
@@ -1348,11 +1526,14 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
     //     (9.4.1). A resumable named-block exit (9.6.2) or a process-control
     //     operation (9.7) is a suspension too, so `disable` and handles from
     //     other processes cannot restart such a process within a slot.
-    // Copies follow their source (23.3.3).
+    // Copies follow their source (23.3.3). A net copy's time-zero evaluation
+    // (4.9.1) moves it once from z to its source's value, and later updates
+    // track single source changes, so a phase still sees at most one edge of
+    // each direction on every root of the class.
     bool singleClockSource = [&] {
       DenseMap<std::pair<unsigned, unsigned>, StringAttr> sources;
       for (uint64_t root : clockRoots) {
-        if (phases.getCopies().count(root))
+        if (phases.getCopies().count(root) || netCopies.contains(root))
           continue;
         for (const Writer &write : writers.lookup(root)) {
           if (write.function == rootInitializer.getSymNameAttr())
