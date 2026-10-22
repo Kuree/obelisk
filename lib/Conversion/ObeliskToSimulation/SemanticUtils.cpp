@@ -329,7 +329,7 @@ std::optional<StringRef> getConstantSpelling(Operation *operation) {
 
 std::optional<StringRef> getElaboratedConstantSpelling(Operation *operation) {
   if (auto constant =
-          operation->getAttrOfType<StringAttr>("elaborated_constant"))
+          operation->getAttrOfType<StringAttr>(elaboratedConstantAttrName))
     return constant.getValue();
   return getConstantSpelling(operation);
 }
@@ -338,7 +338,7 @@ std::optional<StringRef> getTwoStatePatternSpelling(Operation *operation) {
   if (auto pattern = operation->getAttrOfType<StringAttr>("two_state_pattern"))
     return pattern.getValue();
   if (auto constant =
-          operation->getAttrOfType<StringAttr>("elaborated_constant"))
+          operation->getAttrOfType<StringAttr>(elaboratedConstantAttrName))
     return constant.getValue();
   if (isa<semantic::SVConversionExpressionOp>(operation)) {
     auto children = getChildren(operation);

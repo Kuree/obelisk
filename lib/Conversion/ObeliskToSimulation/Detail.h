@@ -47,6 +47,11 @@ inline constexpr ::mlir::StringLiteral readMemEnumElementValuesAttrName =
 /// Written by the Slang importer, so the spelling is fixed there as well.
 inline constexpr ::mlir::StringLiteral foldedConstantAttrName =
     "folded_constant";
+/// Elaboration value of an expression that the language requires to be
+/// constant, kept for that use even where executable folds were withdrawn.
+/// The two-state importer writes it, so the spelling is fixed there as well.
+inline constexpr ::mlir::StringLiteral elaboratedConstantAttrName =
+    "elaborated_constant";
 /// Finest precision any timeprecision, timeunit or `timescale in the source
 /// declares, carried on the semantic root. Written by the Slang importer, so
 /// the spelling is fixed there as well.

@@ -245,6 +245,32 @@ static Operation *getFirstChild(Operation *operation) {
   return &operation->getRegion(0).front().front();
 }
 
+/// Whether the grammar makes this expression operand a constant_expression
+/// that lowering reads as a constant: a simple part-select bound (IEEE
+/// 1800-2017 11.5.1), a replication count (11.4.12.1), or the count of a
+/// replicated assignment pattern or an array pattern key (A.6.7.1).
+static bool isConstantOperand(Operation *operand) {
+  Operation *parent = operand->getParentOp();
+  if (auto select = dyn_cast<semantic::SVRangeSelectExpressionOp>(parent))
+    return select.getSelectionKind() ==
+               semantic::SVRangeSelectionKind::Simple &&
+           getFirstChild(parent) != operand;
+  if (auto pattern =
+          dyn_cast<semantic::SVStructuredAssignmentPatternExpressionOp>(
+              parent)) {
+    // Index setters follow the member and type setters as key/value pairs.
+    uint64_t keys =
+        pattern.getMemberSetterCount() + pattern.getTypeSetterCount();
+    auto position = static_cast<uint64_t>(
+        std::distance(operand->getBlock()->begin(), operand->getIterator()));
+    return position >= keys && (position - keys) % 2 == 0 &&
+           (position - keys) / 2 < pattern.getIndexSetterCount();
+  }
+  return isa<semantic::SVReplicationExpressionOp,
+             semantic::SVReplicatedAssignmentPatternExpressionOp>(parent) &&
+         getFirstChild(parent) == operand;
+}
+
 /// Slang flattens `vif.child.member` and `vif.child.method()` receivers to the
 /// original virtual handle while retaining the nested selection in the exact
 /// referenced symbol. Freeze that symbol ancestry for later unit isolation.
@@ -604,6 +630,9 @@ void ObeliskSimPreparePass::runOnOperation() {
   // walk (and quadratic behavior) when one expression contains many affected
   // literals or compile-time queries.
   llvm::SmallPtrSet<Operation *, 16> staleFoldExpressions;
+  // Expressions whose fold is withdrawn only because they contain a user
+  // function call. Their frontend value is still the elaboration value.
+  llvm::SmallPtrSet<Operation *, 16> callFoldExpressions;
   auto isSemanticExpression = [](Operation *operation) {
     return operation && operation->getName().getStringRef().starts_with(
                             "obelisk.sv.expression.");
@@ -615,6 +644,7 @@ void ObeliskSimPreparePass::runOnOperation() {
   // additional whole-design traversal.
   semanticRoot->walk<WalkOrder::PostOrder>([&](Operation *operation) {
     bool staleFold = staleFoldExpressions.erase(operation);
+    bool callFold = callFoldExpressions.erase(operation);
 
     // IEEE 1800-2017 5.7.1: "Unsized unsigned literal constants where the
     // high-order bit is unknown (X or x) or three-state (Z or z) shall be
@@ -650,7 +680,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (call && !call.getIsSystemCall()) {
       Operation *parent = operation->getParentOp();
       if (isSemanticExpression(parent))
-        staleFoldExpressions.insert(parent);
+        callFoldExpressions.insert(parent);
       else
         staleFold = true;
     }
@@ -663,11 +693,19 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (call && call->hasAttr(arrayQueryDimensionsAttrName))
       staleFold = true;
 
-    if (staleFold && isSemanticExpression(operation)) {
+    if ((staleFold || callFold) && isSemanticExpression(operation)) {
+      // IEEE 1800-2017 13.4.3 evaluates a constant function call in a
+      // constant expression at elaboration, with fresh locals, so a constant
+      // operand withdrawn only for a call keeps its value for that use.
+      if (!staleFold && isConstantOperand(operation))
+        if (auto folded =
+                operation->getAttrOfType<StringAttr>(foldedConstantAttrName))
+          operation->setAttr(elaboratedConstantAttrName, folded);
       operation->removeAttr(foldedConstantAttrName);
       Operation *parent = operation->getParentOp();
       if (isSemanticExpression(parent))
-        staleFoldExpressions.insert(parent);
+        (staleFold ? staleFoldExpressions : callFoldExpressions)
+            .insert(parent);
     }
 
     if (!call)
