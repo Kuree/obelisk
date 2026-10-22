@@ -22,11 +22,11 @@ module bytecode_direct_signal_cohort;
   genvar i;
   generate
     for (i = 0; i < N; ++i)
-      // A scheduler-time read keeps these as independent actors. Otherwise
-      // legal same-clock body fusion would stop exercising the bytecode
-      // scheduler's many-waiter cohort path.
+      // A read of each process's own RNG (IEEE 1800-2023 18.14.2) keeps these
+      // as independent actors. Otherwise legal same-clock body fusion would
+      // stop exercising the bytecode scheduler's many-waiter cohort path.
       always @(posedge clock)
-        if ($time != 0)
+        if ($urandom_range(1, 1) != 0)
           hits[i] = ~hits[i];
   endgenerate
 

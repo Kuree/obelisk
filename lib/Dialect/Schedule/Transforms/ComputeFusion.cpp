@@ -178,6 +178,17 @@ bool isComputeBodyFusionEligibleImpl(
       return;
     }
 
+    // An immediate assertion's failure report. IEEE 1800-2023 20.10: $error
+    // records a nonterminating error; 20.3.1: $time is fixed within the time
+    // slot of the activation; 20.11: the assertion enable is control state no
+    // fused member writes. Running the members back to back reorders them
+    // only within the slot, which 4.7 permits.
+    if (isa<sim::SimErrorOp, sim::SimTimeNowOp, sim::SimAssertionEnabledOp>(
+            operation)) {
+      eligible = hasOnlyStaticDigitalValues(operation);
+      return;
+    }
+
     if (auto enqueue = dyn_cast<sim::SimNBAEnqueueOp>(operation)) {
       eligible = isEligibleNBA(enqueue) &&
                  hasOnlyStaticDigitalValues(operation) &&
