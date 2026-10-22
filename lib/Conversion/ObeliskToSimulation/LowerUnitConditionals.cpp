@@ -195,7 +195,32 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
     cf::CondBranchOp::create(builder, location, *condition, pass, ValueRange{},
                              fail, ValueRange{});
 
+    // IEEE 1800-2023 16.4.1 queues the action block's subroutine call, or
+    // $error for a failing assert or assume without an else clause. A result
+    // with neither (a null statement calls nothing), and no coverage point
+    // to credit when it matures, has no pending report. This mirrors the
+    // action lowering below.
+    bool cover =
+        op.getAssertionKind() == semantic::SVAssertionKind::CoverProperty ||
+        op.getAssertionKind() == semantic::SVAssertionKind::CoverSequence;
+    auto callsSubroutine = [](Operation *action) {
+      return !isa<semantic::SVEmptyStatementOp>(action);
+    };
+    auto hasReport = [&](bool passed) {
+      if (passed)
+        return (op.getHasPassAction() && callsSubroutine(children[1])) ||
+               static_cast<bool>(cov::get<cov::AssertionPointIndex>(op));
+      if (cover)
+        return false;
+      if (op.getHasFailAction())
+        return callsSubroutine(children[1 + op.getHasPassAction()]);
+      return op.getAssertionKind() == semantic::SVAssertionKind::Assert ||
+             op.getAssertionKind() == semantic::SVAssertionKind::Assume;
+    };
+
     auto scheduleReport = [&](bool passed) -> LogicalResult {
+      if (!hasReport(passed))
+        return success();
       auto enqueue = sim::SimDeferredEnqueueOp::create(
           builder, location, builder.getI64IntegerAttr(siteID));
       if (auto targetID = sim::get<sim::metadata::AssertionControlTargetId>(op))

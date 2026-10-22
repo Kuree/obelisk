@@ -4,9 +4,10 @@
 // enabled/action_state material is emitted around either assertion.
 //
 //   module assertion_control_zero_overhead;
+//     logic a;
 //     initial begin
 //       assert (1'b1);
-//       labeled: assert #0 (1'b1);
+//       labeled: assert #0 (a);
 //       #1;
 //       $finish;
 //     end
@@ -22,6 +23,8 @@ module {
       obelisk.sv.symbol.instance_body @s4.assertion_control_zero_overhead attributes {hierarchical_name = "assertion_control_zero_overhead", name = "assertion_control_zero_overhead", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
         obelisk.sv.symbol.statement_block @s5.labeled attributes {block_kind = 0 : i32, hierarchical_name = "assertion_control_zero_overhead.labeled", name = "labeled", node_id = 5 : i64} {
         }
+        obelisk.sv.symbol.variable @s30.a attributes {hierarchical_name = "assertion_control_zero_overhead.a", lifetime = 1 : i32, name = "a", node_id = 30 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
+        }
         obelisk.sv.symbol.procedural_block @s6 attributes {hierarchical_name = "assertion_control_zero_overhead", node_id = 6 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
           obelisk.sv.statement.block attributes {node_id = 7 : i64} {
             obelisk.sv.statement.list attributes {node_id = 8 : i64} {
@@ -33,7 +36,7 @@ module {
               }
               obelisk.sv.statement.block attributes {block_path = "assertion_control_zero_overhead.labeled", block_symbol = @s1.$root::@s3.assertion_control_zero_overhead::@s4.assertion_control_zero_overhead::@s5.labeled, node_id = 12 : i64} {
                 obelisk.sv.statement.immediate_assertion attributes {assertion_kind = 0 : i32, has_fail_action = false, has_pass_action = true, is_deferred = true, is_final = false, node_id = 13 : i64} {
-                  obelisk.sv.expression.integer_literal attributes {constant_value = "1'b1", is_signed = false, node_id = 14 : i64, semantic_type = !obelisk.ranged_packed_array<0 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+                  obelisk.sv.expression.named_value attributes {is_signed = false, node_id = 14 : i64, referenced_path = "assertion_control_zero_overhead.a", referenced_symbol = @s1.$root::@s3.assertion_control_zero_overhead::@s4.assertion_control_zero_overhead::@s30.a, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
                   }
                   obelisk.sv.statement.empty attributes {node_id = 15 : i64} {
                   }
