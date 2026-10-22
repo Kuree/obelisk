@@ -1,9 +1,10 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines --cse | FileCheck %s
 
 // Native lowering must resolve only the static topology components touched by
 // a partial packed driver update. In particular, the 512-bit declarations in
-// this test must not make a scalar primitive drive emit 512 copies of the
-// strength resolver and transition CFG.
+// this test must not make a scalar primitive drive resolve 512 bits. Each
+// drive resolves exactly its touched bits as one word-level slice, with no
+// per-bit strength resolver call, and publishes one transition per net.
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -117,22 +118,31 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @drive_scalar
-// CHECK-COUNT-1: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-COUNT-1: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-DAG: %[[Odrive_scalar100:.*]] = llvm.mlir.constant(100 : i64) : i64
+// CHECK-DAG: %[[Wdrive_scalar100:.*]] = llvm.mlir.constant(1 : i64) : i64
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[Odrive_scalar100]], %[[Wdrive_scalar100]],
 // CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
 // CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
 // CHECK: llvm.return
 
 // CHECK-LABEL: llvm.func @drive_multi
-// CHECK-COUNT-7: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-COUNT-1: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-DAG: %[[Odrive_multi200:.*]] = llvm.mlir.constant(200 : i64) : i64
+// CHECK-DAG: %[[Wdrive_multi200:.*]] = llvm.mlir.constant(7 : i64) : i64
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[Odrive_multi200]], %[[Wdrive_multi200]],
 // CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
 // CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
 // CHECK: llvm.return
 
 // CHECK-LABEL: llvm.func @drive_alias
-// CHECK-COUNT-1: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-DAG: %[[Odrive_alias301:.*]] = llvm.mlir.constant(301 : i64) : i64
+// CHECK-DAG: %[[Wdrive_alias301:.*]] = llvm.mlir.constant(1 : i64) : i64
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[Odrive_alias301]], %[[Wdrive_alias301]],
+// CHECK-DAG: %[[Odrive_alias7:.*]] = llvm.mlir.constant(7 : i64) : i64
+// CHECK-DAG: %[[Wdrive_alias7:.*]] = llvm.mlir.constant(1 : i64) : i64
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[Odrive_alias7]], %[[Wdrive_alias7]],
 // CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
 // CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
 // CHECK: llvm.return
@@ -140,16 +150,20 @@ module attributes {
 // A dynamic view cannot be proven to touch one bit. The exact conservative
 // fallback therefore resolves all eight possible destination bits.
 // CHECK-LABEL: llvm.func @drive_dynamic
-// CHECK: llvm.call @obelisk_rt_v1_native_handle_offset
-// CHECK-COUNT-8: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-COUNT-1: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK-DAG: %[[Odrive_dynamic0:.*]] = llvm.mlir.constant(0 : i64) : i64
+// CHECK-DAG: %[[Wdrive_dynamic0:.*]] = llvm.mlir.constant(8 : i64) : i64
+// CHECK-DAG: llvm.call @obelisk_rt_v1_native_handle_offset
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[Odrive_dynamic0]], %[[Wdrive_dynamic0]],
 // CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
 // CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
 // CHECK: llvm.return
 
 // CHECK-LABEL: llvm.func @drive_declared_range
-// CHECK-COUNT-5: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-COUNT-1: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-DAG: %[[Odrive_declared_range400:.*]] = llvm.mlir.constant(400 : i64) : i64
+// CHECK-DAG: %[[Wdrive_declared_range400:.*]] = llvm.mlir.constant(5 : i64) : i64
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[Odrive_declared_range400]], %[[Wdrive_declared_range400]],
 // CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
 // CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
 // CHECK: llvm.return

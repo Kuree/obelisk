@@ -6,6 +6,8 @@
 #include "ProcessShared.h"
 #include "RuntimeInternal.h"
 
+#include "obelisk/Runtime/StrengthResolution.h"
+
 #include <algorithm>
 #include <cstdlib>
 #include <deque>
@@ -16,26 +18,10 @@
 
 namespace obelisk::designbytecode {
 
-static constexpr unsigned strengthCount = 15;
-
-static uint16_t strengthBit(int strength) {
-  return static_cast<uint16_t>(uint16_t{1} << (strength + 7));
-}
-
-static uint16_t implicitNetStrength(uint8_t resolution) {
-  switch (resolution) {
-  case 5:
-    return strengthBit(-5); // tri0
-  case 6:
-    return strengthBit(5); // tri1
-  case 7:
-    return strengthBit(-7); // supply0
-  case 8:
-    return strengthBit(7); // supply1
-  default:
-    return strengthBit(0); // high impedance
-  }
-}
+using obelisk::runtime::combineStrengthRanges;
+using obelisk::runtime::implicitNetStrength;
+using obelisk::runtime::strengthBit;
+using obelisk::runtime::strengthCount;
 
 // IEEE 1800-2017 28.13 and 28.14: a nonresistive bidirectional pass switch
 // limits supply to strong, while a resistive switch applies Table 28-8. Apply
@@ -84,55 +70,6 @@ static uint16_t propagateFromRemote(uint16_t strengths, uint8_t resistiveEdges,
   if (possibleResistiveEdges < resistiveEdges)
     strengths |= possible;
   return strengths;
-}
-
-static uint16_t combineStrengthRanges(uint16_t lhs, uint16_t rhs,
-                                      uint8_t resolution = 0) {
-  uint16_t result = 0;
-  for (unsigned lhsIndex = 0; lhsIndex != strengthCount; ++lhsIndex) {
-    if ((lhs & (uint16_t{1} << lhsIndex)) == 0)
-      continue;
-    int left = static_cast<int>(lhsIndex) - 7;
-    for (unsigned rhsIndex = 0; rhsIndex != strengthCount; ++rhsIndex) {
-      if ((rhs & (uint16_t{1} << rhsIndex)) == 0)
-        continue;
-      int right = static_cast<int>(rhsIndex) - 7;
-      if (left == 0 || right == 0) {
-        result |= strengthBit(left == 0 ? right : left);
-        continue;
-      }
-      if ((left < 0) == (right < 0)) {
-        result |= strengthBit(std::abs(left) >= std::abs(right) ? left : right);
-        continue;
-      }
-      if (std::abs(left) != std::abs(right)) {
-        result |= strengthBit(std::abs(left) > std::abs(right) ? left : right);
-        continue;
-      }
-      // IEEE 1800-2017 28.12.4 applies wired logic to equal-strength
-      // conflicts. wand/triand select 0; wor/trior select 1.
-      if (resolution == 3 || resolution == 4) {
-        int magnitude = std::abs(left);
-        result |= strengthBit(resolution == 3 ? -magnitude : magnitude);
-        continue;
-      }
-      for (int strength = -std::abs(left); strength <= std::abs(left);
-           ++strength)
-        result |= strengthBit(strength);
-    }
-  }
-  // Ambiguous strengths are ranges, not sparse sets (28.12.2). Preserve that
-  // invariant so a later driver observes every intermediate strength level.
-  unsigned first = 0;
-  while (first != strengthCount && (result & (uint16_t{1} << first)) == 0)
-    ++first;
-  unsigned last = strengthCount;
-  while (last != first && (result & (uint16_t{1} << (last - 1))) == 0)
-    --last;
-  uint16_t range = 0;
-  for (unsigned index = first; index != last; ++index)
-    range |= uint16_t{1} << index;
-  return range;
 }
 
 static uint8_t decodeDriverStrength(uint32_t flags, unsigned shift) {
@@ -761,17 +698,9 @@ static bool computeResolvedStrengths(const NetAliasCache &cache,
   auto members = cache.members.find(root);
   if (members == cache.members.end())
     return false;
-  auto driverStrengths = [&](bool value, bool unknown, uint8_t strength0,
-                             uint8_t strength1) {
-    if (!unknown)
-      return strengthBit(value ? strength1 : -static_cast<int>(strength0));
-    if (value)
-      return strengthBit(0);
-    uint16_t result = 0;
-    for (int strength = -static_cast<int>(strength0);
-         strength <= static_cast<int>(strength1); ++strength)
-      result |= strengthBit(strength);
-    return result;
+  auto driverStrengths = [](bool value, bool unknown, uint8_t strength0,
+                            uint8_t strength1) {
+    return runtime::driverBitStrengths(value, unknown, strength0, strength1);
   };
   const uint8_t *nativeValue = nullptr;
   const uint8_t *nativeUnknown = nullptr;
@@ -1062,16 +991,9 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
                                     control->second))
           return false;
       }
-    bool hasZero = (resolvedStrengths & strengthBit(0)) != 0;
-    constexpr uint16_t negativeMask = (uint16_t{1} << 7) - 1;
-    constexpr uint16_t positiveMask = static_cast<uint16_t>(
-        ((uint16_t{1} << strengthCount) - 1) & ~((uint16_t{1} << 8) - 1));
-    bool hasNegative = (resolvedStrengths & negativeMask) != 0;
-    bool hasPositive = (resolvedStrengths & positiveMask) != 0;
-    bool resolvedZ = hasZero && !hasNegative && !hasPositive;
-    bool resolvedUnknown =
-        resolvedZ || (hasNegative + hasZero + hasPositive) != 1;
-    bool resolvedValue = resolvedZ || (!resolvedUnknown && hasPositive);
+    auto [resolvedValue, resolvedUnknown] =
+        runtime::resolvedBit(resolvedStrengths);
+    bool resolvedZ = resolvedValue && resolvedUnknown;
     bool chargeValue = false;
     bool chargeUnknown = true;
     if (resolution == 9 && resolvedZ) {
@@ -1131,15 +1053,11 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
       } else if (!accumulateCharges(root, 0, 0)) {
         return false;
       }
-      bool chargeHasZero = (chargeStrengths & strengthBit(0)) != 0;
-      bool chargeHasNegative = (chargeStrengths & negativeMask) != 0;
-      bool chargeHasPositive = (chargeStrengths & positiveMask) != 0;
-      bool chargeKnownZero =
-          chargeHasNegative && !chargeHasZero && !chargeHasPositive;
-      bool chargeKnownOne =
-          chargeHasPositive && !chargeHasNegative && !chargeHasZero;
-      chargeUnknown = !(chargeKnownZero || chargeKnownOne);
-      chargeValue = chargeKnownOne;
+      // Only a known 0 or 1 charge survives; anything else, including no
+      // charge at all, is x.
+      runtime::ResolvedBit charge = runtime::resolvedBit(chargeStrengths);
+      chargeUnknown = charge.unknown;
+      chargeValue = !charge.unknown && charge.value;
     }
     for (uint64_t destination : members->second) {
       const NetAliasRange *net = nullptr;

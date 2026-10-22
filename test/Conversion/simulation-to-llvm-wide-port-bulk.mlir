@@ -38,8 +38,10 @@ module attributes {
 
 // -----
 
-// One machine word and narrower deliberately retains the established scalar
-// lowering so common small ports have byte-identical IR.
+// A port alias that the one-driver bulk proof rejects still resolves without
+// per-bit code: each run of identically configured bits is one bitwise
+// function of its drivers' plane slices, published once per member net and
+// 64-bit chunk. One machine word is one run.
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
@@ -68,12 +70,16 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @narrow_port_scalar
-// CHECK-COUNT-64: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
 // CHECK: llvm.return
 
 // -----
 
-// A competing contribution rejects the bulk proof.
+// A competing contribution rejects the bulk proof; the 65-bit run resolves both
+// drivers in a 64-bit and a 1-bit chunk.
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
@@ -103,13 +109,17 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @competing_port_scalar
-// CHECK-COUNT-65: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-COUNT-4: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
 // CHECK: llvm.return
 
 // -----
 
-// Reversed and partial aliases retain scalar resolution.  They also prove the
-// optimization cannot silently reinterpret arbitrary declared ranges.
+// Reversed and partial aliases reject the bulk proof, so it cannot silently
+// reinterpret arbitrary declared ranges. A reversed member walks down as the
+// run walks up: its slices are bit-reversed into run order and back.
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
@@ -138,7 +148,11 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @reversed_port_scalar
-// CHECK-COUNT-65: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK: llvm.intr.bitreverse(%{{.*}}) : (i64) -> i64
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-COUNT-4: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
 // CHECK: llvm.return
 
 // -----
@@ -175,7 +189,10 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @partial_port_scalar
-// CHECK-COUNT-65: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-COUNT-4: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
 // CHECK: llvm.return
 
 // -----
@@ -211,7 +228,10 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @wired_port_scalar
-// CHECK-COUNT-65: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-COUNT-4: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
 // CHECK: llvm.return
 
 // -----
@@ -247,7 +267,10 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @strength_port_scalar
-// CHECK-COUNT-65: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-COUNT-4: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
 // CHECK: llvm.return
 
 // -----
@@ -359,5 +382,7 @@ module attributes {
 
 // CHECK-LABEL: llvm.func @override_port_scalar
 // CHECK: llvm.call @obelisk_rt_v1_native_override
-// CHECK-COUNT-65: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-COUNT-4: llvm.call @obelisk_rt_v1_scheduler_signal_transition
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
 // CHECK: llvm.return

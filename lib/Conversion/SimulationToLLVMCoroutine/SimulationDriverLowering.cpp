@@ -9,9 +9,11 @@
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
 #include "obelisk/Runtime/StableHandle.h"
+#include "obelisk/Runtime/StrengthResolution.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Transforms/DialectConversion.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -35,6 +37,10 @@ uint64_t encodeNativeStaticHandle(uint32_t id, int32_t offset = 0) {
 // dominates compile time and memory.
 constexpr unsigned bulkConnectedDriverMinWidth = 65;
 
+// A run of identically configured bits resolves through a truth table over
+// every driver state combination: 4^n entries for n contributions per bit.
+constexpr unsigned maximumRunContributions = 4;
+
 using NetByID = DenseMap<uint64_t, const NativeStateLayout::Net *>;
 using DriverByID = DenseMap<uint64_t, const NativeStateLayout::Driver *>;
 using DriversByNet =
@@ -51,12 +57,80 @@ struct DriverLookupIndex {
       driversByNet[driver.netId].push_back(&driver);
     for (const auto &entry : layout.connectivityCanonical)
       connectedNets.insert(entry.first.first);
+    for (const auto &[net, drivers] : driversByNet)
+      indexSegments(net, drivers);
+  }
+
+  /// The drivers whose driven range covers bit `offset` of `net`, in layout
+  /// order.
+  ArrayRef<const NativeStateLayout::Driver *>
+  coveringDrivers(uint64_t net, uint64_t offset) const {
+    auto found = segmentsByNet.find(net);
+    if (found == segmentsByNet.end())
+      return {};
+    const auto &segments = found->second;
+    auto next = llvm::upper_bound(segments, offset,
+                                  [](uint64_t bit, const DriverSegment &segment) {
+                                    return bit < segment.low;
+                                  });
+    if (next == segments.begin() || offset >= std::prev(next)->high)
+      return {};
+    return std::prev(next)->drivers;
   }
 
   NetByID netByID;
   DriverByID driverByID;
   DriversByNet driversByNet;
   ConnectedNets connectedNets;
+
+private:
+  /// A maximal range of a net's bits covered by the same drivers.
+  struct DriverSegment {
+    uint64_t low;
+    uint64_t high;
+    SmallVector<const NativeStateLayout::Driver *, 2> drivers;
+  };
+  static uint64_t drivenEnd(const NativeStateLayout::Driver &driver) {
+    return std::min<uint64_t>(uint64_t{driver.drivenLow} + driver.drivenWidth,
+                              driver.width);
+  }
+  // Sweep the driven ranges once, so finding a bit's drivers is a binary
+  // search instead of a scan over every driver of the net.
+  void indexSegments(uint64_t net,
+                     ArrayRef<const NativeStateLayout::Driver *> drivers) {
+    SmallVector<const NativeStateLayout::Driver *> starts;
+    SmallVector<uint64_t> bounds;
+    for (const NativeStateLayout::Driver *driver : drivers)
+      if (driver->drivenLow < drivenEnd(*driver)) {
+        starts.push_back(driver);
+        bounds.push_back(driver->drivenLow);
+        bounds.push_back(drivenEnd(*driver));
+      }
+    llvm::sort(bounds);
+    bounds.erase(std::unique(bounds.begin(), bounds.end()), bounds.end());
+    llvm::stable_sort(starts, [](const auto *lhs, const auto *rhs) {
+      return lhs->drivenLow < rhs->drivenLow;
+    });
+    SmallVector<const NativeStateLayout::Driver *> active;
+    size_t next = 0;
+    auto &segments = segmentsByNet[net];
+    for (size_t bound = 0; bound + 1 < bounds.size(); ++bound) {
+      uint64_t low = bounds[bound];
+      llvm::erase_if(active, [&](const NativeStateLayout::Driver *driver) {
+        return drivenEnd(*driver) <= low;
+      });
+      for (; next < starts.size() && starts[next]->drivenLow <= low; ++next)
+        active.push_back(starts[next]);
+      if (active.empty())
+        continue;
+      DriverSegment segment{low, bounds[bound + 1], {}};
+      segment.drivers.assign(active.begin(), active.end());
+      llvm::sort(segment.drivers);
+      segments.push_back(std::move(segment));
+    }
+  }
+
+  DenseMap<uint64_t, SmallVector<DriverSegment, 1>> segmentsByNet;
 };
 
 std::optional<SmallVector<const NativeStateLayout::Net *, 2>>
@@ -393,9 +467,11 @@ public:
                         const NativeStateLayout &layout,
                         std::shared_ptr<const DriverLookupIndex> index,
                         std::shared_ptr<const NativeStateLayout> cleanLayout,
-                        std::shared_ptr<const DriverLookupIndex> cleanIndex)
+                        std::shared_ptr<const DriverLookupIndex> cleanIndex,
+                        std::shared_ptr<const DriverLookupIndex> resolutionIndex)
       : Base(converter, context), layout(layout), index(std::move(index)),
-        cleanLayout(std::move(cleanLayout)), cleanIndex(std::move(cleanIndex)) {
+        cleanLayout(std::move(cleanLayout)), cleanIndex(std::move(cleanIndex)),
+        resolutionIndex(std::move(resolutionIndex)) {
     // Guard materialization creates two marked drives, each lowered once.
     this->setHasBoundedRewriteRecursion();
   }
@@ -408,6 +484,8 @@ public:
       return failure();
     const NativeStateLayout &layout = clean ? *cleanLayout : this->layout;
     const auto &index = clean ? cleanIndex : this->index;
+    // Driver and net lookups; `index` alone also gates the bulk proofs.
+    const DriverLookupIndex &lookup = index ? *index : *resolutionIndex;
     if (adaptor.getDriver().size() != 1 || adaptor.getValue().empty())
       return failure();
     Type sourceType = op.getValue().getType();
@@ -486,15 +564,7 @@ public:
     auto getDriver = [&](IntegerAttr id) -> const NativeStateLayout::Driver * {
       if (!id)
         return nullptr;
-      uint64_t value = static_cast<uint64_t>(id.getInt());
-      if (index) {
-        auto found = index->driverByID.find(value);
-        return found == index->driverByID.end() ? nullptr : found->second;
-      }
-      auto found = llvm::find_if(layout.driverLayouts, [&](const auto &driver) {
-        return driver.id == value;
-      });
-      return found == layout.driverLayouts.end() ? nullptr : &*found;
+      return lookup.driverByID.lookup(static_cast<uint64_t>(id.getInt()));
     };
     IntegerType driveType = rewriter.getIntegerType(*sourceWidth);
     if (isa<FloatType>(sourceType))
@@ -734,33 +804,11 @@ public:
       auto driverID = native::get<native::DriverId>(op);
       const NativeStateLayout::Driver *driver = getDriver(driverID);
       if (driver) {
-        const NativeStateLayout::Net *net = nullptr;
-        bool onlyDriver = false;
-        bool connected = false;
-        if (index) {
-          auto foundNet = index->netByID.find(driver->netId);
-          if (foundNet != index->netByID.end())
-            net = foundNet->second;
-          auto foundDrivers = index->driversByNet.find(driver->netId);
-          onlyDriver = foundDrivers != index->driversByNet.end() &&
-                       foundDrivers->second.size() == 1;
-          connected = index->connectedNets.contains(driver->netId);
-        } else {
-          auto foundNet =
-              llvm::find_if(layout.netLayouts, [&](const auto &candidate) {
-                return candidate.id == driver->netId;
-              });
-          if (foundNet != layout.netLayouts.end())
-            net = &*foundNet;
-          onlyDriver =
-              llvm::count_if(layout.driverLayouts, [&](const auto &candidate) {
-                return candidate.netId == driver->netId;
-              }) == 1;
-          connected = llvm::any_of(layout.connectivityCanonical,
-                                   [&](const auto &entry) {
-                                     return entry.first.first == driver->netId;
-                                   });
-        }
+        const NativeStateLayout::Net *net = lookup.netByID.lookup(driver->netId);
+        auto foundDrivers = lookup.driversByNet.find(driver->netId);
+        bool onlyDriver = foundDrivers != lookup.driversByNet.end() &&
+                          foundDrivers->second.size() == 1;
+        bool connected = lookup.connectedNets.contains(driver->netId);
         if (net && onlyDriver && !connected && driver->drivenLow == 0 &&
             driver->drivenWidth == driver->width &&
             driver->width == net->width && driveType.getWidth() == net->width &&
@@ -853,9 +901,370 @@ public:
       Value unknown;
       bool fourState;
       std::optional<DirectStaticStateRange> directRange;
+      unsigned width = 1;
+      bool storeUnknown = true;
     };
     SmallVector<Publication> publications;
-    SmallVector<std::pair<uint64_t, uint64_t>> resolvedComponents;
+    DenseSet<std::pair<uint64_t, uint64_t>> resolvedComponents;
+
+    // IEEE 1800-2017 6.7.1 and 28.12 resolve each net bit on its own, so bits
+    // whose drivers, strengths and net kind agree share one resolution
+    // function. Evaluate it once per run of such bits, as bitwise logic over
+    // word-sized slices of the driver and net planes, instead of emitting the
+    // scalar resolver below once per bit. Trireg charge and bits with more
+    // driver contributions than the table bound keep the scalar resolver.
+    struct Contribution {
+      const NativeStateLayout::Driver *driver;
+      unsigned member;
+      bool operator==(const Contribution &other) const {
+        return driver == other.driver && member == other.member;
+      }
+    };
+    struct BitShape {
+      unsigned bit;
+      SmallVector<analysis::NetBit, 2> members;
+      SmallVector<Contribution, 2> contributions;
+      sim::NetResolutionKind resolution;
+    };
+    auto canonicalOf = [&](const NativeStateLayout::Net &net, unsigned bit) {
+      std::pair<uint64_t, uint64_t> logical{net.id, bit};
+      auto found = layout.connectivityCanonical.find(logical);
+      return found == layout.connectivityCanonical.end() ? logical
+                                                         : found->second;
+    };
+    auto shapeBit = [&](const NativeStateLayout::Net &net, unsigned bit,
+                        std::pair<uint64_t, uint64_t> canonical)
+        -> std::optional<BitShape> {
+      BitShape shape;
+      shape.bit = bit;
+      auto foundComponent = layout.connectivityComponents.find(canonical);
+      if (foundComponent == layout.connectivityComponents.end() ||
+          foundComponent->second.empty())
+        shape.members.push_back({net.id, bit});
+      else
+        shape.members.assign(foundComponent->second.begin(),
+                             foundComponent->second.end());
+      shape.resolution = net.resolution;
+      auto foundResolution = layout.connectivityResolutions.find(canonical);
+      if (foundResolution != layout.connectivityResolutions.end())
+        shape.resolution = foundResolution->second;
+      if (shape.resolution == sim::NetResolutionKind::TriReg)
+        return std::nullopt;
+      for (auto [memberIndex, member] : llvm::enumerate(shape.members)) {
+        const NativeStateLayout::Net *memberNet =
+            lookup.netByID.lookup(member.net);
+        if (!memberNet || member.offset >= memberNet->width ||
+            member.offset > static_cast<uint64_t>(INT32_MAX))
+          return std::nullopt;
+        for (const NativeStateLayout::Driver *driver :
+             lookup.coveringDrivers(member.net, member.offset))
+          shape.contributions.push_back(
+              {driver, static_cast<unsigned>(memberIndex)});
+      }
+      if (shape.contributions.size() > maximumRunContributions)
+        return std::nullopt;
+      // Strength combination is commutative and associative; a fixed order
+      // keeps the generated IR deterministic.
+      llvm::sort(shape.contributions, [](const Contribution &lhs,
+                                         const Contribution &rhs) {
+        return std::pair(lhs.driver, lhs.member) <
+               std::pair(rhs.driver, rhs.member);
+      });
+      return shape;
+    };
+    // The next bit continues a run when its whole component is the previous
+    // bit's component moved by one bit, each member in a fixed direction, with
+    // the same contributions. A reversed port alias walks its member down.
+    auto continues = [](const BitShape &previous, const BitShape &next,
+                        SmallVectorImpl<int> &directions) {
+      if (next.bit != previous.bit + 1 ||
+          next.resolution != previous.resolution ||
+          next.members.size() != previous.members.size() ||
+          next.contributions != previous.contributions)
+        return false;
+      SmallVector<int, 2> steps;
+      for (auto [lhs, rhs] : llvm::zip_equal(previous.members, next.members)) {
+        if (rhs.net != lhs.net)
+          return false;
+        if (rhs.offset == lhs.offset + 1)
+          steps.push_back(1);
+        else if (lhs.offset != 0 && rhs.offset == lhs.offset - 1)
+          steps.push_back(-1);
+        else
+          return false;
+      }
+      if (directions.empty()) {
+        directions.assign(steps.begin(), steps.end());
+        return true;
+      }
+      return llvm::equal(steps, directions);
+    };
+    // Per-bit resolution of every driver state combination, using the
+    // runtime's strength algebra: table index bit 2c is contribution c's
+    // value plane and bit 2c+1 its unknown plane.
+    auto resolutionTables = [&](const BitShape &shape) {
+      unsigned entries = 1u << (2 * shape.contributions.size());
+      std::pair<APInt, APInt> tables{APInt::getZero(entries),
+                                     APInt::getZero(entries)};
+      auto kind = static_cast<uint8_t>(shape.resolution);
+      for (unsigned entry = 0; entry != entries; ++entry) {
+        uint16_t strengths = runtime::implicitNetStrength(kind);
+        for (auto [index, contribution] :
+             llvm::enumerate(shape.contributions))
+          strengths = runtime::combineStrengthRanges(
+              strengths,
+              runtime::driverBitStrengths(
+                  (entry >> (2 * index)) & 1, (entry >> (2 * index + 1)) & 1,
+                  static_cast<unsigned>(contribution.driver->strength0),
+                  static_cast<unsigned>(contribution.driver->strength1)),
+              kind);
+        runtime::ResolvedBit resolved = runtime::resolvedBit(strengths);
+        if (resolved.value)
+          tables.first.setBit(entry);
+        if (resolved.unknown)
+          tables.second.setBit(entry);
+      }
+      return tables;
+    };
+    auto resolveRun = [&](const BitShape &first, unsigned length,
+                          ArrayRef<int> directions) {
+      auto [valueTable, unknownTable] = resolutionTables(first);
+      auto reversed = [&](unsigned member) {
+        return !directions.empty() && directions[member] < 0;
+      };
+      for (unsigned delta = 0; delta < length; delta += 64) {
+        unsigned width = std::min(64u, length - delta);
+        IntegerType type = rewriter.getIntegerType(width);
+        Value zero = arith::ConstantOp::create(
+            rewriter, op.getLoc(), type, rewriter.getIntegerAttr(type, 0));
+        Value ones = arith::ConstantOp::create(
+            rewriter, op.getLoc(), type,
+            rewriter.getIntegerAttr(type, APInt::getAllOnes(width)));
+        auto constantOf = [&](Value plane) -> std::optional<bool> {
+          APInt bits;
+          if (!matchPattern(plane, m_ConstantInt(&bits)))
+            return std::nullopt;
+          if (bits.isZero())
+            return false;
+          if (bits.isAllOnes())
+            return true;
+          return std::nullopt;
+        };
+        // The storage slice holding this chunk of a member's bits. A reversed
+        // member holds them in descending order, so its slice is reflected
+        // into run order on load and back on publication.
+        auto sliceLow = [&](unsigned member) -> uint64_t {
+          uint64_t start = first.members[member].offset;
+          return reversed(member) ? start - delta - (width - 1)
+                                  : start + delta;
+        };
+        auto inRunOrder = [&](unsigned member, Value slice) -> Value {
+          if (!reversed(member) || width == 1 || constantOf(slice))
+            return slice;
+          return LLVM::BitReverseOp::create(rewriter, op.getLoc(), type, slice);
+        };
+        auto handleAt = [&](uint32_t handleID, uint64_t offset) {
+          return arith::ConstantOp::create(
+              rewriter, op.getLoc(), rewriter.getI64Type(),
+              rewriter.getI64IntegerAttr(encodeNativeStaticHandle(
+                  handleID, static_cast<int32_t>(offset))));
+        };
+        // This drive's own contribution is the value just stored. Using it
+        // directly lets a two-state drive, proven at compile time or running
+        // in a known-state copy, cofactor its unknown plane away.
+        auto ownSlice = [&](Value plane, uint64_t offset) -> Value {
+          Value shifted = plane;
+          if (offset != *updateLow)
+            shifted = rewriter.createOrFold<arith::ShRUIOp>(
+                op.getLoc(), plane,
+                arith::ConstantOp::create(
+                    rewriter, op.getLoc(), driveType,
+                    rewriter.getIntegerAttr(driveType, offset - *updateLow)));
+          if (driveType.getWidth() == width)
+            return shifted;
+          return rewriter.createOrFold<arith::TruncIOp>(op.getLoc(), type,
+                                                        shifted);
+        };
+        SmallVector<Value> planes;
+        for (const Contribution &contribution : first.contributions) {
+          const NativeStateLayout::Driver &driver = *contribution.driver;
+          uint64_t offset = sliceLow(contribution.member);
+          if (&driver == affectedDriver && updateLow &&
+              offset >= *updateLow &&
+              offset + width <= *updateLow + *sourceWidth) {
+            planes.push_back(inRunOrder(contribution.member,
+                                        ownSlice(driveValue, offset)));
+            planes.push_back(inRunOrder(contribution.member,
+                                        ownSlice(driveUnknown, offset)));
+            continue;
+          }
+          Value handle = handleAt(driver.handleID, offset);
+          planes.push_back(inRunOrder(
+              contribution.member,
+              loadStatePlane(rewriter, op.getLoc(), handle, type,
+                             "__obelisk_state_value", false, layout.bitCount,
+                             &layout)));
+          planes.push_back(inRunOrder(
+              contribution.member,
+              loadStatePlane(rewriter, op.getLoc(), handle, type,
+                             "__obelisk_state_unknown", true, layout.bitCount,
+                             &layout)));
+        }
+        // Project the constant planes out of the tables, so the expansion
+        // below sees every remaining independence: known inputs cost nothing.
+        SmallVector<Value> variables;
+        SmallVector<unsigned> positions;
+        unsigned fixedEntry = 0;
+        for (auto [position, plane] : llvm::enumerate(planes)) {
+          if (std::optional<bool> known = constantOf(plane)) {
+            if (*known)
+              fixedEntry |= 1u << position;
+            continue;
+          }
+          variables.push_back(plane);
+          positions.push_back(static_cast<unsigned>(position));
+        }
+        auto project = [&](const APInt &table) {
+          APInt projected = APInt::getZero(1u << variables.size());
+          for (unsigned entry = 0; entry != projected.getBitWidth(); ++entry) {
+            unsigned index = fixedEntry;
+            for (auto [variable, position] : llvm::enumerate(positions))
+              if ((entry >> variable) & 1)
+                index |= 1u << position;
+            if (table[index])
+              projected.setBit(entry);
+          }
+          return projected;
+        };
+        DenseMap<Value, Value> inverted;
+        auto invert = [&](Value value) {
+          Value &result = inverted[value];
+          if (!result)
+            result = arith::XOrIOp::create(rewriter, op.getLoc(), value, ones);
+          return result;
+        };
+        // Shannon expansion, most significant variable first.
+        DenseMap<std::pair<unsigned, APInt>, Value> memo;
+        auto synthesize = [&](auto &self, const APInt &table,
+                              unsigned count) -> Value {
+          if (table.isZero())
+            return zero;
+          if (table.isAllOnes())
+            return ones;
+          if (Value found = memo.lookup({count, table}))
+            return found;
+          unsigned half = 1u << (count - 1);
+          APInt low = table.trunc(half);
+          APInt high = table.lshr(half).trunc(half);
+          Value plane = variables[count - 1];
+          Value result;
+          if (low == high) {
+            result = self(self, low, count - 1);
+          } else {
+            Value set = self(self, high, count - 1);
+            Value clear = self(self, low, count - 1);
+            if (set == ones && clear == zero)
+              result = plane;
+            else if (set == zero && clear == ones)
+              result = invert(plane);
+            else if (clear == zero)
+              result = arith::AndIOp::create(rewriter, op.getLoc(), plane, set);
+            else if (set == zero)
+              result = arith::AndIOp::create(rewriter, op.getLoc(),
+                                             invert(plane), clear);
+            else if (set == ones)
+              result = arith::OrIOp::create(rewriter, op.getLoc(), plane, clear);
+            else if (clear == ones)
+              result = arith::OrIOp::create(rewriter, op.getLoc(),
+                                            invert(plane), set);
+            else
+              result = arith::OrIOp::create(
+                  rewriter, op.getLoc(),
+                  arith::AndIOp::create(rewriter, op.getLoc(), plane, set),
+                  arith::AndIOp::create(rewriter, op.getLoc(), invert(plane),
+                                        clear));
+          }
+          memo[{count, table}] = result;
+          return result;
+        };
+        unsigned count = static_cast<unsigned>(variables.size());
+        Value resolvedValue = synthesize(synthesize, project(valueTable), count);
+        Value resolvedUnknown =
+            synthesize(synthesize, project(unknownTable), count);
+        for (auto [memberIndex, member] : llvm::enumerate(first.members)) {
+          const NativeStateLayout::Net &memberNet =
+              *lookup.netByID.lookup(member.net);
+          Value netHandle = handleAt(memberNet.handleID, sliceLow(memberIndex));
+          Value oldValue = loadStatePlane(rewriter, op.getLoc(), netHandle,
+                                          type, "__obelisk_state_value", false,
+                                          layout.bitCount, &layout);
+          // The unknown plane of an integer net is permanently zero.
+          Value oldUnknown =
+              memberNet.fourState
+                  ? loadStatePlane(rewriter, op.getLoc(), netHandle, type,
+                                   "__obelisk_state_unknown", true,
+                                   layout.bitCount, &layout)
+                  : zero;
+          Value publishValue =
+              memberNet.fourState
+                  ? resolvedValue
+                  : arith::AndIOp::create(rewriter, op.getLoc(), resolvedValue,
+                                          invert(resolvedUnknown))
+                        .getResult();
+          Value publishUnknown = memberNet.fourState ? resolvedUnknown : zero;
+          unsigned index = static_cast<unsigned>(memberIndex);
+          publications.push_back(
+              {netHandle, oldValue, oldUnknown,
+               inRunOrder(index, publishValue),
+               inRunOrder(index, publishUnknown), memberNet.fourState,
+               resolveDirectStaticStateRange(netHandle, width, &layout), width,
+               memberNet.fourState});
+        }
+      }
+    };
+    auto resolveRuns = [&](const NativeStateLayout::Net &net, unsigned firstBit,
+                           unsigned endBit) {
+      std::optional<BitShape> first, last;
+      unsigned length = 0;
+      SmallVector<int> directions;
+      auto flush = [&]() {
+        if (first)
+          resolveRun(*first, length, directions);
+        first.reset();
+        last.reset();
+        length = 0;
+        directions.clear();
+      };
+      for (unsigned bit = firstBit; bit < endBit; ++bit) {
+        // Filter on the component before building its shape: a partial drive
+        // into a wide net touches only a few of its bits.
+        std::pair<uint64_t, uint64_t> canonical = canonicalOf(net, bit);
+        if ((affectedComponents && !affectedComponents->contains(canonical)) ||
+            resolvedComponents.contains(canonical)) {
+          flush();
+          continue;
+        }
+        std::optional<BitShape> shape = shapeBit(net, bit, canonical);
+        if (!shape) {
+          flush();
+          continue;
+        }
+        if (last && !continues(*last, *shape, directions))
+          flush();
+        resolvedComponents.insert(canonical);
+        if (!first)
+          first = *shape;
+        last = std::move(shape);
+        ++length;
+      }
+      flush();
+    };
+    // Reject before emitting anything for an earlier net.
+    if (exactDriver)
+      for (const NativeStateLayout::Net &net : layout.netLayouts)
+        if ((!affectedNet || net.id == *affectedNet) &&
+            exactDriver->drivenLow + exactDriver->drivenWidth > net.width)
+          return failure();
     for (const NativeStateLayout::Net &net : layout.netLayouts) {
       if (affectedNet && net.id != *affectedNet)
         continue;
@@ -863,8 +1272,7 @@ public:
       unsigned endBit = exactDriver
                             ? exactDriver->drivenLow + exactDriver->drivenWidth
                             : net.width;
-      if (endBit > net.width)
-        return failure();
+      resolveRuns(net, firstBit, endBit);
       for (unsigned bit = firstBit; bit < endBit; ++bit) {
         std::pair<uint64_t, uint64_t> logical{net.id, bit};
         auto foundCanonical = layout.connectivityCanonical.find(logical);
@@ -884,9 +1292,8 @@ public:
         } else {
           component = foundComponent->second;
         }
-        if (llvm::is_contained(resolvedComponents, canonical))
+        if (!resolvedComponents.insert(canonical).second)
           continue;
-        resolvedComponents.push_back(canonical);
 
         IntegerType strengthType = rewriter.getIntegerType(16);
         auto strengthConstant = [&](uint16_t value) {
@@ -894,44 +1301,32 @@ public:
               rewriter, op.getLoc(), strengthType,
               rewriter.getIntegerAttr(strengthType, value));
         };
-        auto strengthBit = [](unsigned index) -> uint16_t {
+        // Bit `index` of a strength set, 7 being high impedance.
+        auto strengthIndexBit = [](unsigned index) -> uint16_t {
           return static_cast<uint16_t>(uint16_t{1} << index);
         };
         sim::NetResolutionKind resolution = net.resolution;
         auto foundResolution = layout.connectivityResolutions.find(canonical);
         if (foundResolution != layout.connectivityResolutions.end())
           resolution = foundResolution->second;
-        unsigned implicitStrengthIndex = 7;
-        switch (resolution) {
-        case sim::NetResolutionKind::Tri0:
-          implicitStrengthIndex = 2;
-          break;
-        case sim::NetResolutionKind::Tri1:
-          implicitStrengthIndex = 12;
-          break;
-        case sim::NetResolutionKind::Supply0:
-          implicitStrengthIndex = 0;
-          break;
-        case sim::NetResolutionKind::Supply1:
-          implicitStrengthIndex = 14;
-          break;
-        default:
-          break;
-        }
-        Value resolvedStrengths =
-            strengthConstant(strengthBit(implicitStrengthIndex));
+        Value resolvedStrengths = strengthConstant(
+            runtime::implicitNetStrength(static_cast<uint8_t>(resolution)));
         Value resolutionValue = arith::ConstantOp::create(
             rewriter, op.getLoc(), rewriter.getI32Type(),
             rewriter.getI32IntegerAttr(static_cast<uint32_t>(resolution)));
-        for (const NativeStateLayout::Driver &driver : layout.driverLayouts) {
-          for (const analysis::NetBit &member : component) {
-            if (member.net != driver.netId ||
-                member.offset < driver.drivenLow ||
-                member.offset - driver.drivenLow >= driver.drivenWidth ||
-                member.offset >= driver.width)
-              continue;
-            // Every bit is an independent driver contribution. A topology
-            // component may contain several bits from the same vector driver.
+        // Every bit is an independent driver contribution. A topology
+        // component may contain several bits from the same vector driver.
+        SmallVector<std::pair<const NativeStateLayout::Driver *, unsigned>, 4>
+            contributions;
+        for (auto [index, member] : llvm::enumerate(component))
+          for (const NativeStateLayout::Driver *driver :
+               lookup.coveringDrivers(member.net, member.offset))
+            contributions.push_back({driver, static_cast<unsigned>(index)});
+        llvm::sort(contributions);
+        for (auto [contributor, memberIndex] : contributions) {
+          {
+            const NativeStateLayout::Driver &driver = *contributor;
+            const analysis::NetBit &member = component[memberIndex];
             Value handle = arith::ConstantOp::create(
                 rewriter, op.getLoc(), rewriter.getI64Type(),
                 rewriter.getI64IntegerAttr(encodeNativeStaticHandle(
@@ -944,18 +1339,18 @@ public:
                 true, layout.bitCount, &layout);
             unsigned strength0 = static_cast<unsigned>(driver.strength0);
             unsigned strength1 = static_cast<unsigned>(driver.strength1);
-            uint16_t zeroMask = strengthBit(7 - strength0);
-            uint16_t oneMask = strengthBit(7 + strength1);
+            uint16_t zeroMask = strengthIndexBit(7 - strength0);
+            uint16_t oneMask = strengthIndexBit(7 + strength1);
             uint16_t xMask = 0;
             for (unsigned index = 7 - strength0; index <= 7 + strength1;
                  ++index)
-              xMask |= strengthBit(index);
+              xMask |= strengthIndexBit(index);
             Value knownStrengths = arith::SelectOp::create(
                 rewriter, op.getLoc(), driverValue, strengthConstant(oneMask),
                 strengthConstant(zeroMask));
             Value unknownStrengths = arith::SelectOp::create(
                 rewriter, op.getLoc(), driverValue,
-                strengthConstant(strengthBit(7)), strengthConstant(xMask));
+                strengthConstant(strengthIndexBit(7)), strengthConstant(xMask));
             Value driverStrengths =
                 arith::SelectOp::create(rewriter, op.getLoc(), driverUnknown,
                                         unknownStrengths, knownStrengths);
@@ -978,7 +1373,7 @@ public:
         };
         Value hasNegative =
             hasStrength(resolvedStrengths, (uint16_t{1} << 7) - 1);
-        Value hasZero = hasStrength(resolvedStrengths, strengthBit(7));
+        Value hasZero = hasStrength(resolvedStrengths, strengthIndexBit(7));
         Value hasPositive =
             hasStrength(resolvedStrengths,
                         static_cast<uint16_t>(((uint16_t{1} << 15) - 1) &
@@ -1015,14 +1410,12 @@ public:
         Value chargeValue;
         Value chargeUnknown;
         if (resolution == sim::NetResolutionKind::TriReg) {
-          Value chargeStrengths = strengthConstant(strengthBit(7));
+          Value chargeStrengths = strengthConstant(strengthIndexBit(7));
           for (const analysis::NetBit &member : component) {
-            auto memberNet =
-                llvm::find_if(layout.netLayouts, [&](const auto &candidate) {
-                  return candidate.id == member.net;
-                });
-            if (memberNet == layout.netLayouts.end() ||
-                member.offset >= memberNet->width || !memberNet->chargeStrength)
+            const NativeStateLayout::Net *memberNet =
+                lookup.netByID.lookup(member.net);
+            if (!memberNet || member.offset >= memberNet->width ||
+                !memberNet->chargeStrength)
               continue;
             Value memberHandle = arith::ConstantOp::create(
                 rewriter, op.getLoc(), rewriter.getI64Type(),
@@ -1036,11 +1429,11 @@ public:
                 "__obelisk_state_unknown", true, layout.bitCount, &layout);
             unsigned strength =
                 static_cast<unsigned>(*memberNet->chargeStrength);
-            uint16_t zeroMask = strengthBit(7 - strength);
-            uint16_t oneMask = strengthBit(7 + strength);
+            uint16_t zeroMask = strengthIndexBit(7 - strength);
+            uint16_t oneMask = strengthIndexBit(7 + strength);
             uint16_t xMask = 0;
             for (unsigned index = 7 - strength; index <= 7 + strength; ++index)
-              xMask |= strengthBit(index);
+              xMask |= strengthIndexBit(index);
             Value knownStrengths = arith::SelectOp::create(
                 rewriter, op.getLoc(), memberValue, strengthConstant(oneMask),
                 strengthConstant(zeroMask));
@@ -1058,7 +1451,7 @@ public:
           }
           Value chargeNegative =
               hasStrength(chargeStrengths, (uint16_t{1} << 7) - 1);
-          Value chargeZero = hasStrength(chargeStrengths, strengthBit(7));
+          Value chargeZero = hasStrength(chargeStrengths, strengthIndexBit(7));
           Value chargePositive =
               hasStrength(chargeStrengths,
                           static_cast<uint16_t>(((uint16_t{1} << 15) - 1) &
@@ -1086,12 +1479,9 @@ public:
                                              chargeKnownOne);
         }
         for (const analysis::NetBit &member : component) {
-          auto memberNet =
-              llvm::find_if(layout.netLayouts, [&](const auto &candidate) {
-                return candidate.id == member.net;
-              });
-          if (memberNet == layout.netLayouts.end() ||
-              member.offset >= memberNet->width)
+          const NativeStateLayout::Net *memberNet =
+              lookup.netByID.lookup(member.net);
+          if (!memberNet || member.offset >= memberNet->width)
             return failure();
           Value netHandle = arith::ConstantOp::create(
               rewriter, op.getLoc(), rewriter.getI64Type(),
@@ -1100,9 +1490,13 @@ public:
           Value oldResolvedValue = loadStatePlane(
               rewriter, op.getLoc(), netHandle, i1, "__obelisk_state_value",
               false, layout.bitCount, &layout);
-          Value oldResolvedUnknown = loadStatePlane(
-              rewriter, op.getLoc(), netHandle, i1, "__obelisk_state_unknown",
-              true, layout.bitCount, &layout);
+          // The unknown plane of an integer net is permanently zero.
+          Value oldResolvedUnknown =
+              memberNet->fourState
+                  ? loadStatePlane(rewriter, op.getLoc(), netHandle, i1,
+                                   "__obelisk_state_unknown", true,
+                                   layout.bitCount, &layout)
+                  : boolean(false);
           Value publishValue = resolvedValue;
           Value publishUnknown = resolvedUnknown;
           if (resolution == sim::NetResolutionKind::TriReg) {
@@ -1121,7 +1515,8 @@ public:
           publications.push_back(
               {netHandle, oldResolvedValue, oldResolvedUnknown, publishValue,
                publishUnknown, memberNet->fourState,
-               resolveDirectStaticStateRange(netHandle, 1, &layout)});
+               resolveDirectStaticStateRange(netHandle, 1, &layout), 1,
+               memberNet->fourState});
         }
       }
     }
@@ -1134,11 +1529,12 @@ public:
           storeStatePlane(rewriter, op.getLoc(), publication.handle,
                           publication.value, "__obelisk_state_value",
                           layout.bitCount, &layout));
-      changed = arith::OrIOp::create(
-          rewriter, op.getLoc(), changed,
-          storeStatePlane(rewriter, op.getLoc(), publication.handle,
-                          publication.unknown, "__obelisk_state_unknown",
-                          layout.bitCount, &layout));
+      if (publication.storeUnknown)
+        changed = arith::OrIOp::create(
+            rewriter, op.getLoc(), changed,
+            storeStatePlane(rewriter, op.getLoc(), publication.handle,
+                            publication.unknown, "__obelisk_state_unknown",
+                            layout.bitCount, &layout));
     }
     auto packBits = [&](ArrayRef<Publication> run, Value Publication::*member) {
       Value packed = llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(),
@@ -1158,12 +1554,13 @@ public:
       size_t end = begin + 1;
       const std::optional<DirectStaticStateRange> &firstRange =
           publications[begin].directRange;
-      if (firstRange) {
+      if (firstRange && publications[begin].width == 1) {
         while (end < publications.size() && end - begin < 64) {
           const std::optional<DirectStaticStateRange> &nextRange =
               publications[end].directRange;
           uint64_t relativeOffset = end - begin;
-          if (!nextRange || nextRange->staticID != firstRange->staticID ||
+          if (publications[end].width != 1 || !nextRange ||
+              nextRange->staticID != firstRange->staticID ||
               nextRange->guarded != firstRange->guarded ||
               nextRange->offset != firstRange->offset + relativeOffset ||
               nextRange->localOffset !=
@@ -1176,7 +1573,8 @@ public:
       if (run.size() == 1) {
         const Publication &publication = run.front();
         notifySignal(
-            rewriter, op.getLoc(), publication.handle, 1, publication.oldValue,
+            rewriter, op.getLoc(), publication.handle, publication.width,
+            publication.oldValue,
             publication.oldUnknown, publication.value,
             publication.fourState ? publication.unknown : Value{},
             publication.directRange,
@@ -1204,6 +1602,9 @@ private:
   std::shared_ptr<const DriverLookupIndex> index;
   std::shared_ptr<const NativeStateLayout> cleanLayout;
   std::shared_ptr<const DriverLookupIndex> cleanIndex;
+  // Indexes the unspecialized layout for run resolution even when no driver
+  // qualifies for a bulk drive.
+  std::shared_ptr<const DriverLookupIndex> resolutionIndex;
 };
 
 } // namespace
@@ -1284,10 +1685,13 @@ void populateDriverToLLVMConversionPatterns(RewritePatternSet &patterns,
         std::make_shared<NativeStateLayout>(makeCleanEvalStateLayout(layout));
     cleanIndex = std::make_shared<DriverLookupIndex>(*cleanLayout);
   }
+  std::shared_ptr<const DriverLookupIndex> resolutionIndex =
+      index ? index : std::make_shared<DriverLookupIndex>(layout);
   patterns.add<DriverDriveConversion<sim::SimDriverDriveOp>,
                DriverDriveConversion<sim::SimDriverDriveDelayedNetOp>,
                DriverDriveConversion<sim::SimDriverDriveChangedOp>>(
-      converter, patterns.getContext(), layout, index, cleanLayout, cleanIndex);
+      converter, patterns.getContext(), layout, index, cleanLayout, cleanIndex,
+      resolutionIndex);
 }
 
 } // namespace obelisk::detail

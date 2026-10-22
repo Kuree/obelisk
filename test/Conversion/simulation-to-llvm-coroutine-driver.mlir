@@ -321,13 +321,12 @@ module attributes {
     }
 
     simulation.func @drive_tri0(
-        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %value: !simulation.logic<1> {simulation.capture_kind = 2 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 9 : i64} {
       %driver = simulation.context.driver %ctx[7] :
           !simulation.driver<!simulation.logic<1>>
-      %one = simulation.logic.constant 1 : i1, 0 : i1 :
-          !simulation.logic<1>
-      simulation.driver.drive %driver = %one :
+      simulation.driver.drive %driver = %value :
           !simulation.driver<!simulation.logic<1>>,
           !simulation.logic<1>
       simulation.return
@@ -409,9 +408,16 @@ module attributes {
 // CHECK-NOT: simulation.nba.enqueue
 
 // A highz1 driver cannot use the single-driver memcpy shortcut. Native
-// lowering resolves the same Figure 28-2 range representation as bytecode.
+// lowering evaluates the same Figure 28-2 range algebra as bytecode at compile
+// time: against the highz0 driver's strong 1, the highz1 driver's 1 or z
+// leaves 1 and its 0 or x makes x, so the net's value plane is that driver's
+// value plane and its unknown plane is the complement.
 // CHECK-LABEL: llvm.func @drive_strength
-// CHECK-COUNT-1: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK: %[[UNKNOWN:.*]] = llvm.xor %[[VALUE:.*]], %{{.*}} : i1
+// CHECK: llvm.zext %[[VALUE]] : i1 to i8
+// CHECK: llvm.zext %[[UNKNOWN]] : i1 to i8
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
 // CHECK-NOT: simulation.driver.drive
 
 // CHECK-LABEL: llvm.func @drive_inertial
@@ -460,19 +466,31 @@ module attributes {
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
 // CHECK-NOT: simulation.driver.drive_delayed_net
 
-// Native wired resolution passes the effective kind to the shared exact
-// strength resolver. 3 is the canonical wand/triand kind.
+// Native wired resolution applies the effective kind through the shared
+// strength algebra at compile time. On wand, a strong 0 joined with any
+// equal-strength contribution is 0 (Table 6-3), so the published net is a
+// constant with no logic over the other driver's planes.
 // CHECK-LABEL: llvm.func @drive_wand
-// CHECK: %[[WAND:.*]] = llvm.mlir.constant(3 : i32) : i32
-// CHECK: llvm.call @obelisk_rt_v1_strength_resolve_kind({{.*}}, {{.*}}, %[[WAND]])
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.and
+// CHECK-NOT: llvm.select
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition
 // CHECK-NOT: simulation.driver.drive
 
-// IEEE 1800-2017 6.6.5 gives tri0 an implicit pull0 contribution. Native
-// resolution seeds Figure 28-2 position -5 (bit index 2) and passes kind 5.
+// IEEE 1800-2017 6.6.5 gives tri0 an implicit pull0 contribution: a strong
+// 0 or 1 overrides it, z leaves 0 and x stays x. The value plane is v & ~u
+// and the unknown plane u & ~v.
 // CHECK-LABEL: llvm.func @drive_tri0
-// CHECK: %[[PULL0:.*]] = llvm.mlir.constant(4 : i16) : i16
-// CHECK: %[[TRI0:.*]] = llvm.mlir.constant(5 : i32) : i32
-// CHECK: llvm.call @obelisk_rt_v1_strength_resolve_kind(%[[PULL0]], {{.*}}, %[[TRI0]])
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK: %[[TRUE:.*]] = llvm.mlir.constant(true) : i1
+// CHECK-NEXT: %[[NOTU:.*]] = llvm.xor %arg2, %[[TRUE]] : i1
+// CHECK-NEXT: %[[VALUE:.*]] = llvm.and %[[NOTU]], %arg1 : i1
+// CHECK-NEXT: %[[NOTV:.*]] = llvm.xor %arg1, %[[TRUE]] : i1
+// CHECK-NEXT: %[[UNKNOWN:.*]] = llvm.and %arg2, %[[NOTV]] : i1
+// CHECK: %[[NEWV:.*]] = llvm.zext %[[VALUE]] : i1 to i64
+// CHECK-NEXT: %[[NEWU:.*]] = llvm.zext %[[UNKNOWN]] : i1 to i64
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition({{.*}}, %[[NEWV]], %[[NEWU]])
+// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
 // CHECK-NOT: simulation.driver.drive
 
 // IEEE 1800-2017 6.6.4: native trireg resolution uses ordinary wire
