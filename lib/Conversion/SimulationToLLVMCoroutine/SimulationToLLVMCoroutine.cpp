@@ -243,6 +243,15 @@ bool isEvalClosureRuntimeCall(LLVM::CallOp call, LLVM::LLVMFuncOp function,
       // before dispatch. This query only reads that same timestamp.
       *callee == "obelisk_rt_v1_scheduler_time" ||
       *callee == "obelisk_rt_v1_eval_display" ||
+      // $error only latches the final exit status and lets simulation
+      // continue (IEEE 1800-2023 20.10). It never schedules or executes an
+      // actor, so its report stays inline like the direct display above.
+      *callee == "obelisk_rt_v1_scheduler_error" ||
+      // Assertion control (IEEE 1800-2023 20.11) only affects subsequent
+      // attempts; an attempt reads the current state from the runtime's
+      // table without scheduling, executing or suspending anything.
+      *callee == "obelisk_rt_v1_assertion_enabled" ||
+      *callee == "obelisk_rt_v1_assertion_action_state" ||
       // Cold allocation of private generated NBA storage. This never
       // executes actors, changes design state or re-enters scheduling.
       *callee == "obelisk_rt_v1_eval_nba_reserve" ||

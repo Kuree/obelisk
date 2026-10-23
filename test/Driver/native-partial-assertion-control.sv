@@ -7,11 +7,11 @@
 // RUN: FileCheck %s < %t.auto.out
 
 // $assertoff/$asserton (IEEE 1800-2023 20.11) make every attempt of `chk`
-// read the runtime assertion control state, a runtime leaf that no generated
-// path predicate guards. In this partial design (the fork keeps one process
-// on the lower tier) Auto must choose the generic scheduler before packed
-// lowering stages static NBAs, not fail once ownership is planned.
-module native_partial_assertion_control_fallback;
+// read the runtime assertion control state, and a failing attempt latches
+// $error's final status (20.10). Neither schedules anything, so the generated
+// eval body keeps both inline while the fork keeps one process on the lower
+// tier. The attempt at 25 runs while `chk` is off and reports nothing.
+module native_partial_assertion_control;
   logic clk = 0;
   logic [7:0] a = 0, b = 0, c = 0;
   logic [31:0] wide = 0;
@@ -19,7 +19,7 @@ module native_partial_assertion_control_fallback;
   always #5 clk = ~clk;
   always_ff @(posedge clk) begin
     a <= a + 1;
-    chk: assert (a != 8'd3) else $error("a=3 at %0t", $time);
+    chk: assert (a != 8'd2 && a != 8'd4) else $error("a=%0d at %0t", a, $time);
   end
   always_ff @(posedge clk) b <= a;
   always_ff @(posedge clk) c <= b ^ a;
@@ -28,8 +28,8 @@ module native_partial_assertion_control_fallback;
   end
 
   initial begin
-    #12 $assertoff(0, native_partial_assertion_control_fallback.chk);
-    #20 $asserton(0, native_partial_assertion_control_fallback.chk);
+    #12 $assertoff(0, native_partial_assertion_control.chk);
+    #20 $asserton(0, native_partial_assertion_control.chk);
   end
   initial begin
     #100;
@@ -38,7 +38,8 @@ module native_partial_assertion_control_fallback;
   end
 endmodule
 
-// TIER: partial eval disabled: an eval owner keeps an unguarded runtime leaf
+// TIER-NOT: eval disabled
 // TIER-NOT: error
-// CHECK: simulation time 35: a=3 at 35
+// CHECK-NOT: a=2 at
+// CHECK: simulation time 45: a=4 at 45
 // CHECK: a=10 b=9 c=1 w=10

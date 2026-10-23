@@ -82,7 +82,12 @@ bool isDirectOutput(sim::SimDisplayOp display) {
   return true;
 }
 
+// A nonterminating error only latches the final exit status (IEEE 1800-2023
+// 20.10), so an immediate assertion's `$error` report stays inline with its
+// direct display rather than checkpointing the activation.
 bool isDirectOutput(Operation *operation) {
+  if (isa<sim::SimErrorOp>(operation))
+    return true;
   auto display = dyn_cast<sim::SimDisplayOp>(operation);
   return display && isDirectOutput(display);
 }
@@ -306,10 +311,10 @@ LogicalResult materializeEvalTwoStateVariants(
   // Only mark private activation roots, not shared canonical helpers or
   // independently scheduled monitor/observer callbacks.
   for (sim::SimFuncOp root : roots)
-    root.walk([&](sim::SimDisplayOp display) {
-      if (isDirectOutput(display))
+    root.walk([&](Operation *operation) {
+      if (isDirectOutput(operation))
         ::obelisk::schedule::set<schedule::Field::EvalDirectOutput>(
-            display, UnitAttr::get(module.getContext()));
+            operation, UnitAttr::get(module.getContext()));
     });
   llvm::SmallPtrSet<Operation *, 32> variantEligibleSources;
   llvm::SmallPtrSet<Operation *, 16> knownOnlyPathSources;

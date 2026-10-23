@@ -14,6 +14,13 @@
 // CHECK-LABEL: llvm.func @channel.__obelisk_eval_body
 // CHECK-NOT: llvm.call @obelisk_rt_v1_eval_display(
 // CHECK: llvm.call @obelisk_rt_v1_display(
+// An immediate assertion's $error only latches the final status (IEEE
+// 1800-2023 20.10), so its report stays in the generated body instead of
+// becoming a checkpoint leaf with path probes.
+// CHECK-LABEL: llvm.func @failed.__obelisk_eval_body_0(
+// CHECK: llvm.call @obelisk_rt_v1_scheduler_error(
+// CHECK: llvm.call @obelisk_rt_v1_eval_display(
+// CHECK-NOT: @failed.__obelisk_eval_body_0.__obelisk_checkpoint_path
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -26,6 +33,7 @@ module attributes {
     simulation.code_unit.decl 2 in 0 always hierarchy "output.safe"
     simulation.code_unit.decl 3 in 0 always hierarchy "output.strength"
     simulation.code_unit.decl 4 in 0 always hierarchy "output.channel"
+    simulation.code_unit.decl 5 in 0 always hierarchy "output.failed"
     simulation.storage.decl 0 in 0 : !simulation.logic<1> design
     simulation.net.decl 0 in 0 : !simulation.logic<1> design
     simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
@@ -35,6 +43,7 @@ module attributes {
       %a = simulation.spawn @safe(%ctx, %clock, %net) : !simulation.context, !simulation.ref<!simulation.logic<1>>, !simulation.net<!simulation.logic<1>> -> !simulation.process
       %b = simulation.spawn @strength(%ctx, %clock, %net) : !simulation.context, !simulation.ref<!simulation.logic<1>>, !simulation.net<!simulation.logic<1>> -> !simulation.process
       %c = simulation.spawn @channel(%ctx, %clock, %net) : !simulation.context, !simulation.ref<!simulation.logic<1>>, !simulation.net<!simulation.logic<1>> -> !simulation.process
+      %d = simulation.spawn @failed(%ctx, %clock, %net) : !simulation.context, !simulation.ref<!simulation.logic<1>>, !simulation.net<!simulation.logic<1>> -> !simulation.process
       simulation.return
     }
     simulation.func @safe(
@@ -79,6 +88,27 @@ module attributes {
       %fd = arith.constant 2 : i32
       %format = simulation.bytes.constant "%b"
       %value = simulation.net.read %net : !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      simulation.display %ctx to %fd(%format, %value, %net) newline = true radix = <decimal> flags = [0, 2048] {scope = "output"} : !simulation.bytes, !simulation.logic<1>, !simulation.net<!simulation.logic<1>>
+      cf.br ^wait
+    }
+    simulation.func @failed(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %clock: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64},
+        %net: !simulation.net<!simulation.logic<1>> {simulation.capture_kind = 4 : i32, simulation.descriptor_id = 0 : i64})
+        attributes {entry_kind = 3 : i32, code_unit_id = 5 : i64} {
+      cf.br ^wait
+    ^wait:
+      simulation.suspend.edge negedge %clock to ^check {site = #schedule.continuation<id = 4>} : !simulation.ref<!simulation.logic<1>>
+    ^check:
+      %value = simulation.net.read %net : !simulation.net<!simulation.logic<1>> -> !simulation.logic<1>
+      %zero = simulation.logic.constant 0 : i1, 0 : i1 : !simulation.logic<1>
+      %low = simulation.logic.compare eq %value, %zero : (!simulation.logic<1>, !simulation.logic<1>) -> !simulation.logic<1>
+      %ok = simulation.logic.is_true %low : !simulation.logic<1>
+      cf.cond_br %ok, ^wait, ^fail
+    ^fail:
+      simulation.error %ctx
+      %fd = arith.constant -2147483646 : i32
+      %format = simulation.bytes.constant "failed %x"
       simulation.display %ctx to %fd(%format, %value, %net) newline = true radix = <decimal> flags = [0, 2048] {scope = "output"} : !simulation.bytes, !simulation.logic<1>, !simulation.net<!simulation.logic<1>>
       cf.br ^wait
     }
