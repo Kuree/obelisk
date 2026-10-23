@@ -9,7 +9,7 @@
 // A second clock transition exercises reactivation after cached emptiness.
 // Keep fragments separate in this pass-specific test: fusion would hide the
 // multiword runtime boundary. At least 100 nodes ensures it remains covered.
-// PLAN: llvm.mlir.global internal constant @__obelisk_aot_schedule_nodes_v1()
+// PLAN: llvm.mlir.global internal constant @__obelisk_aot_schedule_nodes_v1(
 // PLAN-SAME: !llvm.array<{{[1-9][0-9][0-9]+}} x struct<(i32, i32, i32)>>
 // PLAN: llvm.call @obelisk_rt_v1_scheduler_run_aot_nodes
 

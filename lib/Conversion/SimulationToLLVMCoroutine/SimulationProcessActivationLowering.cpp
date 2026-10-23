@@ -210,21 +210,14 @@ FailureOr<LLVM::LLVMFuncOp> makeProcessSpawnHelper(
     auto arrayType =
         LLVM::LLVMArrayType::get(i32, schedule.continuations.size());
     auto makeArray = [&](StringRef name, unsigned element) {
+      SmallVector<uint64_t> values;
+      values.reserve(schedule.continuations.size());
+      for (auto continuation : schedule.continuations)
+        values.push_back(element == 0 ? continuation.first
+                                      : continuation.second);
       LLVM::GlobalOp global = makeConstantGlobal(
           module, location, arrayType, name, LLVM::Linkage::Internal, 4,
-          [&](OpBuilder &initializer) {
-            Value array =
-                LLVM::ZeroOp::create(initializer, location, arrayType);
-            for (auto [index, continuation] :
-                 llvm::enumerate(schedule.continuations))
-              array = LLVM::InsertValueOp::create(
-                  initializer, location, array,
-                  llvmConstant(initializer, location, i32,
-                               element == 0 ? continuation.first
-                                            : continuation.second),
-                  ArrayRef<int64_t>{static_cast<int64_t>(index)});
-            return array;
-          });
+          integerArrayAttr(cast<IntegerType>(i32), values));
       copyNativePartition(function, global);
       indexModuleSymbol(module, symbols, global);
     };
@@ -234,18 +227,12 @@ FailureOr<LLVM::LLVMFuncOp> makeProcessSpawnHelper(
   if (!schedule.bytecodeContinuations.empty()) {
     auto arrayType =
         LLVM::LLVMArrayType::get(i32, schedule.bytecodeContinuations.size());
-    LLVM::GlobalOp global = makeConstantGlobal(
-        module, location, arrayType, bytecodeContinuationName,
-        LLVM::Linkage::Internal, 4, [&](OpBuilder &initializer) {
-          Value array = LLVM::ZeroOp::create(initializer, location, arrayType);
-          for (auto [index, continuation] :
-               llvm::enumerate(schedule.bytecodeContinuations))
-            array = LLVM::InsertValueOp::create(
-                initializer, location, array,
-                llvmConstant(initializer, location, i32, continuation),
-                ArrayRef<int64_t>{static_cast<int64_t>(index)});
-          return array;
-        });
+    SmallVector<uint64_t> values(schedule.bytecodeContinuations.begin(),
+                                 schedule.bytecodeContinuations.end());
+    LLVM::GlobalOp global =
+        makeConstantGlobal(module, location, arrayType,
+                           bytecodeContinuationName, LLVM::Linkage::Internal, 4,
+                           integerArrayAttr(cast<IntegerType>(i32), values));
     copyNativePartition(function, global);
     indexModuleSymbol(module, symbols, global);
   }

@@ -509,6 +509,40 @@ makeConstantGlobal(ModuleOp module, Location location, Type type,
   return global;
 }
 
+LLVM::GlobalOp makeConstantGlobal(ModuleOp module, Location location, Type type,
+                                  StringRef name, LLVM::Linkage linkage,
+                                  uint64_t alignment, Attribute value) {
+  OpBuilder builder(module.getContext());
+  builder.setInsertionPointToStart(module.getBody());
+  return LLVM::GlobalOp::create(builder, location, type, true, linkage, name,
+                                value, alignment);
+}
+
+ArrayAttr integerStructAttr(LLVM::LLVMStructType type,
+                            ArrayRef<uint64_t> values) {
+  assert(type.getBody().size() == values.size() &&
+         "one value per struct field");
+  SmallVector<Attribute> fields;
+  fields.reserve(values.size());
+  for (auto [field, value] : llvm::zip_equal(type.getBody(), values))
+    fields.push_back(IntegerAttr::get(
+        field, APInt(cast<IntegerType>(field).getWidth(), value,
+                     /*isSigned=*/false, /*implicitTrunc=*/true)));
+  return ArrayAttr::get(type.getContext(), fields);
+}
+
+DenseElementsAttr integerArrayAttr(IntegerType elementType,
+                                   ArrayRef<uint64_t> values) {
+  SmallVector<APInt> elements;
+  elements.reserve(values.size());
+  for (uint64_t value : values)
+    elements.emplace_back(elementType.getWidth(), value, /*isSigned=*/false,
+                          /*implicitTrunc=*/true);
+  return DenseElementsAttr::get(
+      RankedTensorType::get({static_cast<int64_t>(values.size())}, elementType),
+      elements);
+}
+
 LLVM::LLVMFuncOp getOrDeclareLLVMFunction(ModuleOp module, StringRef name,
                                           Type result,
                                           ArrayRef<Type> arguments) {

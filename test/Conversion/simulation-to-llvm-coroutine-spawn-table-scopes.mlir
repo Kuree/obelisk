@@ -57,9 +57,7 @@ module attributes {
 // CHECK: llvm.mlir.constant(0 : i64)
 // CHECK: llvm.mlir.constant(9 : i64)
 // CHECK: llvm.return %{{.*}} : !llvm.array<3 x struct<(ptr, i64, i64)>>
-// CHECK: llvm.mlir.global internal constant @parent.__obelisk_spawn_batch_0_captures() {{.*}} : !llvm.array<2 x i64>
-// CHECK: llvm.mlir.constant(17 : i64)
-// CHECK: llvm.mlir.constant(29 : i64)
+// CHECK: llvm.mlir.global internal constant @parent.__obelisk_spawn_batch_0_captures(dense<[17, 29]> : tensor<2xi64>) {{.*}} : !llvm.array<2 x i64>
 
 // CHECK-LABEL: llvm.func @parent(
 // CHECK-NOT: obelisk_rt_v1_random_initialization

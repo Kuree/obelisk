@@ -1,6 +1,7 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=CHECK
 // RUN: obelisk-opt %s --mlir-disable-threading --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=SPAWN
+// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | FileCheck %s --check-prefix=LLVM
 
 // Actor slots follow root spawn order: root=0, z_always=1, a_initial=2.
 // This legal schedule orders the independent children a_initial, z_always.
@@ -10,18 +11,16 @@
 // Without the fix, both new entry blocks can receive fallback rank zero and
 // the native node table incorrectly becomes slot order 0, 1, 2.
 
-// CHECK-LABEL: llvm.mlir.global internal constant @__obelisk_aot_schedule_nodes_v1()
+// CHECK-LABEL: llvm.mlir.global internal constant @__obelisk_aot_schedule_nodes_v1(
+// CHECK-SAME: {{\[\[}}0 : i32, 0 : i32, -1 : i32], [2 : i32, 0 : i32, -1 : i32], [1 : i32, 0 : i32, -1 : i32]])
 // CHECK-SAME: !llvm.array<3 x struct<(i32, i32, i32)>>
-// CHECK: %[[ROOT:.*]] = llvm.mlir.constant(0 : i32)
-// CHECK-NEXT: llvm.insertvalue %[[ROOT]], {{.*}}[0]
-// CHECK: llvm.insertvalue {{.*}}[0] : !llvm.array<3 x struct<(i32, i32, i32)>>
-// CHECK: %[[FIRST:.*]] = llvm.mlir.constant(2 : i32)
-// CHECK-NEXT: llvm.insertvalue %[[FIRST]], {{.*}}[0]
-// CHECK: llvm.insertvalue {{.*}}[1] : !llvm.array<3 x struct<(i32, i32, i32)>>
-// CHECK: %[[SECOND:.*]] = llvm.mlir.constant(1 : i32)
-// CHECK-NEXT: llvm.insertvalue %[[SECOND]], {{.*}}[0]
-// CHECK: llvm.insertvalue {{.*}}[2] : !llvm.array<3 x struct<(i32, i32, i32)>>
-// CHECK: llvm.return
+
+// Integer tables are attribute initializers; translation builds the same
+// constants an insertvalue chain folds to, and an empty table is zero.
+// LLVM-DAG: @root.__obelisk_frame_fields = internal constant [0 x { i32, i32, i64, i64, i32, i32 }] zeroinitializer, align 8
+// LLVM-DAG: @z_always.__obelisk_frame_fields = internal constant [2 x { i32, i32, i64, i64, i32, i32 }] [{ i32, i32, i64, i64, i32, i32 } { i32 1, i32 1, i64 0, i64 1, i32 1, i32 0 }, { i32, i32, i64, i64, i32, i32 } { i32 1, i32 2, i64 1, i64 1, i32 1, i32 0 }], align 8
+// LLVM-DAG: @z_always.__obelisk_continuations = internal constant [1 x i32] zeroinitializer, align 4
+// LLVM-DAG: @__obelisk_aot_schedule_nodes_v1 = internal constant [3 x { i32, i32, i32 }] [{ i32, i32, i32 } { i32 0, i32 0, i32 -1 }, { i32, i32, i32 } { i32 2, i32 0, i32 -1 }, { i32, i32, i32 } { i32 1, i32 0, i32 -1 }], align 4
 
 // Spawn metadata must contain the same actor/rank pairs as the node table.
 // SPAWN-LABEL: llvm.mlir.global internal constant @z_always.__obelisk_spawn_plan

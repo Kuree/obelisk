@@ -5,7 +5,7 @@
 // replay the Active peer, or hand the complete plan to another scheduler.
 // The fully static plan keeps all five nodes, including the Inactive boundary,
 // in the AOT node loop; a partial plan would call obelisk_rt_v1_scheduler_run.
-// PLAN: llvm.mlir.global internal constant @__obelisk_aot_schedule_nodes_v1() {{.*}} : !llvm.array<5 x struct<(i32, i32, i32)>>
+// PLAN: llvm.mlir.global internal constant @__obelisk_aot_schedule_nodes_v1({{.*}} : !llvm.array<5 x struct<(i32, i32, i32)>>
 // PLAN-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
 // PLAN-NEXT: %[[NODES:.*]] = llvm.mlir.addressof @__obelisk_aot_schedule_nodes_v1
 // PLAN-NEXT: %[[COUNT:.*]] = llvm.mlir.constant(5 : i32)

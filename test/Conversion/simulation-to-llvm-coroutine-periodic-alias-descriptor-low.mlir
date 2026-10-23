@@ -80,8 +80,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 }
 
 // CHECK-LABEL: llvm.mlir.global internal constant @__obelisk_periodic_alias_plan_v1
-// CHECK: %[[ALIAS_SOURCE:.*]] = llvm.mlir.constant(9 : i64)
-// CHECK: llvm.insertvalue %[[ALIAS_SOURCE]], {{.*}}[4]
+// CHECK-SAME: {{\[\[}}2 : i32, 5 : i32, 7 : i32, 3 : i32, 9, 16, 24]]
 // CHECK-LABEL: llvm.mlir.global internal constant @__obelisk_periodic_clock_plan_v1
 // CHECK-SAME: !llvm.array<2 x
 // CHECK: %[[CLOCK0:.*]] = llvm.mlir.constant(8 : i64)

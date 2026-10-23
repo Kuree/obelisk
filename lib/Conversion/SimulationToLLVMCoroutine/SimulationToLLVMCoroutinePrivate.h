@@ -393,6 +393,22 @@ mlir::LLVM::GlobalOp makeConstantGlobal(
     mlir::ModuleOp module, mlir::Location location, mlir::Type type,
     llvm::StringRef name, mlir::LLVM::Linkage linkage, uint64_t alignment,
     llvm::function_ref<mlir::Value(mlir::OpBuilder &)> initializer);
+/// A constant global initialized by an attribute. Pointer-free tables use
+/// this form: translation builds the same ConstantDataArray/ConstantStruct an
+/// insertvalue chain folds to, without one operation per field.
+mlir::LLVM::GlobalOp makeConstantGlobal(mlir::ModuleOp module,
+                                        mlir::Location location,
+                                        mlir::Type type, llvm::StringRef name,
+                                        mlir::LLVM::Linkage linkage,
+                                        uint64_t alignment,
+                                        mlir::Attribute value);
+/// The initializer attribute of a struct whose fields are all integers, one
+/// value per field (truncated to the field's width).
+mlir::ArrayAttr integerStructAttr(mlir::LLVM::LLVMStructType type,
+                                  llvm::ArrayRef<uint64_t> values);
+/// The initializer attribute of an array of `elementType` integers.
+mlir::DenseElementsAttr integerArrayAttr(mlir::IntegerType elementType,
+                                         llvm::ArrayRef<uint64_t> values);
 
 mlir::LLVM::LLVMFuncOp
 getOrDeclareLLVMFunction(mlir::ModuleOp module, llvm::StringRef name,

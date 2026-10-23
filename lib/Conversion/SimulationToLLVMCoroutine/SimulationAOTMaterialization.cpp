@@ -1435,32 +1435,15 @@ FailureOr<bool> makeNativeEvalPlan(
 
   Type nodeType = LLVM::LLVMStructType::getLiteral(context, {i32, i32, i32});
   Type nodesType = LLVM::LLVMArrayType::get(nodeType, executableNodes.size());
-  makeConstantGlobal(
-      module, location, nodesType, nodesName, LLVM::Linkage::Internal, 4,
-      [&](OpBuilder &initializerBuilder) {
-        Value nodes =
-            LLVM::ZeroOp::create(initializerBuilder, location, nodesType);
-        for (auto [index, node] : llvm::enumerate(executableNodes)) {
-          Value value =
-              LLVM::ZeroOp::create(initializerBuilder, location, nodeType);
-          value = insertValue(
-              initializerBuilder, location, value,
-              llvmConstant(initializerBuilder, location, i32, node.actor_slot),
-              0);
-          value = insertValue(initializerBuilder, location, value,
-                              llvmConstant(initializerBuilder, location, i32,
-                                           node.continuation),
-                              1);
-          value = insertValue(initializerBuilder, location, value,
-                              llvmConstant(initializerBuilder, location, i32,
-                                           node.fusion_group),
-                              2);
-          nodes = LLVM::InsertValueOp::create(
-              initializerBuilder, location, nodes, value,
-              ArrayRef<int64_t>{static_cast<int64_t>(index)});
-        }
-        return nodes;
-      });
+  SmallVector<Attribute> nodeRows;
+  nodeRows.reserve(executableNodes.size());
+  for (const auto &node : executableNodes)
+    nodeRows.push_back(integerStructAttr(
+        cast<LLVM::LLVMStructType>(nodeType),
+        {node.actor_slot, node.continuation, node.fusion_group}));
+  makeConstantGlobal(module, location, nodesType, nodesName,
+                     LLVM::Linkage::Internal, 4,
+                     ArrayAttr::get(context, nodeRows));
 
   uint32_t nbaDirtyWordCount =
       static_cast<uint32_t>((nbaRoots.size() + 63) / 64);
@@ -1511,89 +1494,31 @@ FailureOr<bool> makeNativeEvalPlan(
   Type nbaSiteType = LLVM::LLVMStructType::getLiteral(context, {i64, i32, i32});
   if (!nbaSites.empty()) {
     Type sitesType = LLVM::LLVMArrayType::get(nbaSiteType, nbaSites.size());
-    makeConstantGlobal(
-        module, location, sitesType, nbaSitesName, LLVM::Linkage::Internal, 8,
-        [&](OpBuilder &initializerBuilder) {
-          Value sites =
-              LLVM::ZeroOp::create(initializerBuilder, location, sitesType);
-          for (auto [index, site] : llvm::enumerate(nbaSites)) {
-            Value value =
-                LLVM::ZeroOp::create(initializerBuilder, location, nbaSiteType);
-            value = insertValue(
-                initializerBuilder, location, value,
-                llvmConstant(initializerBuilder, location, i64, site.site), 0);
-            value = insertValue(
-                initializerBuilder, location, value,
-                llvmConstant(initializerBuilder, location, i32, site.root), 1);
-            value = insertValue(
-                initializerBuilder, location, value,
-                llvmConstant(initializerBuilder, location, i32, site.storage),
-                2);
-            sites = LLVM::InsertValueOp::create(
-                initializerBuilder, location, sites, value,
-                ArrayRef<int64_t>{static_cast<int64_t>(index)});
-          }
-          return sites;
-        });
+    SmallVector<Attribute> rows;
+    rows.reserve(nbaSites.size());
+    for (const auto &site : nbaSites)
+      rows.push_back(integerStructAttr(cast<LLVM::LLVMStructType>(nbaSiteType),
+                                       {site.site, site.root, site.storage}));
+    makeConstantGlobal(module, location, sitesType, nbaSitesName,
+                       LLVM::Linkage::Internal, 8,
+                       ArrayAttr::get(context, rows));
   }
   Type fanoutType = LLVM::LLVMStructType::getLiteral(
       context, {i32, i32, i32, i32, i32, i32, i64, i64, i32, i32});
   if (!fanoutEntries.empty()) {
     Type entriesType =
         LLVM::LLVMArrayType::get(fanoutType, fanoutEntries.size());
-    makeConstantGlobal(
-        module, location, entriesType, fanoutName, LLVM::Linkage::Internal, 8,
-        [&](OpBuilder &initializerBuilder) {
-          Value entries =
-              LLVM::ZeroOp::create(initializerBuilder, location, entriesType);
-          for (auto [index, entry] : llvm::enumerate(fanoutEntries)) {
-            Value value =
-                LLVM::ZeroOp::create(initializerBuilder, location, fanoutType);
-            value = insertValue(initializerBuilder, location, value,
-                                llvmConstant(initializerBuilder, location, i32,
-                                             entry.static_state),
-                                0);
-            value = insertValue(initializerBuilder, location, value,
-                                llvmConstant(initializerBuilder, location, i32,
-                                             entry.actor_slot),
-                                1);
-            value = insertValue(initializerBuilder, location, value,
-                                llvmConstant(initializerBuilder, location, i32,
-                                             entry.continuation),
-                                2);
-            value = insertValue(
-                initializerBuilder, location, value,
-                llvmConstant(initializerBuilder, location, i32, entry.edge), 3);
-            value = insertValue(initializerBuilder, location, value,
-                                llvmConstant(initializerBuilder, location, i32,
-                                             entry.compute_node),
-                                4);
-            value = insertValue(
-                initializerBuilder, location, value,
-                llvmConstant(initializerBuilder, location, i32, entry.reserved),
-                5);
-            value = insertValue(
-                initializerBuilder, location, value,
-                llvmConstant(initializerBuilder, location, i64, entry.low_bit),
-                6);
-            value = insertValue(initializerBuilder, location, value,
-                                llvmConstant(initializerBuilder, location, i64,
-                                             entry.bit_width),
-                                7);
-            value = insertValue(
-                initializerBuilder, location, value,
-                llvmConstant(initializerBuilder, location, i32, entry.kernel),
-                8);
-            value = insertValue(initializerBuilder, location, value,
-                                llvmConstant(initializerBuilder, location, i32,
-                                             entry.merged_bit),
-                                9);
-            entries = LLVM::InsertValueOp::create(
-                initializerBuilder, location, entries, value,
-                ArrayRef<int64_t>{static_cast<int64_t>(index)});
-          }
-          return entries;
-        });
+    SmallVector<Attribute> rows;
+    rows.reserve(fanoutEntries.size());
+    for (const auto &entry : fanoutEntries)
+      rows.push_back(integerStructAttr(
+          cast<LLVM::LLVMStructType>(fanoutType),
+          {entry.static_state, entry.actor_slot, entry.continuation, entry.edge,
+           entry.compute_node, entry.reserved, entry.low_bit, entry.bit_width,
+           entry.kernel, entry.merged_bit}));
+    makeConstantGlobal(module, location, entriesType, fanoutName,
+                       LLVM::Linkage::Internal, 8,
+                       ArrayAttr::get(context, rows));
   }
   auto ingressWordCount = [&](const NativeEvalClockKernel &kernel) {
     (void)kernel;
@@ -3532,32 +3457,15 @@ FailureOr<bool> makeNativeEvalPlan(
   if (!actorRoots.empty()) {
     Type entriesType =
         LLVM::LLVMArrayType::get(actorRootType, actorRoots.size());
-    makeConstantGlobal(
-        module, location, entriesType, actorRootsName, LLVM::Linkage::Internal,
-        4, [&](OpBuilder &initializerBuilder) {
-          Value entries =
-              LLVM::ZeroOp::create(initializerBuilder, location, entriesType);
-          for (auto [index, entry] : llvm::enumerate(actorRoots)) {
-            Value value = LLVM::ZeroOp::create(initializerBuilder, location,
-                                               actorRootType);
-            value = insertValue(initializerBuilder, location, value,
-                                llvmConstant(initializerBuilder, location, i32,
-                                             entry.actor_slot),
-                                0);
-            value = insertValue(initializerBuilder, location, value,
-                                llvmConstant(initializerBuilder, location, i32,
-                                             entry.static_state),
-                                1);
-            value = insertValue(
-                initializerBuilder, location, value,
-                llvmConstant(initializerBuilder, location, i32, entry.flags),
-                2);
-            entries = LLVM::InsertValueOp::create(
-                initializerBuilder, location, entries, value,
-                ArrayRef<int64_t>{static_cast<int64_t>(index)});
-          }
-          return entries;
-        });
+    SmallVector<Attribute> rows;
+    rows.reserve(actorRoots.size());
+    for (const auto &entry : actorRoots)
+      rows.push_back(integerStructAttr(
+          cast<LLVM::LLVMStructType>(actorRootType),
+          {entry.actor_slot, entry.static_state, entry.flags, 0}));
+    makeConstantGlobal(module, location, entriesType, actorRootsName,
+                       LLVM::Linkage::Internal, 4,
+                       ArrayAttr::get(context, rows));
   }
 
   constexpr StringLiteral periodicAliasesName =
@@ -3567,41 +3475,18 @@ FailureOr<bool> makeNativeEvalPlan(
   if (!periodicAliases.empty()) {
     Type aliasesType =
         LLVM::LLVMArrayType::get(periodicAliasType, periodicAliases.size());
-    makeConstantGlobal(
-        module, location, aliasesType, periodicAliasesName,
-        LLVM::Linkage::Internal, 8, [&](OpBuilder &initializerBuilder) {
-          Value aliases =
-              LLVM::ZeroOp::create(initializerBuilder, location, aliasesType);
-          for (auto [index, alias] : llvm::enumerate(periodicAliases)) {
-            Value value = LLVM::ZeroOp::create(initializerBuilder, location,
-                                               periodicAliasType);
-            const uint32_t fields[] = {alias.getSourceStaticState(),
-                                       alias.getForwardingActorSlot(),
-                                       alias.getForwardingContinuation(),
-                                       alias.getTargetStaticState()};
-            for (unsigned field = 0; field != std::size(fields); ++field)
-              value = insertValue(initializerBuilder, location, value,
-                                  llvmConstant(initializerBuilder, location,
-                                               i32, fields[field]),
-                                  field);
-            value = insertValue(initializerBuilder, location, value,
-                                llvmConstant(initializerBuilder, location, i64,
-                                             alias.getSourceBitOffset()),
-                                4);
-            value = insertValue(initializerBuilder, location, value,
-                                llvmConstant(initializerBuilder, location, i64,
-                                             alias.getTargetBitOffset()),
-                                5);
-            value = insertValue(initializerBuilder, location, value,
-                                llvmConstant(initializerBuilder, location, i64,
-                                             alias.getDriverBitOffset()),
-                                6);
-            aliases = LLVM::InsertValueOp::create(
-                initializerBuilder, location, aliases, value,
-                ArrayRef<int64_t>{static_cast<int64_t>(index)});
-          }
-          return aliases;
-        });
+    SmallVector<Attribute> rows;
+    rows.reserve(periodicAliases.size());
+    for (const auto &alias : periodicAliases)
+      rows.push_back(integerStructAttr(
+          cast<LLVM::LLVMStructType>(periodicAliasType),
+          {alias.getSourceStaticState(), alias.getForwardingActorSlot(),
+           alias.getForwardingContinuation(), alias.getTargetStaticState(),
+           alias.getSourceBitOffset(), alias.getTargetBitOffset(),
+           alias.getDriverBitOffset()}));
+    makeConstantGlobal(module, location, aliasesType, periodicAliasesName,
+                       LLVM::Linkage::Internal, 8,
+                       ArrayAttr::get(context, rows));
   }
 
   builder.setInsertionPointToEnd(module.getBody());

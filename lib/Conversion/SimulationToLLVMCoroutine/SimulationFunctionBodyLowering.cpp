@@ -173,14 +173,7 @@ void materializeNativeSpawnBatches(Operation *root,
       auto type = LLVM::LLVMArrayType::get(i64, words.size());
       auto global = makeConstantGlobal(
           module, location, type, capturesName, LLVM::Linkage::Internal, 8,
-          [&](OpBuilder &builder) {
-            Value value = LLVM::ZeroOp::create(builder, location, type);
-            for (auto [index, bits] : llvm::enumerate(words))
-              value = insertValue(builder, location, value,
-                                  llvmConstant(builder, location, i64, bits),
-                                  index);
-            return value;
-          });
+          integerArrayAttr(cast<IntegerType>(i64), words));
       copyNativePartition(root, global);
     }
     auto tableType = LLVM::LLVMArrayType::get(rowType, batch.size());

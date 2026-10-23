@@ -147,50 +147,21 @@ makeProcessDescriptor(ModuleOp module, SymbolTable &embeddedSymbols,
     return module.emitError(
         "bytecode-only process descriptor has no encoded entry");
 
-  makeConstantGlobal(
-      module, location, fieldsType, fieldsName, LLVM::Linkage::Internal, 8,
-      [&](OpBuilder &builder) {
-        Value array = LLVM::ZeroOp::create(builder, location, fieldsType);
-        for (auto [index, field] : llvm::enumerate(analysis.getFields())) {
-          Value value = LLVM::ZeroOp::create(builder, location, fieldType);
-          value = insertValue(builder, location, value,
-                              llvmConstant(builder, location, i32,
-                                           static_cast<uint32_t>(field.kind)),
-                              0);
-          value = insertValue(builder, location, value,
-                              llvmConstant(builder, location, i32,
-                                           static_cast<uint32_t>(field.flags)),
-                              1);
-          value = insertValue(
-              builder, location, value,
-              llvmConstant(builder, location, i64, field.offset), 2);
-          value =
-              insertValue(builder, location, value,
-                          llvmConstant(builder, location, i64, field.size), 3);
-          value = insertValue(
-              builder, location, value,
-              llvmConstant(builder, location, i32, field.alignment), 4);
-          value = insertValue(
-              builder, location, value,
-              llvmConstant(builder, location, i32, field.reserved), 5);
-          array = LLVM::InsertValueOp::create(
-              builder, location, array, value,
-              ArrayRef<int64_t>{static_cast<int64_t>(index)});
-        }
-        return array;
-      });
+  SmallVector<Attribute> fields;
+  fields.reserve(analysis.getFields().size());
+  for (const auto &field : analysis.getFields())
+    fields.push_back(integerStructAttr(
+        fieldType,
+        {static_cast<uint32_t>(field.kind), static_cast<uint32_t>(field.flags),
+         field.offset, field.size, field.alignment, field.reserved}));
+  makeConstantGlobal(module, location, fieldsType, fieldsName,
+                     LLVM::Linkage::Internal, 8,
+                     ArrayAttr::get(context, fields));
+  SmallVector<uint64_t> continuations(analysis.getContinuations().begin(),
+                                      analysis.getContinuations().end());
   makeConstantGlobal(module, location, continuationsType, continuationsName,
-                     LLVM::Linkage::Internal, 4, [&](OpBuilder &builder) {
-                       Value array = LLVM::ZeroOp::create(builder, location,
-                                                          continuationsType);
-                       for (auto [index, continuation] :
-                            llvm::enumerate(analysis.getContinuations()))
-                         array = LLVM::InsertValueOp::create(
-                             builder, location, array,
-                             llvmConstant(builder, location, i32, continuation),
-                             ArrayRef<int64_t>{static_cast<int64_t>(index)});
-                       return array;
-                     });
+                     LLVM::Linkage::Internal, 4,
+                     integerArrayAttr(cast<IntegerType>(i32), continuations));
   makeConstantGlobal(
       module, location, layoutType, layoutName, LLVM::Linkage::Internal, 8,
       [&](OpBuilder &builder) {

@@ -48,9 +48,7 @@ module attributes {
 // CHECK: llvm.mlir.addressof @child.__obelisk_spawn_plan
 // CHECK: llvm.mlir.constant(8 : i64)
 // CHECK: llvm.mlir.constant(0 : i64)
-// CHECK: llvm.mlir.global internal constant @parent.__obelisk_coro_ramp.__obelisk_spawn_batch_0_captures() {{.*}} : !llvm.array<2 x i64>
-// CHECK: llvm.mlir.constant(17 : i64)
-// CHECK: llvm.mlir.constant(29 : i64)
+// CHECK: llvm.mlir.global internal constant @parent.__obelisk_coro_ramp.__obelisk_spawn_batch_0_captures(dense<[17, 29]> : tensor<2xi64>) {{.*}} : !llvm.array<2 x i64>
 // CHECK-LABEL: llvm.func @parent.__obelisk_coro_ramp
 // CHECK: %[[TABLE:.*]] = llvm.mlir.addressof @parent.__obelisk_coro_ramp.__obelisk_spawn_batch_0 :
 // CHECK: %[[CAPTURES:.*]] = llvm.mlir.addressof @parent.__obelisk_coro_ramp.__obelisk_spawn_batch_0_captures
