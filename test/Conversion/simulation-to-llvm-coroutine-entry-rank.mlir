@@ -17,8 +17,12 @@
 
 // Integer tables are attribute initializers; translation builds the same
 // constants an insertvalue chain folds to, and an empty table is zero.
-// LLVM-DAG: @root.__obelisk_frame_fields = internal constant [0 x { i32, i32, i64, i64, i32, i32 }] zeroinitializer, align 8
-// LLVM-DAG: @z_always.__obelisk_frame_fields = internal constant [2 x { i32, i32, i64, i64, i32, i32 }] [{ i32, i32, i64, i64, i32, i32 } { i32 1, i32 1, i64 0, i64 1, i32 1, i32 0 }, { i32, i32, i64, i64, i32, i32 } { i32 1, i32 2, i64 1, i64 1, i32 1, i32 0 }], align 8
+// Processes with equal frame shapes share one field table.
+// LLVM-DAG: @root.__obelisk_frame_layout = {{.*}} ptr @[[EMPTY:__obelisk_frame_fields_[0-9a-f]+]], i32 0,
+// LLVM-DAG: @[[EMPTY]] = internal constant [0 x { i32, i32, i64, i64, i32, i32 }] zeroinitializer, align 8
+// LLVM-DAG: @z_always.__obelisk_frame_layout = {{.*}} ptr @[[FIELDS:__obelisk_frame_fields_[0-9a-f]+]], i32 2,
+// LLVM-DAG: @a_initial.__obelisk_frame_layout = {{.*}} ptr @[[FIELDS]], i32 2,
+// LLVM-DAG: @[[FIELDS]] = internal constant [2 x { i32, i32, i64, i64, i32, i32 }] [{ i32, i32, i64, i64, i32, i32 } { i32 1, i32 1, i64 0, i64 1, i32 1, i32 0 }, { i32, i32, i64, i64, i32, i32 } { i32 1, i32 2, i64 1, i64 1, i32 1, i32 0 }], align 8
 // LLVM-DAG: @z_always.__obelisk_continuations = internal constant [1 x i32] zeroinitializer, align 4
 // LLVM-DAG: @__obelisk_aot_schedule_nodes_v1 = internal constant [3 x { i32, i32, i32 }] [{ i32, i32, i32 } { i32 0, i32 0, i32 -1 }, { i32, i32, i32 } { i32 2, i32 0, i32 -1 }, { i32, i32, i32 } { i32 1, i32 0, i32 -1 }], align 4
 

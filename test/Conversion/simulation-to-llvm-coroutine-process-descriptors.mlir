@@ -68,11 +68,11 @@ module attributes {
 // CHECK: llvm.mlir.global internal constant @process.__obelisk_frame_layout
 // CHECK-SAME: alignment = 8 : i64
 // CHECK: llvm.mlir.constant(1 : i32)
-// CHECK: llvm.mlir.addressof @process.__obelisk_frame_fields
+// CHECK: llvm.mlir.addressof @[[FIELDS:__obelisk_frame_fields_[0-9a-f]+]]
 // CHECK: llvm.mlir.addressof @process.__obelisk_continuations
 // CHECK: llvm.mlir.global internal constant @process.__obelisk_continuations
 // CHECK-SAME: alignment = 4 : i64
-// CHECK: llvm.mlir.global internal constant @process.__obelisk_frame_fields
+// CHECK: llvm.mlir.global internal constant @[[FIELDS]](
 // CHECK-SAME: alignment = 8 : i64
 // CHECK-LABEL: llvm.func internal @task.__obelisk_activate_checked(
 // CHECK-SAME: %[[TASK_CTX:.*]]: !llvm.ptr,

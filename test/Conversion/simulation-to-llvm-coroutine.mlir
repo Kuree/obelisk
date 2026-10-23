@@ -296,7 +296,7 @@ module attributes {
 // CHECK-DAG: llvm.mlir.global external constant @delay_process.__obelisk_process_descriptor
 // CHECK-DAG: llvm.mlir.global internal constant @delay_process.__obelisk_frame_layout
 // CHECK-DAG: llvm.mlir.global internal constant @delay_process.__obelisk_continuations
-// CHECK-DAG: llvm.mlir.global internal constant @delay_process.__obelisk_frame_fields
+// CHECK-DAG: llvm.mlir.global internal constant @__obelisk_frame_fields_{{[0-9a-f]+}}(
 // CHECK-DAG: llvm.mlir.global external constant @plain_process.__obelisk_process_descriptor
 // CHECK-LABEL: llvm.func @delay_process.__obelisk_coro_ramp
 // CHECK-SAME: native.frame = #native.frame<size = {{[^,]+}}, alignment = 8, checksum = {{[^,]+}}, continuations = [0, 1, 2]

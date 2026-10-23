@@ -13,6 +13,7 @@
 #include "mlir/Interfaces/CallInterfaces.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
 
 using namespace mlir;
 
@@ -127,7 +128,6 @@ makeProcessDescriptor(ModuleOp module, SymbolTable &embeddedSymbols,
           ? LLVM::LLVMStructType::getLiteral(context, {descriptorType, pointer})
           : descriptorType;
 
-  std::string fieldsName = (baseName + ".__obelisk_frame_fields").str();
   std::string continuationsName = (baseName + ".__obelisk_continuations").str();
   std::string layoutName = (baseName + ".__obelisk_frame_layout").str();
   std::string descriptorName =
@@ -147,16 +147,43 @@ makeProcessDescriptor(ModuleOp module, SymbolTable &embeddedSymbols,
     return module.emitError(
         "bytecode-only process descriptor has no encoded entry");
 
-  SmallVector<Attribute> fields;
-  fields.reserve(analysis.getFields().size());
-  for (const auto &field : analysis.getFields())
-    fields.push_back(integerStructAttr(
-        fieldType,
-        {static_cast<uint32_t>(field.kind), static_cast<uint32_t>(field.flags),
-         field.offset, field.size, field.alignment, field.reserved}));
-  makeConstantGlobal(module, location, fieldsType, fieldsName,
-                     LLVM::Linkage::Internal, 8,
-                     ArrayAttr::get(context, fields));
+  // Frame field tables depend only on the frame shape, so processes with
+  // equal shapes share one. The runtime reads them only through
+  // frame_layout.fields and never compares their addresses. Attributes are
+  // uniqued, so equal tables have equal attributes; the name is keyed by a
+  // stable hash of the contents.
+  SmallVector<Attribute> fieldRows;
+  SmallVector<uint64_t> fieldWords;
+  fieldRows.reserve(analysis.getFields().size());
+  for (const auto &field : analysis.getFields()) {
+    uint64_t row[] = {static_cast<uint32_t>(field.kind),
+                      static_cast<uint32_t>(field.flags),
+                      field.offset,
+                      field.size,
+                      field.alignment,
+                      field.reserved};
+    fieldRows.push_back(integerStructAttr(fieldType, row));
+    llvm::append_range(fieldWords, row);
+  }
+  ArrayAttr fields = ArrayAttr::get(context, fieldRows);
+  uint64_t fieldsHash = obelisk_stable_hash(
+      fieldWords.data(), fieldWords.size() * sizeof(uint64_t));
+  std::string sharedName =
+      "__obelisk_frame_fields_" + llvm::utohexstr(fieldsHash, true);
+  std::string fieldsName = sharedName;
+  for (unsigned probe = 1;; ++probe) {
+    auto shared = embeddedSymbols.lookup<LLVM::GlobalOp>(fieldsName);
+    if (!shared) {
+      embeddedSymbols.insert(
+          makeConstantGlobal(module, location, fieldsType, fieldsName,
+                             LLVM::Linkage::Internal, 8, fields));
+      break;
+    }
+    if (shared.getGlobalType() == fieldsType &&
+        shared.getValueOrNull() == fields)
+      break;
+    fieldsName = (sharedName + "_" + Twine(probe)).str();
+  }
   SmallVector<uint64_t> continuations(analysis.getContinuations().begin(),
                                       analysis.getContinuations().end());
   makeConstantGlobal(module, location, continuationsType, continuationsName,
