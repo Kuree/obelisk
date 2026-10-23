@@ -5,6 +5,8 @@
 #include "obelisk/Analysis/ActivationRegionAnalysis.h"
 #include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 
 #include "obelisk/Runtime/ActivationOrder.h"
 #include "obelisk/Runtime/StableHandle.h"
@@ -190,7 +192,20 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
     if (direct.instanceCoordinator || direct.fragmentIDs.empty() ||
         subsumed[record.bit] || !plan.ownerSubsumptionMasks[owner].isZero())
       continue;
-    Node node{{record.bit, direct.body, direct.twoStateBody, {}}, {}, {}};
+    // A ranked sweep selects a member's two-state body by its promotion
+    // certificate alone. An uncertified path-guarded body has no certificate:
+    // only its activation-local probe proves the bits it reads known, and a
+    // never-written variable still holds X (IEEE 1800-2023 6.8, Table 6-7).
+    // Run such a member's four-state body in the sweep.
+    StringRef twoStateBody = direct.twoStateBody;
+    if (sim::SimFuncOp variant = functions.lookup(twoStateBody);
+        variant &&
+        ::obelisk::schedule::has<schedule::metadata::evalPathGuardedTwoState>(
+            variant) &&
+        !::obelisk::schedule::has<
+            schedule::metadata::evalPathGuardedKnownPreserving>(variant))
+      twoStateBody = {};
+    Node node{{record.bit, direct.body, twoStateBody.str(), {}}, {}, {}};
     bool clocked = llvm::any_of(direct.fragmentIDs, [&](uint32_t id) {
       auto fragment = fragments.lookup(id);
       return fragment && llvm::any_of(fragment.getEffects(), [](Attribute raw) {
