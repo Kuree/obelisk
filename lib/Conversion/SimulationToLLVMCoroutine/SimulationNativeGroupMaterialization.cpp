@@ -1786,50 +1786,81 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
   SmallVector<Refinement> refinements;
   DenseMap<Operation *, unsigned> refinementRoots;
   SmallVector<uint64_t> refinementBudgets;
-  // Establish body read/write dependencies with MLIR's call graph before
+  // Establish body read/write dependencies over the call graph before
   // mutation. A worker must neither read a group another worker can change,
   // nor change a definition read by the ordered refinement phase. Shared leaf
   // executors remain immutable; groups with dependencies retain source order.
-  CallGraph callGraph(module);
-  DenseSet<CallGraphNode *> groupNodes, reachesGroup, referencedGroups;
-  DenseMap<CallGraphNode *, SmallVector<CallGraphNode *>> callers;
-  for (CallGraphNode *node : callGraph)
-    for (const auto &edge : *node)
-      callers[edge.getTarget()].push_back(node);
-  SmallVector<CallGraphNode *> pending;
-  for (auto function : groups)
-    if (auto *node = callGraph.lookupNode(&function.getBody())) {
-      groupNodes.insert(node);
-      reachesGroup.insert(node);
-      pending.push_back(node);
+  // The graph has the call edges mlir::CallGraph records between the defined
+  // functions, gathered concurrently: a call to a declaration or through a
+  // pointer reaches no node. Nested callables would need CallGraph's child
+  // edges; then every group keeps its order, which only costs concurrency.
+  SmallVector<LLVM::LLVMFuncOp> definitions;
+  DenseMap<Operation *, unsigned> nodes;
+  for (auto function : module.getOps<LLVM::LLVMFuncOp>())
+    if (!function.isExternal()) {
+      nodes.try_emplace(function, definitions.size());
+      definitions.push_back(function);
     }
+  bool flatCallables = !analysis::anyNested<CallableOpInterface>(
+      module, [&](CallableOpInterface callable) {
+        return callable.getCallableRegion() &&
+               !(isa<LLVM::LLVMFuncOp>(callable) &&
+                 callable->getParentOp() == module.getOperation());
+      });
+  SmallVector<SmallVector<unsigned, 4>> callees(definitions.size());
+  analysis::parallelForChunked(
+      module.getContext(), definitions.size(), [&](size_t index) {
+        llvm::SmallDenseSet<unsigned, 8> unique;
+        definitions[index].walk([&](CallOpInterface call) {
+          auto reference = dyn_cast<SymbolRefAttr>(call.getCallableForCallee());
+          if (!reference || !reference.getNestedReferences().empty())
+            return;
+          auto callee =
+              nodes.find(symbols.lookup(reference.getRootReference()));
+          if (callee != nodes.end() && unique.insert(callee->second).second)
+            callees[index].push_back(callee->second);
+        });
+      });
+  SmallVector<SmallVector<unsigned, 4>> callers(definitions.size());
+  for (auto [caller, targets] : llvm::enumerate(callees))
+    for (unsigned callee : targets)
+      callers[callee].push_back(caller);
+  SmallVector<char> groupNodes(definitions.size(), false),
+      reachesGroup(definitions.size(), false),
+      referencedGroups(definitions.size(), false),
+      reachable(definitions.size(), false);
+  SmallVector<unsigned> pending;
+  for (auto function : groups)
+    if (auto node = nodes.find(function); node != nodes.end()) {
+      groupNodes[node->second] = true;
+      reachesGroup[node->second] = true;
+      pending.push_back(node->second);
+    }
+  SmallVector<unsigned> groupIndices(pending);
   while (!pending.empty()) {
-    auto *node = pending.pop_back_val();
-    for (auto *caller : callers.lookup(node))
-      if (reachesGroup.insert(caller).second)
+    unsigned node = pending.pop_back_val();
+    for (unsigned caller : callers[node])
+      if (!reachesGroup[caller]) {
+        reachesGroup[caller] = true;
         pending.push_back(caller);
+      }
   }
-  DenseSet<CallGraphNode *> reachable;
-  llvm::append_range(pending, groupNodes);
+  llvm::append_range(pending, groupIndices);
   while (!pending.empty()) {
-    auto *node = pending.pop_back_val();
-    if (!reachable.insert(node).second)
+    unsigned node = pending.pop_back_val();
+    if (reachable[node])
       continue;
-    for (const auto &edge : *node) {
-      if (groupNodes.contains(edge.getTarget()))
-        referencedGroups.insert(edge.getTarget());
-      if (!edge.getTarget()->isExternal())
-        pending.push_back(edge.getTarget());
+    reachable[node] = true;
+    for (unsigned callee : callees[node]) {
+      if (groupNodes[callee])
+        referencedGroups[callee] = true;
+      pending.push_back(callee);
     }
   }
   SmallVector<LLVM::LLVMFuncOp> stableDefinitions;
-  for (auto *node : reachable) {
-    if (node->isExternal() || groupNodes.contains(node))
-      continue;
-    if (auto function = dyn_cast<LLVM::LLVMFuncOp>(
-            node->getCallableRegion()->getParentOp()))
+  for (auto [node, function] : llvm::enumerate(definitions))
+    if (reachable[node] && !groupNodes[node])
       stableDefinitions.push_back(function);
-  }
   SmallVector<uint64_t> stableCounts(stableDefinitions.size());
   parallelFor(module.getContext(), 0, stableDefinitions.size(), [&](size_t i) {
     stableDefinitions[i].walk([&](Operation *operation) {
@@ -1859,13 +1890,13 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
     }
   SmallVector<LLVM::LLVMFuncOp> independent;
   for (auto function : groups) {
-    auto *node = callGraph.lookupNode(&function.getBody());
-    if (!node || referencedGroups.contains(node) ||
+    auto node = nodes.find(function);
+    if (!flatCallables || node == nodes.end() ||
+        referencedGroups[node->second] ||
         earlyRefinementTargets.contains(function) ||
         externallyUsedCandidates.contains(function) ||
-        llvm::any_of(*node, [&](const auto &edge) {
-          return reachesGroup.contains(edge.getTarget());
-        }))
+        llvm::any_of(callees[node->second],
+                     [&](unsigned callee) { return reachesGroup[callee]; }))
       continue;
     independent.push_back(function);
   }
