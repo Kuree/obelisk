@@ -407,7 +407,10 @@ publishNativePartitionManifest(mlir::ModuleOp module,
                                const NativePhysicalPartitions &inventory);
 
 mlir::LogicalResult lowerNativeDPICalls(mlir::Operation *root);
-void materializeNativeSpawnBatches(mlir::Operation *root);
+/// Callers batching many bodies pass one `symbols` cache: batching creates
+/// only capture and table globals, never the spawn helpers it looks up.
+void materializeNativeSpawnBatches(
+    mlir::Operation *root, mlir::SymbolTableCollection *symbols = nullptr);
 mlir::LogicalResult
 lowerNativeFunctionBody(mlir::Operation *root,
                         NativeReturnLowering returnLowering,

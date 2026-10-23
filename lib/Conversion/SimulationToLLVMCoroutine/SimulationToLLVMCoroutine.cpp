@@ -2007,8 +2007,11 @@ LogicalResult NativePipelineAnalysis::materialize() {
     ordinaryFunctions.push_back(std::move(*prepared));
   }
   markTiming("ordinary function preparation");
-  for (PreparedOrdinaryNativeFunction &function : ordinaryFunctions)
-    detail::materializeNativeSpawnBatches(function.body);
+  {
+    SymbolTableCollection spawnSymbols;
+    for (PreparedOrdinaryNativeFunction &function : ordinaryFunctions)
+      detail::materializeNativeSpawnBatches(function.body, &spawnSymbols);
+  }
   if (failed(failableParallelForEach(
           context, ordinaryFunctions,
           [&](PreparedOrdinaryNativeFunction &function) {
@@ -2154,10 +2157,11 @@ LogicalResult NativePipelineAnalysis::materialize() {
                  << '\n';
   // Batches introduce module-level capture globals. Create them before the
   // parallel workers, which may only mutate their own process bodies.
+  SymbolTableCollection spawnSymbols;
   for (PreparedPlainNativeProcess &process : plainProcesses)
-    detail::materializeNativeSpawnBatches(process.body);
+    detail::materializeNativeSpawnBatches(process.body, &spawnSymbols);
   for (PreparedSuspendableProcess &process : suspendableProcesses)
-    detail::materializeNativeSpawnBatches(process.ramp);
+    detail::materializeNativeSpawnBatches(process.ramp, &spawnSymbols);
   bool needsCoroutine =
       llvm::any_of(suspendableProcesses, [](const auto &process) {
         return !process.directActivation;

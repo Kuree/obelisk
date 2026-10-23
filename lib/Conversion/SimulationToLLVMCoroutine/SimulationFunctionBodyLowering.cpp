@@ -63,7 +63,8 @@ void foldNativeSpawnInitializationScopes(ModuleOp module) {
 // its containing instance, in creation order, so rows keep program order.
 // Automatic handles still have retain/failure calls between spawns, which are
 // boundaries for this scan.
-void materializeNativeSpawnBatches(Operation *root) {
+void materializeNativeSpawnBatches(Operation *root,
+                                   SymbolTableCollection *cache) {
   ModuleOp module = root->getParentOfType<ModuleOp>();
   MLIRContext *context = root->getContext();
   Type pointer = LLVM::LLVMPointerType::get(context);
@@ -71,7 +72,8 @@ void materializeNativeSpawnBatches(Operation *root) {
   Type i64 = IntegerType::get(context, 64);
   auto rowType =
       LLVM::LLVMStructType::getLiteral(context, {pointer, i64, i64});
-  SymbolTableCollection symbols;
+  SymbolTableCollection local;
+  SymbolTableCollection &symbols = cache ? *cache : local;
   unsigned batchID = 0;
   struct Spawn {
     schedule::NativeSpawnOp operation;
