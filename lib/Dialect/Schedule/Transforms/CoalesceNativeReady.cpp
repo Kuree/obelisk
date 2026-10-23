@@ -18,13 +18,20 @@
 using namespace mlir;
 
 namespace obelisk::schedule {
+LLVM::GlobalOp
+NativeGlobalLookup::operator()(LLVM::AddressOfOp address) const {
+  if (symbols)
+    return address.getGlobal(*symbols);
+  return dyn_cast_or_null<LLVM::GlobalOp>(
+      module->lookup(address.getGlobalNameAttr().getAttr()));
+}
 namespace {
 using Key = std::tuple<Value, SymbolRefAttr, uint64_t, uint64_t>;
-Key readyKey(NativeReadyUpdateOp update, SymbolTableCollection &symbols) {
+Key readyKey(NativeReadyUpdateOp update, const NativeGlobalLookup &globals) {
   Value base = update.getBase();
   SymbolRefAttr global;
   if (auto address = base.getDefiningOp<LLVM::AddressOfOp>();
-      address && address.getGlobal(symbols)) {
+      address && globals(address)) {
     global = address.getGlobalNameAttr();
     base = {};
   }
@@ -93,14 +100,14 @@ struct FunctionReadyUpdates {
   DenseMap<Operation *, Key> keys;
 };
 static FunctionReadyUpdates
-collectReadyUpdates(Operation *operation, SymbolTableCollection &symbols) {
+collectReadyUpdates(Operation *operation, const NativeGlobalLookup &globals) {
   FunctionReadyUpdates result;
   result.function = operation;
   operation->walk(
       [&](NativeReadyUpdateOp op) { result.updates.push_back(op); });
   if (result.updates.size() >= 2)
     for (auto update : result.updates)
-      result.keys.try_emplace(update, readyKey(update, symbols));
+      result.keys.try_emplace(update, readyKey(update, globals));
   return result;
 }
 /// Rewrites only `input.function`, so distinct functions are independent.
@@ -207,11 +214,11 @@ void coalesceNativeReadyUpdates(Operation *operation) {
   coalesceNativeReadyUpdates(operation, symbols);
 }
 void coalesceNativeReadyUpdates(Operation *operation,
-                                SymbolTableCollection &symbols) {
+                                const NativeGlobalLookup &globals) {
   // Inventories are cheap; allocate solver state only for functions that
   // actually have executable ready actions, not millions of unrelated LLVM ops.
   if (isa<FunctionOpInterface>(operation)) {
-    FunctionReadyUpdates input = collectReadyUpdates(operation, symbols);
+    FunctionReadyUpdates input = collectReadyUpdates(operation, globals);
     return coalesceFunction(input);
   }
   // Resolve keys serially with one symbol cache. Each function's chains and
@@ -221,7 +228,7 @@ void coalesceNativeReadyUpdates(Operation *operation,
   operation->walk([&](Operation *op) {
     if (!isa<FunctionOpInterface>(op))
       return;
-    FunctionReadyUpdates input = collectReadyUpdates(op, symbols);
+    FunctionReadyUpdates input = collectReadyUpdates(op, globals);
     if (input.updates.size() >= 2)
       inputs.push_back(std::move(input));
   });

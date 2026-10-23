@@ -2,6 +2,7 @@
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
+#include "mlir/IR/Threading.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
@@ -10,13 +11,15 @@
 #include "obelisk/Dialect/Schedule/Transforms/NativeTransforms.h"
 #include "llvm/ADT/SmallPtrSet.h"
 
+#include <atomic>
+
 using namespace mlir;
 
 namespace obelisk {
 namespace detail {
 void lowerSpecializedNBABatch(schedule::NativeNBABatchOp op);
 void lowerNativeReadyRegion(schedule::NativeReadyRegionOp op,
-                            SymbolTableCollection &symbols);
+                            const schedule::NativeGlobalLookup &globals);
 } // namespace detail
 namespace {
 // Keep readiness semantic until conversion. Only speculatable, effect-free
@@ -24,7 +27,7 @@ namespace {
 // In particular a ready read, ordinary load, transition, call or alias action
 // ends a batch, even when its result is unused.
 void materializeReadyBatches(Operation *operation,
-                             SymbolTableCollection &symbols) {
+                             const schedule::NativeGlobalLookup &globals) {
   SmallVector<SmallVector<Operation *>> batches;
   SmallVector<Block *> blocks;
   llvm::SmallPtrSet<Block *, 16> seen;
@@ -46,8 +49,7 @@ void materializeReadyBatches(Operation *operation,
     auto lhs = a.getDefiningOp<LLVM::AddressOfOp>();
     auto rhs = b.getDefiningOp<LLVM::AddressOfOp>();
     // Distinct aliases or opaque pointers do not prove a shared base.
-    return lhs && rhs && lhs.getGlobal(symbols) &&
-           lhs.getGlobal(symbols) == rhs.getGlobal(symbols);
+    return lhs && rhs && globals(lhs) && globals(lhs) == globals(rhs);
   };
   for (Block *block : blocks) {
     SmallVector<Operation *> pending;
@@ -96,12 +98,21 @@ void materializeReadyBatches(Operation *operation,
       op->erase();
   }
 }
-} // namespace
-void materializeNativeScheduleActions(Operation *operation, bool coalesce,
-                                      bool preserveReadiness,
-                                      SymbolTableCollection *cache) {
-  SymbolTableCollection local;
-  SymbolTableCollection &symbols = cache ? *cache : local;
+
+void declareStaticTransition(ModuleOp module) {
+  OpBuilder builder(module.getContext());
+  auto ptr = LLVM::LLVMPointerType::get(builder.getContext());
+  detail::getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_scheduler_static_transition",
+      LLVM::LLVMVoidType::get(builder.getContext()),
+      {ptr, builder.getI32Type(), builder.getI64Type(), builder.getI64Type(),
+       builder.getI64Type(), builder.getI64Type(), builder.getI64Type(),
+       builder.getI64Type()});
+}
+
+/// Lowers NBA batches. An unspecialized batch adds a module global and a
+/// runtime declaration; `cache`, if given, stays coherent with the global.
+void lowerNBABatches(Operation *operation, SymbolTableCollection *cache) {
   SmallVector<schedule::NativeNBABatchOp> batches;
   operation->walk(
       [&](schedule::NativeNBABatchOp op) { batches.push_back(op); });
@@ -134,7 +145,7 @@ void materializeNativeScheduleActions(Operation *operation, bool coalesce,
       unique.insert(table);
       // Keep a caller's cache coherent; the name is already unique.
       if (cache)
-        symbols.getSymbolTable(module).insert(table);
+        cache->getSymbolTable(module).insert(table);
     }
     Value address = LLVM::AddressOfOp::create(builder, loc, table);
     auto call = LLVM::CallOp::create(
@@ -147,16 +158,23 @@ void materializeNativeScheduleActions(Operation *operation, bool coalesce,
     batch.replaceAllUsesWith(call.getResult());
     batch.erase();
   }
+}
+
+/// Lowers the remaining actions in place. The module is touched only to
+/// declare the static-transition entry, and only if `declareRuntime`.
+void materializeLocalScheduleActions(
+    Operation *operation, bool coalesce, bool preserveReadiness,
+    const schedule::NativeGlobalLookup &globals, bool declareRuntime) {
   if (coalesce && !preserveReadiness)
-    schedule::coalesceNativeReadyUpdates(operation, symbols);
+    schedule::coalesceNativeReadyUpdates(operation, globals);
   SmallVector<schedule::NativeReadyRegionOp> readyRegions;
   if (!preserveReadiness)
     operation->walk(
         [&](schedule::NativeReadyRegionOp op) { readyRegions.push_back(op); });
   for (auto region : readyRegions)
-    detail::lowerNativeReadyRegion(region, symbols);
+    detail::lowerNativeReadyRegion(region, globals);
   if (coalesce && !preserveReadiness)
-    materializeReadyBatches(operation, symbols);
+    materializeReadyBatches(operation, globals);
   SmallVector<schedule::NativeReadyUpdateOp> updates;
   SmallVector<schedule::NativeTransitionOp> transitions;
   SmallVector<schedule::NativeReadyCommitOp> commits;
@@ -176,18 +194,11 @@ void materializeNativeScheduleActions(Operation *operation, bool coalesce,
     else if (auto read = dyn_cast<schedule::NativeReadyReadOp>(op))
       reads.push_back(read);
   });
-  if (!transitions.empty()) {
+  if (declareRuntime && !transitions.empty()) {
     auto module = dyn_cast<ModuleOp>(operation);
     if (!module)
       module = operation->getParentOfType<ModuleOp>();
-    OpBuilder builder(operation->getContext());
-    auto ptr = LLVM::LLVMPointerType::get(builder.getContext());
-    detail::getOrDeclareLLVMFunction(
-        module, "obelisk_rt_v1_scheduler_static_transition",
-        LLVM::LLVMVoidType::get(builder.getContext()),
-        {ptr, builder.getI32Type(), builder.getI64Type(), builder.getI64Type(),
-         builder.getI64Type(), builder.getI64Type(), builder.getI64Type(),
-         builder.getI64Type()});
+    declareStaticTransition(module);
   }
   for (auto read : reads) {
     OpBuilder builder(read);
@@ -256,10 +267,8 @@ void materializeNativeScheduleActions(Operation *operation, bool coalesce,
   }
 }
 
-LogicalResult lowerNativeScheduleActionsToLLVM(Operation *operation,
-                                               SymbolTableCollection *symbols) {
-  materializeNativeScheduleActions(operation, /*coalesce=*/true,
-                                   /*preserveReadiness=*/false, symbols);
+
+LogicalResult convertActionArithmetic(Operation *operation) {
   LLVMTypeConverter converter(operation->getContext());
   RewritePatternSet patterns(operation->getContext());
   arith::populateArithToLLVMConversionPatterns(converter, patterns);
@@ -269,6 +278,89 @@ LogicalResult lowerNativeScheduleActionsToLLVM(Operation *operation,
   target.addIllegalDialect<arith::ArithDialect, cf::ControlFlowDialect>();
   target.markUnknownOpDynamicallyLegal([](Operation *) { return true; });
   return applyPartialConversion(operation, target, std::move(patterns));
+}
+
+/// Lowers each function of `module` independently, as the serial module-wide
+/// lowering would: only batches and runtime declarations touch the module, so
+/// they run first; each worker then rewrites and converts its own function.
+/// Returns nothing, before any change, if an operation outside the functions
+/// is not already LLVM IR.
+std::optional<LogicalResult> lowerModuleActionsInParallel(ModuleOp module) {
+  MLIRContext *context = module.getContext();
+  SmallVector<LLVM::LLVMFuncOp> functions;
+  SmallVector<Operation *> others;
+  for (Operation &operation : *module.getBody()) {
+    if (auto function = dyn_cast<LLVM::LLVMFuncOp>(operation)) {
+      if (!function.isExternal())
+        functions.push_back(function);
+    } else {
+      others.push_back(&operation);
+    }
+  }
+  std::atomic<bool> foreign = false;
+  parallelForEach(context, others, [&](Operation *operation) {
+    operation->walk([&](Operation *nested) {
+      if (isa_and_nonnull<LLVM::LLVMDialect>(nested->getDialect()))
+        return WalkResult::advance();
+      foreign = true;
+      return WalkResult::interrupt();
+    });
+  });
+  if (foreign)
+    return std::nullopt;
+  lowerNBABatches(module, /*cache=*/nullptr);
+  std::atomic<bool> transitions = false;
+  parallelForEach(context, functions, [&](LLVM::LLVMFuncOp function) {
+    if (function
+            .walk([](schedule::NativeTransitionOp) {
+              return WalkResult::interrupt();
+            })
+            .wasInterrupted())
+      transitions = true;
+  });
+  if (transitions)
+    declareStaticTransition(module);
+  // Workers add or remove no symbols.
+  SymbolTable symbols(module);
+  schedule::NativeGlobalLookup globals(symbols);
+  return failableParallelForEach(
+      context, functions, [&](LLVM::LLVMFuncOp function) {
+        materializeLocalScheduleActions(function, /*coalesce=*/true,
+                                        /*preserveReadiness=*/false, globals,
+                                        /*declareRuntime=*/false);
+        bool converts = function
+                            .walk([](Operation *operation) {
+                              return isa_and_nonnull<arith::ArithDialect,
+                                                     cf::ControlFlowDialect>(
+                                         operation->getDialect())
+                                         ? WalkResult::interrupt()
+                                         : WalkResult::advance();
+                            })
+                            .wasInterrupted();
+        return converts ? convertActionArithmetic(function) : success();
+      });
+}
+} // namespace
+
+void materializeNativeScheduleActions(Operation *operation, bool coalesce,
+                                      bool preserveReadiness,
+                                      SymbolTableCollection *cache) {
+  SymbolTableCollection local;
+  lowerNBABatches(operation, cache);
+  materializeLocalScheduleActions(operation, coalesce, preserveReadiness,
+                                  cache ? *cache : local,
+                                  /*declareRuntime=*/true);
+}
+
+LogicalResult lowerNativeScheduleActionsToLLVM(Operation *operation,
+                                               SymbolTableCollection *symbols) {
+  if (auto module = dyn_cast<ModuleOp>(operation); module && !symbols)
+    if (std::optional<LogicalResult> lowered =
+            lowerModuleActionsInParallel(module))
+      return *lowered;
+  materializeNativeScheduleActions(operation, /*coalesce=*/true,
+                                   /*preserveReadiness=*/false, symbols);
+  return convertActionArithmetic(operation);
 }
 
 #define GEN_PASS_DEF_CONVERTNATIVESCHEDULEACTIONSTOLLVMPASS

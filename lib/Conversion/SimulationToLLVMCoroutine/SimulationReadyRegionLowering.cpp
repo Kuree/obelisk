@@ -5,6 +5,7 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/Mem2Reg.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "obelisk/Dialect/Schedule/Transforms/NativeTransforms.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringSet.h"
 #include <map>
@@ -20,7 +21,8 @@ struct Key {
            std::tie(other.global, other.capacity, other.word);
   }
 };
-std::optional<Key> keyFor(Operation *op, SymbolTableCollection &symbols) {
+std::optional<Key> keyFor(Operation *op,
+                          const schedule::NativeGlobalLookup &globals) {
   Value base;
   uint64_t capacity, word;
   if (auto update = dyn_cast<schedule::NativeReadyUpdateOp>(op)) {
@@ -39,7 +41,7 @@ std::optional<Key> keyFor(Operation *op, SymbolTableCollection &symbols) {
     return std::nullopt;
   }
   auto address = base.getDefiningOp<LLVM::AddressOfOp>();
-  if (!address || !address.getGlobal(symbols))
+  if (!address || !globals(address))
     return std::nullopt;
   return Key{address.getGlobalName(), capacity, word};
 }
@@ -69,7 +71,7 @@ bool readinessTransparentCall(Operation *op) {
 // the ready set. All other memory/control effects materialize it first. This
 // includes indirect aliases, atomics, callbacks, transitions and NBA actions.
 bool isBoundary(Operation *op, const std::map<Key, unsigned> &keys,
-                SymbolTableCollection &symbols) {
+                const schedule::NativeGlobalLookup &globals) {
   if (isa<schedule::NativeReadyYieldOp>(op))
     return true;
   if (isa<CallOpInterface>(op))
@@ -82,7 +84,7 @@ bool isBoundary(Operation *op, const std::map<Key, unsigned> &keys,
     if (root.getDefiningOp<LLVM::AllocaOp>())
       return true;
     auto address = root.getDefiningOp<LLVM::AddressOfOp>();
-    if (!address || !address.getGlobal(symbols))
+    if (!address || !globals(address))
       return false;
     return llvm::none_of(keys, [&](const auto &entry) {
       return entry.first.global == address.getGlobalName();
@@ -118,7 +120,7 @@ bool isBoundary(Operation *op, const std::map<Key, unsigned> &keys,
 } // namespace
 
 void lowerNativeReadyRegion(schedule::NativeReadyRegionOp region,
-                            SymbolTableCollection &symbols) {
+                            const schedule::NativeGlobalLookup &globals) {
   std::map<Key, unsigned> keys;
   SmallVector<Operation *> operations;
   llvm::StringMap<uint64_t> capacities;
@@ -126,7 +128,7 @@ void lowerNativeReadyRegion(schedule::NativeReadyRegionOp region,
   for (Block &block : region.getBody())
     for (Operation &op : block) {
       operations.push_back(&op);
-      if (auto key = keyFor(&op, symbols)) {
+      if (auto key = keyFor(&op, globals)) {
         ++keys[*key];
         auto [prior, inserted] =
             capacities.try_emplace(key->global, key->capacity);
@@ -141,8 +143,8 @@ void lowerNativeReadyRegion(schedule::NativeReadyRegionOp region,
       ++it;
   // Bound generated flush code for bodies with many opaque call boundaries.
   unsigned boundaries = llvm::count_if(operations, [&](Operation *op) {
-    auto key = keyFor(op, symbols);
-    return !(key && keys.count(*key)) && isBoundary(op, keys, symbols);
+    auto key = keyFor(op, globals);
+    return !(key && keys.count(*key)) && isBoundary(op, keys, globals);
   });
   if (keys.size() > 64 || keys.size() * uint64_t(boundaries + 1) > 4096)
     keys.clear();
@@ -156,11 +158,11 @@ void lowerNativeReadyRegion(schedule::NativeReadyRegionOp region,
   DenseMap<Operation *, uint64_t> additions;
   llvm::SmallPtrSet<Operation *, 16> barriers;
   for (Operation *op : operations) {
-    auto key = keyFor(op, symbols);
+    auto key = keyFor(op, globals);
     if (key && keys.count(*key)) {
       if (!isa<schedule::NativeReadyReadOp>(op))
         additions[op] = uint64_t{1} << keys.at(*key);
-    } else if (isBoundary(op, keys, symbols))
+    } else if (isBoundary(op, keys, globals))
       barriers.insert(op);
   }
   DenseMap<Block *, uint64_t> incoming, outgoing;
@@ -243,7 +245,7 @@ void lowerNativeReadyRegion(schedule::NativeReadyRegionOp region,
   };
   for (Operation *op : operations) {
     b.setInsertionPoint(op);
-    auto key = keyFor(op, symbols);
+    auto key = keyFor(op, globals);
     if (key && pending.count(*key)) {
       auto &value = pending.at(*key);
       if (auto read = dyn_cast<schedule::NativeReadyReadOp>(op)) {
