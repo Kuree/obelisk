@@ -92,6 +92,14 @@ bool isDirectOutput(Operation *operation) {
   return display && isDirectOutput(display);
 }
 
+// Assertion control (IEEE 1800-2023 20.11) changes only through a control
+// task, which a dry-run probe never admits, so a probe reads the enablement
+// the attempt itself sees.
+bool isAssertionControlRead(Operation *operation) {
+  return isa<sim::SimAssertionEnabledOp, sim::SimAssertionActionStateOp>(
+      operation);
+}
+
 } // namespace
 /// Preserve the compact-NBA conversion proof on the operation that consumes
 /// it. Function and NBA conversion patterns may run in either order, so the
@@ -1312,6 +1320,8 @@ LogicalResult materializeEvalTwoStateVariants(
               sim::SimStatusCheckOp, sim::SimTimeNowOp, cf::BranchOp,
               cf::CondBranchOp>(operation))
         return;
+      if (isAssertionControlRead(operation))
+        return;
       if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
         if (isPureValueHelper(
                 isPureValueHelper,
@@ -1576,7 +1586,8 @@ LogicalResult materializeEvalTwoStateVariants(
       }
       if (isa<sim::SimRefLoadOp, sim::SimNetReadOp, sim::SimReturnOp,
               sim::SimNBAEnqueueOp, sim::SimTerminationRequestedOp,
-              sim::SimTimeNowOp, cf::BranchOp, cf::CondBranchOp>(operation))
+              sim::SimTimeNowOp, cf::BranchOp, cf::CondBranchOp>(operation) ||
+          isAssertionControlRead(operation))
         return;
       if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
         if (isPureValueHelper(
