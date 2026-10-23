@@ -5,8 +5,11 @@
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/IR/Threading.h"
+#include "mlir/IR/Verifier.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
+#include "obelisk/Analysis/ParallelWalk.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -62,6 +65,81 @@ inline void reportNativePrunedSymbols(const llvm::StringSet<> &removed,
                  << " category=" << category << " symbols=" << count << '\n';
 }
 
+/// SymbolDCE (mlir/lib/Transforms/SymbolDCE.cpp) for a module without nested
+/// symbol tables. Each top-level operation's symbol uses are gathered
+/// concurrently; liveness then propagates from the same roots, and dead
+/// symbols are erased in module order. Returns false without changing
+/// anything when SymbolDCE itself must run: for nested symbol tables, or for a
+/// live operation whose uses cannot be enumerated, which it reports.
+inline bool eraseDeadModuleSymbols(mlir::ModuleOp module) {
+  if (obelisk::analysis::anyNested<mlir::Operation *>(
+          module, [&](mlir::Operation *operation) {
+            return operation != module.getOperation() &&
+                   operation->hasTrait<mlir::OpTrait::SymbolTable>();
+          }))
+    return false;
+  llvm::SmallVector<mlir::Operation *> operations;
+  for (mlir::Operation &operation : *module.getBody())
+    operations.push_back(&operation);
+  // Without nested symbol tables only flat references can resolve.
+  llvm::SmallVector<llvm::SmallVector<mlir::StringAttr, 2>> uses(
+      operations.size());
+  llvm::SmallVector<char> unknown(operations.size(), false);
+  obelisk::analysis::parallelForChunked(
+      module.getContext(), operations.size(), [&](size_t index) {
+        auto found = mlir::SymbolTable::getSymbolUses(operations[index]);
+        if (!found) {
+          unknown[index] = true;
+          return;
+        }
+        for (const auto &use : *found)
+          if (use.getSymbolRef().getNestedReferences().empty())
+            uses[index].push_back(use.getSymbolRef().getRootReference());
+      });
+  // Resolve like mlir::SymbolTable: the first operation with a name.
+  llvm::DenseMap<mlir::StringAttr, unsigned> symbols;
+  for (auto [index, operation] : llvm::enumerate(operations))
+    if (auto name = operation->getAttrOfType<mlir::StringAttr>(
+            mlir::SymbolTable::getSymbolAttrName()))
+      symbols.try_emplace(name, index);
+  bool hidden = true;
+  if (auto self =
+          llvm::dyn_cast<mlir::SymbolOpInterface>(module.getOperation());
+      self && module->getParentOp())
+    hidden = self.isPrivate();
+  llvm::SmallVector<char> live(operations.size(), false);
+  llvm::SmallVector<unsigned> worklist;
+  for (auto [index, operation] : llvm::enumerate(operations)) {
+    auto symbol = llvm::dyn_cast<mlir::SymbolOpInterface>(operation);
+    if (!symbol) {
+      worklist.push_back(index);
+      continue;
+    }
+    bool discardable =
+        (hidden || symbol.isPrivate()) && symbol.canDiscardOnUseEmpty();
+    if (!discardable && !live[index]) {
+      live[index] = true;
+      worklist.push_back(index);
+    }
+  }
+  while (!worklist.empty()) {
+    unsigned index = worklist.pop_back_val();
+    if (unknown[index])
+      return false;
+    for (mlir::StringAttr name : uses[index]) {
+      auto found = symbols.find(name);
+      if (found == symbols.end() || live[found->second])
+        continue;
+      live[found->second] = true;
+      worklist.push_back(found->second);
+    }
+  }
+  for (auto [index, operation] : llvm::enumerate(operations))
+    if (llvm::isa<mlir::SymbolOpInterface>(operation) && !live[index])
+      operation->erase();
+  return true;
+}
+
 /// Give SymbolDCE the closed-world visibility of a generated executable.
 /// LLVM linkage is left intact for translation and subsequent partitioning.
 /// Keep the state globals consumed by the LLVM-level lifecycle builder until
@@ -92,11 +170,16 @@ pruneNativeExecutableSymbols(mlir::ModuleOp module,
     candidates.insert(name);
     symbol.setPrivate();
   }
-  mlir::PassManager passes(module.getContext());
-  passes.enableVerifier(verifyEach);
-  passes.addPass(mlir::createSymbolDCEPass());
-  if (mlir::failed(passes.run(module)))
-    return mlir::failure();
+  if (eraseDeadModuleSymbols(module)) {
+    if (verifyEach && mlir::failed(mlir::verify(module)))
+      return mlir::failure();
+  } else {
+    mlir::PassManager passes(module.getContext());
+    passes.enableVerifier(verifyEach);
+    passes.addPass(mlir::createSymbolDCEPass());
+    if (mlir::failed(passes.run(module)))
+      return mlir::failure();
+  }
   for (mlir::Operation &operation : module.getBody()->getOperations())
     if (auto symbol = mlir::dyn_cast<mlir::SymbolOpInterface>(&operation))
       candidates.erase(symbol.getName());
