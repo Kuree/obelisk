@@ -1,6 +1,7 @@
 //===- DPIEffectAnalysis.cpp - Design state reachable from DPI calls ------===//
 
 #include "obelisk/Analysis/DPIEffectAnalysis.h"
+#include "obelisk/Analysis/ParallelWalk.h"
 #include "obelisk/Dialect/DPI/DPIDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -114,9 +115,8 @@ DPIEffectAnalysis::DPIEffectAnalysis(sim::SimDesignOp design) {
   else
     transparentExports = exportClosuresAreTransparent(design);
   transparentContext = vpiOff && transparentExports;
-  design.walk([&](sim::SimDPICallOp call) {
-    opaqueCalls |= mayAccessDesign(call);
-  });
+  opaqueCalls = anyNested<sim::SimDPICallOp>(
+      design, [&](sim::SimDPICallOp call) { return mayAccessDesign(call); });
 }
 
 bool DPIEffectAnalysis::mayAccessDesign(sim::SimDPICallOp call) const {

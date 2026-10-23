@@ -20,6 +20,8 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/IR/Threading.h"
+#include "obelisk/Analysis/ParallelWalk.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
@@ -77,9 +79,14 @@ LogicalResult addressNativeStateThroughBases(ModuleOp module) {
   }
   if (bases.empty())
     return success();
-  for (auto function : module.getOps<LLVM::LLVMFuncOp>()) {
-    if (function.isExternal())
-      continue;
+  // Each function rewrites only its own body.
+  SmallVector<LLVM::LLVMFuncOp> functions;
+  for (auto function : module.getOps<LLVM::LLVMFuncOp>())
+    if (!function.isExternal())
+      functions.push_back(function);
+  analysis::parallelForChunked(context, functions.size(), [&](size_t index) {
+    LLVM::LLVMFuncOp function = functions[index];
+    OpBuilder builder(context);
     // A coroutine would carry the base across its suspensions in the frame.
     llvm::MapVector<StringAttr, SmallVector<LLVM::AddressOfOp>> uses;
     bool coroutine = false;
@@ -91,7 +98,7 @@ LogicalResult addressNativeStateThroughBases(ModuleOp module) {
           uses[address.getGlobalNameAttr().getAttr()].push_back(address);
     });
     if (coroutine || uses.empty())
-      continue;
+      return;
     // Within one block, code generation already folds the smallest offset
     // into the plane address and reaches the rest with immediates.
     DenseSet<Block *> blocks;
@@ -100,7 +107,7 @@ LogicalResult addressNativeStateThroughBases(ModuleOp module) {
         for (Operation *user : address->getUsers())
           blocks.insert(user->getBlock());
     if (blocks.size() < 2)
-      continue;
+      return;
     builder.setInsertionPointToStart(&function.getBody().front());
     for (auto &[plane, addresses] : uses) {
       Base base = bases.lookup(plane);
@@ -119,7 +126,7 @@ LogicalResult addressNativeStateThroughBases(ModuleOp module) {
     for (auto &[plane, addresses] : uses)
       for (LLVM::AddressOfOp address : addresses)
         address.erase();
-  }
+  });
   return success();
 }
 

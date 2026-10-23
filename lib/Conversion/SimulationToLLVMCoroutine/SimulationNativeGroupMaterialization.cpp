@@ -4,6 +4,7 @@
 #include "SimulationAOTPlanning.h"
 #include "SimulationEvalReadySet.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Analysis/ParallelWalk.h"
 #include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
@@ -292,109 +293,146 @@ llvm::StringMap<NativeStateFootprint>
 buildNativeStateFootprints(ModuleOp module,
                            const llvm::StringMap<Type> &globalTypes,
                            const llvm::StringSet<> &metadataOnly) {
-  llvm::StringMap<LLVM::LLVMFuncOp> functions;
+  SmallVector<LLVM::LLVMFuncOp> functions;
+  llvm::StringMap<unsigned> indices;
   for (auto function : module.getOps<LLVM::LLVMFuncOp>())
-    functions.try_emplace(function.getSymName(), function);
+    if (indices.try_emplace(function.getSymName(), functions.size()).second)
+      functions.push_back(function);
+  // A function's own accesses, and the functions it calls. Consumers only use
+  // exact footprints, and exactness does not depend on traversal order: a
+  // footprint is exact iff every access in the call closure has a static
+  // state range and the closure is defined, direct and non-recursive.
+  struct LocalFootprint {
+    NativeStateFootprint accesses{true, {}, {}};
+    SmallVector<StringRef> callees;
+  };
+  SmallVector<LocalFootprint> locals(functions.size());
+  analysis::parallelForChunked(
+      module.getContext(), functions.size(), [&](size_t index) {
+        LLVM::LLVMFuncOp function = functions[index];
+        if (function.isExternal() ||
+            metadataOnly.contains(function.getSymName()))
+          return;
+        NativeStateFootprint &result = locals[index].accesses;
+        auto memory = [&](Operation *operation, Value pointer,
+                          std::optional<uint64_t> bytes) {
+          Value root = pointer;
+          while (auto gep = root.getDefiningOp<LLVM::GEPOp>())
+            root = gep.getBase();
+          if (root.getDefiningOp<LLVM::AllocaOp>())
+            return;
+          auto address = root.getDefiningOp<LLVM::AddressOfOp>();
+          if (!address || !globalTypes.contains(address.getGlobalName())) {
+            result.exact = false;
+            return;
+          }
+          StringRef global = address.getGlobalName();
+          if (global != "__obelisk_state_value" &&
+              global != "__obelisk_state_unknown")
+            return;
+          if (!bytes) {
+            result.exact = false;
+            return;
+          }
+          auto offset = staticByteOffset(pointer);
+          auto array =
+              dyn_cast<LLVM::LLVMArrayType>(globalTypes.lookup(global));
+          auto interval =
+              schedule::get<schedule::Field::EvalStateAccessBytes>(operation);
+          if (array && interval && interval.size() == 2 && interval[0] >= 0 &&
+              interval[1] > interval[0]) {
+            uint64_t begin = interval[0];
+            uint64_t end =
+                std::min(uint64_t(interval[1]), array.getNumElements());
+            if (begin < end) {
+              (global == "__obelisk_state_value" ? result.value
+                                                 : result.unknown)
+                  .emplace_back(begin, end);
+              return;
+            }
+          }
+          if (!offset || !array || *offset > array.getNumElements() ||
+              *bytes > array.getNumElements() - *offset) {
+            result.exact = false;
+            return;
+          }
+          if (*bytes)
+            (global == "__obelisk_state_value" ? result.value : result.unknown)
+                .emplace_back(*offset, *offset + *bytes);
+        };
+        function.walk([&](Operation *operation) {
+          if (!result.exact || operation == function.getOperation())
+            return;
+          if (auto call = dyn_cast<LLVM::CallOp>(operation)) {
+            if (call.getCallee())
+              locals[index].callees.push_back(*call.getCallee());
+            else
+              result.exact = false;
+          } else if (auto load = dyn_cast<LLVM::LoadOp>(operation)) {
+            auto type = dyn_cast<IntegerType>(load.getType());
+            memory(operation, load.getAddr(),
+                   type && type.getWidth() % 8 == 0
+                       ? std::optional<uint64_t>(type.getWidth() / 8)
+                       : std::nullopt);
+          } else if (auto store = dyn_cast<LLVM::StoreOp>(operation)) {
+            auto type = dyn_cast<IntegerType>(store.getValue().getType());
+            memory(operation, store.getAddr(),
+                   type && type.getWidth() % 8 == 0
+                       ? std::optional<uint64_t>(type.getWidth() / 8)
+                       : std::nullopt);
+          } else if (isa<LLVM::MemcpyOp, LLVM::MemsetOp>(operation)) {
+            Value length = isa<LLVM::MemcpyOp>(operation)
+                               ? cast<LLVM::MemcpyOp>(operation).getLen()
+                               : cast<LLVM::MemsetOp>(operation).getLen();
+            APInt bytes;
+            if (!matchPattern(length, m_ConstantInt(&bytes)) ||
+                bytes.getActiveBits() > 64)
+              result.exact = false;
+            else if (auto copy = dyn_cast<LLVM::MemcpyOp>(operation)) {
+              memory(operation, copy.getDst(), bytes.getZExtValue());
+              memory(operation, copy.getSrc(), bytes.getZExtValue());
+            } else
+              memory(operation, cast<LLVM::MemsetOp>(operation).getDst(),
+                     bytes.getZExtValue());
+          } else if (!isa<LLVM::ReturnOp, LLVM::AllocaOp>(operation) &&
+                     !isMemoryEffectFree(operation))
+            result.exact = false;
+        });
+      });
+
+  // Close over calls. A function reached again while its own closure is
+  // still open is recursive, so it and every caller on the path are inexact.
   llvm::StringMap<NativeStateFootprint> results;
-  llvm::StringSet<> visiting;
+  enum class State : uint8_t { Unvisited, Open, Done };
+  SmallVector<State> states(functions.size(), State::Unvisited);
   std::function<NativeStateFootprint(StringRef)> visit = [&](StringRef name) {
     if (metadataOnly.contains(name))
       return NativeStateFootprint{true, {}, {}};
-    if (auto found = results.find(name); found != results.end())
-      return found->second;
-    auto function = functions.lookup(name);
-    if (!function || function.isExternal() || !visiting.insert(name).second)
+    auto found = indices.find(name);
+    if (found == indices.end())
       return NativeStateFootprint{};
-    NativeStateFootprint result{true, {}, {}};
-    auto memory = [&](Operation *operation, Value pointer,
-                      std::optional<uint64_t> bytes) {
-      Value root = pointer;
-      while (auto gep = root.getDefiningOp<LLVM::GEPOp>())
-        root = gep.getBase();
-      if (root.getDefiningOp<LLVM::AllocaOp>())
-        return;
-      auto address = root.getDefiningOp<LLVM::AddressOfOp>();
-      if (!address || !globalTypes.contains(address.getGlobalName())) {
-        result.exact = false;
-        return;
-      }
-      StringRef global = address.getGlobalName();
-      if (global != "__obelisk_state_value" &&
-          global != "__obelisk_state_unknown")
-        return;
-      if (!bytes) {
-        result.exact = false;
-        return;
-      }
-      auto offset = staticByteOffset(pointer);
-      auto array = dyn_cast<LLVM::LLVMArrayType>(globalTypes.lookup(global));
-      auto interval =
-          schedule::get<schedule::Field::EvalStateAccessBytes>(operation);
-      if (array && interval && interval.size() == 2 && interval[0] >= 0 &&
-          interval[1] > interval[0]) {
-        uint64_t begin = interval[0];
-        uint64_t end = std::min(uint64_t(interval[1]), array.getNumElements());
-        if (begin < end) {
-          (global == "__obelisk_state_value" ? result.value : result.unknown)
-              .emplace_back(begin, end);
-          return;
-        }
-      }
-      if (!offset || !array || *offset > array.getNumElements() ||
-          *bytes > array.getNumElements() - *offset) {
-        result.exact = false;
-        return;
-      }
-      if (*bytes)
-        (global == "__obelisk_state_value" ? result.value : result.unknown)
-            .emplace_back(*offset, *offset + *bytes);
-    };
-    function.walk([&](Operation *operation) {
-      if (!result.exact || operation == function.getOperation())
-        return;
-      if (auto call = dyn_cast<LLVM::CallOp>(operation)) {
-        auto nested = call.getCallee() ? visit(*call.getCallee())
-                                       : NativeStateFootprint{};
-        result.exact &= nested.exact;
-        llvm::append_range(result.value, nested.value);
-        llvm::append_range(result.unknown, nested.unknown);
-      } else if (auto load = dyn_cast<LLVM::LoadOp>(operation)) {
-        auto type = dyn_cast<IntegerType>(load.getType());
-        memory(operation, load.getAddr(),
-               type && type.getWidth() % 8 == 0
-                   ? std::optional<uint64_t>(type.getWidth() / 8)
-                   : std::nullopt);
-      } else if (auto store = dyn_cast<LLVM::StoreOp>(operation)) {
-        auto type = dyn_cast<IntegerType>(store.getValue().getType());
-        memory(operation, store.getAddr(),
-               type && type.getWidth() % 8 == 0
-                   ? std::optional<uint64_t>(type.getWidth() / 8)
-                   : std::nullopt);
-      } else if (isa<LLVM::MemcpyOp, LLVM::MemsetOp>(operation)) {
-        Value length = isa<LLVM::MemcpyOp>(operation)
-                           ? cast<LLVM::MemcpyOp>(operation).getLen()
-                           : cast<LLVM::MemsetOp>(operation).getLen();
-        APInt bytes;
-        if (!matchPattern(length, m_ConstantInt(&bytes)) ||
-            bytes.getActiveBits() > 64)
-          result.exact = false;
-        else if (auto copy = dyn_cast<LLVM::MemcpyOp>(operation)) {
-          memory(operation, copy.getDst(), bytes.getZExtValue());
-          memory(operation, copy.getSrc(), bytes.getZExtValue());
-        } else
-          memory(operation, cast<LLVM::MemsetOp>(operation).getDst(),
-                 bytes.getZExtValue());
-      } else if (!isa<LLVM::ReturnOp, LLVM::AllocaOp>(operation) &&
-                 !isMemoryEffectFree(operation))
-        result.exact = false;
-    });
+    unsigned index = found->second;
+    if (states[index] == State::Done)
+      return results.find(name)->second;
+    if (functions[index].isExternal() || states[index] == State::Open)
+      return NativeStateFootprint{};
+    states[index] = State::Open;
+    NativeStateFootprint result = locals[index].accesses;
+    for (StringRef callee : locals[index].callees) {
+      NativeStateFootprint nested = visit(callee);
+      result.exact &= nested.exact;
+      llvm::append_range(result.value, nested.value);
+      llvm::append_range(result.unknown, nested.unknown);
+    }
+    if (!result.exact)
+      result = NativeStateFootprint{};
     normalizeNativeByteFootprint(result.value);
     normalizeNativeByteFootprint(result.unknown);
-    visiting.erase(name);
+    states[index] = State::Done;
     results.try_emplace(name, result);
     return result;
   };
-  for (auto function : module.getOps<LLVM::LLVMFuncOp>())
+  for (auto function : functions)
     visit(function.getSymName());
   return results;
 }
@@ -1698,11 +1736,12 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
             ::obelisk::schedule::Field::EvalDataflowCandidate>(function);
       })) {
     SmallVector<Region *> scopes;
-    module.walk([&](Operation *operation) {
-      if (operation->hasTrait<OpTrait::SymbolTable>())
-        for (Region &region : operation->getRegions())
-          scopes.push_back(&region);
-    });
+    for (Operation *operation : analysis::collectInWalkOrder<Operation *>(
+             module, [](Operation *operation) {
+               return operation->hasTrait<OpTrait::SymbolTable>();
+             }))
+      for (Region &region : operation->getRegions())
+        scopes.push_back(&region);
     auto uses = collectNativeSymbolUses(module.getContext(), scopes);
     if (!uses) {
       // An unknown symbol scope cannot prove a transient candidate unused.

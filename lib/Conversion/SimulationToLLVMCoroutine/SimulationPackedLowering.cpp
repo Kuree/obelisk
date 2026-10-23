@@ -4,6 +4,7 @@
 #include "SimulationLocalStorageLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 #include "obelisk/Analysis/LocalStorageAnalysis.h"
+#include "obelisk/Analysis/ParallelWalk.h"
 #include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
@@ -1436,7 +1437,8 @@ LogicalResult lowerPackedSimulationOperations(
   // These summaries describe semantic scalar arguments and results. Packed
   // conversion has changed their ABI and indices; no later pass may reuse
   // them as facts about the physical planes.
-  module.walk([&](Operation *operation) {
+  // Each operation drops only its own attributes.
+  auto dropFacts = [](Operation *operation) {
     sim::remove<sim::metadata::ResultRanges>(operation);
     sim::remove<sim::metadata::ResultExprs>(operation);
     sim::remove<sim::metadata::KnownLogicResult>(operation);
@@ -1444,7 +1446,14 @@ LogicalResult lowerPackedSimulationOperations(
       for (unsigned index = 0; index < function.getNumArguments(); ++index)
         function.removeArgAttr(index,
                                sim::metadata::IntegerRange::getNameStr());
-  });
+  };
+  SmallVector<Operation *> topLevel;
+  for (Operation &operation : *module.getBody())
+    topLevel.push_back(&operation);
+  analysis::parallelForChunked(
+      module.getContext(), topLevel.size(),
+      [&](size_t index) { topLevel[index]->walk(dropFacts); });
+  dropFacts(module);
   markTiming("two-state block specialization");
   SmallVector<runtime::RTScratchOp> scratchBuffers;
   module.walk(

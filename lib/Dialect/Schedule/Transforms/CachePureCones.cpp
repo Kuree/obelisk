@@ -4,7 +4,9 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/IR/Threading.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "obelisk/Analysis/ParallelWalk.h"
 #include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/Transforms/NativeTransforms.h"
 #include "obelisk/Dialect/Schedule/Transforms/Passes.h"
@@ -36,75 +38,116 @@ bool isDeterministicValueOp(Operation *op) {
          llvm::all_of(op->getResultTypes(),
                       [](Type type) { return cacheWidth(type).has_value(); });
 }
+// Keep an existing value helper's ABI and cache the complete function.
+bool isAlreadyPure(LLVM::LLVMFuncOp function) {
+  return !function
+              .walk([&](Operation *op) {
+                return op != function &&
+                               !op->hasTrait<OpTrait::IsTerminator>() &&
+                               !isDeterministicValueOp(op)
+                           ? WalkResult::interrupt()
+                           : WalkResult::advance();
+              })
+              .wasInterrupted();
+}
+// Outline at uses that must execute: loads and publications stay in the
+// caller; the helper receives their already captured SSA snapshots.
+llvm::SetVector<Value> coneRoots(Block &block) {
+  llvm::SetVector<Value> roots;
+  for (Operation &op : block)
+    if (!isDeterministicValueOp(&op) || op.hasTrait<OpTrait::IsTerminator>())
+      for (Value value : op.getOperands())
+        if (cacheWidth(value.getType()))
+          roots.insert(value);
+  return roots;
+}
+// The closed pure computation of `block` that `root` would be outlined from,
+// and its inputs.
+struct PureCone {
+  llvm::SetVector<Operation *> slice;
+  llvm::SetVector<Value> inputs;
+};
+std::optional<PureCone> findCone(Block &block, Value root, uint64_t minimumCost,
+                                 uint64_t maximumCost) {
+  Operation *definition = root.getDefiningOp();
+  if (!definition || definition->getBlock() != &block ||
+      !isDeterministicValueOp(definition) || !cacheWidth(root.getType()))
+    return std::nullopt;
+  PureCone cone;
+  llvm::SetVector<Operation *> &slice = cone.slice;
+  BackwardSliceOptions options;
+  options.inclusive = true;
+  options.omitBlockArguments = true;
+  options.filter = [&](Operation *op) {
+    return op->getBlock() == &block && isDeterministicValueOp(op);
+  };
+  if (failed(getBackwardSlice(definition, &slice, options)) ||
+      slice.size() < minimumCost || slice.size() > maximumCost)
+    return std::nullopt;
+  llvm::SetVector<Value> &inputs = cone.inputs;
+  bool closed = true;
+  for (Operation *op : slice) {
+    for (Value operand : op->getOperands())
+      if (!slice.contains(operand.getDefiningOp()))
+        inputs.insert(operand);
+    for (Value result : op->getResults())
+      if (result != root &&
+          llvm::any_of(result.getUsers(),
+                       [&](Operation *user) { return !slice.contains(user); }))
+        closed = false;
+  }
+  unsigned inputBits = 0;
+  for (Value input : inputs) {
+    auto width = cacheWidth(input.getType());
+    if (!width || *width > 256 - inputBits) {
+      closed = false;
+      break;
+    }
+    inputBits += *width;
+  }
+  if (!closed || inputs.empty() || inputs.size() > 4)
+    return std::nullopt;
+  return cone;
+}
 unsigned outlineCones(ModuleOp module, uint64_t minimumCost,
                       uint64_t maximumCost, unsigned maximumCones) {
   SmallVector<LLVM::LLVMFuncOp> functions(module.getOps<LLVM::LLVMFuncOp>());
+  // Outlining changes only its own function and adds helpers. Find, without
+  // changing IR, the functions that have a cone to outline; the serial pass
+  // below revisits only those, in order.
+  SmallVector<char> hasCone(functions.size(), false);
+  analysis::parallelForChunked(
+      module.getContext(), functions.size(), [&](size_t index) {
+        LLVM::LLVMFuncOp function = functions[index];
+        if (function.isExternal() || isAlreadyPure(function))
+          return;
+        for (Block &block : function.getBody())
+          for (Value root : coneRoots(block))
+            if (findCone(block, root, minimumCost, maximumCost)) {
+              hasCone[index] = true;
+              return;
+            }
+      });
   SymbolTable symbols(module);
   unsigned outlined = 0;
-  for (auto function : functions) {
+  for (auto [index, function] : llvm::enumerate(functions)) {
     if (function.isExternal() || function->hasAttr("schedule.pure_cache") ||
         function->hasAttr("schedule.pure_cone"))
       continue;
-    bool alreadyPure = true;
-    function.walk([&](Operation *op) {
-      if (op != function && !op->hasTrait<OpTrait::IsTerminator>() &&
-          !isDeterministicValueOp(op))
-        alreadyPure = false;
-    });
-    // Keep an existing value helper's ABI and cache the complete function.
-    if (alreadyPure)
+    if (!hasCone[index] || isAlreadyPure(function))
       continue;
     for (Block &block : function.getBody()) {
-      // Outline at uses that must execute: loads and publications stay in
-      // the caller; the helper receives their already captured SSA snapshots.
-      llvm::SetVector<Value> roots;
-      for (Operation &op : block)
-        if (!isDeterministicValueOp(&op) ||
-            op.hasTrait<OpTrait::IsTerminator>())
-          for (Value value : op.getOperands())
-            if (cacheWidth(value.getType()))
-              roots.insert(value);
+      llvm::SetVector<Value> roots = coneRoots(block);
       for (Value root : roots) {
         if (outlined == maximumCones)
           return outlined;
+        std::optional<PureCone> cone =
+            findCone(block, root, minimumCost, maximumCost);
+        if (!cone)
+          continue;
         Operation *definition = root.getDefiningOp();
-        if (!definition || definition->getBlock() != &block ||
-            !isDeterministicValueOp(definition) || !cacheWidth(root.getType()))
-          continue;
-        llvm::SetVector<Operation *> slice;
-        BackwardSliceOptions options;
-        options.inclusive = true;
-        options.omitBlockArguments = true;
-        options.filter = [&](Operation *op) {
-          return op->getBlock() == &block && isDeterministicValueOp(op);
-        };
-        if (failed(getBackwardSlice(definition, &slice, options)) ||
-            slice.size() < minimumCost || slice.size() > maximumCost)
-          continue;
-        llvm::SetVector<Value> inputs;
-        bool closed = true;
-        for (Operation *op : slice) {
-          for (Value operand : op->getOperands())
-            if (!slice.contains(operand.getDefiningOp()))
-              inputs.insert(operand);
-          for (Value result : op->getResults())
-            if (result != root &&
-                llvm::any_of(result.getUsers(), [&](Operation *user) {
-                  return !slice.contains(user);
-                }))
-              closed = false;
-        }
-        unsigned inputBits = 0;
-        for (Value input : inputs) {
-          auto width = cacheWidth(input.getType());
-          if (!width || *width > 256 - inputBits) {
-            closed = false;
-            break;
-          }
-          inputBits += *width;
-        }
-        if (!closed || inputs.empty() || inputs.size() > 4)
-          continue;
+        llvm::SetVector<Operation *> &slice = cone->slice;
+        llvm::SetVector<Value> &inputs = cone->inputs;
         OpBuilder builder(module.getContext());
         builder.setInsertionPointAfter(function);
         SmallVector<Type> types;

@@ -7,6 +7,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/SymbolTable.h"
 #include "obelisk/Analysis/LocalStorageAnalysis.h"
+#include "obelisk/Analysis/ParallelWalk.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/StaticSpecializationAnalysis.h"
 #include "obelisk/Analysis/StorageWriteAnalysis.h"
@@ -426,7 +427,7 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
         entry = std::make_unique<analysis::NativeHotPathReachability>(function);
       return *entry;
     };
-    metadataDesign.walk([&](sim::SimFuncOp actor) {
+    auto admitActor = [&](sim::SimFuncOp actor) {
       if (!aotActorSlotFor(actor))
         return;
       auto body =
@@ -595,7 +596,10 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
           llvm::errs() << '\n';
         }
       }
-    });
+    };
+    for (sim::SimFuncOp actor :
+         analysis::collectInWalkOrder<sim::SimFuncOp>(metadataDesign))
+      admitActor(actor);
     if (runtimeCalendar)
       ::obelisk::schedule::set<::obelisk::schedule::Field::EvalRuntimeCalendar>(
           module, UnitAttr::get(module.getContext()));

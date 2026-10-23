@@ -5,6 +5,7 @@
 #include "mlir/IR/Threading.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "obelisk/Analysis/ParallelWalk.h"
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
@@ -113,9 +114,8 @@ void declareStaticTransition(ModuleOp module) {
 /// Lowers NBA batches. An unspecialized batch adds a module global and a
 /// runtime declaration; `cache`, if given, stays coherent with the global.
 void lowerNBABatches(Operation *operation, SymbolTableCollection *cache) {
-  SmallVector<schedule::NativeNBABatchOp> batches;
-  operation->walk(
-      [&](schedule::NativeNBABatchOp op) { batches.push_back(op); });
+  SmallVector<schedule::NativeNBABatchOp> batches =
+      analysis::collectInWalkOrder<schedule::NativeNBABatchOp>(operation);
   for (auto batch : batches) {
     if (batch.getLayoutAttr()) {
       detail::lowerSpecializedNBABatch(batch);
@@ -169,8 +169,8 @@ void materializeLocalScheduleActions(
     schedule::coalesceNativeReadyUpdates(operation, globals);
   SmallVector<schedule::NativeReadyRegionOp> readyRegions;
   if (!preserveReadiness)
-    operation->walk(
-        [&](schedule::NativeReadyRegionOp op) { readyRegions.push_back(op); });
+    readyRegions =
+        analysis::collectInWalkOrder<schedule::NativeReadyRegionOp>(operation);
   for (auto region : readyRegions)
     detail::lowerNativeReadyRegion(region, globals);
   if (coalesce && !preserveReadiness)
@@ -180,20 +180,22 @@ void materializeLocalScheduleActions(
   SmallVector<schedule::NativeReadyCommitOp> commits;
   SmallVector<schedule::NativeReadyReadOp> reads;
   // One walk of the whole module collects every kind in its own walk order.
-  operation->walk([&](Operation *op) {
-    if (auto transition = dyn_cast<schedule::NativeTransitionOp>(op)) {
+  for (Operation *op :
+       analysis::collectInWalkOrder<Operation *>(operation, [&](Operation *op) {
+         return isa<schedule::NativeTransitionOp>(op) ||
+                (!preserveReadiness && isa<schedule::NativeReadyUpdateOp,
+                                           schedule::NativeReadyCommitOp,
+                                           schedule::NativeReadyReadOp>(op));
+       })) {
+    if (auto transition = dyn_cast<schedule::NativeTransitionOp>(op))
       transitions.push_back(transition);
-      return;
-    }
-    if (preserveReadiness)
-      return;
-    if (auto update = dyn_cast<schedule::NativeReadyUpdateOp>(op))
+    else if (auto update = dyn_cast<schedule::NativeReadyUpdateOp>(op))
       updates.push_back(update);
     else if (auto commit = dyn_cast<schedule::NativeReadyCommitOp>(op))
       commits.push_back(commit);
-    else if (auto read = dyn_cast<schedule::NativeReadyReadOp>(op))
-      reads.push_back(read);
-  });
+    else
+      reads.push_back(cast<schedule::NativeReadyReadOp>(op));
+  }
   if (declareRuntime && !transitions.empty()) {
     auto module = dyn_cast<ModuleOp>(operation);
     if (!module)
@@ -298,8 +300,8 @@ std::optional<LogicalResult> lowerModuleActionsInParallel(ModuleOp module) {
     }
   }
   std::atomic<bool> foreign = false;
-  parallelForEach(context, others, [&](Operation *operation) {
-    operation->walk([&](Operation *nested) {
+  analysis::parallelForChunked(context, others.size(), [&](size_t index) {
+    others[index]->walk([&](Operation *nested) {
       if (isa_and_nonnull<LLVM::LLVMDialect>(nested->getDialect()))
         return WalkResult::advance();
       foreign = true;
@@ -310,8 +312,8 @@ std::optional<LogicalResult> lowerModuleActionsInParallel(ModuleOp module) {
     return std::nullopt;
   lowerNBABatches(module, /*cache=*/nullptr);
   std::atomic<bool> transitions = false;
-  parallelForEach(context, functions, [&](LLVM::LLVMFuncOp function) {
-    if (function
+  analysis::parallelForChunked(context, functions.size(), [&](size_t index) {
+    if (functions[index]
             .walk([](schedule::NativeTransitionOp) {
               return WalkResult::interrupt();
             })
@@ -323,22 +325,25 @@ std::optional<LogicalResult> lowerModuleActionsInParallel(ModuleOp module) {
   // Workers add or remove no symbols.
   SymbolTable symbols(module);
   schedule::NativeGlobalLookup globals(symbols);
-  return failableParallelForEach(
-      context, functions, [&](LLVM::LLVMFuncOp function) {
-        materializeLocalScheduleActions(function, /*coalesce=*/true,
-                                        /*preserveReadiness=*/false, globals,
-                                        /*declareRuntime=*/false);
-        bool converts = function
-                            .walk([](Operation *operation) {
-                              return isa_and_nonnull<arith::ArithDialect,
-                                                     cf::ControlFlowDialect>(
-                                         operation->getDialect())
-                                         ? WalkResult::interrupt()
-                                         : WalkResult::advance();
-                            })
-                            .wasInterrupted();
-        return converts ? convertActionArithmetic(function) : success();
-      });
+  std::atomic<bool> converted = true;
+  analysis::parallelForChunked(context, functions.size(), [&](size_t index) {
+    LLVM::LLVMFuncOp function = functions[index];
+    materializeLocalScheduleActions(function, /*coalesce=*/true,
+                                    /*preserveReadiness=*/false, globals,
+                                    /*declareRuntime=*/false);
+    bool converts = function
+                        .walk([](Operation *operation) {
+                          return isa_and_nonnull<arith::ArithDialect,
+                                                 cf::ControlFlowDialect>(
+                                     operation->getDialect())
+                                     ? WalkResult::interrupt()
+                                     : WalkResult::advance();
+                        })
+                        .wasInterrupted();
+    if (converts && failed(convertActionArithmetic(function)))
+      converted = false;
+  });
+  return success(converted);
 }
 } // namespace
 

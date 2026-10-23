@@ -25,6 +25,7 @@
 
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
 #include "obelisk/Analysis/NativeStorageLayout.h"
+#include "obelisk/Analysis/ParallelWalk.h"
 #include "obelisk/Analysis/SSAValueAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/SimulationCopyProcessAnalysis.h"
@@ -2218,8 +2219,8 @@ LogicalResult NativePipelineAnalysis::materialize() {
       return failure();
   markTiming("suspendable process finalization");
 
-  SmallVector<sim::SimDesignOp> designs;
-  module.walk([&](sim::SimDesignOp design) { designs.push_back(design); });
+  SmallVector<sim::SimDesignOp> designs =
+      analysis::collectInWalkOrder<sim::SimDesignOp>(module);
   SymbolTable flattenedSymbols(module);
   for (sim::SimDesignOp design : designs) {
     SmallVector<Operation *> nested;
@@ -2298,16 +2299,16 @@ LogicalResult NativePipelineAnalysis::materialize() {
   }
   markTiming("scalar spawn body materialization");
 
-  SmallVector<schedule::NativeTimeOp> times;
-  module.walk([&](schedule::NativeTimeOp op) { times.push_back(op); });
+  SmallVector<schedule::NativeTimeOp> times =
+      analysis::collectInWalkOrder<schedule::NativeTimeOp>(module);
   for (auto time : times) {
     if (time.getTime().getType() != time.getResult().getType())
       return time.emitError("native time was not converted");
     time.getResult().replaceAllUsesWith(time.getTime());
     time.erase();
   }
-  SmallVector<schedule::NativeContextOp> projections;
-  module.walk([&](schedule::NativeContextOp op) { projections.push_back(op); });
+  SmallVector<schedule::NativeContextOp> projections =
+      analysis::collectInWalkOrder<schedule::NativeContextOp>(module);
   for (auto projection : projections) {
     if (projection.getContext().getType() != projection.getResult().getType())
       return projection.emitError("native function context was not converted");
@@ -3459,26 +3460,32 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   // call. Address uses, unproven calls, and unknown uses require a clone.
   SymbolTable wrapperSymbols(module);
   llvm::MapVector<Operation *, SmallVector<LLVM::CallOp>> trustedWrapperCalls;
-  module.walk([&](LLVM::CallOp call) {
+  auto trustedWrapperOf = [&](LLVM::CallOp call) -> LLVM::LLVMFuncOp {
     if (!::obelisk::schedule::has<
             ::obelisk::schedule::Field::EvalProvenTwoStateCall>(call) ||
         !call.getCallee())
-      return;
+      return {};
     auto callee = wrapperSymbols.lookup<LLVM::LLVMFuncOp>(*call.getCallee());
     if (callee &&
         ::obelisk::schedule::has<schedule::Field::EvalTwoStateWrapper>(callee))
-      trustedWrapperCalls[callee.getOperation()].push_back(call);
-  });
+      return callee;
+    return {};
+  };
+  for (LLVM::CallOp call : analysis::collectInWalkOrder<LLVM::CallOp>(
+           module,
+           [&](LLVM::CallOp call) { return bool(trustedWrapperOf(call)); }))
+    trustedWrapperCalls[trustedWrapperOf(call).getOperation()].push_back(call);
   llvm::DenseMap<StringAttr, size_t> referenceCounts;
   llvm::DenseSet<StringAttr> referencesFromWrappers;
   bool canReuse = native::has<native::ClosedExecutable>(module);
   if (canReuse) {
     // Symbol-use enumeration stops at nested symbol tables. The executable
     // pipeline has flattened designs; retain cloning for any other layout.
-    module.walk([&](Operation *operation) {
-      if (operation != module && operation->hasTrait<OpTrait::SymbolTable>())
-        canReuse = false;
-    });
+    if (analysis::anyNested<Operation *>(module, [&](Operation *operation) {
+          return operation != module &&
+                 operation->hasTrait<OpTrait::SymbolTable>();
+        }))
+      canReuse = false;
     auto uses = detail::collectNativeSymbolUses(module.getContext(),
                                                 {&module.getBodyRegion()});
     canReuse &= uses.has_value();
@@ -3533,11 +3540,10 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     llvm::errs() << "obelisk trusted executor wrappers: reused=" << reused
                  << " cloned=" << trustedWrapperCalls.size() - reused << '\n';
 
-  SmallVector<LLVM::CallOp> calls;
-  module.walk([&](LLVM::CallOp call) {
-    if (call.getCallee() && routesByFunction.contains(*call.getCallee()))
-      calls.push_back(call);
-  });
+  SmallVector<LLVM::CallOp> calls = analysis::collectInWalkOrder<LLVM::CallOp>(
+      module, [&](LLVM::CallOp call) {
+        return call.getCallee() && routesByFunction.contains(*call.getCallee());
+      });
   for (LLVM::CallOp call : calls) {
     Route &route = *routesByFunction.lookup(*call.getCallee());
     // Certified ranked groups already selected this exact value-domain
@@ -3728,7 +3734,15 @@ LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
   // Specialization is carried entirely by call-site intent.  Validate and
   // consume the phase-local markers so a renamed or newly outlined
   // coordinator cannot silently retain the wrong NBA implementation.
-  WalkResult rewrite = module.walk([&](LLVM::CallOp call) {
+  auto hasIntent = [](LLVM::CallOp call) {
+    return ::obelisk::schedule::has<
+               ::obelisk::schedule::Field::EvalUseFastTwoStateNba>(call) ||
+           ::obelisk::schedule::has<
+               ::obelisk::schedule::Field::EvalUseCanonicalTwoStateNba>(call) ||
+           ::obelisk::schedule::has<
+               ::obelisk::schedule::Field::EvalKeepFourStateNba>(call);
+  };
+  auto rewriteIntent = [&](LLVM::CallOp call) {
     bool useFast = ::obelisk::schedule::has<
         ::obelisk::schedule::Field::EvalUseFastTwoStateNba>(call);
     bool useCanonical = ::obelisk::schedule::has<
@@ -3782,9 +3796,11 @@ LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
     ::obelisk::schedule::remove<
         ::obelisk::schedule::Field::EvalKeepFourStateNba>(call);
     return WalkResult::advance();
-  });
-  if (rewrite.wasInterrupted())
-    return failure();
+  };
+  for (LLVM::CallOp call :
+       analysis::collectInWalkOrder<LLVM::CallOp>(module, hasIntent))
+    if (rewriteIntent(call).wasInterrupted())
+      return failure();
   source.walk([](LLVM::LoadOp load) {
     ::obelisk::schedule::remove<
         ::obelisk::schedule::Field::EvalTwoStateZeroUnknown>(load);
@@ -3972,7 +3988,18 @@ public:
                                  schedule::NativeManagedRootPopOp>();
       runtimeTarget.markUnknownOpDynamicallyLegal(
           [](Operation *) { return true; });
-      if (failed(applyPartialConversion(module, runtimeTarget,
+      // The module and every other operation are legal. Converting only the
+      // children holding illegal operations visits those in the same order.
+      SmallVector<Operation *> runtimeRoots =
+          analysis::childrenContaining(module, [](Operation *operation) {
+            return isa_and_nonnull<runtime::ObeliskRuntimeDialect>(
+                       operation->getDialect()) ||
+                   isa<schedule::NativeScratchOp,
+                       schedule::NativeManagedRootPushOp,
+                       schedule::NativeManagedRootPopOp>(operation);
+          });
+      if (!runtimeRoots.empty() &&
+          failed(applyPartialConversion(runtimeRoots, runtimeTarget,
                                         std::move(runtimePatterns)))) {
         signalPassFailure();
         return;
@@ -3982,11 +4009,11 @@ public:
 
     if (failed(verify(module)))
       return signalPassFailure();
-    SmallVector<schedule::NativeObserverOp> deadObservers;
-    module.walk([&](schedule::NativeObserverOp observer) {
-      if (observer->use_empty())
-        deadObservers.push_back(observer);
-    });
+    SmallVector<schedule::NativeObserverOp> deadObservers =
+        analysis::collectInWalkOrder<schedule::NativeObserverOp>(
+            module, [](schedule::NativeObserverOp observer) {
+              return observer->use_empty();
+            });
     for (auto observer : deadObservers)
       observer.erase();
 
@@ -4000,7 +4027,12 @@ public:
       shellTarget.addIllegalOp<func::FuncOp>();
       shellTarget.markUnknownOpDynamicallyLegal(
           [](Operation *) { return true; });
-      if (failed(applyPartialConversion(module, shellTarget,
+      SmallVector<Operation *> shellRoots =
+          analysis::childrenContaining(module, [](Operation *operation) {
+            return isa<func::FuncOp>(operation);
+          });
+      if (!shellRoots.empty() &&
+          failed(applyPartialConversion(shellRoots, shellTarget,
                                         std::move(shellPatterns))))
         return signalPassFailure();
     }
@@ -4018,7 +4050,12 @@ public:
       signatureTarget.addIllegalDialect<func::FuncDialect>();
       signatureTarget.markUnknownOpDynamicallyLegal(
           [](Operation *) { return true; });
-      if (failed(applyPartialConversion(module, signatureTarget,
+      SmallVector<Operation *> signatureRoots =
+          analysis::childrenContaining(module, [](Operation *operation) {
+            return isa_and_nonnull<func::FuncDialect>(operation->getDialect());
+          });
+      if (!signatureRoots.empty() &&
+          failed(applyPartialConversion(signatureRoots, signatureTarget,
                                         std::move(patterns))))
         return signalPassFailure();
     }
@@ -4076,10 +4113,8 @@ public:
       return;
     }
     markTiming("serial wrapper conversion");
-    SmallVector<UnrealizedConversionCastOp> unrealizedCasts;
-    module.walk([&](UnrealizedConversionCastOp cast) {
-      unrealizedCasts.push_back(cast);
-    });
+    SmallVector<UnrealizedConversionCastOp> unrealizedCasts =
+        analysis::collectInWalkOrder<UnrealizedConversionCastOp>(module);
     SmallVector<UnrealizedConversionCastOp> remainingCasts;
     reconcileUnrealizedCasts(unrealizedCasts, &remainingCasts);
     if (!remainingCasts.empty()) {

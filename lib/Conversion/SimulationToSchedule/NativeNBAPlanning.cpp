@@ -7,6 +7,7 @@
 
 #include "obelisk/Analysis/GraphAlgorithms.h"
 #include "obelisk/Analysis/NBAInfluenceAnalysis.h"
+#include "obelisk/Analysis/ParallelWalk.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Analysis/StorageWriteAnalysis.h"
 #include "obelisk/Conversion/SimulationRuntime.h"
@@ -163,7 +164,9 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
   SmallVector<DenseMap<uint64_t, Lane>> lanes(plan.roots.size());
   DenseMap<uint64_t, SmallVector<sim::SimNBAEnqueueOp>> originEnqueues;
   SmallVector<bool> conflictingLanes(plan.roots.size(), false);
-  module.walk([&](sim::SimNBAEnqueueOp enqueue) {
+  SmallVector<sim::SimNBAEnqueueOp> enqueues =
+      analysis::collectInWalkOrder<sim::SimNBAEnqueueOp>(module);
+  auto recordEnqueueLane = [&](sim::SimNBAEnqueueOp enqueue) {
     auto function = enqueue->getParentOfType<sim::SimFuncOp>();
     if (!function ||
         !::obelisk::schedule::has<::obelisk::schedule::Field::EvalRawCaptures>(
@@ -208,7 +211,9 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
     if (!stride || target.low > stride || target.width > stride - target.low)
       return reject();
     recordLane({stride, target.low, target.width});
-  });
+  };
+  for (sim::SimNBAEnqueueOp enqueue : enqueues)
+    recordEnqueueLane(enqueue);
   // Overlapping slots are also independent if their statements cannot both
   // execute. Require one occurrence of each origin in the same outlined
   // activation and no CFG path in either direction. Helpers, separate owners,
@@ -262,34 +267,49 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
     originsByRoot[root->second].insert(
         origin == plan.siteSemanticOrigins.end() ? entry.site : origin->second);
   }
-  // The call closure is read-only; avoid one whole-design symbol scan per
-  // call while deriving every root's merge proof.
-  SymbolTableCollection callSymbols;
+  // The call closure is read-only. Inventory each function's sites and
+  // callees concurrently through one prebuilt table per design, then record
+  // them in walk order.
   llvm::SmallPtrSet<Operation *, 8> callees;
   struct FunctionSites {
     SmallVector<sim::SimFuncOp> callees;
     llvm::DenseMap<uint64_t, unsigned> sites;
   };
   llvm::DenseMap<Operation *, FunctionSites> functionSites;
-  module.walk([&](sim::SimFuncOp function) {
-    auto &facts = functionSites[function.getOperation()];
-    auto design = function->getParentOfType<sim::SimDesignOp>();
-    function.walk([&](Operation *operation) {
-      if (auto enqueue = dyn_cast<sim::SimNBAEnqueueOp>(operation))
-        if (schedule::NBASiteAttr site = enqueue.getSiteAttr()) {
-          auto origin = plan.siteSemanticOrigins.find(site.getId());
-          ++facts.sites[origin == plan.siteSemanticOrigins.end()
-                            ? site.getId()
-                            : origin->second];
-        }
-      if (auto call = dyn_cast<sim::SimCallOp>(operation); call && design)
-        if (auto callee = callSymbols.lookupSymbolIn<sim::SimFuncOp>(
-                design, call.getCalleeAttr())) {
-          facts.callees.push_back(callee);
-          callees.insert(callee.getOperation());
-        }
-    });
-  });
+  SmallVector<sim::SimFuncOp> siteFunctions =
+      analysis::collectInWalkOrder<sim::SimFuncOp>(module);
+  llvm::DenseMap<Operation *, std::unique_ptr<SymbolTable>> designSymbols;
+  for (sim::SimFuncOp function : siteFunctions)
+    if (auto design = function->getParentOfType<sim::SimDesignOp>();
+        design && !designSymbols.count(design))
+      designSymbols.try_emplace(design, std::make_unique<SymbolTable>(design));
+  SmallVector<FunctionSites> siteFacts(siteFunctions.size());
+  analysis::parallelForChunked(
+      module.getContext(), siteFunctions.size(), [&](size_t index) {
+        sim::SimFuncOp function = siteFunctions[index];
+        FunctionSites &facts = siteFacts[index];
+        auto design = function->getParentOfType<sim::SimDesignOp>();
+        const SymbolTable *symbols =
+            design ? designSymbols.find(design)->second.get() : nullptr;
+        function.walk([&](Operation *operation) {
+          if (auto enqueue = dyn_cast<sim::SimNBAEnqueueOp>(operation))
+            if (schedule::NBASiteAttr site = enqueue.getSiteAttr()) {
+              auto origin = plan.siteSemanticOrigins.find(site.getId());
+              ++facts.sites[origin == plan.siteSemanticOrigins.end()
+                                ? site.getId()
+                                : origin->second];
+            }
+          if (auto call = dyn_cast<sim::SimCallOp>(operation); call && symbols)
+            if (auto callee = symbols->lookup<sim::SimFuncOp>(
+                    call.getCalleeAttr().getAttr()))
+              facts.callees.push_back(callee);
+        });
+      });
+  for (auto [function, facts] : llvm::zip_equal(siteFunctions, siteFacts)) {
+    for (sim::SimFuncOp callee : facts.callees)
+      callees.insert(callee.getOperation());
+    functionSites[function.getOperation()] = std::move(facts);
+  }
   llvm::DenseMap<Operation *, llvm::DenseMap<uint64_t, unsigned>> closureOps;
   auto closureSiteOpsFor = [&](sim::SimFuncOp function) -> auto & {
     auto [entry, inserted] = closureOps.try_emplace(function.getOperation());
@@ -340,7 +360,8 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
     }
     return entry->second.contains(origin);
   };
-  module.walk([&](sim::SimSpawnOp spawn) {
+  for (sim::SimSpawnOp spawn :
+       analysis::collectInWalkOrder<sim::SimSpawnOp>(module)) {
     StringRef callee = spawn.getCallee();
     ++spawnCounts[callee];
     sim::SimFuncOp owner = spawn->getParentOfType<sim::SimFuncOp>();
@@ -353,13 +374,13 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
         potentiallyRepeatedSpawns.insert(callee);
     if (isCyclic(spawn->getBlock()))
       potentiallyRepeatedSpawns.insert(callee);
-  });
-  module.walk([&](sim::SimNBAEnqueueOp enqueue) {
+  }
+  for (sim::SimNBAEnqueueOp enqueue : enqueues) {
     schedule::NBASiteAttr site = enqueue.getSiteAttr();
     auto mapped =
         site ? plan.siteRoots.find(site.getId()) : plan.siteRoots.end();
     if (mapped == plan.siteRoots.end() || mapped->second >= plan.roots.size())
-      return;
+      continue;
     sim::SimFuncOp function = enqueue->getParentOfType<sim::SimFuncOp>();
     bool uniqueProcess =
         function &&
@@ -370,7 +391,7 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
                               enqueue, plan, closureSiteOpsFor(function),
                               callees, writesFor(function)))
       plan.mergeSafeRoots[mapped->second] = false;
-  });
+  }
   // A root whose intermediate NBA values nothing observes may merge any
   // number of updates, in any order relative to other roots.
 
@@ -395,7 +416,7 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
   if (guardedPrivate) {
     llvm::SmallDenseSet<uint64_t, 4> guardedOrigins;
     bool guardedOrderComplete = true;
-    module.walk([&](sim::SimNBAEnqueueOp enqueue) {
+    for (sim::SimNBAEnqueueOp enqueue : enqueues) {
       auto site = enqueue.getSiteAttr();
       if (!site || !plan.siteRoots.contains(site.getId()) ||
           enqueue.getClockingOutputAttr() || enqueue.getDelay() ||
@@ -404,10 +425,10 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
               schedule::ComputeNBAStorageKind::DynamicFrontier ||
           isa<sim::DriverType>(enqueue.getDestination().getType())) {
         guardedOrderComplete = false;
-        return;
+        continue;
       }
       guardedOrigins.insert(plan.siteSemanticOrigins.lookup(site.getId()));
-    });
+    }
     if (!guardedOrderComplete || guardedOrigins.size() != 1)
       guardedPrivate = {};
   }

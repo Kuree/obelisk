@@ -1,6 +1,7 @@
 //===- SimulationDriverLowering.cpp - Native driver patterns ------------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Analysis/ParallelWalk.h"
 #include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
@@ -1656,9 +1657,14 @@ void annotateStaticDriverNets(ModuleOp module,
       return;
     }
   };
-  module.walk([&](sim::SimDriverDriveOp drive) { annotate(drive); });
-  module.walk([&](sim::SimDriverDriveDelayedNetOp drive) { annotate(drive); });
-  module.walk([&](sim::SimDriverDriveChangedOp drive) { annotate(drive); });
+  for (auto drive : analysis::collectInWalkOrder<sim::SimDriverDriveOp>(module))
+    annotate(drive);
+  for (auto drive :
+       analysis::collectInWalkOrder<sim::SimDriverDriveDelayedNetOp>(module))
+    annotate(drive);
+  for (auto drive :
+       analysis::collectInWalkOrder<sim::SimDriverDriveChangedOp>(module))
+    annotate(drive);
 }
 
 void populateDriverToLLVMConversionPatterns(RewritePatternSet &patterns,

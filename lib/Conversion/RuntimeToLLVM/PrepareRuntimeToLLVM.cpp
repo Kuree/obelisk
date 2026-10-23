@@ -6,6 +6,7 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
+#include "obelisk/Analysis/ParallelWalk.h"
 #include "obelisk/Conversion/RuntimeToLLVM.h"
 #include "obelisk/Dialect/Runtime/RuntimeOps.h"
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
@@ -73,17 +74,19 @@ LogicalResult prepareRuntimeToLLVMByteGlobals(ModuleOp module) {
     } while (!reservedSymbols.insert(name).second);
     return StringAttr::get(context, name);
   };
-  module.walk([&](Operation *operation) {
+  for (Operation *operation : analysis::collectInWalkOrder<Operation *>(
+           module, [](Operation *operation) {
+             return isa<runtime::RTBytesConstantOp,
+                        runtime::RTFormatEnvironmentOp>(operation);
+           })) {
     SmallVector<StringRef> values;
-    if (auto bytes = dyn_cast<runtime::RTBytesConstantOp>(operation))
+    if (auto bytes = dyn_cast<runtime::RTBytesConstantOp>(operation)) {
       values.push_back(bytes.getValue());
-    else if (auto environment =
-                 dyn_cast<runtime::RTFormatEnvironmentOp>(operation)) {
+    } else {
+      auto environment = cast<runtime::RTFormatEnvironmentOp>(operation);
       values.push_back(environment.getScope());
       values.push_back(environment.getLibraryCell());
       values.push_back(environment.getTimeSuffix());
-    } else {
-      return;
     }
     SmallVector<Attribute> names;
     names.reserve(values.size());
@@ -92,14 +95,13 @@ LogicalResult prepareRuntimeToLLVMByteGlobals(ModuleOp module) {
                                     : allocateName());
     runtime::set<runtime::LLVMByteGlobals>(operation,
                                            ArrayAttr::get(context, names));
-  });
+  }
   return success();
 }
 
 LogicalResult materializeDeferredRuntimeByteGlobals(ModuleOp module) {
-  SmallVector<schedule::NativeByteAddressOp> addresses;
-  module.walk(
-      [&](schedule::NativeByteAddressOp op) { addresses.push_back(op); });
+  SmallVector<schedule::NativeByteAddressOp> addresses =
+      analysis::collectInWalkOrder<schedule::NativeByteAddressOp>(module);
   if (addresses.empty())
     return success();
   SymbolTable symbols(module);

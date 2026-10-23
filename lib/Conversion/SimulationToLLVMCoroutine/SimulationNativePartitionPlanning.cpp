@@ -1,6 +1,7 @@
 //===- SimulationNativePartitionPlanning.cpp - Stable native partitions --===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Analysis/ParallelWalk.h"
 #include "obelisk/Conversion/Passes.h"
 #include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
@@ -128,19 +129,22 @@ static LogicalResult planNativePartitions(sim::SimDesignOp design) {
     if (found != functionIndices.end())
       records[caller].callees.push_back(found->second);
   };
-  for (auto [index, record] : llvm::enumerate(records)) {
-    record.function.walk([&](Operation *operation) {
-      if (auto call = dyn_cast<sim::SimCallOp>(operation))
-        addEdge(index, call.getCallee());
-      else if (auto call = dyn_cast<sim::SimClassDirectCallOp>(operation))
-        addEdge(index, call.getCallee());
-      else if (auto call = dyn_cast<sim::SimTaskCallOp>(operation))
-        addEdge(index, call.getCallee());
-      else if (auto spawn = dyn_cast<sim::SimSpawnOp>(operation))
-        addEdge(index, spawn.getCallee());
-    });
-    sortUnique(record.callees);
-  }
+  // Each record's walk fills only its own callee list.
+  analysis::parallelForChunked(
+      design.getContext(), records.size(), [&](size_t index) {
+        FunctionRecord &record = records[index];
+        record.function.walk([&](Operation *operation) {
+          if (auto call = dyn_cast<sim::SimCallOp>(operation))
+            addEdge(index, call.getCallee());
+          else if (auto call = dyn_cast<sim::SimClassDirectCallOp>(operation))
+            addEdge(index, call.getCallee());
+          else if (auto call = dyn_cast<sim::SimTaskCallOp>(operation))
+            addEdge(index, call.getCallee());
+          else if (auto spawn = dyn_cast<sim::SimSpawnOp>(operation))
+            addEdge(index, spawn.getCallee());
+        });
+        sortUnique(record.callees);
+      });
 
   SmallVector<std::string> ownerKeys;
   for (const FunctionRecord &record : records)
@@ -434,9 +438,8 @@ collectNativePartitionInventory(ModuleOp module) {
     if (!isa<LLVM::LLVMFuncOp, LLVM::GlobalOp>(operation)) {
       return std::shared_ptr<NativePhysicalPartitions>{};
     }
-  bool hasBlockAddress = false;
-  module.walk([&](LLVM::BlockAddressOp) { hasBlockAddress = true; });
-  if (hasBlockAddress) {
+  if (analysis::anyNested<LLVM::BlockAddressOp>(
+          module, [](LLVM::BlockAddressOp) { return true; })) {
     return std::shared_ptr<NativePhysicalPartitions>{};
   }
 
@@ -527,27 +530,39 @@ collectNativePartitionInventory(ModuleOp module) {
   for (const auto &symbol : symbols)
     symbolPartitions.push_back(partitionIndices.lookup(symbol.partition));
   inventory->referencedSymbols.resize(symbols.size());
+  SmallVector<unsigned> globals;
   for (auto [index, symbol] : llvm::enumerate(symbols)) {
-    if (isa<LLVM::LLVMFuncOp>(symbol.operation)) {
+    if (isa<LLVM::LLVMFuncOp>(symbol.operation))
       inventory->functionIndices.try_emplace(symbol.operation, index);
-      continue;
-    }
-    auto uses = SymbolTable::getSymbolUses(symbol.operation);
-    if (!uses) {
-      symbol.operation->emitError(
+    else
+      globals.push_back(index);
+  }
+  // Each initializer's references fill only its own entry.
+  SmallVector<char> unenumerable(symbols.size(), false);
+  analysis::parallelForChunked(
+      module.getContext(), globals.size(), [&](size_t position) {
+        unsigned index = globals[position];
+        auto uses = SymbolTable::getSymbolUses(symbols[index].operation);
+        if (!uses) {
+          unenumerable[index] = true;
+          return;
+        }
+        llvm::SmallDenseSet<unsigned> uniqueTargets;
+        for (const auto &use : *uses) {
+          auto target = symbolIndices.find(
+              use.getSymbolRef().getRootReference().getValue());
+          if (target != symbolIndices.end() &&
+              symbolPartitions[index] != symbolPartitions[target->second] &&
+              uniqueTargets.insert(target->second).second)
+            inventory->referencedSymbols[index].push_back(target->second);
+        }
+      });
+  for (unsigned index : globals)
+    if (unenumerable[index]) {
+      symbols[index].operation->emitError(
           "cannot enumerate physical partition symbol uses");
       return failure();
     }
-    llvm::SmallDenseSet<unsigned> uniqueTargets;
-    for (const auto &use : *uses) {
-      auto target =
-          symbolIndices.find(use.getSymbolRef().getRootReference().getValue());
-      if (target != symbolIndices.end() &&
-          symbolPartitions[index] != symbolPartitions[target->second] &&
-          uniqueTargets.insert(target->second).second)
-        inventory->referencedSymbols[index].push_back(target->second);
-    }
-  }
   return inventory;
 }
 

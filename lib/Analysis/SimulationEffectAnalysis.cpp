@@ -4,6 +4,7 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "obelisk/Analysis/HandleDataflowAnalysis.h"
+#include "obelisk/Analysis/ParallelWalk.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
@@ -69,7 +70,7 @@ public:
     SymbolTableCollection symbols;
     // Index each design's drivers once rather than once per function.
     DenseMap<Operation *, std::unique_ptr<HandleDataflowAnalysis>> designs;
-    root->walk([&](sim::SimFuncOp function) {
+    auto summarize = [&](sim::SimFuncOp function) {
       auto &summary = local[function];
       if (function.isExternal())
         summary.effects = allEffects;
@@ -140,7 +141,9 @@ public:
         if (!isMemoryEffectFree(op))
           summary.effects |= allEffects;
       });
-    });
+    };
+    for (sim::SimFuncOp function : collectInWalkOrder<sim::SimFuncOp>(root))
+      summarize(function);
     for (auto &entry : local)
       if (failed(visit(getProgramPointBefore(entry.first))))
         return failure();

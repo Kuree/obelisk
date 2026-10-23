@@ -1,6 +1,7 @@
 //===- RuntimeToLLVM.cpp - Lower typed runtime operations to C ABI calls -===//
 
 #include "obelisk/Conversion/RuntimeToLLVM.h"
+#include "obelisk/Analysis/ParallelWalk.h"
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 
@@ -100,28 +101,32 @@ bool containsBufferType(Type type) {
 }
 
 LogicalResult verifyRuntimeBufferOwnership(ModuleOp module) {
-  WalkResult result = module.walk([&](Operation *operation) -> WalkResult {
+  // Whether `operation` violates buffer ownership, reporting it if `report`.
+  auto violates = [](Operation *operation, bool report) {
     if (auto function = dyn_cast<func::FuncOp>(operation)) {
       for (Type type : function.getFunctionType().getInputs())
         if (containsBufferType(type)) {
-          function.emitOpError()
-              << "owned runtime buffers cannot be function arguments";
-          return WalkResult::interrupt();
+          if (report)
+            function.emitOpError()
+                << "owned runtime buffers cannot be function arguments";
+          return true;
         }
       for (Type type : function.getFunctionType().getResults())
         if (containsBufferType(type)) {
-          function.emitOpError()
-              << "owned runtime buffers cannot be function results";
-          return WalkResult::interrupt();
+          if (report)
+            function.emitOpError()
+                << "owned runtime buffers cannot be function results";
+          return true;
         }
     }
     for (Region &region : operation->getRegions())
       for (Block &block : region)
         for (BlockArgument argument : block.getArguments())
           if (containsBufferType(argument.getType())) {
-            operation->emitOpError()
-                << "owned runtime buffers cannot be block arguments";
-            return WalkResult::interrupt();
+            if (report)
+              operation->emitOpError()
+                  << "owned runtime buffers cannot be block arguments";
+            return true;
           }
     for (Value resultValue : operation->getResults()) {
       if (!containsBufferType(resultValue.getType()))
@@ -129,10 +134,11 @@ LogicalResult verifyRuntimeBufferOwnership(ModuleOp module) {
       if (!isa<runtime::BufferType>(resultValue.getType()) ||
           !isa<runtime::RTLastErrorOp, runtime::RTFormatOp,
                runtime::RTFileGetlineOp, runtime::RTFileErrorOp>(operation)) {
-        operation->emitOpError()
-            << "owned runtime buffers must be produced directly by a typed "
-               "runtime buffer operation";
-        return WalkResult::interrupt();
+        if (report)
+          operation->emitOpError()
+              << "owned runtime buffers must be produced directly by a typed "
+                 "runtime buffer operation";
+        return true;
       }
       unsigned releases = 0;
       unsigned sizes = 0;
@@ -155,16 +161,26 @@ LogicalResult verifyRuntimeBufferOwnership(ModuleOp module) {
           if (user != release && !user->isBeforeInBlock(release))
             invalid = true;
       if (invalid || releases != 1 || sizes > 1 || packedReads > 1) {
-        operation->emitOpError()
-            << "owned runtime buffer requires one same-block release and at "
-               "most one size and one packed-byte consumer, both before the "
-               "release";
-        return WalkResult::interrupt();
+        if (report)
+          operation->emitOpError()
+              << "owned runtime buffer requires one same-block release and at "
+                 "most one size and one packed-byte consumer, both before the "
+                 "release";
+        return true;
       }
     }
-    return WalkResult::advance();
+    return false;
+  };
+  // Search concurrently; report the first violation in walk order serially.
+  if (!analysis::anyNested<Operation *>(module, [&](Operation *operation) {
+        return violates(operation, /*report=*/false);
+      }))
+    return success();
+  module.walk([&](Operation *operation) {
+    return violates(operation, /*report=*/true) ? WalkResult::interrupt()
+                                                : WalkResult::advance();
   });
-  return result.wasInterrupted() ? failure() : success();
+  return failure();
 }
 
 LogicalResult verifyNoRuntimeTypes(ModuleOp module) {

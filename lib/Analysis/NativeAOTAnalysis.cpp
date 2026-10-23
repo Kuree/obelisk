@@ -3,6 +3,7 @@
 //===- NativeAOTAnalysis.cpp - Native scheduler eligibility --------------===//
 
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
+#include "obelisk/Analysis/ParallelWalk.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
@@ -1161,7 +1162,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     return callee && nonSuspendingTasks.contains(callee.getOperation());
   };
 
-  module.walk([&](sim::SimFuncOp function) {
+  for (sim::SimFuncOp function : collectInWalkOrder<sim::SimFuncOp>(module)) {
     if ((function.getEntryKind() == sim::EntryKind::Task &&
          !nonSuspendingTasks.contains(function.getOperation())) ||
         (function.getEntryKind() == sim::EntryKind::Fork &&
@@ -1178,7 +1179,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     // rank and insertion sequence.  Observed, Reactive, and Postponed actors
     // therefore need no generic-only exclusion merely because they are not
     // Active.
-  });
+  }
   module.walk([&](Operation *operation) {
     bool hasRealValue =
         llvm::any_of(operation->getOperandTypes(),
@@ -1380,12 +1381,11 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   bool hasPostActiveWork = llvm::any_of(nodes, [](Attribute node) {
     return isa<schedule::ComputeNBACommitAttr>(node);
   });
-  module.walk([&](Operation *operation) {
+  hasPostActiveWork |= anyNested<Operation *>(module, [](Operation *operation) {
     auto region =
         operation->getAttrOfType<sim::EventRegionAttr>("resume_region");
-    hasPostActiveWork |= region &&
-                         region.getValue() == sim::EventRegion::Inactive &&
-                         sim::isSuspensionOp(operation);
+    return region && region.getValue() == sim::EventRegion::Inactive &&
+           sim::isSuspensionOp(operation);
   });
   if (hasPostActiveWork && result.reasons.empty() && scheduler &&
       (scheduler.getValue() == schedule::NativeSchedulerMode::Eval ||

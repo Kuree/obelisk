@@ -54,21 +54,34 @@ class SimFuncOp;
 
 namespace obelisk::detail {
 
-/// Function declarations never contain other native function declarations.
-/// Inventory their symbols without walking every operation in every body.
+/// Function declarations never contain other native function declarations,
+/// and they are children of symbol tables (modules, designs). Inventory them
+/// in walk order without walking function bodies or other regions, such as
+/// global initializers.
 template <typename FunctionOp, typename Callback>
 mlir::WalkResult walkNativeFunctions(mlir::Operation *root,
                                      Callback &&callback) {
-  return root->walk<mlir::WalkOrder::PreOrder>([&](FunctionOp function) {
+  auto visit = [&](FunctionOp function) {
     if constexpr (std::is_same_v<std::invoke_result_t<Callback, FunctionOp>,
-                                 mlir::WalkResult>) {
-      if (callback(function).wasInterrupted())
-        return mlir::WalkResult::interrupt();
-    } else {
-      callback(function);
-    }
-    return mlir::WalkResult::skip();
-  });
+                                 mlir::WalkResult>)
+      return callback(function);
+    callback(function);
+    return mlir::WalkResult::advance();
+  };
+  if (auto function = mlir::dyn_cast<FunctionOp>(root))
+    return visit(function);
+  for (mlir::Region &region : root->getRegions())
+    for (mlir::Block &block : region)
+      for (mlir::Operation &child : llvm::make_early_inc_range(block)) {
+        mlir::WalkResult result = mlir::WalkResult::advance();
+        if (auto function = mlir::dyn_cast<FunctionOp>(child))
+          result = visit(function);
+        else if (child.hasTrait<mlir::OpTrait::SymbolTable>())
+          result = walkNativeFunctions<FunctionOp>(&child, callback);
+        if (result.wasInterrupted())
+          return result;
+      }
+  return mlir::WalkResult::advance();
 }
 
 inline constexpr auto assumeCleanSpecializationAttr =

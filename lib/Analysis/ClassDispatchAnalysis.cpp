@@ -2,6 +2,7 @@
 
 #include "obelisk/Analysis/ClassDispatchAnalysis.h"
 #include "obelisk/Analysis/DescriptorOrdering.h"
+#include "obelisk/Analysis/ParallelWalk.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
@@ -168,8 +169,7 @@ struct ClassDispatchAnalysis::Index {
 };
 
 ClassDispatchAnalysis::ClassDispatchAnalysis(sim::SimDesignOp design) {
-  design.walk(
-      [&](sim::SimClassDeclOp declaration) { classes.push_back(declaration); });
+  classes = collectInWalkOrder<sim::SimClassDeclOp>(design);
   orderClasses(classes);
   for (auto [ordinal, declaration] : llvm::enumerate(classes))
     classIndices.try_emplace(declaration.getSymName(), ordinal);
@@ -203,11 +203,10 @@ ClassDispatchAnalysis::ClassDispatchAnalysis(sim::SimDesignOp design) {
         if (auto reference = dyn_cast<FlatSymbolRefAttr>(attribute))
           inherit(ordinal, reference.getValue(), false);
   }
-  design.walk([&](sim::SimClassMethodDeclOp method) {
+  for (auto method : collectInWalkOrder<sim::SimClassMethodDeclOp>(design))
     if (auto found = classIndices.find(method.getOwner());
         found != classIndices.end())
       methods[found->second].push_back(method);
-  });
 
   // Single-inheritance subtrees give ordinary instanceof queries constant
   // time. Interface edges remain sparse: a diamond is visited once per query,
