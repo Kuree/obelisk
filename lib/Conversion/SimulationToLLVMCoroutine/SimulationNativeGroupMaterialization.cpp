@@ -1685,7 +1685,10 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
   DialectRegistry registry;
   LLVM::registerInlinerInterface(registry);
   module.getContext()->appendDialectRegistry(registry);
-  SymbolTable symbols(module);
+  // Every symbol change below goes through `symbols`, so the per-function
+  // action lowering reuses the same module table instead of rebuilding it.
+  SymbolTableCollection symbolTables;
+  SymbolTable &symbols = symbolTables.getSymbolTable(module);
   // Candidates are transient compiler-owned bodies. Preserve user-authored
   // candidates with existing callers rather than deleting or retargeting
   // their callable interface. Inventory uses once, not once per group.
@@ -1863,7 +1866,7 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
       preInlined.erase(inlined);
     // Member effects are now visible in one CFG. Combine semantic readiness
     // reads/updates before expanding indexes or predicating the computation.
-    if (failed(lowerNativeScheduleActionsToLLVM(function)))
+    if (failed(lowerNativeScheduleActionsToLLVM(function, &symbolTables)))
       return failure();
     uint64_t remaining = body.remaining;
     if (auto candidate = ::obelisk::schedule::get<
@@ -1938,7 +1941,7 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
       // materialization never introduces loads on a collapsed child's entry.
       if (auto remaining = residualBudgets.find(original);
           remaining != residualBudgets.end()) {
-        if (failed(lowerNativeScheduleActionsToLLVM(original)))
+        if (failed(lowerNativeScheduleActionsToLLVM(original, &symbolTables)))
           return failure();
         if (failed(promoteGroupReadyWords(original, inputs.globalTypes,
                                           remaining->second)) ||

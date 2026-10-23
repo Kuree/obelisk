@@ -6,6 +6,7 @@
 namespace mlir {
 class ModuleOp;
 class Operation;
+class SymbolTableCollection;
 }
 namespace obelisk::sim {
 class SimDesignOp;
@@ -21,8 +22,11 @@ mlir::LogicalResult materializeEvalTwoStateVariants(
 } // namespace obelisk::detail
 namespace obelisk::schedule {
 // Function-local executable scheduling rewrites; no fallback/frame facts are
-// recomputed by these actions.
+// recomputed by these actions. Callers rewriting many functions of one module
+// pass one symbol cache rather than rebuilding the module table per function.
 void coalesceNativeReadyUpdates(mlir::Operation *operation);
+void coalesceNativeReadyUpdates(mlir::Operation *operation,
+                                mlir::SymbolTableCollection &symbols);
 void cacheNativePureCones(mlir::ModuleOp module, uint64_t minimumCost = 256,
                           uint64_t maximumCost = 4096,
                           unsigned maximumCaches = 128);

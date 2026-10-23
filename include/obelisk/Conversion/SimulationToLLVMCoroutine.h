@@ -17,6 +17,7 @@ class ModuleOp;
 class OpPassManager;
 class RewritePatternSet;
 class Operation;
+class SymbolTableCollection;
 } // namespace mlir
 
 namespace obelisk {
@@ -32,13 +33,17 @@ void buildSimulationToLLVMCoroutinePipeline(mlir::OpPassManager &manager,
 void registerSimulationToLLVMCoroutinePipeline();
 
 /// Lower executable schedule actions after their effect-aware optimization.
-void materializeNativeScheduleActions(mlir::Operation *operation,
-                                      bool coalesce = true,
-                                      bool preserveReadiness = false);
+/// A caller lowering many functions of one module passes `symbols`, a cache
+/// kept coherent with its own symbol changes, so each call does not rebuild
+/// the module symbol table.
+void materializeNativeScheduleActions(
+    mlir::Operation *operation, bool coalesce = true,
+    bool preserveReadiness = false,
+    mlir::SymbolTableCollection *symbols = nullptr);
 /// Materialize actions introduced after the main LLVM conversion, including
 /// the integer arithmetic and CFG needed by local readiness regions.
-mlir::LogicalResult
-lowerNativeScheduleActionsToLLVM(mlir::Operation *operation);
+mlir::LogicalResult lowerNativeScheduleActionsToLLVM(
+    mlir::Operation *operation, mlir::SymbolTableCollection *symbols = nullptr);
 
 /// Address each native state plane through one invariant base per function
 /// that accesses it in several blocks, instead of constant offsets from the

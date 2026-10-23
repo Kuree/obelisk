@@ -98,7 +98,10 @@ void materializeReadyBatches(Operation *operation,
 }
 } // namespace
 void materializeNativeScheduleActions(Operation *operation, bool coalesce,
-                                      bool preserveReadiness) {
+                                      bool preserveReadiness,
+                                      SymbolTableCollection *cache) {
+  SymbolTableCollection local;
+  SymbolTableCollection &symbols = cache ? *cache : local;
   SmallVector<schedule::NativeNBABatchOp> batches;
   operation->walk(
       [&](schedule::NativeNBABatchOp op) { batches.push_back(op); });
@@ -120,7 +123,7 @@ void materializeNativeScheduleActions(Operation *operation, bool coalesce,
       roots.push_back(commit.getRoot());
     LLVM::GlobalOp table;
     {
-      SymbolTable symbols(module);
+      SymbolTable unique(module);
       OpBuilder::InsertionGuard guard(builder);
       builder.setInsertionPointToStart(module.getBody());
       auto tensor = RankedTensorType::get({int64_t(roots.size())}, i32);
@@ -128,7 +131,10 @@ void materializeNativeScheduleActions(Operation *operation, bool coalesce,
           builder, loc, LLVM::LLVMArrayType::get(i32, roots.size()), true,
           LLVM::Linkage::Internal, "__obelisk_nba_batch_roots",
           DenseIntElementsAttr::get(tensor, ArrayRef<uint32_t>(roots)), 4);
-      symbols.insert(table);
+      unique.insert(table);
+      // Keep a caller's cache coherent; the name is already unique.
+      if (cache)
+        symbols.getSymbolTable(module).insert(table);
     }
     Value address = LLVM::AddressOfOp::create(builder, loc, table);
     auto call = LLVM::CallOp::create(
@@ -142,12 +148,11 @@ void materializeNativeScheduleActions(Operation *operation, bool coalesce,
     batch.erase();
   }
   if (coalesce && !preserveReadiness)
-    schedule::coalesceNativeReadyUpdates(operation);
+    schedule::coalesceNativeReadyUpdates(operation, symbols);
   SmallVector<schedule::NativeReadyRegionOp> readyRegions;
   if (!preserveReadiness)
     operation->walk(
         [&](schedule::NativeReadyRegionOp op) { readyRegions.push_back(op); });
-  SymbolTableCollection symbols;
   for (auto region : readyRegions)
     detail::lowerNativeReadyRegion(region, symbols);
   if (coalesce && !preserveReadiness)
@@ -251,8 +256,10 @@ void materializeNativeScheduleActions(Operation *operation, bool coalesce,
   }
 }
 
-LogicalResult lowerNativeScheduleActionsToLLVM(Operation *operation) {
-  materializeNativeScheduleActions(operation);
+LogicalResult lowerNativeScheduleActionsToLLVM(Operation *operation,
+                                               SymbolTableCollection *symbols) {
+  materializeNativeScheduleActions(operation, /*coalesce=*/true,
+                                   /*preserveReadiness=*/false, symbols);
   LLVMTypeConverter converter(operation->getContext());
   RewritePatternSet patterns(operation->getContext());
   arith::populateArithToLLVMConversionPatterns(converter, patterns);

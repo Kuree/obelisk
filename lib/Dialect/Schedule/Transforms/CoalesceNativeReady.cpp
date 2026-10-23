@@ -203,9 +203,13 @@ static void coalesceFunction(FunctionReadyUpdates &input) {
   formReadyRegion(operation);
 }
 void coalesceNativeReadyUpdates(Operation *operation) {
+  SymbolTableCollection symbols;
+  coalesceNativeReadyUpdates(operation, symbols);
+}
+void coalesceNativeReadyUpdates(Operation *operation,
+                                SymbolTableCollection &symbols) {
   // Inventories are cheap; allocate solver state only for functions that
   // actually have executable ready actions, not millions of unrelated LLVM ops.
-  SymbolTableCollection symbols;
   if (isa<FunctionOpInterface>(operation)) {
     FunctionReadyUpdates input = collectReadyUpdates(operation, symbols);
     return coalesceFunction(input);
