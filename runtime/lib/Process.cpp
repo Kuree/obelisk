@@ -807,11 +807,28 @@ bool obelisk_rt_current_time_queue_pending_unlocked(
   return false;
 }
 
+static void
+refreshNativeSchedulerReadinessUnlocked(obelisk_rt_context *context) {
+  context->nativePollCandidates.clear();
+  context->scheduledProcessDelayHeap.clear();
+  for (const ScheduledProcess &process : context->scheduledProcesses) {
+    if (process.instance && !indexedBlocked(*context, process))
+      context->nativePollCandidates.insert(process.token);
+    // Periodic evaluation updates detached deadlines without maintaining the
+    // generic calendar. Rebuild it from the restored actors at handoff too,
+    // otherwise stale heap entries can hide every future clock edge.
+    if (process.instance && process.started && process.phase == 0 &&
+        process.suspendKind == OBELISK_RT_SUSPEND_DELAY)
+      context->scheduledProcessDelayHeap.emplace_back(process.wakeTime,
+                                                      process.token);
+  }
+  std::make_heap(context->scheduledProcessDelayHeap.begin(),
+                 context->scheduledProcessDelayHeap.end(), std::greater<>());
+}
+
 void rebuildNativeSchedulerIndexUnlocked(obelisk_rt_context *context) {
   context->scheduledProcessIndices.clear();
   context->scheduledProcessTokens.clear();
-  context->nativePollCandidates.clear();
-  context->scheduledProcessDelayHeap.clear();
   std::fill(context->nativeScheduleActorIndices.begin(),
             context->nativeScheduleActorIndices.end(), SIZE_MAX);
   context->scheduledProcessIndices.reserve(context->scheduledProcesses.size());
@@ -826,18 +843,8 @@ void rebuildNativeSchedulerIndexUnlocked(obelisk_rt_context *context) {
       context->scheduledProcessTokens.emplace(process.instance, process.token);
     if (process.aotActorSlot < context->nativeScheduleActorIndices.size())
       context->nativeScheduleActorIndices[process.aotActorSlot] = index;
-    if (process.instance && !indexedBlocked(*context, process))
-      context->nativePollCandidates.insert(process.token);
-    // Periodic evaluation updates detached deadlines without maintaining the
-    // generic calendar. Rebuild it from the restored actors at handoff too,
-    // otherwise stale heap entries can hide every future clock edge.
-    if (process.instance && process.started && process.phase == 0 &&
-        process.suspendKind == OBELISK_RT_SUSPEND_DELAY)
-      context->scheduledProcessDelayHeap.emplace_back(process.wakeTime,
-                                                      process.token);
   }
-  std::make_heap(context->scheduledProcessDelayHeap.begin(),
-                 context->scheduledProcessDelayHeap.end(), std::greater<>());
+  refreshNativeSchedulerReadinessUnlocked(context);
 }
 
 void obelisk_rt_erase_automatic_bookkeeping_unlocked(
@@ -2569,8 +2576,10 @@ obelisk_rt_v1_native_state_register_static(obelisk_rt_context *context,
       context->schedulerStatus = OBELISK_RT_INVALID_ARGUMENT;
       return OBELISK_RT_INVALID_ARGUMENT;
     }
-    if (inserted)
+    if (inserted) {
       context->nativeStaticStateRangesValid = false;
+      context->nativeStaticStatesWithinPlanes = false;
+    }
     return OBELISK_RT_OK;
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) {
@@ -2635,11 +2644,16 @@ obelisk_rt_v1_native_state_sync(obelisk_rt_context *context, uint8_t *value,
         !validNativeStatePlanesUnlocked(context, value, unknown,
                                         context->execution->state_bit_count))
       return OBELISK_RT_LAYOUT_MISMATCH;
-    for (const auto &[id, state] : context->nativeStaticStates)
-      if (state.bitOffset > context->execution->state_bit_count ||
-          state.bitWidth >
-              context->execution->state_bit_count - state.bitOffset)
-        return OBELISK_RT_LAYOUT_MISMATCH;
+    // Checkpoint callbacks sync on every entry and exit. Bound-check the
+    // immutable layout once instead of rescanning every static root.
+    if (!context->nativeStaticStatesWithinPlanes) {
+      for (const auto &[id, state] : context->nativeStaticStates)
+        if (state.bitOffset > context->execution->state_bit_count ||
+            state.bitWidth >
+                context->execution->state_bit_count - state.bitOffset)
+          return OBELISK_RT_LAYOUT_MISMATCH;
+      context->nativeStaticStatesWithinPlanes = true;
+    }
     if (!importNativeStatePlanesUnlocked(context, value, unknown,
                                          context->execution->state_bit_count))
       return OBELISK_RT_LAYOUT_MISMATCH;
@@ -3621,8 +3635,17 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       (context->nativeSchedulePlan->flags &
        OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
       !context->nativeStaticEvalIslandCertified;
-  if (options.nativePlan && !indexedRuntimeCalendar)
-    rebuildNativeSchedulerIndexUnlocked(context);
+  // Process creation, rollback and compaction maintain the token maps, so
+  // only the state-derived poll candidates and delay heap can be dormant.
+  // Re-creating the complete actor map here cost O(actors) allocations at
+  // every checkpoint of a large design.
+  if (options.nativePlan && !indexedRuntimeCalendar) {
+    if (context->scheduledProcessIndices.size() !=
+        context->scheduledProcesses.size())
+      rebuildNativeSchedulerIndexUnlocked(context);
+    else
+      refreshNativeSchedulerReadinessUnlocked(context);
+  }
   for (;;) {
     bool deferredEvalIngress = false;
     {

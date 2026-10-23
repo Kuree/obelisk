@@ -2559,6 +2559,9 @@ struct obelisk_rt_context {
   // Lazily sorted interval index for reflection/VPI range lookups.
   mutable std::vector<NativeStaticStateRange> nativeStaticStateRanges;
   mutable bool nativeStaticStateRangesValid = false;
+  // Every registered static state lies within the execution's state planes.
+  // The layout only grows by registration, which clears this.
+  bool nativeStaticStatesWithinPlanes = false;
   std::vector<NativeStaticState> nativeScheduleStaticStateIndex;
   std::vector<uint8_t> nativeScheduleStaticStateFanoutEdges;
   std::unordered_map<uint32_t, NativeAutomaticState> nativeAutomaticStates;
