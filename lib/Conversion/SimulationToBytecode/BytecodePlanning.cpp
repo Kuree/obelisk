@@ -10,6 +10,7 @@
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Analysis/StaticSpecializationAnalysis.h"
 #include "obelisk/Dialect/Native/NativeDialect.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Runtime/Runtime.h"
 
@@ -109,8 +110,13 @@ void pruneNativeFunctions(sim::SimDesignOp design,
 
     // Keep callback and helper entry points conservatively. Their native
     // callers need bytecode only when a call can reach an interpreter boundary.
+    // A generated eval body is not one: only the native dispatch calls it, and
+    // a checkpoint resumes its owning actor's continuation, not the body. It
+    // stays only when a retained function depends on it.
     if (!native.getActorSlots().contains(function) &&
-        !nativeBootstraps.contains(function))
+        !nativeBootstraps.contains(function) &&
+        !::obelisk::schedule::has<::obelisk::schedule::Field::EvalContinuation>(
+            function))
       retain(function);
     bool needsFallback =
         native.getBytecodeFragments().contains(function) ||
