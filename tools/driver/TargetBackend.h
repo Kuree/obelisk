@@ -64,6 +64,15 @@ struct NativeLinkInput {
   size_t sharedLibraryIndex = 0;
 };
 
+/// Writes the whole module before or after the first run of the pass with a
+/// given argument, then exits, so that one slow pass of a large design can be
+/// replayed with obelisk-opt. A path ending in ".mlirbc" receives bytecode;
+/// any other path receives textual IR without locations.
+struct PassIRDumpOptions {
+  std::string before, after, path;
+  bool enabled() const { return !before.empty() || !after.empty(); }
+};
+
 struct NativeOutputOptions {
   NativeOutputKind kind = NativeOutputKind::Executable;
   TargetKind target = TargetKind::Native;
@@ -86,6 +95,7 @@ struct NativeOutputOptions {
   bool timing = false;
   bool verifyEach = false;
   bool debugNativeExecutionCounts = false;
+  PassIRDumpOptions irDump;
   uint32_t optLevel = 3;
   uint32_t compileThreads = 1;
 };

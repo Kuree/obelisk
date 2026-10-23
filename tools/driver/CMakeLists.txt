@@ -143,6 +143,7 @@ function(obelisk_configure_driver target)
     ObeliskSlangIR
     ObeliskSlangToObelisk
     ObeliskToSimulation
+    MLIRBytecodeWriter
     MLIRIR
     MLIRBuiltinToLLVMIRTranslation
     MLIRLLVMToLLVMIRTranslation

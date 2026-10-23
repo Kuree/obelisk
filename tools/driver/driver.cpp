@@ -16,6 +16,7 @@
 #endif
 #include "DriverMain.h"
 #include "Options.h"
+#include "PassIRDump.h"
 #include "TargetBackend.h"
 
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
@@ -1105,6 +1106,17 @@ static int executeCompilation(
     emitDriverError("--compile-threads must be greater than zero");
     valid = false;
   }
+  obelisk::driver::PassIRDumpOptions irDump;
+  irDump.before = args.getLastArgValue(OPT_dump_ir_before_EQ).str();
+  irDump.after = args.getLastArgValue(OPT_dump_ir_after_EQ).str();
+  irDump.path = args.getLastArgValue(OPT_dump_ir_path_EQ).str();
+  if (irDump.enabled() == irDump.path.empty()) {
+    emitDriverError(irDump.enabled()
+                        ? "--dump-ir-before/--dump-ir-after need --dump-ir-path"
+                        : "--dump-ir-path needs --dump-ir-before or "
+                          "--dump-ir-after");
+    valid = false;
+  }
   std::string coverageConfigContents;
   if (StringRef path = args.getLastArgValue(OPT_coverage_config_EQ);
       !path.empty())
@@ -1466,6 +1478,7 @@ static int executeCompilation(
       // under the existing diagnostic flag rather than only its pass timing.
       obelisk::native::mark<obelisk::native::DebugTiming>(*module);
     }
+    obelisk::driver::addPassIRDump(passManager, irDump);
     passManager.addPass(obelisk::createConvertSlangToObeliskPass());
     if (emitSim || emitSchedule || native)
       obelisk::buildObeliskToSimulationPipeline(
@@ -1524,6 +1537,7 @@ static int executeCompilation(
     nativeOptions.verifyEach = args.hasArg(OPT_mlir_verify_each);
     nativeOptions.debugNativeExecutionCounts =
         args.hasArg(OPT_debug_native_execution_counts);
+    nativeOptions.irDump = irDump;
     nativeOptions.compileThreads = resolvedCompilerThreads;
     nativeOptions.target = targetName == "wasm32"
                                ? obelisk::driver::TargetKind::Wasm

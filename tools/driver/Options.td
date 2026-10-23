@@ -61,6 +61,15 @@ def mlir_timing : Flag<["--"], "mlir-timing">, Group<Output_Group>,
 def mlir_verify_each : Flag<["--"], "mlir-verify-each">,
   Group<Diagnostic_Group>, Flags<[HelpHidden]>,
   HelpText<"Verify the MLIR after every internal pass instead of at pipeline boundaries">;
+def dump_ir_before_EQ : Joined<["--"], "dump-ir-before=">,
+  Group<Diagnostic_Group>, Flags<[HelpHidden]>, MetaVarName<"<pass>">,
+  HelpText<"Write the module to --dump-ir-path before the first run of <pass> and exit">;
+def dump_ir_after_EQ : Joined<["--"], "dump-ir-after=">,
+  Group<Diagnostic_Group>, Flags<[HelpHidden]>, MetaVarName<"<pass>">,
+  HelpText<"Write the module to --dump-ir-path after the first run of <pass> and exit">;
+def dump_ir_path_EQ : Joined<["--"], "dump-ir-path=">,
+  Group<Diagnostic_Group>, Flags<[HelpHidden]>, MetaVarName<"<file>">,
+  HelpText<"Destination of --dump-ir-before/--dump-ir-after (.mlirbc for bytecode)">;
 def debug_native_execution_counts : Flag<["--"], "debug-native-execution-counts">,
   Group<Diagnostic_Group>, Flags<[HelpHidden]>,
   HelpText<"Instrument generated native function entries and print counts at exit">;

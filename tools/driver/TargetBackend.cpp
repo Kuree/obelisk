@@ -21,6 +21,7 @@
 #include "NativeGlobalInitializers.h"
 #include "NativeModulePruning.h"
 #include "NativePartitionCost.h"
+#include "PassIRDump.h"
 #include "WasmBackend.h"
 
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
@@ -819,8 +820,8 @@ lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
             bool bytecode, StringRef vpi, StringRef bytecodeScope,
             obelisk::schedule::NativeSchedulerMode nativeScheduler,
             uint32_t optLevel, bool planSemanticPartitions, bool timing,
-            bool verifyEach, bool &requiresStateSync,
-            bool &resolveInitialDrivers) {
+            bool verifyEach, const PassIRDumpOptions &irDump,
+            bool &requiresStateSync, bool &resolveInitialDrivers) {
   if (bytecode &&
       nativeScheduler == obelisk::schedule::NativeSchedulerMode::Auto)
     nativeScheduler = obelisk::schedule::NativeSchedulerMode::Generic;
@@ -840,6 +841,7 @@ lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
   manager.enableVerifier(verifyEach);
   if (timing)
     manager.enableTiming();
+  addPassIRDump(manager, irDump);
   if (timing)
     native::mark<native::DebugTiming>(module);
   else
@@ -1466,8 +1468,8 @@ LogicalResult emitTargetOutput(ModuleOp module,
                          useBytecode, options.vpi, options.bytecodeScope,
                          *nativeScheduler, options.optLevel,
                          backend->supportsSemanticPartitions() && !useBytecode,
-                         options.timing, options.verifyEach, requiresStateSync,
-                         resolveInitialDrivers)))
+                         options.timing, options.verifyEach, options.irDump,
+                         requiresStateSync, resolveInitialDrivers)))
     return failure();
   auto lastBackendTiming = std::chrono::steady_clock::now();
   auto markBackendTiming = [&](StringRef name) {
