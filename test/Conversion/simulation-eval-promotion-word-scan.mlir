@@ -28,9 +28,9 @@
 // STORE: llvm.store
 // STORE: llvm.icmp "ne"
 // STORE: llvm.cond_br
-// STORE: llvm.call @__obelisk_eval_promotion_publish_unknown_v1
+// STORE: llvm.call preserve_mostcc @__obelisk_eval_promotion_publish_unknown_v1
 // STORE-LABEL: llvm.func @other_work.__obelisk_eval_body_0(
-// STORE: llvm.call @__obelisk_eval_promotion_publish_unknown_v1
+// STORE: llvm.call preserve_mostcc @__obelisk_eval_promotion_publish_unknown_v1
 // STORE-LABEL: llvm.func @work.__obelisk_eval_body_0.__obelisk_two_state_0(
 // STORE-NOT: __obelisk_eval_promotion_publish_unknown_v1
 // STORE-LABEL: llvm.func @other_work.__obelisk_eval_body_0.__obelisk_two_state_0(
@@ -41,9 +41,9 @@
 // outside every value-domain certificate. Keep their canonical semantics
 // without emitting guards or proof publications in the generated clock loop.
 // CLOCK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// CLOCK-NOT: llvm.call @__obelisk_eval_promotion_publish_unknown_v1
+// CLOCK-NOT: llvm.call preserve_mostcc @__obelisk_eval_promotion_publish_unknown_v1
 // CLOCK: llvm.mlir.addressof @__obelisk_state_unknown
-// CLOCK-NOT: llvm.call @__obelisk_eval_promotion_publish_unknown_v1
+// CLOCK-NOT: llvm.call preserve_mostcc @__obelisk_eval_promotion_publish_unknown_v1
 // CLOCK: llvm.func
 
 module attributes {

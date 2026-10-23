@@ -530,7 +530,8 @@ public:
             builder, location, TypeRange{},
             SymbolRefAttr::get(context,
                                "__obelisk_eval_promotion_publish_unknown_v1"),
-            ValueRange{offset, chunk, nextChunk});
+            ValueRange{offset, chunk, nextChunk})
+            .setCConv(LLVM::cconv::CConv::PreserveMost);
         LLVM::BrOp::create(builder, location, ValueRange{}, continuation);
         builder.setInsertionPointToStart(continuation);
       }
@@ -619,6 +620,12 @@ LogicalResult materializeNativePromotionWrites(ModuleOp module) {
   schedule::set(publish, schedule::Field::EvalStateMetadataOnly,
                 builder.getUnitAttr());
   publish->setAttr("passthrough", maskHook->getAttr("passthrough"));
+  // Publishing is the only call in most generated bodies, and it is cold. A
+  // callee that preserves the scratch registers lets a caller keep its values
+  // in them across the call, so shrink-wrapping confines the caller's frame to
+  // the cold block. This is a generated-code ABI choice; every call site above
+  // uses the same convention.
+  publish.setCConv(LLVM::cconv::CConv::PreserveMost);
   Block *publication = publish.addEntryBlock(builder);
   builder.setInsertionPointToStart(publication);
   Value changedMask = publication->getArgument(1);

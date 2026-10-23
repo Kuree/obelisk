@@ -4,12 +4,15 @@
 // negative, partially out-of-range and invalid offsets. A root outside all
 // certificates needs no promotion publication; a possibly overlapping root
 // must retain it. The unaligned 129-bit root shares bytes with its neighbors.
+// The cold publication helper and its calls use a register-preserving
+// convention, so a caller keeps no frame for it on the hot path.
+// DYNAMIC: llvm.func preserve_mostcc @__obelisk_eval_promotion_publish_unknown_v1(
 // DYNAMIC-LABEL: llvm.func @write_disjoint(
-// DYNAMIC-NOT: llvm.call @__obelisk_eval_promotion_publish_unknown_v1
+// DYNAMIC-NOT: llvm.call preserve_mostcc @__obelisk_eval_promotion_publish_unknown_v1
 // DYNAMIC: llvm.mlir.addressof @__obelisk_state_unknown
-// DYNAMIC-NOT: llvm.call @__obelisk_eval_promotion_publish_unknown_v1
+// DYNAMIC-NOT: llvm.call preserve_mostcc @__obelisk_eval_promotion_publish_unknown_v1
 // DYNAMIC-LABEL: llvm.func @write_overlapping(
-// DYNAMIC: llvm.call @__obelisk_eval_promotion_publish_unknown_v1
+// DYNAMIC: llvm.call preserve_mostcc @__obelisk_eval_promotion_publish_unknown_v1
 // DYNAMIC: llvm.func
 
 module attributes {

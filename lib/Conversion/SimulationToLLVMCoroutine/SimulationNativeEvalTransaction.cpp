@@ -730,7 +730,10 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
   for (Operation *operation : reachable) {
     auto function = cast<LLVM::LLVMFuncOp>(operation);
     auto &scope = masks.try_emplace(operation, roots.size()).first->second;
-    if (function.isVarArg() || function.getCConv() != LLVM::CConv::C)
+    // A metadata-only helper touches no pending root, so it is never cloned
+    // and its convention need not be the default one.
+    if (!schedule::has<schedule::Field::EvalStateMetadataOnly>(function) &&
+        (function.isVarArg() || function.getCConv() != LLVM::CConv::C))
       return success();
     function.walk([&](Operation *nested) {
       for (auto role :
