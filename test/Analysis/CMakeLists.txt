@@ -13,6 +13,7 @@ add_mlir_library(ObeliskAnalysisTestPasses
   LocalUnknownAnalysisTestPass.cpp
   SteadyUnknownAnalysisTestPass.cpp
   NativeAOTAnalysisTestPass.cpp
+  NativeSizeCensusTestPass.cpp
   NativeStateLayoutAnalysisTestPass.cpp
   RandomProgramTestPass.cpp
   SimulationProcessFrameAnalysisTestPass.cpp

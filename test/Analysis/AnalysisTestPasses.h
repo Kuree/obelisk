@@ -19,6 +19,7 @@ void registerLocalStorageAnalysisTestPass();
 void registerLocalUnknownAnalysisTestPass();
 void registerSteadyUnknownAnalysisTestPass();
 void registerNativeAOTAnalysisTestPass();
+void registerNativeSizeCensusTestPass();
 void registerNativeStateLayoutAnalysisTestPass();
 void registerRandomProgramTestPass();
 void registerSimulationProcessFrameAnalysisTestPass();
