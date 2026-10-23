@@ -1315,6 +1315,7 @@ LogicalResult NativePipelineAnalysis::planOwnership() {
   // drops the body's NBA staging.
   if (evalScheduler) {
     std::string unsupportedCheckpointOwner;
+    Location unsupportedLoc = module.getLoc();
     for (const NativeDirectFragment &direct : *directFragments) {
       auto wrapper =
           evalSymbols.getSymbolTable(module).lookup<LLVM::LLVMFuncOp>(
@@ -1328,12 +1329,13 @@ LogicalResult NativePipelineAnalysis::planOwnership() {
       unsupportedCheckpointOwner =
           "an eval owner keeps an unguarded runtime leaf in " +
           owner.getValue().str();
+      unsupportedLoc = wrapper.getLoc();
       break;
     }
     if (!unsupportedCheckpointOwner.empty()) {
       if (nativeScheduler != schedule::NativeSchedulerMode::Auto)
-        return module.emitError(unsupportedCheckpointOwner), failure();
-      module.emitRemark("generated eval disabled: ")
+        return emitError(unsupportedLoc, unsupportedCheckpointOwner), failure();
+      emitRemark(unsupportedLoc, "generated eval disabled: ")
           << unsupportedCheckpointOwner;
       if (detailedTiming)
         llvm::errs() << "generated eval disabled: "
@@ -1452,8 +1454,8 @@ LogicalResult NativePipelineAnalysis::planOwnership() {
     }
     if (!invalidConvergenceOwnership.empty()) {
       if (nativeScheduler != schedule::NativeSchedulerMode::Auto)
-        return module.emitError(invalidConvergenceOwnership), failure();
-      module.emitRemark("generated eval disabled: ")
+        return emitError(module.getLoc(), invalidConvergenceOwnership), failure();
+      emitRemark(module.getLoc(), "generated eval disabled: ")
           << invalidConvergenceOwnership;
       if (detailedTiming)
         llvm::errs() << "generated eval disabled: "
