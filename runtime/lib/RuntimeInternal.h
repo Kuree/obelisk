@@ -2322,6 +2322,9 @@ struct obelisk_rt_context {
   std::vector<uint32_t> nativeScheduleFanoutNodes;
   std::vector<uint64_t> nativeScheduleNodeIngress;
   std::vector<std::pair<uint64_t, uint64_t>> nativeScheduleFanoutRanges;
+  // Indices of the immutable fanout entries routed to the runtime. Periodic
+  // handoff validation inspects only these instead of the whole table.
+  std::vector<uint64_t> nativeScheduleRuntimeFanoutIndices;
   uint32_t nativeScheduleMinimumActivatedNode = UINT32_MAX;
   bool nativeScheduleClockIngressPending = false;
   uint32_t nativeScheduleDirectActorSlot = UINT32_MAX;

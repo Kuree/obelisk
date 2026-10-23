@@ -678,13 +678,10 @@ initializeNativeAOTNodesUnlocked(obelisk_rt_context *context,
                                  const obelisk_rt_native_schedule_node *nodes,
                                  uint32_t nodeCount) {
   if (!context->nativeScheduleNodes.empty()) {
-    // A compiler-certified runtime-calendar plan owns an immutable node
-    // table for its lifetime. Checkpoint reentry uses that same table; its
+    // A compiler-certified plan owns an immutable node table for its
+    // lifetime. Checkpoint and periodic reentry pass that same table; its
     // complete identities were already validated when installed.
-    if (context->nativeSchedulePlan &&
-        (context->nativeSchedulePlan->flags &
-         OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
-        nodes == context->nativeScheduleNodeSource &&
+    if (nodes == context->nativeScheduleNodeSource &&
         context->nativeScheduleNodes.size() == nodeCount)
       return OBELISK_RT_OK;
     if (context->nativeScheduleNodes.size() != nodeCount ||
@@ -1793,15 +1790,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
               scheduled.suspendKind == OBELISK_RT_SUSPEND_OBSERVER);
     };
     auto missingPeriodicFanoutActive = [&] {
-      for (uint64_t index = 0; index != context->nativeScheduleFanoutEntryCount;
-           ++index) {
+      // A generated owner remains generated even when its source process is
+      // classified as an initial process (always/always_comb use that
+      // lifecycle flag too). Finite unsupported stimulus remains explicitly
+      // runtime-owned until its continuation terminates.
+      for (uint64_t index : context->nativeScheduleRuntimeFanoutIndices) {
         const auto &entry = context->nativeScheduleFanoutEntries[index];
-        // A generated owner remains generated even when its source process is
-        // classified as an initial process (always/always_comb use that
-        // lifecycle flag too). Finite unsupported stimulus remains explicitly
-        // runtime-owned until its continuation terminates.
-        if (fanoutRoute(entry) != OBELISK_RT_FANOUT_RUNTIME)
-          continue;
         bool periodic = false;
         for (uint32_t clockIndex = 0; clockIndex != clockCount; ++clockIndex)
           periodic |= periodicFanoutMatches(entry, clocks[clockIndex]);
@@ -2042,19 +2036,34 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
           return decodeNativeStatic(subscription.stableID, staticID, offset) &&
                  offset >= 0 && generatedWritesState(staticID);
         };
-    for (const ScheduledProcess &scheduled : context->scheduledProcesses) {
-      if (!scheduled.instance || scheduled.phase != 0 ||
-          scheduled.aotActorSlot != UINT32_MAX)
-        continue;
-      for (const auto &subscription : scheduled.signalSubscriptions)
-        if (!sharedCalendar && subscription &&
-            subscriptionReadsGeneratedState(*subscription)) {
+    // Only an indexed subscription can wake its waiter, and each one has a
+    // slot-zero entry in the subscription buckets. Walk that index rather
+    // than every actor, so the check costs the live runtime waiters, not the
+    // size of the design (IEEE 1800-2023 9.4.2).
+    if (!sharedCalendar)
+      for (const auto &[key, bucket] : context->signalSubscriptionBuckets) {
+        (void)key;
+        for (const auto &entry : bucket) {
+          const SignalSubscription *subscription = entry.subscription;
+          if (!subscription || entry.slotIndex != 0 ||
+              !subscriptionReadsGeneratedState(*subscription))
+            continue;
+          const ScheduledProcess *scheduled =
+              findScheduledProcess(context, subscription->waiterToken);
+          if (!scheduled || !scheduled->instance || scheduled->phase != 0 ||
+              scheduled->aotActorSlot != UINT32_MAX ||
+              std::none_of(scheduled->signalSubscriptions.begin(),
+                           scheduled->signalSubscriptions.end(),
+                           [&](const auto &owned) {
+                             return owned.get() == subscription;
+                           }))
+            continue;
           if (context->signalDiagnosticsEnabled)
             std::fprintf(stderr,
                          "obelisk-periodic-reject=process-subscription\n");
           return OBELISK_RT_TIER_UNAVAILABLE;
         }
-    }
+      }
     for (const ScheduledDesignTask &task : context->scheduledDesignTasks) {
       if (task.terminated || task.phase != 0)
         continue;
@@ -2070,11 +2079,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
     // unsupported live waiter whose source is actually writable by the
     // generated closure; dormant fanout on runtime-only state cannot be
     // reached while run_until owns the calendar and must not pessimize it.
-    for (uint64_t index = 0; index != context->nativeScheduleFanoutEntryCount;
-         ++index) {
+    for (uint64_t index : context->nativeScheduleRuntimeFanoutIndices) {
       const auto &entry = context->nativeScheduleFanoutEntries[index];
-      if (sharedCalendar || fanoutRoute(entry) != OBELISK_RT_FANOUT_RUNTIME ||
-          !generatedWritesState(entry.static_state) ||
+      if (sharedCalendar || !generatedWritesState(entry.static_state) ||
           entry.actor_slot >= context->nativeScheduleActors.size())
         continue;
       obelisk_rt_process_instance_v1 *actor =
@@ -3168,6 +3175,7 @@ void obelisk_rt_release_native_schedule_plan(
   context->nativeScheduleFanoutNodes.clear();
   context->nativeScheduleNodeIngress.clear();
   context->nativeScheduleFanoutRanges.clear();
+  context->nativeScheduleRuntimeFanoutIndices.clear();
   context->nativeScheduleReadyNodes.resize(0);
   context->nativeScheduleDeadlines.clear();
   context->nativeScheduleDeadlineHeap.clear();

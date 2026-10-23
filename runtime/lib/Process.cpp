@@ -1951,6 +1951,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       context->nativeScheduleFanoutNodes.clear();
       context->nativeScheduleNodeIngress.clear();
       context->nativeScheduleFanoutRanges.clear();
+      context->nativeScheduleRuntimeFanoutIndices.clear();
       context->nativeScheduleReadyNodes.resize(0);
       context->nativeScheduleDeadlines.assign(plan->actor_capacity, UINT64_MAX);
       context->nativeScheduleDeadlineHeap.clear();
@@ -1985,6 +1986,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
             context->nativeScheduleStaticStateFanoutEdges.size())
           context->nativeScheduleStaticStateFanoutEdges[entry.static_state] |=
               static_cast<uint8_t>(uint32_t{1} << entry.edge);
+        if ((entry.reserved & OBELISK_RT_FANOUT_ROUTE_MASK) ==
+            OBELISK_RT_FANOUT_RUNTIME)
+          context->nativeScheduleRuntimeFanoutIndices.push_back(index);
       }
       size_t dirtyWords =
           (context->nativeScheduleStaticStateIndex.size() + 63) / 64;
@@ -3635,16 +3639,20 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       (context->nativeSchedulePlan->flags &
        OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
       !context->nativeStaticEvalIslandCertified;
-  // Process creation, rollback and compaction maintain the token maps, so
-  // only the state-derived poll candidates and delay heap can be dormant.
-  // Re-creating the complete actor map here cost O(actors) allocations at
-  // every checkpoint of a large design.
+  // Process creation, rollback and compaction maintain the token maps, and
+  // every wake-time change (actions and periodic restore) indexes the delay
+  // heap, so neither needs an O(actors) rescan at each handoff. A wake indexed
+  // after its slot was entered is the one readiness that slot entry did not
+  // admit (IEEE 1800-2023 4.4-4.5); admit it here.
   if (options.nativePlan && !indexedRuntimeCalendar) {
     if (context->scheduledProcessIndices.size() !=
-        context->scheduledProcesses.size())
+        context->scheduledProcesses.size()) {
       rebuildNativeSchedulerIndexUnlocked(context);
-    else
-      refreshNativeSchedulerReadinessUnlocked(context);
+    } else if (context->schedulerPreponedTime == context->schedulerTime) {
+      obelisk_rt_status admitted = admitDueProcessDelaysUnlocked(context);
+      if (admitted != OBELISK_RT_OK)
+        return admitted;
+    }
   }
   for (;;) {
     bool deferredEvalIngress = false;
