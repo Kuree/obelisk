@@ -466,35 +466,147 @@ LogicalResult makeSchedulerMain(ModuleOp module,
       if (mlir::failed(emitBoundRegistration(builder, runtimeContext, bound)))
         return failure();
   } else {
-    SymbolTable symbols(module);
-    for (size_t first = 0; first < stateLayout.bounds.size();
-         first += registrationBatchSize) {
-      LLVM::LLVMFuncOp helper;
-      {
-        OpBuilder::InsertionGuard guard(builder);
-        builder.setInsertionPointToEnd(module.getBody());
-        helper = LLVM::LLVMFuncOp::create(
-            builder, location,
-            "__obelisk_register_static_state_" + std::to_string(first),
-            LLVM::LLVMFunctionType::get(voidType, {pointer}, false),
-            LLVM::Linkage::Internal);
-        symbols.insert(helper);
-        helper.setNoInline(true);
-        Block *entry = helper.addEntryBlock(builder);
-        builder.setInsertionPointToStart(entry);
-        size_t end = std::min(first + registrationBatchSize,
-                              stateLayout.bounds.size());
-        for (size_t index = first; index < end; ++index)
-          if (mlir::failed(emitBoundRegistration(
-                  builder, entry->getArgument(0), stateLayout.bounds[index])))
-            return failure();
-        LLVM::ReturnOp::create(builder, location, ValueRange{});
+    // Large designs register from two constant tables in one loop: bounds
+    // {handle, end of its roots, bit offset, width} and managed roots {byte
+    // offset, kind mask}. The order of runtime calls and their status checks
+    // is the same as the unrolled form, without a call sequence per bound.
+    auto boundType =
+        LLVM::LLVMStructType::getLiteral(context, {i32, i32, i64, i64});
+    auto rootType = LLVM::LLVMStructType::getLiteral(context, {i64, i32, i32});
+    SmallVector<Attribute> boundRows, rootRows;
+    boundRows.reserve(stateLayout.bounds.size());
+    for (const NativeStateLayout::Bound &bound : stateLayout.bounds) {
+      for (const sim::ManagedHandleSlot &root : bound.managedRootSlots) {
+        uint64_t bit = bound.offset + root.bitOffset;
+        if (bit & 7)
+          return module.emitError("managed static root is not byte aligned");
+        rootRows.push_back(
+            integerStructAttr(rootType, {bit / 8, root.kindMask, 0}));
       }
-      LLVM::CallOp::create(
-          builder, location, TypeRange{},
-          SymbolRefAttr::get(context, helper.getSymName()),
-          ValueRange{runtimeContext});
+      boundRows.push_back(
+          integerStructAttr(boundType, {bound.handleID, rootRows.size(),
+                                        bound.offset, bound.width}));
     }
+    constexpr StringLiteral boundsName = "__obelisk_static_state_bounds_v1";
+    constexpr StringLiteral rootsName = "__obelisk_static_state_roots_v1";
+    makeConstantGlobal(module, location,
+                       LLVM::LLVMArrayType::get(boundType, boundRows.size()),
+                       boundsName, LLVM::Linkage::Internal, 8,
+                       ArrayAttr::get(context, boundRows));
+    makeConstantGlobal(module, location,
+                       LLVM::LLVMArrayType::get(rootType, rootRows.size()),
+                       rootsName, LLVM::Linkage::Internal, 8,
+                       ArrayAttr::get(context, rootRows));
+    LLVM::LLVMFuncOp helper;
+    {
+      OpBuilder::InsertionGuard guard(builder);
+      builder.setInsertionPointToEnd(module.getBody());
+      helper = LLVM::LLVMFuncOp::create(
+          builder, location, "__obelisk_register_static_state",
+          LLVM::LLVMFunctionType::get(voidType, {pointer}, false),
+          LLVM::Linkage::Internal);
+      helper.setNoInline(true);
+      Block *entry = helper.addEntryBlock(builder);
+      Value helperContext = entry->getArgument(0);
+      Region &body = helper.getBody();
+      auto *boundHeader = new Block, *boundBody = new Block,
+           *rootHeader = new Block, *rootBody = new Block, *exit = new Block;
+      for (Block *block : {boundHeader, boundBody, rootHeader, rootBody, exit})
+        body.push_back(block);
+      Value bound = boundHeader->addArgument(i64, location);
+      Value firstRoot = boundHeader->addArgument(i64, location);
+      Value root = rootHeader->addArgument(i64, location);
+      Value nextBound = rootHeader->addArgument(i64, location);
+      Value rootEnd = rootHeader->addArgument(i64, location);
+      auto fail = [&](Value status) {
+        LLVM::CallOp::create(
+            builder, location, TypeRange{},
+            SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+            ValueRange{helperContext, status});
+      };
+      auto field = [&](StringRef table, Type rowType, Value row, int32_t index,
+                       Type type) -> Value {
+        Value address = LLVM::GEPOp::create(
+            builder, location, pointer, rowType,
+            LLVM::AddressOfOp::create(builder, location, pointer, table),
+            ArrayRef<LLVM::GEPArg>{row, index});
+        return LLVM::LoadOp::create(builder, location, type, address,
+                                    type == i64 ? 8 : 4);
+      };
+
+      builder.setInsertionPointToStart(entry);
+      Value zero = llvmConstant(builder, location, i64, 0);
+      LLVM::BrOp::create(builder, location, ValueRange{zero, zero},
+                         boundHeader);
+
+      builder.setInsertionPointToStart(boundHeader);
+      Value more = LLVM::ICmpOp::create(
+          builder, location, LLVM::ICmpPredicate::ult, bound,
+          llvmConstant(builder, location, i64, boundRows.size()));
+      LLVM::CondBrOp::create(builder, location, more, boundBody, exit);
+
+      builder.setInsertionPointToStart(boundBody);
+      Value status =
+          LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(context,
+                                 "obelisk_rt_v1_native_state_register_static"),
+              ValueRange{helperContext,
+                         field(boundsName, boundType, bound, 0, i32),
+                         field(boundsName, boundType, bound, 2, i64),
+                         field(boundsName, boundType, bound, 3, i64)})
+              .getResult();
+      fail(status);
+      Value end = LLVM::ZExtOp::create(
+          builder, location, i64, field(boundsName, boundType, bound, 1, i32));
+      Value following = LLVM::AddOp::create(
+          builder, location, bound, llvmConstant(builder, location, i64, 1));
+      LLVM::BrOp::create(builder, location,
+                         ValueRange{firstRoot, following, end}, rootHeader);
+
+      builder.setInsertionPointToStart(rootHeader);
+      Value rootsLeft = LLVM::ICmpOp::create(
+          builder, location, LLVM::ICmpPredicate::ult, root, rootEnd);
+      LLVM::CondBrOp::create(builder, location, rootsLeft, rootBody,
+                             ValueRange{}, boundHeader,
+                             ValueRange{nextBound, rootEnd});
+
+      builder.setInsertionPointToStart(rootBody);
+      Value byte = field(rootsName, rootType, root, 0, i64);
+      Value kind = field(rootsName, rootType, root, 1, i32);
+      Value slot = LLVM::GEPOp::create(
+          builder, location, pointer, builder.getI8Type(),
+          LLVM::AddressOfOp::create(builder, location, pointer,
+                                    "__obelisk_state_value"),
+          ArrayRef<LLVM::GEPArg>{byte});
+      fail(LLVM::CallOp::create(
+               builder, location, TypeRange{i32},
+               SymbolRefAttr::get(
+                   context, "obelisk_rt_v1_gc_candidate_static_root_register"),
+               ValueRange{helperContext, slot, kind})
+               .getResult());
+      if (hasDesignBytecode && !sharedNativeState) {
+        Value bit = LLVM::ShlOp::create(
+            builder, location, byte, llvmConstant(builder, location, i64, 3));
+        fail(
+            LLVM::CallOp::create(
+                builder, location, TypeRange{i32},
+                SymbolRefAttr::get(
+                    context, "obelisk_rt_v1_gc_design_candidate_root_register"),
+                ValueRange{helperContext, bit, kind})
+                .getResult());
+      }
+      Value nextRoot = LLVM::AddOp::create(
+          builder, location, root, llvmConstant(builder, location, i64, 1));
+      LLVM::BrOp::create(builder, location,
+                         ValueRange{nextRoot, nextBound, rootEnd}, rootHeader);
+
+      builder.setInsertionPointToStart(exit);
+      LLVM::ReturnOp::create(builder, location, ValueRange{});
+    }
+    LLVM::CallOp::create(builder, location, TypeRange{},
+                         SymbolRefAttr::get(context, helper.getSymName()),
+                         ValueRange{runtimeContext});
   }
   if (requiresNativeStateSync) {
     Value stateValue = LLVM::AddressOfOp::create(builder, location, pointer,
