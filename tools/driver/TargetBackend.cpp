@@ -46,6 +46,7 @@
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
@@ -1551,9 +1552,22 @@ LogicalResult emitTargetOutput(ModuleOp module,
   // Translation has fully consumed the lowered MLIR. Release its operation
   // storage before building LLVM partitions or entering LTO; otherwise large
   // designs retain both complete IR representations through the peak-memory
-  // backend phase.
-  module.getBody()->clear();
-  releaseFreedHeapPages();
+  // backend phase. Nothing below reads the module body, so an idle MLIR
+  // worker can destroy it while this thread prepares the LLVM module.
+  std::shared_future<void> mlirTeardown;
+  auto releaseMLIR = [&module] {
+    module.getBody()->clear();
+    releaseFreedHeapPages();
+  };
+  if (module.getContext()->isMultithreadingEnabled())
+    mlirTeardown =
+        module.getContext()->getThreadPool().async(std::move(releaseMLIR));
+  else
+    releaseMLIR();
+  auto waitForMLIRTeardown = llvm::make_scope_exit([&] {
+    if (mlirTeardown.valid())
+      mlirTeardown.wait();
+  });
   llvmModule->setTargetTriple(Triple(backend->getTriple()));
   llvmModule->setDataLayout(targetMachine->createDataLayout());
   if (failed(addVPIStartupLifecycle(*llvmModule, options.vpi,
@@ -1787,6 +1801,10 @@ LogicalResult emitTargetOutput(ModuleOp module,
       double bitcodeSerializationSeconds = 0.0;
       std::vector<std::unique_ptr<TargetMachine>> partitionTargets;
       partitionTargets.reserve(splitPlan->groups.size());
+      // Destroying a clone drops uses of constants it shares with the source
+      // module and with later clones, so clones are released together, off
+      // this thread, once no clone remains to be made.
+      std::vector<std::unique_ptr<llvm::Module>> serializedPartitions;
       double cloneSeconds = 0.0;
       for (auto [index, group] : llvm::enumerate(splitPlan->groups)) {
         auto cloneStart = std::chrono::steady_clock::now();
@@ -1804,6 +1822,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
                                           serializationStart)
                 .count();
         partitionBitcode[index].assign(storage.begin(), storage.end());
+        serializedPartitions.push_back(std::move(partition));
         FailureOr<SmallString<256>> temporary = makeTemporaryBeside(
             (Twine(options.outputPath) + ".part-" + Twine(index)).str(), ".o");
         if (failed(temporary)) {
@@ -1824,8 +1843,6 @@ LogicalResult emitTargetOutput(ModuleOp module,
         }
         partitionTargets.push_back(std::move(workerTarget));
       }
-      llvmModule.reset();
-      releaseFreedHeapPages();
       if (options.timing) {
         errs() << "obelisk backend timing: partition cloning: " << cloneSeconds
                << " s\n";
@@ -1838,6 +1855,14 @@ LogicalResult emitTargetOutput(ModuleOp module,
           hardware_concurrency(std::max<uint32_t>(1, options.compileThreads));
       strategy.Limit = true;
       DefaultThreadPool pool(strategy);
+      // Workers parse into private contexts; only this task still touches the
+      // source context. It releases the clones and the source module while
+      // partitions compile.
+      pool.async([&] {
+        serializedPartitions.clear();
+        llvmModule.reset();
+        releaseFreedHeapPages();
+      });
       std::vector<std::shared_future<bool>> futures;
       futures.reserve(partitionBitcode.size());
       std::mutex diagnosticMutex;
@@ -1869,6 +1894,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
                                  modulePaths[index],
                                  backend->getDescription())))
             return false;
+          partitionTargets[index].reset();
           auto workerEnd = std::chrono::steady_clock::now();
           partitionObjectSeconds[index] =
               std::chrono::duration<double>(workerEnd - objectStart).count();
