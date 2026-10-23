@@ -162,6 +162,10 @@ private:
 } // namespace
 DemandedBitAnalysis::DemandedBitAnalysis(Operation *function) {
   SymbolTableCollection symbols;
+  *this = DemandedBitAnalysis(function, symbols);
+}
+DemandedBitAnalysis::DemandedBitAnalysis(Operation *function,
+                                         SymbolTableCollection &symbols) {
   DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
   solver.load<dataflow::DeadCodeAnalysis>();
   solver.load<dataflow::SparseConstantPropagation>();

@@ -666,11 +666,13 @@ struct ObeliskSimSimplifyBodiesPass
     }
     // Promotion and forwarding rewrite storage and function bodies, never
     // drivers or nets, so the driver index above still serves every function.
+    // They add or remove no symbols, so call resolution shares one table.
+    SymbolTableCollection symbols;
     for (auto function : design.getBody().front().getOps<sim::SimFuncOp>()) {
       analysis::forwardSourceMemoryLoads(function, canonicalWrites,
                                          /*canForward=*/{}, &provenance);
       LogicBitAnalysis bits(function);
-      analysis::DemandedBitAnalysis demanded(function);
+      analysis::DemandedBitAnalysis demanded(function, symbols);
       SmallVector<Operation *> constants;
       function.walk([&](Operation *op) {
         if (op->getNumResults() == 1 && isMemoryEffectFree(op) &&

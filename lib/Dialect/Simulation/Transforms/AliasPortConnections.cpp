@@ -592,15 +592,36 @@ void ObeliskSimAliasPortConnectionsPass::runOnOperation() {
         calendarPublished.contains(candidate.target))
       candidate.rejected = true;
 
+  // Each descriptor's accesses, and each function's written descriptors.
+  // A candidate's validity is an OR over the accesses to its two roots, so
+  // visiting only those accesses decides it exactly.
+  DenseMap<uint64_t, SmallVector<std::pair<Operation *, const Access *>>>
+      accessesByDescriptor;
+  DenseMap<Operation *, DenseSet<uint64_t>> writesByFunction;
+  for (auto &[function, list] : accesses)
+    for (const Access &access : list) {
+      accessesByDescriptor[access.descriptor].push_back({function, &access});
+      if (access.kind == Access::Kind::Write)
+        writesByFunction[function].insert(access.descriptor);
+    }
+  auto accessesOf = [&](uint64_t descriptor)
+      -> ArrayRef<std::pair<Operation *, const Access *>> {
+    auto found = accessesByDescriptor.find(descriptor);
+    if (found == accessesByDescriptor.end())
+      return {};
+    return found->second;
+  };
+  auto writes = [&](Operation *function, uint64_t descriptor) {
+    auto found = writesByFunction.find(function);
+    return found != writesByFunction.end() &&
+           found->second.contains(descriptor);
+  };
+
   for (Candidate &candidate : candidates) {
     if (candidate.rejected)
       continue;
-    for (auto &[function, list] : accesses)
-      if (selfSettling.contains(function) &&
-          llvm::any_of(list, [&](const Access &access) {
-            return access.descriptor == candidate.eliminated &&
-                   access.kind == Access::Kind::Read;
-          }))
+    for (auto [function, access] : accessesOf(candidate.eliminated))
+      if (selfSettling.contains(function) && access->kind == Access::Kind::Read)
         candidate.rejected = true;
   }
 
@@ -648,12 +669,14 @@ void ObeliskSimAliasPortConnectionsPass::runOnOperation() {
           overlapping += overlaps(low, width, claimLow, claimWidth);
         reject |= overlapping != 1;
       }
-      for (auto &[function, list] : accesses) {
-        bool isRoot = initializers.contains(function);
-        if (accepted.contains(function))
-          continue;
-        for (const Access &access : list) {
-          if (access.descriptor != x && access.descriptor != r)
+      SmallVector<uint64_t, 2> roots{x};
+      if (r != x)
+        roots.push_back(r);
+      for (uint64_t descriptor : roots) {
+        for (auto [function, accessPointer] : accessesOf(descriptor)) {
+          const Access &access = *accessPointer;
+          bool isRoot = initializers.contains(function);
+          if (accepted.contains(function))
             continue;
           // LRM 4.5 drains the Reactive region set before returning to
           // Active. An Active port copy cannot run immediately after a
@@ -682,20 +705,12 @@ void ObeliskSimAliasPortConnectionsPass::runOnOperation() {
             // was private to one root; keep such outputs separate rather
             // than create a settling cycle on the shared root.
             if (!candidate.sinkElimination &&
-                access.kind == Access::Kind::Read &&
-                llvm::any_of(list, [&](const Access &other) {
-                  return other.descriptor == x &&
-                         other.kind == Access::Kind::Write;
-                }))
+                access.kind == Access::Kind::Read && writes(function, x))
               reject = true;
             // Symmetrically, a writer of the source that reads the sink would
             // read its own writes once they share storage.
             if (candidate.sinkElimination &&
-                access.kind == Access::Kind::Read &&
-                llvm::any_of(list, [&](const Access &other) {
-                  return other.descriptor == r &&
-                         other.kind == Access::Kind::Write;
-                }))
+                access.kind == Access::Kind::Read && writes(function, r))
               reject = true;
             if (isRoot && access.kind == Access::Kind::Read)
               reject = true;
