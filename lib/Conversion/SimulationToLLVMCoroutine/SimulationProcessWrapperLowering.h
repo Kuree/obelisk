@@ -6,6 +6,8 @@
 #include "SimulationToLLVMCoroutinePrivate.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/SymbolTable.h"
+#include "llvm/ADT/DenseMap.h"
 
 namespace obelisk::detail {
 
@@ -42,12 +44,28 @@ struct DeferredDirectFragmentWrapper {
   const SimulationProcessFrameAnalysis *analysis;
 };
 
+/// Termination facts shared by the wrappers of one direct-fragment
+/// materialization: each function is scanned once and callees resolve through
+/// the design's symbol table. Valid while neither the scanned functions nor the
+/// design's symbols change.
+struct DirectFragmentTerminationCache {
+  explicit DirectFragmentTerminationCache(mlir::SymbolTable &designSymbols)
+      : designSymbols(designSymbols) {}
+  struct Facts {
+    bool mayTerminate = false;
+    llvm::SmallVector<sim::SimFuncOp> callees;
+  };
+  mlir::SymbolTable &designSymbols;
+  llvm::DenseMap<mlir::Operation *, Facts> facts;
+};
+
 mlir::FailureOr<mlir::LLVM::LLVMFuncOp>
 makeDirectFragmentWrapper(mlir::ModuleOp module, sim::SimFuncOp body,
                           sim::SimFuncOp actor, llvm::StringRef wrapperName,
                           uint32_t actorSlot, uint32_t continuation,
                           const SimulationProcessFrameAnalysis &analysis,
-                          bool materializeBody = true);
+                          bool materializeBody = true,
+                          DirectFragmentTerminationCache *cache = nullptr);
 mlir::LogicalResult
 makeDirectFragmentBody(mlir::LLVM::LLVMFuncOp wrapper, sim::SimFuncOp body,
                        sim::SimFuncOp actor, uint32_t actorSlot,

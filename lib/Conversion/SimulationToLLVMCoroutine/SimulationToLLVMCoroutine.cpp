@@ -518,6 +518,27 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
   struct ContinuationFragmentCoverage {
     SmallVector<uint32_t> members;
   };
+  // Each function's graph fragments in graph order, so a coverage query does
+  // not scan the whole graph. Rebuilt if the design's graph is replaced.
+  schedule::ComputeGraphAttr indexedGraph;
+  DenseMap<StringAttr, SmallVector<schedule::ComputeFragmentAttr>>
+      fragmentsByFunction;
+  auto fragmentsOf =
+      [&](schedule::ComputeGraphAttr graph,
+          sim::SimFuncOp actor) -> ArrayRef<schedule::ComputeFragmentAttr> {
+    if (graph != indexedGraph) {
+      indexedGraph = graph;
+      fragmentsByFunction.clear();
+      for (Attribute attribute : graph.getNodes())
+        if (auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(attribute))
+          fragmentsByFunction[fragment.getFunction().getAttr()].push_back(
+              fragment);
+    }
+    auto found = fragmentsByFunction.find(actor.getSymNameAttr());
+    if (found == fragmentsByFunction.end())
+      return {};
+    return found->second;
+  };
   auto fragmentCoverageFor = [&](sim::SimFuncOp actor, uint32_t continuation) {
     ContinuationFragmentCoverage coverage;
     schedule::ComputeGraphAttr graph = design.getComputeGraphAttr();
@@ -526,10 +547,7 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
     DenseMap<Block *, uint32_t> fragmentByBlock;
     Block *anchorBlock = nullptr;
     analysis::ComputeGraphBlockIndex graphBlocks;
-    for (Attribute attribute : graph.getNodes()) {
-      auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(attribute);
-      if (!fragment || fragment.getFunction().getValue() != actor.getSymName())
-        continue;
+    for (schedule::ComputeFragmentAttr fragment : fragmentsOf(graph, actor)) {
       Block *block = graphBlocks.lookup(actor, fragment.getBlock());
       if (!block)
         continue;
@@ -589,6 +607,13 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
         if (actorSlotFor(actor))
           currentActors.push_back(actor);
       });
+  DenseSet<uint64_t> runtimeCheckpointCodeUnits;
+  for (const auto &entry : runtimeCheckpointContinuations)
+    runtimeCheckpointCodeUnits.insert(entry.first);
+  // Scope of each declared code unit and the next free ID, built on the
+  // first direct body and kept current as bodies declare their own units.
+  std::optional<DenseMap<uint64_t, uint64_t>> codeUnitScopes;
+  uint64_t nextCodeUnit = 1;
   for (sim::SimFuncOp actor : currentActors) {
     // IEEE 1800-2023 4.5: this evaluator drains Active work. Reactive
     // activations must retain their runtime identity and region arbitration
@@ -601,10 +626,7 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
     auto analyzed = codeUnit ? analyzedActors.find(codeUnit.getUInt())
                              : analyzedActors.end();
     bool hasRuntimeCheckpointActivation =
-        codeUnit &&
-        llvm::any_of(runtimeCheckpointContinuations, [&](const auto &entry) {
-          return entry.first == codeUnit.getUInt();
-        });
+        codeUnit && runtimeCheckpointCodeUnits.contains(codeUnit.getUInt());
     if (!actorSlot || analyzed == analyzedActors.end() ||
         (!isGeneratedRegionActor(actor) &&
          !::obelisk::schedule::has<::obelisk::schedule::Field::EvalBody>(
@@ -902,20 +924,24 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
           FunctionType::get(context, actor.getFunctionType().getInputs(),
                             TypeRange{}),
           sim::EntryKind::Function, ArrayRef<NamedAttribute>{}, argumentAttrs);
-      uint64_t nextCodeUnit = 1;
-      uint64_t scope = 0;
-      for (auto declaration : design.getOps<sim::SimCodeUnitDeclOp>()) {
-        nextCodeUnit = std::max(nextCodeUnit, declaration.getId() + 1);
-        if (actor.getCodeUnitId() &&
-            declaration.getId() == *actor.getCodeUnitId())
-          scope = declaration.getScopeId();
+      if (!codeUnitScopes) {
+        codeUnitScopes.emplace();
+        for (auto declaration : design.getOps<sim::SimCodeUnitDeclOp>()) {
+          nextCodeUnit = std::max(nextCodeUnit, declaration.getId() + 1);
+          (*codeUnitScopes)[declaration.getId()] = declaration.getScopeId();
+        }
       }
+      uint64_t scope = 0;
+      if (actor.getCodeUnitId())
+        scope = codeUnitScopes->lookup(*actor.getCodeUnitId());
       body.setCodeUnitIdAttr(builder.getI64IntegerAttr(nextCodeUnit));
       sim::SimCodeUnitDeclOp::create(
           builder, actor.getLoc(), nextCodeUnit, scope,
           sim::EntryKind::Function, builder.getStringAttr(bodyName),
           builder.getStringAttr("native direct fragment"),
           builder.getUnitAttr());
+      (*codeUnitScopes)[nextCodeUnit] = scope;
+      ++nextCodeUnit;
       designSymbols.insert(body);
       detail::copyNativePartition(actor, body);
       ::obelisk::schedule::set<
@@ -989,6 +1015,7 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
   // invalidate MLIR's internal symbol/cache state once enough eval bodies are
   // present.  Materialize them in a second phase after every actor decision is
   // complete.
+  detail::DirectFragmentTerminationCache terminationCache(designSymbols);
   for (PendingEvalWrapper &pending : pendingEvalWrappers) {
     // Preserve the typed executor identity across design-to-module symbol
     // flattening. A fusion executor can own several physical source
@@ -1017,14 +1044,15 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
                   pending.continuation))
             : failed(makeDirectFragmentWrapper(
                   module, pending.body, pending.actor, pending.wrapper,
-                  pending.actorSlot, pending.continuation, *pending.analysis)))
+                  pending.actorSlot, pending.continuation, *pending.analysis,
+                  /*materializeBody=*/true, &terminationCache)))
       return failure();
     if (pending.twoStateBody) {
       bool deferBody = native::has<native::ClosedExecutable>(module);
       auto wrapper = makeDirectFragmentWrapper(
           module, pending.twoStateBody, pending.actor, pending.twoStateWrapper,
           pending.actorSlot, pending.continuation, *pending.analysis,
-          !deferBody);
+          !deferBody, &terminationCache);
       if (failed(wrapper))
         return failure();
       if (deferBody)
@@ -1679,6 +1707,22 @@ LogicalResult NativePipelineAnalysis::prepareFragments(
         observers;
     for (const auto &entry : staticFanoutPlan.entries)
       observers[entry.static_state].push_back(&entry);
+    // An unobserved root whose every fanout entry is one self-suppressing
+    // (slot, continuation) belongs to that continuation alone.
+    DenseMap<std::pair<uint32_t, uint64_t>, SmallVector<int32_t>> soleRoots;
+    for (const auto &[root, entries] : observers) {
+      const obelisk_rt_static_fanout_entry *first = entries.front();
+      if (observedRoots.contains(root) ||
+          !llvm::all_of(entries, [&](const auto *entry) {
+            return entry->actor_slot == first->actor_slot &&
+                   entry->continuation == first->continuation &&
+                   (entry->reserved & OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF) !=
+                       0;
+          }))
+        continue;
+      soleRoots[{first->actor_slot, first->continuation}].push_back(
+          static_cast<int32_t>(root));
+    }
     llvm::StringMap<DenseI32ArrayAttr> bodyRoots;
     SymbolTableCollection symbols;
     for (sim::SimFuncOp actor : currentActors) {
@@ -1693,18 +1737,8 @@ LogicalResult NativePipelineAnalysis::prepareFragments(
       if (!continuation)
         continue;
       uint32_t slot = *aotActorSlotFor(actor);
-      SmallVector<int32_t> roots;
-      for (const auto &[root, entries] : observers) {
-        if (observedRoots.contains(root) ||
-            !llvm::all_of(entries, [&](const auto *entry) {
-              return entry->actor_slot == slot &&
-                     entry->continuation == continuation.getUInt() &&
-                     (entry->reserved &
-                      OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF) != 0;
-            }))
-          continue;
-        roots.push_back(static_cast<int32_t>(root));
-      }
+      SmallVector<int32_t> roots =
+          soleRoots.lookup({slot, continuation.getUInt()});
       llvm::sort(roots);
       if (roots.empty())
         continue;

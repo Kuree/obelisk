@@ -328,7 +328,8 @@ makePlainNativeWrappers(ModuleOp module, func::FuncOp body, StringRef baseName,
 FailureOr<LLVM::LLVMFuncOp> makeDirectFragmentWrapper(
     ModuleOp module, sim::SimFuncOp body, sim::SimFuncOp actor,
     StringRef wrapperName, uint32_t actorSlot, uint32_t continuation,
-    const SimulationProcessFrameAnalysis &analysis, bool materializeBody) {
+    const SimulationProcessFrameAnalysis &analysis, bool materializeBody,
+    DirectFragmentTerminationCache *cache) {
   OpBuilder builder(module.getContext());
   builder.setInsertionPointToEnd(module.getBody());
   Location location = body.getLoc();
@@ -362,12 +363,11 @@ FailureOr<LLVM::LLVMFuncOp> makeDirectFragmentWrapper(
     ::obelisk::schedule::set<
         schedule::metadata::evalUnsupportedCheckpointOwner>(wrapper,
                                                             unsupportedOwner);
-  bool mayTerminate = false;
-  llvm::SmallPtrSet<Operation *, 8> visited;
   auto design = body->getParentOfType<sim::SimDesignOp>();
-  std::function<void(sim::SimFuncOp)> inspect = [&](sim::SimFuncOp function) {
-    if (!function || !visited.insert(function.getOperation()).second)
-      return;
+  // Whether `function` itself may terminate, and the functions it calls.
+  auto scan = [&](sim::SimFuncOp function) {
+    DirectFragmentTerminationCache::Facts facts;
+    bool &mayTerminate = facts.mayTerminate;
     function.walk([&](Operation *operation) {
       // Direct-fragment materialization runs after Simulation-to-Runtime
       // conversion, so checkpoint-producing operations may already have
@@ -399,11 +399,33 @@ FailureOr<LLVM::LLVMFuncOp> makeDirectFragmentWrapper(
             call.getCallee() &&
             call.getCallee()->starts_with("obelisk_rt_v1_deferred_enqueue");
       if (auto call = dyn_cast<sim::SimCallOp>(operation))
-        inspect(design.lookupSymbol<sim::SimFuncOp>(call.getCallee()));
+        facts.callees.push_back(
+            cache ? cache->designSymbols.lookup<sim::SimFuncOp>(
+                        call.getCallee())
+                  : design.lookupSymbol<sim::SimFuncOp>(call.getCallee()));
     });
+    return facts;
   };
-  inspect(body);
-  inspect(actor);
+  bool mayTerminate = false;
+  llvm::SmallPtrSet<Operation *, 8> visited;
+  SmallVector<sim::SimFuncOp> pending{body, actor};
+  while (!pending.empty()) {
+    sim::SimFuncOp function = pending.pop_back_val();
+    if (!function || !visited.insert(function.getOperation()).second)
+      continue;
+    DirectFragmentTerminationCache::Facts local;
+    const DirectFragmentTerminationCache::Facts *facts = &local;
+    if (cache) {
+      auto [found, inserted] = cache->facts.try_emplace(function);
+      if (inserted)
+        found->second = scan(function);
+      facts = &found->second;
+    } else {
+      local = scan(function);
+    }
+    mayTerminate |= facts->mayTerminate;
+    llvm::append_range(pending, facts->callees);
+  }
   if (mayTerminate) {
     ::obelisk::schedule::set<schedule::metadata::evalMayTerminate>(
         wrapper, builder.getUnitAttr());
