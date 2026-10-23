@@ -1048,6 +1048,20 @@ applyNativeFunctionTargetAttributes(llvm::Module &module,
   }
 }
 
+/// Generated code never throws, and nothing unwinds through it: the runtime
+/// is built without exceptions and catches none, so an exception escaping
+/// foreign code (a DPI import) terminates the process with or without unwind
+/// tables. On ELF a nounwind function without uwtable needs no .eh_frame
+/// entry. Other object formats keep their unwind information (Windows walks
+/// stacks through .pdata).
+static void markGeneratedFunctionsNoUnwind(llvm::Module &module) {
+  if (!module.getTargetTriple().isOSBinFormatELF())
+    return;
+  for (llvm::Function &function : module)
+    if (!function.isDeclaration())
+      function.setDoesNotThrow();
+}
+
 LogicalResult lowerLLVMCoroutines(llvm::Module &module,
                                   TargetMachine &targetMachine,
                                   bool optimizeFrame) {
@@ -1574,8 +1588,10 @@ LogicalResult emitTargetOutput(ModuleOp module,
                                     options.sharedLibraryInputs,
                                     requiresStateSync, resolveInitialDrivers)))
     return failure();
-  if (options.target == TargetKind::Native)
+  if (options.target == TargetKind::Native) {
     applyNativeFunctionTargetAttributes(*llvmModule, *targetMachine);
+    markGeneratedFunctionsNoUnwind(*llvmModule);
+  }
   markBackendTiming("VPI lifecycle materialization");
   if (options.debugNativeExecutionCounts &&
       !detail::addNativeExecutionCounts(*llvmModule)) {
