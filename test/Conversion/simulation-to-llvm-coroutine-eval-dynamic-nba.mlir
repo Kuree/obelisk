@@ -2,8 +2,9 @@
 // RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep))' \
 // RUN:   -o %t.planned.mlir
 // RUN: obelisk-opt %t.planned.mlir \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | FileCheck %s
+// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.mlir
+// RUN: FileCheck %s < %t.mlir
+// RUN: FileCheck %s --check-prefix=COMMIT < %t.mlir
 
 // Feed preplanned Simulation IR to only the coroutine conversion pass.  The
 // eval body bases a dynamic NBA at bit 8 of a wider root.  The pass must merge
@@ -124,3 +125,17 @@ module attributes {
 // CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_nba
 // CHECK-NOT: llvm.call @malloc
 // CHECK: llvm.return
+
+// The NBA barrier consumes only the dirty bit of a root it commits. Another
+// root of the word, such as a canonical accumulator staged by a
+// runtime-executed actor, keeps its bit for the runtime's index (IEEE
+// 1800-2023 4.9.4, 10.4.2); clearing the whole word dropped that update.
+// COMMIT-LABEL: llvm.func @__obelisk_aot_static_nba_commit_v1(
+// COMMIT: %[[DIRTY:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// COMMIT-NEXT: %[[WORD:.*]] = llvm.getelementptr %[[DIRTY]][0]
+// COMMIT-NEXT: llvm.load %[[WORD]]
+// COMMIT-NOT: llvm.store {{.*}}, %[[WORD]]
+// COMMIT: %[[CURRENT:.*]] = llvm.load %[[WORD]]
+// COMMIT-NEXT: %[[KEEP:.*]] = llvm.mlir.constant(-2 : i64)
+// COMMIT-NEXT: %[[REST:.*]] = llvm.and %[[CURRENT]], %[[KEEP]]
+// COMMIT-NEXT: llvm.store %[[REST]], %[[WORD]]

@@ -17,8 +17,22 @@
 // CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
 // CHECK-NOT: @__obelisk_eval_nba_commit_
 // CHECK: {{^  }}}
+// A root's dirty bit is consumed only by its own commit. The other roots of
+// its word, including a canonical accumulator staged by a runtime-executed
+// actor, keep their bits for the runtime's index (IEEE 1800-2023 4.9.4,
+// 10.4.2); clearing the whole word dropped such an update.
 // CHECK-LABEL: llvm.func @__obelisk_aot_static_nba_commit_v1(
 // CHECK: %[[OFFSETS:.*]] = llvm.mlir.addressof @__obelisk_eval_nba_commit_offsets_v1
+// CHECK: %[[DIRTY:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// CHECK: %[[WORD_ADDRESS:.*]] = llvm.getelementptr %[[DIRTY]][%{{.*}}] : (!llvm.ptr, i64) -> !llvm.ptr, i64
+// CHECK-NEXT: llvm.load %[[WORD_ADDRESS]]
+// CHECK-NOT: llvm.store {{.*}}, %[[WORD_ADDRESS]]
+// CHECK: %[[BIT:.*]] = "llvm.intr.cttz"
+// CHECK: %[[CURRENT:.*]] = llvm.load %[[WORD_ADDRESS]]
+// CHECK-NEXT: %[[ONE_HOT:.*]] = llvm.shl %{{.*}}, %[[BIT]] : i64
+// CHECK-NEXT: %[[KEEP:.*]] = llvm.xor %[[ONE_HOT]], %{{.*}} : i64
+// CHECK-NEXT: %[[REST:.*]] = llvm.and %[[CURRENT]], %[[KEEP]] : i64
+// CHECK-NEXT: llvm.store %[[REST]], %[[WORD_ADDRESS]]
 // CHECK: llvm.getelementptr %[[OFFSETS]][%{{.*}}] : (!llvm.ptr, i64) -> !llvm.ptr, i64
 
 module native_nba_table_commit;

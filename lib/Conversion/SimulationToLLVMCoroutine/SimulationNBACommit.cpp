@@ -174,9 +174,6 @@ void emitScalarNBACommitLoop(OpBuilder &b, ModuleOp module,
       gep(address("__obelisk_aot_nba_dirty_roots_v1"), i64, word);
   Value dirty = LLVM::LoadOp::create(b, loc, i64, dirtyAddress, 8);
   Value selectedMask = load(maskTable, word);
-  // Match the existing barrier's ownership of words containing scalar roots.
-  LLVM::StoreOp::create(b, loc, select(eq(selectedMask, c(0)), dirty, c(0)),
-                        dirtyAddress, 8);
   cf::BranchOp::create(b, loc, rootHead, ValueRange{band(dirty, selectedMask)});
   b.setInsertionPointToStart(rootHead);
   Value remaining = rootHead->getArgument(0);
@@ -218,6 +215,14 @@ void emitScalarNBACommitLoop(OpBuilder &b, ModuleOp module,
   cf::CondBranchOp::create(b, loc, regionMatches, commit, ValueRange{},
                            rootHead, ValueRange{rest});
   b.setInsertionPointToStart(commit);
+  // Match the unrolled barrier: consume only the roots committed here. A
+  // root staged in the canonical accumulator by a runtime-executed actor keeps
+  // its bit for the canonical index owner (IEEE 1800-2023 4.9.4, 10.4.2).
+  LLVM::StoreOp::create(
+      b, loc,
+      band(LLVM::LoadOp::create(b, loc, i64, dirtyAddress, 8),
+           inv(arith::ShLIOp::create(b, loc, c(1), bit))),
+      dirtyAddress, 8);
   Value offset = load(offsetTable, index), shift = load(shiftTable, index),
         widthMask = load(widthTable, index),
         fixedMask = load(fixedTable, index);

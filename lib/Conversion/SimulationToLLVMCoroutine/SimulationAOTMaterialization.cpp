@@ -6247,16 +6247,10 @@ FailureOr<bool> makeNativeEvalPlan(
     builder.setInsertionPointToStart(wordBlocks[word]);
     Value dirtyBase = LLVM::AddressOfOp::create(builder, location, pointer,
                                                 nbaDirtyRootsName);
+    Value dirtyAddress = byteGEP(builder, location, dirtyBase,
+                                 uint64_t{word} * sizeof(uint64_t));
     Value dirty =
-        LLVM::LoadOp::create(builder, location, i64,
-                             byteGEP(builder, location, dirtyBase,
-                                     uint64_t{word} * sizeof(uint64_t)),
-                             8);
-    LLVM::StoreOp::create(builder, location,
-                          llvmConstant(builder, location, i64, 0),
-                          byteGEP(builder, location, dirtyBase,
-                                  uint64_t{word} * sizeof(uint64_t)),
-                          8);
+        LLVM::LoadOp::create(builder, location, i64, dirtyAddress, 8);
     Value wordEmpty =
         arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
                               dirty, llvmConstant(builder, location, i64, 0));
@@ -6367,6 +6361,21 @@ FailureOr<bool> makeNativeEvalPlan(
                                ValueRange{}, afterRoot, ValueRange{});
 
       builder.setInsertionPointToStart(commitRoot);
+      // Consume only the roots this barrier commits. A runtime-executed actor
+      // stages its NBA in the canonical accumulator (IEEE 1800-2023 4.9.4,
+      // 10.4.2); that root, or any other root sharing the word, keeps its bit
+      // for the canonical index owner instead of losing its update.
+      {
+        Value current =
+            LLVM::LoadOp::create(builder, location, i64, dirtyAddress, 8);
+        LLVM::StoreOp::create(
+            builder, location,
+            arith::AndIOp::create(
+                builder, location, current,
+                llvmConstant(builder, location, i64,
+                             ~(uint64_t{1} << (rootIndex % 64)))),
+            dirtyAddress, 8);
+      }
       Value stagedValue = LLVM::LoadOp::create(
           builder, location, i64,
           nbaFieldGEP(
