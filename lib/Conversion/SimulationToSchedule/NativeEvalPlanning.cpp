@@ -675,15 +675,17 @@ resolveNativeEvalPlan(ModuleOp module,
                            uint32_t route) {
     entry.reserved = (entry.reserved & ~OBELISK_RT_FANOUT_ROUTE_MASK) | route;
   };
+  // The first executable node of each physical continuation.
+  DenseMap<std::pair<uint32_t, uint32_t>, uint32_t> nodeByContinuation;
+  for (auto [index, node] : llvm::enumerate(executableNodes))
+    nodeByContinuation.try_emplace({node.actor_slot, node.continuation},
+                                   static_cast<uint32_t>(index));
   for (obelisk_rt_static_fanout_entry &entry : result.fanoutEntries) {
-    auto node = llvm::find_if(executableNodes, [&](const auto &candidate) {
-      return candidate.actor_slot == entry.actor_slot &&
-             candidate.continuation == entry.continuation;
-    });
-    if (node == executableNodes.end())
+    auto node = nodeByContinuation.find({entry.actor_slot, entry.continuation});
+    if (node == nodeByContinuation.end())
       return module.emitError("static fanout has no indexed compute fragment"),
              failure();
-    entry.compute_node = static_cast<uint32_t>(node - executableNodes.begin());
+    entry.compute_node = node->second;
     setFanoutRoute(entry, OBELISK_RT_FANOUT_RUNTIME);
     result.clockKernels.push_back(
         {entry.static_state, entry.edge, entry.low_bit, entry.bit_width});
@@ -706,6 +708,8 @@ resolveNativeEvalPlan(ModuleOp module,
     return module.emitError("eval ownership plan does not match fanout"),
            failure();
   result.periodicOwnerBits.assign(result.fanoutEntries.size(), UINT32_MAX);
+  // Each executor's merged records, in record order.
+  llvm::StringMap<SmallVector<uint32_t, 1>> mergedByExecutor;
   auto resolveOwner =
       [&](const NativeEvalFanoutOwner &plannedOwner,
           const obelisk_rt_static_fanout_entry &entry) -> FailureOr<uint32_t> {
@@ -716,20 +720,18 @@ resolveNativeEvalPlan(ModuleOp module,
              failure();
     const NativeDirectFragment &direct =
         directFragments[plannedOwner.directFragment];
-    auto merged =
-        llvm::find_if(result.mergedFragments, [&](const auto &candidate) {
-          size_t index =
-              static_cast<size_t>(&candidate - result.mergedFragments.data());
-          return index < result.mergedExecutors.size() &&
-                 result.mergedExecutors[index] == direct.wrapper &&
-                 candidate.actor_slot == direct.actorSlot &&
-                 candidate.continuation == direct.continuation;
-        });
-    if (merged != result.mergedFragments.end()) {
-      merged->compute_node = std::min(merged->compute_node, entry.compute_node);
-      return merged->bit;
+    SmallVector<uint32_t, 1> &records = mergedByExecutor[direct.wrapper];
+    auto merged = llvm::find_if(records, [&](uint32_t index) {
+      return result.mergedFragments[index].actor_slot == direct.actorSlot &&
+             result.mergedFragments[index].continuation == direct.continuation;
+    });
+    if (merged != records.end()) {
+      auto &record = result.mergedFragments[*merged];
+      record.compute_node = std::min(record.compute_node, entry.compute_node);
+      return record.bit;
     }
     uint32_t bit = static_cast<uint32_t>(result.mergedFragments.size());
+    records.push_back(bit);
     result.mergedFragments.push_back({direct.actorSlot, direct.continuation,
                                       entry.kernel, bit, entry.compute_node, 0,
                                       nullptr});
@@ -819,36 +821,38 @@ resolveNativeEvalPlan(ModuleOp module,
       // significant bit. Ordinary change events observe the complete range.
       return entry.edge == OBELISK_RT_WAIT_EDGE_CHANGE || entry.low_bit == bit;
     };
-    auto clockTouches = [&](const NativePeriodicClock &clock,
-                            const obelisk_rt_static_fanout_entry &entry) {
-      if (entry.static_state != clock.getStaticState() || entry.bit_width == 0)
-        return false;
+    // The state-local bit of a periodic source, if it lies in its state.
+    auto localBit = [&](uint64_t state,
+                        uint64_t offset) -> std::optional<uint64_t> {
       auto bound =
           llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
-            return candidate.handleID == clock.getStaticState();
+            return candidate.handleID == state;
           });
-      if (bound == stateLayout.bounds.end() ||
-          clock.getBitOffset() < bound->offset ||
-          clock.getBitOffset() - bound->offset >= bound->width)
-        return false;
-      uint64_t bit = clock.getBitOffset() - bound->offset;
-      return periodicBitTouches(bit, entry);
+      if (bound == stateLayout.bounds.end() || offset < bound->offset ||
+          offset - bound->offset >= bound->width)
+        return std::nullopt;
+      return offset - bound->offset;
     };
-    auto aliasTouches = [&](const NativePeriodicAlias &alias,
+    SmallVector<std::optional<uint64_t>> clockBits, aliasBits;
+    for (const NativePeriodicClock &clock : periodicClocks)
+      clockBits.push_back(
+          localBit(clock.getStaticState(), clock.getBitOffset()));
+    for (const NativePeriodicAlias &alias : periodicAliases)
+      aliasBits.push_back(
+          localBit(alias.getTargetStaticState(), alias.getTargetBitOffset()));
+    auto clockTouches = [&](size_t index,
                             const obelisk_rt_static_fanout_entry &entry) {
-      if (entry.static_state != alias.getTargetStaticState() ||
-          entry.bit_width == 0)
+      if (entry.static_state != periodicClocks[index].getStaticState() ||
+          entry.bit_width == 0 || !clockBits[index])
         return false;
-      auto bound =
-          llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
-            return candidate.handleID == alias.getTargetStaticState();
-          });
-      if (bound == stateLayout.bounds.end() ||
-          alias.getTargetBitOffset() < bound->offset ||
-          alias.getTargetBitOffset() - bound->offset >= bound->width)
+      return periodicBitTouches(*clockBits[index], entry);
+    };
+    auto aliasTouches = [&](size_t index,
+                            const obelisk_rt_static_fanout_entry &entry) {
+      if (entry.static_state != periodicAliases[index].getTargetStaticState() ||
+          entry.bit_width == 0 || !aliasBits[index])
         return false;
-      uint64_t bit = alias.getTargetBitOffset() - bound->offset;
-      return periodicBitTouches(bit, entry);
+      return periodicBitTouches(*aliasBits[index], entry);
     };
     for (auto [entryIndex, entry] : llvm::enumerate(result.fanoutEntries)) {
       uint32_t route = entry.reserved & OBELISK_RT_FANOUT_ROUTE_MASK;
@@ -856,12 +860,13 @@ resolveNativeEvalPlan(ModuleOp module,
           route == OBELISK_RT_FANOUT_PERIODIC_ALIAS ||
           entry.merged_bit >= result.mergedFragments.size())
         continue;
-      bool periodic = llvm::any_of(periodicClocks, [&](const auto &clock) {
-        return clockTouches(clock, entry);
-      });
-      periodic |= llvm::any_of(periodicAliases, [&](const auto &alias) {
-        return aliasTouches(alias, entry);
-      });
+      bool periodic = false;
+      for (size_t index = 0; index != periodicClocks.size() && !periodic;
+           ++index)
+        periodic = clockTouches(index, entry);
+      for (size_t index = 0; index != periodicAliases.size() && !periodic;
+           ++index)
+        periodic = aliasTouches(index, entry);
       if (periodic) {
         uint32_t owner = result.periodicOwnerBits[entryIndex] == UINT32_MAX
                              ? entry.merged_bit
@@ -880,19 +885,25 @@ resolveNativeEvalPlan(ModuleOp module,
     SmallVector<bool> ownerIsCoordinator(result.mergedFragments.size(), false);
     SmallVector<uint32_t> ownerFusionGroups(result.mergedFragments.size(),
                                             UINT32_MAX);
+    llvm::StringMap<SmallVector<unsigned, 1>> directsByWrapper;
+    for (auto [index, direct] : llvm::enumerate(directFragments))
+      directsByWrapper[direct.wrapper].push_back(index);
     for (auto [recordIndex, executor] :
          llvm::enumerate(result.mergedExecutors)) {
       if (executor.empty())
         continue;
-      auto direct = llvm::find_if(directFragments, [&](const auto &candidate) {
-        return candidate.wrapper == executor &&
-               candidate.actorSlot ==
+      auto candidates = directsByWrapper.find(executor);
+      if (candidates == directsByWrapper.end())
+        continue;
+      auto found = llvm::find_if(candidates->second, [&](unsigned candidate) {
+        return directFragments[candidate].actorSlot ==
                    result.mergedFragments[recordIndex].actor_slot &&
-               candidate.continuation ==
+               directFragments[candidate].continuation ==
                    result.mergedFragments[recordIndex].continuation;
       });
-      if (direct == directFragments.end())
+      if (found == candidates->second.end())
         continue;
+      const NativeDirectFragment *direct = &directFragments[*found];
       ownerIsCoordinator[recordIndex] = direct->instanceCoordinator;
       ownerFusionGroups[recordIndex] = direct->fusionGroup;
       SmallVector<uint32_t> ownedFragments;
@@ -908,41 +919,44 @@ resolveNativeEvalPlan(ModuleOp module,
         result.mergedFragments.size(),
         llvm::APInt(std::max<size_t>(64, result.mergedFragments.size()), 0));
     std::optional<std::tuple<uint32_t, unsigned, unsigned>> overlap;
-    for (unsigned first = 0; first != result.mergedFragments.size(); ++first) {
-      if (ownerFragments[first].empty())
-        continue;
-      for (unsigned second = first + 1; second != result.mergedFragments.size();
-           ++second) {
-        if (ownerFragments[second].empty())
-          continue;
-        auto shared = llvm::find_if(ownerFragments[first], [&](uint32_t id) {
-          return llvm::binary_search(ownerFragments[second], id);
-        });
-        if (shared == ownerFragments[first].end())
-          continue;
-        unsigned coordinator = ownerIsCoordinator[first] ? first : second;
-        unsigned exact = ownerIsCoordinator[first] ? second : first;
-        bool certifiedPair =
-            ownerIsCoordinator[first] != ownerIsCoordinator[second] &&
-            ownerFusionGroups[coordinator] != UINT32_MAX &&
-            ownerFusionGroups[coordinator] == ownerFusionGroups[exact];
-        bool containsExact =
-            certifiedPair &&
-            llvm::all_of(ownerFragments[exact], [&](uint32_t fragment) {
-              return llvm::binary_search(ownerFragments[coordinator], fragment);
-            });
-        // The only intentional overlap is a complete Tier-2 body nested in
-        // its certified Tier-1 fusion coordinator. Partial overlap is not
-        // executable ownership: both wrappers would execute the shared body.
-        if (!containsExact) {
-          overlap = std::tuple{*shared, first, second};
-          break;
-        }
-        result.ownerSubsumptionMasks[coordinator].setBit(
-            result.mergedFragments[exact].bit);
-      }
-      if (overlap)
+    // Only owner pairs that share a fragment can overlap. Visit exactly those
+    // pairs, in the (first, second) order of an all-pairs scan.
+    DenseMap<uint32_t, SmallVector<unsigned, 2>> fragmentOwnerLists;
+    for (auto [owner, fragments] : llvm::enumerate(ownerFragments))
+      for (uint32_t fragment : fragments)
+        fragmentOwnerLists[fragment].push_back(owner);
+    SmallVector<std::pair<unsigned, unsigned>> sharingPairs;
+    for (const auto &[fragment, owners] : fragmentOwnerLists)
+      for (size_t i = 0; i != owners.size(); ++i)
+        for (size_t j = i + 1; j != owners.size(); ++j)
+          sharingPairs.emplace_back(owners[i], owners[j]);
+    llvm::sort(sharingPairs);
+    sharingPairs.erase(std::unique(sharingPairs.begin(), sharingPairs.end()),
+                       sharingPairs.end());
+    for (auto [first, second] : sharingPairs) {
+      auto shared = llvm::find_if(ownerFragments[first], [&](uint32_t id) {
+        return llvm::binary_search(ownerFragments[second], id);
+      });
+      unsigned coordinator = ownerIsCoordinator[first] ? first : second;
+      unsigned exact = ownerIsCoordinator[first] ? second : first;
+      bool certifiedPair =
+          ownerIsCoordinator[first] != ownerIsCoordinator[second] &&
+          ownerFusionGroups[coordinator] != UINT32_MAX &&
+          ownerFusionGroups[coordinator] == ownerFusionGroups[exact];
+      bool containsExact =
+          certifiedPair &&
+          llvm::all_of(ownerFragments[exact], [&](uint32_t fragment) {
+            return llvm::binary_search(ownerFragments[coordinator], fragment);
+          });
+      // The only intentional overlap is a complete Tier-2 body nested in
+      // its certified Tier-1 fusion coordinator. Partial overlap is not
+      // executable ownership: both wrappers would execute the shared body.
+      if (!containsExact) {
+        overlap = std::tuple{*shared, first, second};
         break;
+      }
+      result.ownerSubsumptionMasks[coordinator].setBit(
+          result.mergedFragments[exact].bit);
     }
     if (overlap) {
       auto [fragment, firstOwner, secondOwner] = *overlap;

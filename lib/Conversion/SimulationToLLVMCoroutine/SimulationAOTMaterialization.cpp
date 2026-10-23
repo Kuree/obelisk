@@ -1027,6 +1027,19 @@ FailureOr<bool> makeNativeEvalPlan(
   SmallVector<obelisk_rt_static_fanout_entry> indexedFanoutEntries =
       std::move(resolved->fanoutEntries);
   ArrayRef<obelisk_rt_static_fanout_entry> fanoutEntries = indexedFanoutEntries;
+  // Publications, clocks and NBA roots each select fanout entries by static
+  // state. Index the table once, in table order, rather than scanning every
+  // entry per publisher.
+  DenseMap<uint32_t, SmallVector<uint32_t, 2>> fanoutIndicesByState;
+  for (auto [index, entry] : llvm::enumerate(fanoutEntries))
+    fanoutIndicesByState[entry.static_state].push_back(index);
+  auto fanoutIndicesOf = [&](uint64_t state) -> ArrayRef<uint32_t> {
+    auto found = state <= UINT32_MAX
+                     ? fanoutIndicesByState.find(static_cast<uint32_t>(state))
+                     : fanoutIndicesByState.end();
+    return found == fanoutIndicesByState.end() ? ArrayRef<uint32_t>{}
+                                               : ArrayRef(found->second);
+  };
   SmallVector<NativeEvalClockKernel> clockKernels =
       std::move(resolved->clockKernels);
   SmallVector<obelisk_rt_native_merged_fragment> mergedFragments =
@@ -1664,11 +1677,18 @@ FailureOr<bool> makeNativeEvalPlan(
           return failure();
       }
     }
+    // The first unfused direct fragment whose body or two-state body has a
+    // given name, in table order.
+    llvm::StringMap<std::pair<uint32_t, uint32_t>> bodySourceOwners;
     for (const NativeDirectFragment &direct : directFragments) {
       if (direct.instanceCoordinator)
         continue;
       std::pair<uint32_t, uint32_t> physical{direct.actorSlot,
                                              direct.continuation};
+      for (StringRef body :
+           {StringRef(direct.body), StringRef(direct.twoStateBody)})
+        if (!body.empty())
+          bodySourceOwners.try_emplace(body, physical);
       for (uint64_t codeUnit : direct.sourceCodeUnits) {
         physicalSourceOwners.try_emplace(
             std::pair{codeUnit, direct.continuation}, physical);
@@ -1680,16 +1700,22 @@ FailureOr<bool> makeNativeEvalPlan(
     }
     struct GeneratedTransition {
       schedule::NativeTransitionOp call;
-      APInt activeOwnerMask;
+      // Shared per body; null when no active owner maps to the body.
+      const APInt *activeOwnerMask;
       std::optional<std::pair<uint32_t, uint32_t>> physicalSourceOwner;
     };
     SmallVector<GeneratedTransition> transitions;
     for (sim::SimFuncOp function :
          collectGeneratedEvalCallClosure(module, selectedRawBodies)) {
       auto activeOwner = activeOwnerBits.find(function.getSymName());
-      APInt activeOwnerMask = activeOwner == activeOwnerBits.end()
-                                  ? APInt(ownerCount, 0)
-                                  : activeOwner->second;
+      const APInt *activeOwnerMask =
+          activeOwner == activeOwnerBits.end() || activeOwner->second.isZero()
+              ? nullptr
+              : &activeOwner->second;
+      std::optional<std::pair<uint32_t, uint32_t>> bodySourceOwner;
+      if (auto found = bodySourceOwners.find(function.getSymName());
+          found != bodySourceOwners.end())
+        bodySourceOwner = found->second;
       function.walk([&](schedule::NativeTransitionOp call) {
         std::optional<std::pair<uint32_t, uint32_t>> physicalSourceOwner;
         if (auto owner = call.getSourceOwnerAttr()) {
@@ -1713,14 +1739,7 @@ FailureOr<bool> makeNativeEvalPlan(
         // and carries continuation zero. Preserve that process's event-wait
         // identity; do not infer one for shared helpers or coordinators.
         if (!physicalSourceOwner)
-          for (const auto &direct : directFragments)
-            if (!direct.instanceCoordinator &&
-                (direct.body == function.getSymName() ||
-                 direct.twoStateBody == function.getSymName())) {
-              physicalSourceOwner =
-                  std::pair{direct.actorSlot, direct.continuation};
-              break;
-            }
+          physicalSourceOwner = bodySourceOwner;
         transitions.push_back({call, activeOwnerMask, physicalSourceOwner});
       });
     }
@@ -1731,7 +1750,7 @@ FailureOr<bool> makeNativeEvalPlan(
     };
     for (const GeneratedTransition &transition : transitions) {
       schedule::NativeTransitionOp call = transition.call;
-      const APInt &activeOwnerMask = transition.activeOwnerMask;
+      const APInt *activeOwnerMask = transition.activeOwnerMask;
       std::optional<std::pair<uint32_t, uint32_t>> physicalSourceOwner =
           transition.physicalSourceOwner;
       std::optional<uint64_t> staticState = call.getStaticState();
@@ -1794,8 +1813,10 @@ FailureOr<bool> makeNativeEvalPlan(
                                   invert(newOne)),
             arith::AndIOp::create(transitionBuilder, call.getLoc(), oldUnknown,
                                   newZero));
-        for (const auto &entry : fanoutEntries) {
-          if (entry.static_state != *staticState || entry.bit_width == 0 ||
+        for (uint32_t fanoutIndex : fanoutIndicesOf(*staticState)) {
+          const obelisk_rt_static_fanout_entry &entry =
+              fanoutEntries[fanoutIndex];
+          if (entry.bit_width == 0 ||
               fanoutRoute(entry) != OBELISK_RT_FANOUT_DIRECT ||
               entry.kernel >= clockKernels.size())
             continue;
@@ -1804,10 +1825,10 @@ FailureOr<bool> makeNativeEvalPlan(
                 *physicalSourceOwner ==
                     std::pair{entry.actor_slot, entry.continuation})
               continue;
-            if (!physicalSourceOwner && activeOwnerMask != 0 &&
-                activeOwnerMask[entry.merged_bit])
+            if (!physicalSourceOwner && activeOwnerMask &&
+                (*activeOwnerMask)[entry.merged_bit])
               continue;
-            if (!physicalSourceOwner && activeOwnerMask == 0)
+            if (!physicalSourceOwner && !activeOwnerMask)
               return call.emitError("dynamic publication has no source owner"),
                      failure();
           }
@@ -1884,9 +1905,9 @@ FailureOr<bool> makeNativeEvalPlan(
       // side of execution, matching the source logical-process identity
       // without adding a runtime token lookup to the hot path.
       bool needsActiveSelfCheck = false;
-      for (const obelisk_rt_static_fanout_entry &entry : fanoutEntries) {
-        if (entry.static_state != *staticState)
-          continue;
+      for (uint32_t fanoutIndex : fanoutIndicesOf(*staticState)) {
+        const obelisk_rt_static_fanout_entry &entry =
+            fanoutEntries[fanoutIndex];
         uint64_t overlapLow = std::max(*lowBit, entry.low_bit);
         uint64_t overlapHigh =
             std::min(rangeEnd, entry.low_bit + entry.bit_width);
@@ -1903,10 +1924,10 @@ FailureOr<bool> makeNativeEvalPlan(
             if (*physicalSourceOwner ==
                 std::pair{entry.actor_slot, entry.continuation})
               continue;
-          } else if (activeOwnerMask == 0) {
+          } else if (!activeOwnerMask) {
             needsActiveSelfCheck = true;
             continue;
-          } else if (activeOwnerMask[entry.merged_bit]) {
+          } else if ((*activeOwnerMask)[entry.merged_bit]) {
             continue;
           }
         }
@@ -3745,13 +3766,15 @@ FailureOr<bool> makeNativeEvalPlan(
         periodicClocks.size(), {APInt(ownerCount, 0), APInt(ownerCount, 0)});
     SmallVector<std::pair<APInt, APInt>> clockDirectMasks(
         periodicClocks.size(), {APInt(ownerCount, 0), APInt(ownerCount, 0)});
+    // The first merged record of each owner bit.
+    DenseMap<uint32_t, size_t> mergedIndexByBit;
+    for (auto [index, record] : llvm::enumerate(mergedFragments))
+      mergedIndexByBit.try_emplace(record.bit, index);
     auto canDispatchClockOwnerDirectly = [&](uint32_t bit) {
-      auto record = llvm::find_if(mergedFragments, [&](const auto &candidate) {
-        return candidate.bit == bit;
-      });
-      if (record == mergedFragments.end())
+      auto record = mergedIndexByBit.find(bit);
+      if (record == mergedIndexByBit.end())
         return false;
-      size_t index = static_cast<size_t>(record - mergedFragments.begin());
+      size_t index = record->second;
       // A deferred owner runs only after every Active owner of its pass; the
       // dispatcher selects it once nothing else is pending.
       if (mergedExecutors[index].empty() || bit >= firstDeferredBit)
@@ -3785,26 +3808,22 @@ FailureOr<bool> makeNativeEvalPlan(
           return fanout.edge == OBELISK_RT_WAIT_EDGE_CHANGE ||
                  fanout.low_bit == bit;
         };
-    auto clockTouchesFanout =
-        [&](const NativePeriodicClock &clock,
-            const obelisk_rt_static_fanout_entry &fanout) {
-          if (fanout.static_state != clock.getStaticState())
-            return false;
-          auto bound =
-              llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
-                return candidate.handleID == clock.getStaticState();
-              });
-          if (bound == stateLayout.bounds.end() ||
-              clock.getBitOffset() < bound->offset ||
-              clock.getBitOffset() - bound->offset >= bound->width)
-            return false;
-          uint64_t localBit = clock.getBitOffset() - bound->offset;
-          return periodicBitTouchesFanout(localBit, fanout);
-        };
-    for (auto [clockIndex, clock] : llvm::enumerate(periodicClocks))
-      for (auto [fanoutIndex, fanout] : llvm::enumerate(fanoutEntries)) {
+    for (auto [clockIndex, clock] : llvm::enumerate(periodicClocks)) {
+      auto clockState = clock.getStaticState();
+      auto bound =
+          llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
+            return candidate.handleID == clockState;
+          });
+      if (bound == stateLayout.bounds.end() ||
+          clock.getBitOffset() < bound->offset ||
+          clock.getBitOffset() - bound->offset >= bound->width)
+        continue;
+      uint64_t localBit = clock.getBitOffset() - bound->offset;
+      for (uint32_t fanoutIndex : fanoutIndicesOf(clock.getStaticState())) {
+        const obelisk_rt_static_fanout_entry &fanout =
+            fanoutEntries[fanoutIndex];
         if (fanoutRoute(fanout) == OBELISK_RT_FANOUT_RUNTIME ||
-            !clockTouchesFanout(clock, fanout) ||
+            !periodicBitTouchesFanout(localBit, fanout) ||
             fanout.kernel >= clockKernels.size())
           continue;
         if (llvm::any_of(
@@ -3820,7 +3839,6 @@ FailureOr<bool> makeNativeEvalPlan(
         uint32_t owner = periodicOwnerBits[fanoutIndex] == UINT32_MAX
                              ? fanout.merged_bit
                              : periodicOwnerBits[fanoutIndex];
-        APInt bit = APInt::getOneBitSet(ownerCount, owner);
         auto &masks = canDispatchClockOwnerDirectly(owner)
                           ? clockDirectMasks[clockIndex]
                           : clockMasks[clockIndex];
@@ -3828,12 +3846,13 @@ FailureOr<bool> makeNativeEvalPlan(
         if (fanout.edge == OBELISK_RT_WAIT_EDGE_CHANGE ||
             fanout.edge == OBELISK_RT_WAIT_EDGE_BOTH ||
             fanout.edge == OBELISK_RT_WAIT_EDGE_POSEDGE)
-          rising |= bit;
+          rising.setBit(owner);
         if (fanout.edge == OBELISK_RT_WAIT_EDGE_CHANGE ||
             fanout.edge == OBELISK_RT_WAIT_EDGE_BOTH ||
             fanout.edge == OBELISK_RT_WAIT_EDGE_NEGEDGE)
-          falling |= bit;
+          falling.setBit(owner);
       }
+    }
     for (const NativePeriodicAlias &alias : periodicAliases) {
       auto clock = llvm::find_if(periodicClocks, [&](const auto &candidate) {
         return candidate.getStaticState() == alias.getSourceStaticState() &&
@@ -3853,18 +3872,19 @@ FailureOr<bool> makeNativeEvalPlan(
         continue;
       uint64_t targetLocalBit =
           alias.getTargetBitOffset() - targetBound->offset;
-      for (auto [fanoutIndex, fanout] : llvm::enumerate(fanoutEntries)) {
+      for (uint32_t fanoutIndex :
+           fanoutIndicesOf(alias.getTargetStaticState())) {
+        const obelisk_rt_static_fanout_entry &fanout =
+            fanoutEntries[fanoutIndex];
         if (fanoutRoute(fanout) == OBELISK_RT_FANOUT_RUNTIME ||
             (fanout.actor_slot == alias.getForwardingActorSlot() &&
              fanout.continuation == alias.getForwardingContinuation()) ||
-            fanout.static_state != alias.getTargetStaticState() ||
             !periodicBitTouchesFanout(targetLocalBit, fanout) ||
             fanout.kernel >= clockKernels.size())
           continue;
         uint32_t owner = periodicOwnerBits[fanoutIndex] == UINT32_MAX
                              ? fanout.merged_bit
                              : periodicOwnerBits[fanoutIndex];
-        APInt bit = APInt::getOneBitSet(ownerCount, owner);
         auto &masks = canDispatchClockOwnerDirectly(owner)
                           ? clockDirectMasks[clockIndex]
                           : clockMasks[clockIndex];
@@ -3872,11 +3892,11 @@ FailureOr<bool> makeNativeEvalPlan(
         if (fanout.edge == OBELISK_RT_WAIT_EDGE_CHANGE ||
             fanout.edge == OBELISK_RT_WAIT_EDGE_BOTH ||
             fanout.edge == OBELISK_RT_WAIT_EDGE_POSEDGE)
-          rising |= bit;
+          rising.setBit(owner);
         if (fanout.edge == OBELISK_RT_WAIT_EDGE_CHANGE ||
             fanout.edge == OBELISK_RT_WAIT_EDGE_BOTH ||
             fanout.edge == OBELISK_RT_WAIT_EDGE_NEGEDGE)
-          falling |= bit;
+          falling.setBit(owner);
       }
     }
 
@@ -4061,13 +4081,21 @@ FailureOr<bool> makeNativeEvalPlan(
     // owners once; clocked and ordinary always-process bodies were already
     // evaluated by the generic time-zero drain and must not be replayed.
     APInt initialMask(ownerCount, 0);
+    llvm::StringMap<SmallVector<unsigned, 1>> directsByWrapper;
+    for (auto [index, direct] : llvm::enumerate(directFragments))
+      directsByWrapper[direct.wrapper].push_back(index);
     for (auto [index, executor] : llvm::enumerate(mergedExecutors)) {
-      auto direct = llvm::find_if(directFragments, [&](const auto &candidate) {
-        return candidate.wrapper == executor &&
-               candidate.actorSlot == mergedFragments[index].actor_slot &&
-               candidate.continuation == mergedFragments[index].continuation;
+      auto candidates = directsByWrapper.find(executor);
+      if (candidates == directsByWrapper.end())
+        continue;
+      auto direct = llvm::find_if(candidates->second, [&](unsigned candidate) {
+        return directFragments[candidate].actorSlot ==
+                   mergedFragments[index].actor_slot &&
+               directFragments[candidate].continuation ==
+                   mergedFragments[index].continuation;
       });
-      if (direct != directFragments.end() && direct->initialActivation)
+      if (direct != candidates->second.end() &&
+          directFragments[*direct].initialActivation)
         initialMask.setBit(mergedFragments[index].bit);
     }
     if (initialMask != 0) {
@@ -5413,10 +5441,7 @@ FailureOr<bool> makeNativeEvalPlan(
   bool generateGroupedFanout =
       llvm::any_of(scalarRootsByWord, [&](ArrayRef<uint32_t> roots) {
         return llvm::any_of(roots, [&](uint32_t rootIndex) {
-          return llvm::any_of(
-              fanoutEntries, [&](const obelisk_rt_static_fanout_entry &entry) {
-                return entry.static_state == nbaRoots[rootIndex].static_state;
-              });
+          return !fanoutIndicesOf(nbaRoots[rootIndex].static_state).empty();
         });
       });
   uint32_t activationWordCount =
@@ -6002,9 +6027,9 @@ FailureOr<bool> makeNativeEvalPlan(
                               llvmConstant(builder, location, i64, entry.width),
                               lowClip),
         highClip);
-    for (const obelisk_rt_static_fanout_entry &fanout : fanoutEntries) {
-      if (fanout.static_state != dynamicRoot.static_state ||
-          fanout.bit_width == 0)
+    for (uint32_t fanoutIndex : fanoutIndicesOf(dynamicRoot.static_state)) {
+      const obelisk_rt_static_fanout_entry &fanout = fanoutEntries[fanoutIndex];
+      if (fanout.bit_width == 0)
         continue;
       Value writeHigh = arith::AddIOp::create(builder, location, publishedStart,
                                               publishedWidth);
@@ -6487,9 +6512,10 @@ FailureOr<bool> makeNativeEvalPlan(
         SmallVector<uint64_t> direct;
       };
       SmallVector<TriggerGroup> groups;
-      for (const obelisk_rt_static_fanout_entry &entry : fanoutEntries) {
-        if (entry.static_state != root.static_state ||
-            entry.low_bit >= root.bit_width)
+      for (uint32_t fanoutIndex : fanoutIndicesOf(root.static_state)) {
+        const obelisk_rt_static_fanout_entry &entry =
+            fanoutEntries[fanoutIndex];
+        if (entry.low_bit >= root.bit_width)
           continue;
         uint64_t high =
             std::min<uint64_t>(root.bit_width, entry.low_bit + entry.bit_width);
@@ -6821,8 +6847,9 @@ FailureOr<bool> makeNativeEvalPlan(
               slot->constantOffset
                   ? builder.getI64IntegerAttr(*slot->constantOffset)
                   : IntegerAttr{}));
-        for (const auto &entry : fanoutEntries)
-          if (entry.static_state == nbaRoots[root].static_state &&
+        for (uint32_t fanoutIndex :
+             fanoutIndicesOf(nbaRoots[root].static_state))
+          if (const auto &entry = fanoutEntries[fanoutIndex];
               entry.low_bit < nbaRoots[root].bit_width && entry.bit_width)
             consumers.push_back(schedule::NBAConsumerAttr::get(
                 context, entry.low_bit,
