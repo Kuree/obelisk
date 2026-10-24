@@ -520,25 +520,33 @@ static obelisk_rt_status schedulerNBA(
           }
           uint64_t first = static_cast<uint64_t>(firstWide);
           uint64_t last = static_cast<uint64_t>(lastWide);
-          auto *accValue =
-              reinterpret_cast<uint8_t *>(accumulator.value.data());
-          auto *accUnknown =
-              reinterpret_cast<uint8_t *>(accumulator.unknown.data());
-          auto *accMask =
-              reinterpret_cast<uint8_t *>(accumulator.writeMask.data());
-          for (uint64_t source = first; source < last; ++source) {
+          // Capture the RHS in destination-word-sized pieces. This is the
+          // same ordered masked merge as the scalar path, including X/Z and
+          // overwritten intermediate values (1800-2023 4.6, 9.4.2, 10.4.2).
+          // Clip before adding sourceBitOffset: a packed slice can start
+          // outside the destination while its surviving RHS starts mid-byte.
+          for (uint64_t source = first; source < last;) {
             uint64_t destination =
                 static_cast<uint64_t>(static_cast<__int128>(offset) + source);
-            bool bitValue = sourceBit(value, source);
-            bool bitUnknown = unknownPlane && sourceBit(unknown, source);
+            size_t word = static_cast<size_t>(destination / 64);
             unsigned shift = static_cast<unsigned>(destination % 64);
-            recordStaticNBATransient(accumulator, destination / 64,
-                                     uint64_t{1} << shift,
-                                     uint64_t{bitValue} << shift,
-                                     uint64_t{bitUnknown} << shift);
-            setByteBit(accValue, destination, bitValue);
-            setByteBit(accUnknown, destination, bitUnknown);
-            setByteBit(accMask, destination, true);
+            uint64_t width = std::min<uint64_t>(last - source, 64 - shift);
+            uint64_t mask = packedWidthMask(width) << shift;
+            uint64_t nextValue =
+                loadPackedBytes(value, sourceBitOffset + source, width) << shift;
+            uint64_t nextUnknown =
+                unknownPlane
+                    ? loadPackedBytes(unknown, sourceBitOffset + source, width)
+                          << shift
+                    : 0;
+            recordStaticNBATransient(accumulator, word, mask, nextValue,
+                                     nextUnknown);
+            accumulator.value[word] =
+                (accumulator.value[word] & ~mask) | nextValue;
+            accumulator.unknown[word] =
+                (accumulator.unknown[word] & ~mask) | nextUnknown;
+            accumulator.writeMask[word] |= mask;
+            source += width;
           }
         }
         accumulator.sequence = context->nextSchedulerSequence++;

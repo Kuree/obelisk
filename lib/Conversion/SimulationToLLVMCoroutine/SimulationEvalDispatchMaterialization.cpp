@@ -393,8 +393,9 @@ materializeNativeEvalDispatch(ModuleOp module,
   // A cyclic island can hold tens of thousands of them, and one coordinator
   // body of that size can neither be divided among backend partitions nor
   // pass through superlinear LLVM transforms. Beyond one segment, emit them
-  // in bounded segment functions that return OK to continue dispatch, or the
-  // status for the coordinator to return.
+  // in bounded segment functions. A segment can continue with the global
+  // minimum ready owner locally, and returns when selection needs the outer
+  // coordinator or a runtime scheduling boundary.
   constexpr unsigned segmentShift = 9;
   unsigned directOwners = 0;
   for (auto [recordIndex, record] : llvm::enumerate(mergedFragments))
@@ -427,9 +428,6 @@ materializeNativeEvalDispatch(ModuleOp module,
     segment.function.getBody().push_back(resume);
     segment.function.getBody().push_back(segmentFailed);
     segment.function.getBody().push_back(segmentStopped);
-    builder.setInsertionPointToStart(resume);
-    LLVM::ReturnOp::create(builder, location,
-                           llvmConstant(builder, location, i32, OBELISK_RT_OK));
     builder.setInsertionPointToStart(segmentFailed);
     LLVM::ReturnOp::create(builder, location, segmentFailed->getArgument(0));
     builder.setInsertionPointToStart(segmentStopped);
@@ -786,13 +784,99 @@ materializeNativeEvalDispatch(ModuleOp module,
     SmallVector<APInt> segmentCases;
     SmallVector<Block *> segmentCalls;
     for (auto &[index, segment] : segments) {
+      // A nonempty cached leaf is the global minimum: publications lower the
+      // cache, while removals can only leave it pointing at an empty leaf.
+      // Reload it after every owner so backward publications preserve the
+      // coordinator's chosen Active ordering (the LRM permits any order,
+      // IEEE 1800-2023 4.4.2.2 and 4.7). Only Active segments take this
+      // shortcut: Inactive and NBA work retain their region boundaries
+      // (4.4.2.3-4.4.2.4), as do ranked owners and priority signals.
+      uint64_t first = index << segmentShift;
+      uint64_t last = std::min<uint64_t>(first + (1u << segmentShift),
+                                        mergedFragments.size());
+      bool localDispatch = !prioritySignalHandoff &&
+                           (!hasDeferred || last <= plan.firstDeferredBit);
+      bool completeSegment = segment.cases.size() == last - first;
+      Block *localSwitch = nullptr;
+      Block *localDone = nullptr;
+      Value localSelectedBit;
+      builder.setInsertionPointToStart(segment.targets.dispatch);
+      if (localDispatch) {
+        Region &body = segment.function.getBody();
+        localSwitch = new Block;
+        localSelectedBit = localSwitch->addArgument(i64, location);
+        body.getBlocks().insert(std::next(body.begin()), localSwitch);
+        Block *load = new Block, *select = new Block, *done = new Block;
+        localDone = done;
+        body.push_back(load);
+        body.push_back(select);
+        body.push_back(done);
+        Value ingress = ingressAddress();
+        Value word = loadOwnerWord(builder, location, ingress,
+                                    readyLayout.cacheOffset());
+        Value relative = arith::SubIOp::create(
+            builder, location, word,
+            llvmConstant(builder, location, i64, first / 64));
+        Value inSegment = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ult, relative,
+            llvmConstant(builder, location, i64, (last + 63) / 64 - first / 64));
+        if (plan.hasOrderedNBA) {
+          Value status = LLVM::LoadOp::create(
+              builder, location, i32, evalNBAQueueField(builder, location, 3),
+              4);
+          Value ok = arith::CmpIOp::create(
+              builder, location, arith::CmpIPredicate::eq, status,
+              llvmConstant(builder, location, i32, OBELISK_RT_OK));
+          inSegment = arith::AndIOp::create(builder, location, inSegment, ok);
+        }
+        cf::CondBranchOp::create(builder, location, inSegment, load,
+                                 ValueRange{}, done, ValueRange{});
+        builder.setInsertionPointToStart(load);
+        Value address = LLVM::GEPOp::create(builder, location, pointer, i64,
+                                            ingress, ValueRange{word});
+        Value ready = LLVM::LoadOp::create(builder, location, i64, address, 8);
+        Value nonempty = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne, ready,
+            llvmConstant(builder, location, i64, 0));
+        cf::CondBranchOp::create(builder, location, nonempty, select,
+                                 ValueRange{}, done, ValueRange{});
+        builder.setInsertionPointToStart(select);
+        Value bit = LLVM::CountTrailingZerosOp::create(builder, location, i64,
+                                                       ready, true);
+        Value selected = arith::AddIOp::create(
+            builder, location, bit,
+            arith::MulIOp::create(builder, location, word,
+                                  llvmConstant(builder, location, i64, 64)));
+        cf::BranchOp::create(builder, location, localSwitch,
+                             ValueRange{selected});
+        builder.setInsertionPointToStart(done);
+      }
+      LLVM::ReturnOp::create(builder, location,
+                             llvmConstant(builder, location, i32, OBELISK_RT_OK));
       builder.setInsertionPointToEnd(&segment.function.getBody().front());
-      LLVM::SwitchOp::create(
-          builder, location, segment.function.getArgument(1),
-          segment.targets.stopped, ValueRange{}, segment.cases,
-          segment.destinations,
-          SmallVector<ValueRange>(segment.cases.size(), ValueRange{}),
-          ArrayRef<int32_t>{});
+      auto emitOwnerSwitch = [&](const Segment &ownerSegment, Value selected,
+                                 Block *otherwise) {
+        LLVM::SwitchOp::create(
+            builder, location, selected, otherwise, ValueRange{},
+            ownerSegment.cases, ownerSegment.destinations,
+            SmallVector<ValueRange>(ownerSegment.cases.size(), ValueRange{}),
+            ArrayRef<int32_t>{});
+      };
+      if (localSwitch && completeSegment) {
+        cf::BranchOp::create(builder, location, localSwitch,
+                             ValueRange{segment.function.getArgument(1)});
+      } else {
+        emitOwnerSwitch(segment, segment.function.getArgument(1),
+                        segment.targets.stopped);
+      }
+      if (localSwitch) {
+        builder.setInsertionPointToStart(localSwitch);
+        // The next global minimum may name a ranked owner sharing this
+        // segment. Return without consuming it so the coordinator runs its
+        // group. Initial calls still reject an invalid owner as before.
+        emitOwnerSwitch(segment, localSelectedBit,
+                        completeSegment ? segment.targets.stopped : localDone);
+      }
       // Infallible owners never branch to the failure exit. Do not leave an
       // unreachable block for later lowering to skip.
       for (Block *exit : {segment.targets.dispatch, segment.targets.failed})

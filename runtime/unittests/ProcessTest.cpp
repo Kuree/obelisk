@@ -8284,6 +8284,101 @@ TEST(Scheduler, AOTStaticNBASitesMergeAndCommitEachRootOnce) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, WideStaticNBACapturesClippedRHSAndOrderedOverwrites) {
+  // LRM 10.4.2 captures the selected RHS now, 4.6 preserves overwrite order,
+  // and 9.4.2 requires even a round trip to be visible to change waiters.
+  constexpr uint64_t rootWidth = 197, rootOffset = 5, planeWidth = 211;
+  for (bool fourState : {false, true})
+    for (bool packedSlice : {false, true})
+      for (int64_t offset : {-71, -3, 0, 1, 63, 64, 129, 190}) {
+        SCOPED_TRACE(fourState);
+        SCOPED_TRACE(packedSlice);
+        SCOPED_TRACE(offset);
+        AOTTestState state;
+        const obelisk_rt_static_nba_root roots[] = {
+            {17, 1, rootWidth, nullptr}};
+        const obelisk_rt_static_nba_site sites[] = {
+            {7, 0, OBELISK_RT_STATIC_NBA_ROOT_ACCUMULATOR}};
+        auto plan = makeAOTPlan(state, 1);
+        plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC;
+        plan.nba_roots = roots;
+        plan.nba_root_count = std::size(roots);
+        plan.nba_sites = sites;
+        plan.nba_site_count = std::size(sites);
+        obelisk_rt_execution_descriptor_v1 execution{};
+        execution.version = OBELISK_RT_VERSION;
+        execution.state_bit_count = planeWidth;
+        obelisk_rt_context *context = nullptr;
+        ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+                  OBELISK_RT_OK);
+        context->stateUnknown.assign(4, 0);
+        ASSERT_EQ(obelisk_rt_v1_native_state_register_static(
+                      context, 1, rootOffset, rootWidth), OBELISK_RT_OK);
+        ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+                  OBELISK_RT_OK);
+        std::array<uint8_t, (planeWidth + 7) / 8> value{}, unknown{};
+        value.fill(0xa5);
+        unknown.fill(fourState ? 0x3c : 0);
+        auto expectedValue = value, expectedUnknown = unknown;
+        std::array<bool, rootWidth> captured{}, stagedValue{}, stagedUnknown{},
+            transient{};
+        uint64_t handle = obelisk_rt_v1_native_state_static_handle(1);
+        auto setBit = [](auto &bytes, uint64_t bit, bool set) {
+          uint8_t mask = uint8_t(1u << (bit % 8));
+          bytes[bit / 8] = (bytes[bit / 8] & ~mask) | (set ? mask : 0);
+        };
+        for (unsigned stage = 0; stage != 3; ++stage) {
+          constexpr uint64_t sourceWidth = 257;
+          std::array<uint8_t, (sourceWidth + 7) / 8> rhs{}, rhsUnknown{};
+          for (size_t i = 0; i != rhs.size(); ++i) {
+            rhs[i] = uint8_t(37 * i + (stage == 1 ? 0x59 : 0xa6));
+            rhsUnknown[i] = uint8_t(19 * i + (stage == 1 ? 0xc3 : 0x3c));
+          }
+          for (uint64_t source = 0; source != sourceWidth; ++source) {
+            int64_t dest = offset + int64_t(source);
+            if (dest < 0 || dest >= int64_t(rootWidth))
+              continue;
+            bool v = (rhs[source / 8] >> (source % 8)) & 1;
+            bool u = fourState &&
+                     ((rhsUnknown[source / 8] >> (source % 8)) & 1);
+            transient[dest] |= captured[dest] &&
+                               (stagedValue[dest] != v || stagedUnknown[dest] != u);
+            captured[dest] = true;
+            stagedValue[dest] = v;
+            stagedUnknown[dest] = u;
+            setBit(expectedValue, rootOffset + dest, v);
+            setBit(expectedUnknown, rootOffset + dest, u);
+          }
+          auto *uPlane = fourState ? unknown.data() : nullptr;
+          auto *uRHS = fourState ? rhsUnknown.data() : nullptr;
+          auto status = packedSlice
+              ? obelisk_rt_v1_scheduler_packed_slice_nba(
+                    context, value.data(), uPlane, planeWidth, handle, rootWidth,
+                    offset, 1, sourceWidth, 0, 7, UINT64_MAX, rhs.data(), uRHS)
+              : obelisk_rt_v1_scheduler_static_nba(
+                    context, 7, value.data(), uPlane, planeWidth,
+                    obelisk_rt_v1_native_handle_offset(handle, offset),
+                    sourceWidth, rhs.data(), uRHS);
+          ASSERT_EQ(status, OBELISK_RT_OK);
+          EXPECT_TRUE(std::all_of(value.begin(), value.end(),
+                                  [](uint8_t byte) { return byte == 0xa5; }));
+          // Destroy the source after scheduling: commit must use the capture.
+          rhs.fill(0);
+          rhsUnknown.fill(0);
+        }
+        const auto &acc = context->staticNBAAccumulators[0];
+        for (uint64_t bit = 0; bit != rootWidth; ++bit)
+          EXPECT_EQ(bool((acc.transient[bit / 64] >> (bit % 64)) & 1),
+                    transient[bit]);
+        ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+        EXPECT_EQ(value, expectedValue);
+        EXPECT_EQ(unknown, expectedUnknown);
+        EXPECT_EQ(context->signalDiagnostics.aotNBAStages, 3u);
+        EXPECT_EQ(context->signalDiagnostics.aotNBACommits, 1u);
+        obelisk_rt_v1_context_destroy(context);
+      }
+}
+
 TEST(Scheduler, GeneratedNBA256SnapshotsAndPreservesGenericLastWrite) {
   AOTTestState state;
   obelisk_rt_generated_nba_accumulator_256 generated{};
@@ -10281,6 +10376,43 @@ TEST(Scheduler, UnknownSummaryClearsCleanRootsAndReportsRuntimeWrites) {
   ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
   EXPECT_EQ(unknown[0] & 0xff, 0x10u);
   EXPECT_EQ(summary, 0b010u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, AllKnownSummaryRetainsUnknownsAcrossPartialKnownWrites) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  std::array<uint64_t, 2> unknown{};
+  uint64_t summary = 0;
+  const obelisk_rt_native_unknown_root_v1 roots[] = {{0, 64, 0, 0},
+                                                   {64, 64, 0, 0}};
+  ASSERT_EQ(obelisk_rt_v1_native_state_bind_unknown_summary(
+                context, reinterpret_cast<uint8_t *>(unknown.data()), 128,
+                &summary, roots, 2, nullptr, 0),
+            OBELISK_RT_OK);
+  const uint64_t all[] = {0, 3};
+  auto refresh = [&] {
+    return obelisk_rt_v1_native_state_refresh_unknown_summary(context, all, 1,
+                                                              nullptr);
+  };
+  ASSERT_EQ(refresh(), 1u);
+  EXPECT_EQ(summary, 0u);
+  // Bits outside the written mask, or beyond the write width, do not taint
+  // a root. A known write must not clear an earlier, still-live X/Z.
+  markNativeUnknownBitsUnlocked(context, 0, 32, UINT64_MAX << 32);
+  markNativeUnknownBitsUnlocked(context, 0, 64, UINT64_MAX, 0);
+  EXPECT_EQ(summary, 0u);
+  unknown[0] = 1;
+  markNativeUnknownBitsUnlocked(context, 0, 64, 1);
+  EXPECT_EQ(summary, 1u);
+  markNativeUnknownBitsUnlocked(context, 1, 64, 0);
+  EXPECT_EQ(summary, 1u);
+  EXPECT_EQ(refresh(), 0u);
+  unknown[0] = 0;
+  markNativeUnknownBitsUnlocked(context, 0, 1, 0);
+  EXPECT_EQ(summary, 1u);
+  EXPECT_EQ(refresh(), 1u);
+  EXPECT_EQ(summary, 0u);
   obelisk_rt_v1_context_destroy(context);
 }
 

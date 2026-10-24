@@ -1,10 +1,11 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-replicate,simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' 2>/dev/null | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-replicate,simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
 
 // test-obelisk-replicate expands counter# into 513 clocked counters, each a
 // direct eval owner outside any ranked group. Beyond one 512-owner segment,
 // the coordinator selects a segment function by `bit >> 9`; the segment runs
-// the owner and returns OK to resume dispatch, or the status the coordinator
-// returns. The four-state fallback flag is passed by address.
+// owners while the globally first ready leaf remains local. Empty leaves and
+// cross-segment publications return to the coordinator. The four-state
+// fallback flag is passed by address; errors and termination still escape.
 
 // CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
 // CHECK: %[[FALLBACK:.*]] = llvm.alloca %{{.*}} x i1
@@ -27,18 +28,28 @@
 // CHECK-NEXT: llvm.call @__obelisk_eval_dispatch_v1.segment_1(%arg1, %[[BIT]], %[[FALLBACK]])
 
 // CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1.segment_0(%arg0: !llvm.ptr, %arg1: i64, %arg2: !llvm.ptr) -> i32
-// CHECK: llvm.switch %arg1 : i64, ^[[NONE:bb[0-9]+]] [
+// CHECK: llvm.br ^[[LOCAL:bb[0-9]+]](%arg1 : i64)
+// CHECK-NEXT: ^[[LOCAL]](%[[SELECTED:.*]]: i64):
+// CHECK-NEXT: llvm.switch %[[SELECTED]] : i64, ^[[NONE:bb[0-9]+]] [
 // CHECK-NEXT: 0: ^
 // CHECK: 511: ^
 // CHECK-NEXT: ]
 
 // CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1.segment_1(%arg0: !llvm.ptr, %arg1: i64, %arg2: !llvm.ptr) -> i32
-// CHECK-NEXT: llvm.switch %arg1 : i64, ^[[NONE:bb[0-9]+]] [
+// CHECK-NEXT: llvm.br ^[[LOCAL:bb[0-9]+]](%arg1 : i64)
+// CHECK-NEXT: ^[[LOCAL]](%[[SELECTED:.*]]: i64):
+// CHECK-NEXT: llvm.switch %[[SELECTED]] : i64, ^[[NONE:bb[0-9]+]] [
 // CHECK-NEXT: 512: ^[[OWNER:bb[0-9]+]]
 // CHECK-NEXT: ]
 // CHECK-NEXT: ^[[CONTINUE:bb[0-9]+]]:
-// CHECK-NEXT: %[[OK:.*]] = llvm.mlir.constant(0 : i32)
-// CHECK-NEXT: llvm.return %[[OK]]
+// CHECK: %[[INGRESS:.*]] = llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
+// CHECK: %[[CACHE:.*]] = llvm.getelementptr %[[INGRESS]][72]
+// CHECK: %[[WORD:.*]] = llvm.load %[[CACHE]]
+// CHECK: %[[START:.*]] = llvm.mlir.constant(8 : i64)
+// CHECK: %[[RELATIVE:.*]] = llvm.sub %[[WORD]], %[[START]]
+// CHECK: %[[COUNT:.*]] = llvm.mlir.constant(1 : i64)
+// CHECK: %[[INSIDE:.*]] = llvm.icmp "ult" %[[RELATIVE]], %[[COUNT]]
+// CHECK-NEXT: llvm.cond_br %[[INSIDE]], ^[[LOAD:bb[0-9]+]], ^[[DONE:bb[0-9]+]]
 // CHECK-NEXT: ^[[FAIL:bb[0-9]+]](%[[CODE:.*]]: i32):
 // CHECK-NEXT: llvm.return %[[CODE]]
 // CHECK-NEXT: ^[[NONE]]:
@@ -51,6 +62,18 @@
 // CHECK: llvm.call @__obelisk_eval_path_dispatch_v1_{{[0-9]+}}(%arg0) {schedule.eval.direct_call}
 // CHECK: llvm.cond_br %{{.*}}, ^{{bb[0-9]+}}, ^[[FAIL]](%{{.*}} : i32)
 // CHECK: llvm.cond_br %{{.*}}, ^[[NONE]], ^[[CONTINUE]]
+// CHECK: ^[[LOAD]]:
+// CHECK: %[[ADDRESS:.*]] = llvm.getelementptr %[[INGRESS]][%[[WORD]]]
+// CHECK: %[[READY:.*]] = llvm.load %[[ADDRESS]]
+// CHECK: %[[ZERO:.*]] = llvm.mlir.constant(0 : i64)
+// CHECK: %[[NONEMPTY:.*]] = llvm.icmp "ne" %[[READY]], %[[ZERO]]
+// CHECK-NEXT: llvm.cond_br %[[NONEMPTY]], ^[[SELECT:bb[0-9]+]], ^[[DONE]]
+// CHECK: ^[[SELECT]]:
+// CHECK-NEXT: %[[BIT:.*]] = "llvm.intr.cttz"(%[[READY]]) <{is_zero_poison = true}>
+// CHECK: llvm.br ^[[LOCAL]](%{{.*}} : i64)
+// CHECK: ^[[DONE]]:
+// CHECK-NEXT: %[[OK:.*]] = llvm.mlir.constant(0 : i32)
+// CHECK-NEXT: llvm.return %[[OK]]
 
 !clk = !simulation.ref<i1>
 !int = !simulation.ref<i32>

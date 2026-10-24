@@ -3513,12 +3513,13 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
              std::tuple{rhs.region, rhs.rank, rhs.insertionSequence, rhs.token};
     }
   };
-  // An initial publication batch is sorted once in later-first order and
-  // consumed from the back in O(1) per member. The common already-ordered
-  // process vector needs only a linear check and reversal. Rare incremental
-  // additions use a separate heap so task-call, continue, and spawned-child
-  // handling retain the fully general ordering contract.
+  // Consume an already-ordered process vector from the back in O(1) per
+  // member. Otherwise heapify in O(N): a publication can invalidate a large
+  // startup batch after only a few selections, so sorting all N entries on
+  // each rebuild does work that may never be used. Both forms and the heap
+  // of incremental additions use the same complete scheduler ordering key.
   std::vector<CachedNativeReady> cachedNativeReady;
+  bool cachedNativeReadyIsHeap = false;
   std::vector<CachedNativeReady> cachedNativeDynamicReady;
   std::vector<uint64_t> cachedNativeSlowCandidates;
   CachedNativeReadyLater cachedNativeReadyLater;
@@ -3542,17 +3543,25 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
   auto nextCachedNativeReady = [&]() -> std::pair<CachedNativeReady, bool> {
     bool dynamic = cachedNativeReady.empty() ||
                    (!cachedNativeDynamicReady.empty() &&
-                    cachedNativeReadyLater(cachedNativeReady.back(),
+                    cachedNativeReadyLater(cachedNativeReadyIsHeap
+                                               ? cachedNativeReady.front()
+                                               : cachedNativeReady.back(),
                                            cachedNativeDynamicReady.front()));
     return {dynamic ? cachedNativeDynamicReady.front()
-                    : cachedNativeReady.back(),
+                    : cachedNativeReadyIsHeap ? cachedNativeReady.front()
+                                              : cachedNativeReady.back(),
             dynamic};
   };
   auto popCachedNativeReady = [&](bool dynamic) {
     if (context->nativeReadyPublicationBatch == &publications)
       publications.queued.erase(dynamic ? cachedNativeDynamicReady.front().token
-                                        : cachedNativeReady.back().token);
+                                : cachedNativeReadyIsHeap
+                                    ? cachedNativeReady.front().token
+                                    : cachedNativeReady.back().token);
     if (!dynamic) {
+      if (cachedNativeReadyIsHeap)
+        std::pop_heap(cachedNativeReady.begin(), cachedNativeReady.end(),
+                      cachedNativeReadyLater);
       cachedNativeReady.pop_back();
       return;
     }
@@ -4100,7 +4109,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               if (alreadyEarlierFirst)
                 std::reverse(batch.begin(), batch.end());
               else
-                std::sort(batch.begin(), batch.end(), cachedNativeReadyLater);
+                std::make_heap(batch.begin(), batch.end(), cachedNativeReadyLater);
+              cachedNativeReadyIsHeap = !alreadyEarlierFirst;
               cachedNativeUrgentCount = static_cast<size_t>(std::count_if(
                   batch.begin(), batch.end(),
                   [](const CachedNativeReady &ready) { return ready.urgent; }));
@@ -4965,9 +4975,17 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                              newValue);
             storePackedBytes(canonicalUnknown, packedPlaneBit, update.bitWidth,
                              newUnknown);
+            // Shared canonical storage already contains the new value.
+            // Preserve its pre-write X/Z bits so unchanged knownness does
+            // not invalidate/recheck every dependent proof (LRM 6.11.2).
+            std::optional<uint64_t> nativeOldUnknown;
+            if (context->nativeSchedulePlan &&
+                canonicalUnknown == context->nativeSchedulePlan->state_unknown)
+              nativeOldUnknown = oldUnknown;
             if (!storeNativeScheduleStateUnlocked(context, packedPlaneBit,
                                                   update.bitWidth, newValue,
-                                                  newUnknown)) {
+                                                  newUnknown,
+                                                  nativeOldUnknown)) {
               context->schedulerStatus = OBELISK_RT_LAYOUT_MISMATCH;
               return;
             }
@@ -5082,12 +5100,17 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               };
               apply(update.valuePlane, false, newValue);
               apply(update.unknownPlane, true, newUnknown);
-              if (!automatic)
+              if (!automatic && !canonical)
                 markNativeUnknownBitsUnlocked(context, planeBit, 1,
                                               newUnknown ? 1 : 0);
+              std::optional<uint64_t> nativeOldUnknown;
+              if (canonical && context->nativeSchedulePlan &&
+                  reinterpret_cast<const uint8_t *>(context->stateUnknown.data()) ==
+                      context->nativeSchedulePlan->state_unknown)
+                nativeOldUnknown = oldUnknown ? 1 : 0;
               if (canonical && !storeNativeScheduleStateUnlocked(
                                    context, planeBit, 1, newValue ? 1 : 0,
-                                   newUnknown ? 1 : 0)) {
+                                   newUnknown ? 1 : 0, nativeOldUnknown)) {
                 context->schedulerStatus = OBELISK_RT_LAYOUT_MISMATCH;
                 return;
               }

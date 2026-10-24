@@ -268,6 +268,11 @@ void markNativeUnknownBitsUnlocked(const obelisk_rt_context *context,
   if (!summary || bitWidth == 0)
     return;
   bitWidth = std::min<uint64_t>(bitWidth, 64);
+  // A known write cannot break an all-known pattern. Keep the existing
+  // dirty bits until refresh proves the whole root clean (LRM 6.11.2).
+  if (summary->patterns.empty() &&
+      !(unknown & written & lowBits(bitWidth)))
+    return;
   forEachUnknownRoot(*summary, bitOffset, bitWidth, [&](uint32_t root) {
     const obelisk_rt_native_unknown_root_v1 &entry = summary->roots[root];
     // The written bits inside this root, relative to `bitOffset`.
