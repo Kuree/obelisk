@@ -1,6 +1,7 @@
 //===- DesignBytecodeTest.cpp - Design bytecode/reflection tests ----------===//
 
 #include "../lib/DesignBytecodeExecution.h"
+#include "../lib/DesignBytecodeLogic.h"
 #include "../lib/ProcessShared.h"
 #include "../lib/RuntimeInternal.h"
 #include "../lib/VPIHandleToken.h"
@@ -4265,6 +4266,49 @@ obelisk_rt_status mixedTierExecute(obelisk_rt_process_instance_v1 *instance) {
 
 void mixedTierDestroy(obelisk_rt_process_instance_v1 *instance) {
   instance->native_handle = nullptr;
+}
+
+TEST(DesignBytecode, CopiesAndFillsBitRangesLikeSingleBitAccess) {
+  using obelisk::designbytecode::LimbVector;
+  // Deterministic xorshift trials of random source, destination and count
+  // alignments across one to four limbs, against a one-bit-at-a-time
+  // reference.
+  uint64_t seed = 0x9e3779b97f4a7c15ull;
+  auto next = [&] {
+    seed ^= seed << 13;
+    seed ^= seed >> 7;
+    seed ^= seed << 17;
+    return seed;
+  };
+  for (unsigned trial = 0; trial != 4000; ++trial) {
+    size_t fromLimbs = 1 + next() % 4, toLimbs = 1 + next() % 4;
+    LimbVector from(fromLimbs), to(toLimbs);
+    for (size_t index = 0; index != fromLimbs; ++index)
+      from[index] = next();
+    for (size_t index = 0; index != toLimbs; ++index)
+      to[index] = next();
+    uint64_t source = next() % (fromLimbs * 64);
+    uint64_t destination = next() % (toLimbs * 64);
+    uint64_t count =
+        next() %
+        (std::min(fromLimbs * 64 - source, toLimbs * 64 - destination) + 1);
+    LimbVector expected = to;
+    bool enabled = (next() & 1) != 0;
+    if (trial % 2) {
+      for (uint64_t bit = 0; bit != count; ++bit)
+        obelisk::designbytecode::setBit(
+            expected, destination + bit,
+            obelisk::designbytecode::bit(from, source + bit));
+      obelisk::designbytecode::copyBits(to, destination, from, source, count);
+    } else {
+      for (uint64_t bit = 0; bit != count; ++bit)
+        obelisk::designbytecode::setBit(expected, destination + bit, enabled);
+      obelisk::designbytecode::fillBits(to, destination, count, enabled);
+    }
+    ASSERT_TRUE(to == expected)
+        << "trial " << trial << " source " << source << " destination "
+        << destination << " count " << count;
+  }
 }
 
 TEST(DesignBytecode, ExecutesArbitraryWidthLogicInSharedScratch) {

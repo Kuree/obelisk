@@ -349,15 +349,14 @@ Logic replicate(const Logic &input, uint32_t resultWidth, uint64_t count) {
     }
     return result;
   }
-  // The general unaligned case still takes work proportional to the output
-  // width and allocates no progressively wider temporaries.
-  for (uint64_t copy = 0; copy != count; ++copy)
-    for (uint64_t inputBit = 0; inputBit != input.width; ++inputBit) {
-      uint64_t outputBit = copy * input.width + inputBit;
-      setBit(result.value, outputBit, bit(input.value, inputBit));
-      if (input.fourState)
-        setBit(result.unknown, outputBit, bit(input.unknown, inputBit));
-    }
+  // The general unaligned case copies each replica a word at a time and
+  // allocates no progressively wider temporaries.
+  for (uint64_t copy = 0; copy != count; ++copy) {
+    copyBits(result.value, copy * input.width, input.value, 0, input.width);
+    if (input.fourState)
+      copyBits(result.unknown, copy * input.width, input.unknown, 0,
+               input.width);
+  }
   return result;
 }
 
@@ -369,6 +368,59 @@ void setBit(LimbVector &value, uint64_t index, bool enabled) {
   value[index / 64] =
       enabled ? value[index / 64] | mask : value[index / 64] & ~mask;
 }
+namespace {
+uint64_t lowMask(uint64_t count) {
+  return count >= 64 ? UINT64_MAX : (uint64_t{1} << count) - 1;
+}
+
+/// Reads `count` (1 to 64) bits starting at bit `source`.
+uint64_t loadBits(const LimbVector &from, uint64_t source, uint64_t count) {
+  uint64_t word = source / 64;
+  unsigned offset = static_cast<unsigned>(source % 64);
+  uint64_t bits = from[word] >> offset;
+  if (offset != 0 && offset + count > 64)
+    bits |= from[word + 1] << (64 - offset);
+  return bits & lowMask(count);
+}
+
+/// Writes the low `count` (1 to 64) bits of `bits` starting at bit
+/// `destination`, leaving every other bit unchanged.
+void storeBits(LimbVector &to, uint64_t destination, uint64_t count,
+               uint64_t bits) {
+  uint64_t word = destination / 64;
+  unsigned offset = static_cast<unsigned>(destination % 64);
+  uint64_t mask = lowMask(count);
+  bits &= mask;
+  to[word] = (to[word] & ~(mask << offset)) | (bits << offset);
+  if (offset != 0 && offset + count > 64) {
+    unsigned written = 64 - offset;
+    to[word + 1] = (to[word + 1] & ~(mask >> written)) | (bits >> written);
+  }
+}
+} // namespace
+
+void copyBits(LimbVector &to, uint64_t destination, const LimbVector &from,
+              uint64_t source, uint64_t count) {
+  while (count != 0) {
+    uint64_t chunk = std::min<uint64_t>(count, 64);
+    storeBits(to, destination, chunk, loadBits(from, source, chunk));
+    destination += chunk;
+    source += chunk;
+    count -= chunk;
+  }
+}
+
+void fillBits(LimbVector &to, uint64_t destination, uint64_t count,
+              bool enabled) {
+  uint64_t bits = enabled ? UINT64_MAX : 0;
+  while (count != 0) {
+    uint64_t chunk = std::min<uint64_t>(count, 64);
+    storeBits(to, destination, chunk, bits);
+    destination += chunk;
+    count -= chunk;
+  }
+}
+
 bool bit(const std::vector<uint64_t> &value, uint64_t index) {
   return ((value[index / 64] >> (index % 64)) & 1) != 0;
 }
@@ -459,35 +511,48 @@ Logic shift(const Logic &input, const Logic &amount, uint16_t opcode) {
   bool arithmetic = opcode == OBELISK_RT_DB_ASHR;
   bool signValue = arithmetic && bit(input.value, input.width - 1);
   bool signUnknown = arithmetic && bit(input.unknown, input.width - 1);
-  for (uint64_t destination = 0; destination != input.width; ++destination) {
-    bool fill = false;
-    uint64_t source = 0;
-    if (opcode == OBELISK_RT_DB_SHL) {
-      fill = !oversized && destination >= distance;
-      source = destination - std::min<uint64_t>(destination, distance);
-    } else {
-      fill = !oversized && destination + distance < input.width;
-      source = destination + distance;
-    }
-    setBit(result.value, destination,
-           fill ? bit(input.value, source) : arithmetic && signValue);
-    setBit(result.unknown, destination,
-           fill ? bit(input.unknown, source) : arithmetic && signUnknown);
+  // Shifted-in bits are zero, or copies of the sign for an arithmetic shift.
+  uint64_t kept = oversized ? 0 : input.width - distance;
+  if (opcode == OBELISK_RT_DB_SHL) {
+    copyBits(result.value, distance, input.value, 0, kept);
+    copyBits(result.unknown, distance, input.unknown, 0, kept);
+  } else {
+    copyBits(result.value, 0, input.value, distance, kept);
+    copyBits(result.unknown, 0, input.unknown, distance, kept);
+    fillBits(result.value, kept, input.width - kept, signValue);
+    fillBits(result.unknown, kept, input.width - kept, signUnknown);
   }
   return result;
 }
 
+namespace {
+uint64_t loadLimb(const uint8_t *address) {
+  uint64_t limb;
+  std::memcpy(&limb, address, sizeof(limb));
+  return limb;
+}
+void storeLimb(uint8_t *address, uint64_t limb) {
+  std::memcpy(address, &limb, sizeof(limb));
+}
+} // namespace
+
 Logic readLogic(const uint8_t *frame, const Layout &layout) {
+  uint64_t limbs = limbCount(layout.width);
   Logic result{layout.width, layout.kind == OBELISK_RT_DBREG_LOGIC,
-               LimbVector(limbCount(layout.width)),
-               LimbVector(limbCount(layout.width))};
-  std::memcpy(
-      result.value.data(), frame + layout.offset,
-      std::min<uint64_t>(layout.size, result.value.size() * sizeof(uint64_t)));
+               LimbVector(limbs), LimbVector(limbs)};
+  const uint8_t *value = frame + layout.offset;
+  // Whole limbs load with fixed-size copies; a narrower register keeps the
+  // byte copy of its stored prefix.
+  if (layout.size >= limbs * sizeof(uint64_t)) {
+    for (uint64_t index = 0; index != limbs; ++index)
+      result.value[index] = loadLimb(value + index * sizeof(uint64_t));
+  } else {
+    std::memcpy(result.value.data(), value, layout.size);
+  }
   if (result.fourState)
-    std::memcpy(result.unknown.data(),
-                frame + layout.offset + result.value.size() * sizeof(uint64_t),
-                result.unknown.size() * sizeof(uint64_t));
+    for (uint64_t index = 0; index != limbs; ++index)
+      result.unknown[index] =
+          loadLimb(value + (limbs + index) * sizeof(uint64_t));
   result.value.back() &= finalMask(result.width);
   result.unknown.back() &= finalMask(result.width);
   return result;
@@ -495,26 +560,33 @@ Logic readLogic(const uint8_t *frame, const Layout &layout) {
 
 void writeLogic(uint8_t *frame, const Layout &layout, const Logic &value) {
   uint64_t limbs = limbCount(layout.width);
-  LimbVector plane(limbs, 0);
-  for (uint64_t index = 0;
-       index != std::min<uint64_t>(limbs, value.value.size()); ++index) {
-    plane[index] = value.value[index];
+  uint64_t valueLimbs = std::min<uint64_t>(limbs, value.value.size());
+  uint64_t unknownLimbs = std::min<uint64_t>(limbs, value.unknown.size());
+  // Bits past either the value's limbs or the register's width are zero.
+  auto valueLimb = [&](uint64_t index) {
+    uint64_t limb = index < valueLimbs ? value.value[index] : 0;
     // Four-state to two-state conversion maps both X and Z to zero.
-    if (layout.kind == OBELISK_RT_DBREG_BITS && index < value.unknown.size())
-      plane[index] &= ~value.unknown[index];
+    if (layout.kind == OBELISK_RT_DBREG_BITS && index < unknownLimbs)
+      limb &= ~value.unknown[index];
+    return index + 1 == limbs ? limb & finalMask(layout.width) : limb;
+  };
+  uint8_t *address = frame + layout.offset;
+  if (layout.size >= limbs * sizeof(uint64_t)) {
+    for (uint64_t index = 0; index != limbs; ++index)
+      storeLimb(address + index * sizeof(uint64_t), valueLimb(index));
+  } else {
+    LimbVector plane(limbs, 0);
+    for (uint64_t index = 0; index != limbs; ++index)
+      plane[index] = valueLimb(index);
+    std::memcpy(address, plane.data(), layout.size);
   }
-  plane.back() &= finalMask(layout.width);
-  std::memcpy(frame + layout.offset, plane.data(),
-              std::min<uint64_t>(layout.size, limbs * sizeof(uint64_t)));
-  if (layout.kind == OBELISK_RT_DBREG_LOGIC) {
-    std::fill(plane.begin(), plane.end(), 0);
-    for (uint64_t index = 0;
-         index != std::min<uint64_t>(limbs, value.unknown.size()); ++index)
-      plane[index] = value.unknown[index];
-    plane.back() &= finalMask(layout.width);
-    std::memcpy(frame + layout.offset + limbs * sizeof(uint64_t), plane.data(),
-                limbs * sizeof(uint64_t));
-  }
+  if (layout.kind == OBELISK_RT_DBREG_LOGIC)
+    for (uint64_t index = 0; index != limbs; ++index) {
+      uint64_t limb = index < unknownLimbs ? value.unknown[index] : 0;
+      if (index + 1 == limbs)
+        limb &= finalMask(layout.width);
+      storeLimb(address + (limbs + index) * sizeof(uint64_t), limb);
+    }
 }
 
 } // namespace obelisk::designbytecode

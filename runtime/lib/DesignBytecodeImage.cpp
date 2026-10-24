@@ -26,9 +26,6 @@ using BytecodeHeader = obelisk_rt_design_bytecode_header_v1;
 constexpr char kMagic[] = OBELISK_RT_DESIGN_BYTECODE_MAGIC;
 static_assert(sizeof(kMagic) == sizeof(BytecodeHeader::magic));
 constexpr uint64_t kFunctionSize = 96;
-constexpr uint64_t kLayoutSize = 40;
-constexpr uint64_t kInstructionSize =
-    OBELISK_RT_DESIGN_BYTECODE_INSTRUCTION_SIZE;
 constexpr uint64_t kOperandSize = 8;
 constexpr uint64_t kContinuationSize = 24;
 constexpr uint64_t kIntrinsicSize = 16;
@@ -65,23 +62,6 @@ static bool rejectImage(unsigned line, const char *reason,
                  static_cast<unsigned long long>(pc), opcode, line);
   }
   return false;
-}
-
-uint16_t read16(const uint8_t *data) {
-  return uint16_t{data[0]} |
-         static_cast<uint16_t>(static_cast<uint16_t>(data[1]) << 8);
-}
-uint32_t read32(const uint8_t *data) {
-  uint32_t value = 0;
-  for (unsigned byte = 0; byte != 4; ++byte)
-    value |= uint32_t{data[byte]} << (byte * 8);
-  return value;
-}
-uint64_t read64(const uint8_t *data) {
-  uint64_t value = 0;
-  for (unsigned byte = 0; byte != 8; ++byte)
-    value |= uint64_t{data[byte]} << (byte * 8);
-  return value;
 }
 
 bool validRange(uint64_t offset, uint64_t count, uint64_t stride,
@@ -243,20 +223,6 @@ Continuation continuationAt(const Image &image, uint64_t index) {
       image.data + image.continuations + index * kContinuationSize;
   return {read32(data), read32(data + 4), read64(data + 8), read32(data + 16),
           read32(data + 20)};
-}
-
-Layout layoutAt(const Image &image, const Function &function, uint32_t index) {
-  const uint8_t *data =
-      image.data + image.layouts + (function.firstLayout + index) * kLayoutSize;
-  return {data[0],          data[1],           read32(data + 4),
-          read64(data + 8), read64(data + 16), read64(data + 24)};
-}
-
-Instruction instructionAt(const Image &image, uint64_t index) {
-  const uint8_t *data = image.data + image.code + index * kInstructionSize;
-  return {read16(data),      read16(data + 2),  read32(data + 4),
-          read32(data + 8),  read32(data + 12), read32(data + 16),
-          read32(data + 20), read64(data + 24)};
 }
 
 IntrinsicSignature intrinsicAt(const Image &image, uint32_t index) {

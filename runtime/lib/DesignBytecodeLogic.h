@@ -134,6 +134,14 @@ Logic power(const Logic &base, const Logic &exponent);
 Logic replicate(const Logic &input, uint32_t resultWidth, uint64_t count);
 bool bit(const LimbVector &value, uint64_t index);
 void setBit(LimbVector &value, uint64_t index, bool enabled);
+/// Copies `count` bits starting at bit `source` of `from` to bit
+/// `destination` of `to`, a word at a time. Both ranges must lie within their
+/// vectors, and the vectors must be distinct.
+void copyBits(LimbVector &to, uint64_t destination, const LimbVector &from,
+              uint64_t source, uint64_t count);
+/// Sets `count` bits of `to` starting at bit `destination` to `enabled`.
+void fillBits(LimbVector &to, uint64_t destination, uint64_t count,
+              bool enabled);
 inline bool bit(const CanonicalPlane &value, uint64_t index) {
   return ((value[index / 64] >> (index % 64)) & 1) != 0;
 }

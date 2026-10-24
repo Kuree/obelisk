@@ -266,6 +266,27 @@ struct ExecutionState {
   std::array<Frame *, kMaxFrameCount> frames;
 };
 
+/// Copies a register's bytes. Scalar logic registers are one or two limbs;
+/// copy those with fixed-size moves instead of a library call. The ranges
+/// may be the same register but never partially overlap.
+void copyRegisterBytes(uint8_t *to, const uint8_t *from, uint64_t size) {
+  if (to == from)
+    return;
+  uint64_t limbs[2];
+  switch (size) {
+  case 8:
+    std::memcpy(limbs, from, 8);
+    std::memcpy(to, limbs, 8);
+    return;
+  case 16:
+    std::memcpy(limbs, from, 16);
+    std::memcpy(to, limbs, 16);
+    return;
+  default:
+    std::memmove(to, from, static_cast<size_t>(size));
+  }
+}
+
 bool copyRegister(const Image &image, const Frame &source, uint32_t sourceIndex,
                   Frame &destination, uint32_t destinationIndex) {
   if (!validRegister(source.function, sourceIndex) ||
@@ -276,8 +297,8 @@ bool copyRegister(const Image &image, const Frame &source, uint32_t sourceIndex,
       layoutAt(image, destination.function, destinationIndex);
   if (!compatible(sourceLayout, destinationLayout))
     return false;
-  std::memmove(destination.data + destinationLayout.offset,
-               source.data + sourceLayout.offset, sourceLayout.size);
+  copyRegisterBytes(destination.data + destinationLayout.offset,
+                    source.data + sourceLayout.offset, sourceLayout.size);
   return true;
 }
 
@@ -289,8 +310,11 @@ bool readKnownScalar(const Image &image, const Frame &frame, uint32_t reg,
       layout.width == 0 || layout.width > 64)
     return false;
   value = 0;
-  std::memcpy(&value, frame.data + layout.offset,
-              static_cast<size_t>(std::min<uint64_t>(layout.size, 8)));
+  if (layout.size >= 8)
+    std::memcpy(&value, frame.data + layout.offset, 8);
+  else
+    std::memcpy(&value, frame.data + layout.offset,
+                static_cast<size_t>(layout.size));
   if (layout.kind == OBELISK_RT_DBREG_LOGIC) {
     uint64_t unknown = 0;
     std::memcpy(&unknown, frame.data + layout.offset + 8, sizeof(unknown));
@@ -309,10 +333,15 @@ bool writeKnownScalar(const Image &image, Frame &frame, uint32_t reg,
       layout.width == 0 || layout.width > 64)
     return false;
   value &= finalMask(layout.width);
-  std::memcpy(frame.data + layout.offset, &value,
-              static_cast<size_t>(std::min<uint64_t>(layout.size, 8)));
-  if (layout.kind == OBELISK_RT_DBREG_LOGIC)
-    std::memset(frame.data + layout.offset + 8, 0, 8);
+  if (layout.size >= 8)
+    std::memcpy(frame.data + layout.offset, &value, 8);
+  else
+    std::memcpy(frame.data + layout.offset, &value,
+                static_cast<size_t>(layout.size));
+  if (layout.kind == OBELISK_RT_DBREG_LOGIC) {
+    uint64_t known = 0;
+    std::memcpy(frame.data + layout.offset + 8, &known, 8);
+  }
   return true;
 }
 
@@ -468,6 +497,937 @@ obelisk_rt_status prepareTaskActivation(
   return OBELISK_RT_OK;
 }
 
+// The interpreter's fast path. Most instructions in typical process bodies
+// operate on scalar two- or four-state registers. Decoding such an
+// instruction once into a FastOp lets the loop execute it on frame words
+// directly; every other instruction, and any fast instruction whose dynamic
+// precondition fails, runs the general implementation below. Each handler
+// reproduces that implementation's result bit for bit, including the
+// four-state rules of IEEE 1800-2023 11.4 and readLogic/writeLogic's masking.
+enum FastKind : uint8_t {
+  kFastGeneric = 0,
+  kFastConstant,
+  kFastMove,
+  kFastJump,
+  kFastBranch,
+  kFastNot,
+  kFastAnd,
+  kFastOr,
+  kFastXor,
+  kFastAdd,
+  kFastSub,
+  kFastShl,
+  kFastLshr,
+  kFastAshr,
+  kFastExtract,
+  kFastConcat,
+  kFastCompare,
+  kFastSelect,
+  kFastLoadFrame,
+  kFastStoreFrame,
+  kFastLoadFrameHandle,
+  kFastStoreFrameHandle,
+  kFastHandleID,
+  kFastLoadState,
+  kFastStoreState,
+};
+
+constexpr uint8_t kFastDestinationFourState = 1;
+constexpr uint8_t kFastSource0FourState = 2;
+constexpr uint8_t kFastSource1FourState = 4;
+constexpr uint8_t kFastSource2FourState = 8;
+
+inline uint64_t fastMask(uint32_t width) {
+  return width >= 64 ? UINT64_MAX : (uint64_t{1} << width) - 1;
+}
+
+inline uint64_t fastLoad(const uint8_t *data, uint32_t offset) {
+  uint64_t word;
+  std::memcpy(&word, data + offset, sizeof(word));
+  return word;
+}
+
+inline void fastStoreWord(uint8_t *data, uint32_t offset, uint64_t word) {
+  std::memcpy(data + offset, &word, sizeof(word));
+}
+
+/// Reads a scalar register's planes, masked to its width as readLogic does.
+inline void fastRead(const uint8_t *data, uint32_t offset, bool fourState,
+                     uint32_t width, uint64_t &value, uint64_t &unknown) {
+  uint64_t mask = fastMask(width);
+  value = fastLoad(data, offset) & mask;
+  unknown = fourState ? fastLoad(data, offset + 8) & mask : 0;
+}
+
+/// Writes a result as writeLogic does: masked to the destination width, and
+/// X/Z mapped to zero in a two-state destination.
+inline void fastWrite(uint8_t *data, const FastOp &op, uint64_t value,
+                      uint64_t unknown) {
+  uint64_t mask = fastMask(op.width);
+  value &= mask;
+  unknown &= mask;
+  if (op.fourState & kFastDestinationFourState) {
+    fastStoreWord(data, op.destination, value);
+    fastStoreWord(data, op.destination + 8, unknown);
+  } else {
+    fastStoreWord(data, op.destination, value & ~unknown);
+  }
+}
+
+/// A frame transfer of 1 to 8 bytes; larger transfers stay generic.
+inline void fastCopy(uint8_t *to, const uint8_t *from, uint64_t size) {
+  switch (size) {
+  case 1:
+    *to = *from;
+    return;
+  case 2:
+    std::memcpy(to, from, 2);
+    return;
+  case 4:
+    std::memcpy(to, from, 4);
+    return;
+  case 8:
+    std::memcpy(to, from, 8);
+    return;
+  default:
+    std::memcpy(to, from, static_cast<size_t>(size));
+  }
+}
+
+FastOp decodeFastOp(const Image &image, const Function &function,
+                    const Instruction &instruction) {
+  FastOp op;
+  struct Scalar {
+    bool valid = false, fourState = false;
+    uint32_t offset = 0, width = 0;
+  };
+  auto scalar = [&](uint32_t reg) {
+    Scalar result;
+    if (!validRegister(function, reg))
+      return result;
+    Layout layout = layoutAt(image, function, reg);
+    bool fourState = layout.kind == OBELISK_RT_DBREG_LOGIC;
+    if ((layout.kind != OBELISK_RT_DBREG_BITS && !fourState) ||
+        layout.width == 0 || layout.width > 64 ||
+        layout.size != (fourState ? 16u : 8u) ||
+        layout.offset > UINT32_MAX - 16)
+      return result;
+    result = {true, fourState, static_cast<uint32_t>(layout.offset),
+              layout.width};
+    return result;
+  };
+  auto use = [&](const Scalar &value, uint32_t &offset, uint8_t bit) {
+    offset = value.offset;
+    if (value.fourState)
+      op.fourState |= bit;
+  };
+  auto same = [](const Scalar &left, const Scalar &right) {
+    return left.valid && right.valid && left.fourState == right.fourState &&
+           left.width == right.width;
+  };
+  Scalar destination = scalar(instruction.destination);
+  Scalar source0 = scalar(instruction.source0);
+  Scalar source1 = scalar(instruction.source1);
+  op.flags = instruction.flags;
+  op.width = static_cast<uint8_t>(destination.width);
+  op.sourceWidth = static_cast<uint8_t>(source0.width);
+  auto unary = [&](uint8_t kind) {
+    if (!same(destination, source0))
+      return;
+    op.kind = kind;
+    use(destination, op.destination, kFastDestinationFourState);
+    use(source0, op.source0, kFastSource0FourState);
+  };
+  auto binary = [&](uint8_t kind) {
+    if (!same(destination, source0) || !same(destination, source1))
+      return;
+    unary(kind);
+    use(source1, op.source1, kFastSource1FourState);
+  };
+  switch (instruction.opcode) {
+  case OBELISK_RT_DB_CONSTANT: {
+    if (!destination.valid)
+      break;
+    uint64_t size = destination.fourState ? 16 : 8;
+    if (instruction.immediate > image.constantSize ||
+        size > image.constantSize - instruction.immediate)
+      break;
+    const uint8_t *constant =
+        image.data + image.constants + instruction.immediate;
+    op.kind = kFastConstant;
+    use(destination, op.destination, kFastDestinationFourState);
+    op.immediate = fastLoad(constant, 0) & fastMask(destination.width);
+    op.immediate2 = destination.fourState
+                        ? fastLoad(constant, 8) & fastMask(destination.width)
+                        : 0;
+    break;
+  }
+  case OBELISK_RT_DB_MOVE:
+    if (validRegister(function, instruction.destination) &&
+        validRegister(function, instruction.source0) &&
+        compatible(layoutAt(image, function, instruction.destination),
+                   layoutAt(image, function, instruction.source0)))
+      unary(kFastMove);
+    break;
+  case OBELISK_RT_DB_JUMP:
+    // Block arguments (source1 != 0) keep copyMap's parallel assignment.
+    if (instruction.source1 == 0 && instruction.source0 <= image.operandCount) {
+      op.kind = kFastJump;
+      op.immediate = instruction.immediate;
+    }
+    break;
+  case OBELISK_RT_DB_BRANCH:
+    if (instruction.source1 == 0 && instruction.source0 <= image.operandCount &&
+        destination.valid) {
+      op.kind = kFastBranch;
+      use(destination, op.destination, kFastDestinationFourState);
+      op.immediate = instruction.immediate;
+    }
+    break;
+  case OBELISK_RT_DB_NOT:
+    unary(kFastNot);
+    break;
+  case OBELISK_RT_DB_AND:
+    binary(kFastAnd);
+    break;
+  case OBELISK_RT_DB_OR:
+    binary(kFastOr);
+    break;
+  case OBELISK_RT_DB_XOR:
+    binary(kFastXor);
+    break;
+  case OBELISK_RT_DB_ADD:
+    binary(kFastAdd);
+    break;
+  case OBELISK_RT_DB_SUB:
+    binary(kFastSub);
+    break;
+  case OBELISK_RT_DB_SHL:
+  case OBELISK_RT_DB_LSHR:
+  case OBELISK_RT_DB_ASHR:
+    if (same(destination, source0) && source1.valid) {
+      op.kind = instruction.opcode == OBELISK_RT_DB_SHL    ? kFastShl
+                : instruction.opcode == OBELISK_RT_DB_LSHR ? kFastLshr
+                                                           : kFastAshr;
+      use(destination, op.destination, kFastDestinationFourState);
+      use(source0, op.source0, kFastSource0FourState);
+      use(source1, op.source1, kFastSource1FourState);
+      op.reserved = static_cast<uint16_t>(source1.width);
+    }
+    break;
+  case OBELISK_RT_DB_EXTRACT:
+    if (destination.valid && source0.valid &&
+        instruction.source1 == kInvalidRegister &&
+        instruction.flags != OBELISK_RT_DB_AGGREGATE_MANAGED) {
+      op.kind = kFastExtract;
+      use(destination, op.destination, kFastDestinationFourState);
+      use(source0, op.source0, kFastSource0FourState);
+      op.immediate = instruction.immediate;
+    }
+    break;
+  case OBELISK_RT_DB_CONCAT:
+    if (destination.valid && source0.valid && source1.valid &&
+        destination.fourState == source0.fourState &&
+        destination.fourState == source1.fourState &&
+        source0.width + source1.width == destination.width) {
+      op.kind = kFastConcat;
+      use(destination, op.destination, kFastDestinationFourState);
+      use(source0, op.source0, kFastSource0FourState);
+      use(source1, op.source1, kFastSource1FourState);
+      op.immediate = source1.width;
+    }
+    break;
+  case OBELISK_RT_DB_COMPARE:
+    if (destination.valid && destination.width == 1 && same(source0, source1) &&
+        instruction.flags <= OBELISK_RT_DB_CMP_CASEXZ_EQ) {
+      op.kind = kFastCompare;
+      use(destination, op.destination, kFastDestinationFourState);
+      use(source0, op.source0, kFastSource0FourState);
+      use(source1, op.source1, kFastSource1FourState);
+    }
+    break;
+  case OBELISK_RT_DB_SELECT: {
+    Scalar condition = scalar(instruction.source2);
+    if (same(destination, source0) && same(destination, source1) &&
+        condition.valid && condition.width == 1) {
+      binary(kFastSelect);
+      use(condition, op.source2, kFastSource2FourState);
+    }
+    break;
+  }
+  case OBELISK_RT_DB_LOAD_FRAME:
+  case OBELISK_RT_DB_STORE_FRAME: {
+    // A scalar register's planes are each one limb; the canonical frame packs
+    // each plane at the transfer size (half of it per plane when four-state).
+    const Scalar &value =
+        instruction.opcode == OBELISK_RT_DB_LOAD_FRAME ? destination : source0;
+    if (!value.valid)
+      break;
+    uint64_t size = value.fourState ? 16 : 8;
+    uint64_t transfer =
+        instruction.auxiliary != 0 ? instruction.auxiliary : size;
+    uint64_t plane = value.fourState ? transfer / 2 : transfer;
+    uint64_t displacement =
+        instruction.source1 != 0 ? instruction.source1 : plane;
+    if (plane == 0 || plane > 8 || (value.fourState && transfer % 2 != 0) ||
+        displacement > UINT32_MAX)
+      break;
+    op.kind = instruction.opcode == OBELISK_RT_DB_LOAD_FRAME ? kFastLoadFrame
+                                                             : kFastStoreFrame;
+    use(value, op.destination, kFastDestinationFourState);
+    op.width = static_cast<uint8_t>(value.width);
+    op.source1 = static_cast<uint32_t>(displacement);
+    op.immediate = instruction.immediate;
+    op.immediate2 = (transfer << 8) | plane;
+    break;
+  }
+  default:
+    break;
+  }
+  if (op.kind != kFastGeneric)
+    return op;
+  // Handle transfers and scalar state accesses.
+  auto handle = [&](uint32_t reg) {
+    if (!validRegister(function, reg))
+      return false;
+    Layout layout = layoutAt(image, function, reg);
+    return layout.kind == OBELISK_RT_DBREG_HANDLE && layout.size == 32 &&
+           layout.offset <= UINT32_MAX - 32;
+  };
+  auto handleOffset = [&](uint32_t reg) {
+    return static_cast<uint32_t>(layoutAt(image, function, reg).offset);
+  };
+  switch (instruction.opcode) {
+  case OBELISK_RT_DB_LOAD_FRAME:
+    if (handle(instruction.destination)) {
+      op.kind = kFastLoadFrameHandle;
+      op.destination = handleOffset(instruction.destination);
+      op.immediate = instruction.immediate;
+      op.immediate2 = instruction.auxiliary;
+    }
+    break;
+  case OBELISK_RT_DB_STORE_FRAME:
+    if (handle(instruction.source0)) {
+      op.kind = kFastStoreFrameHandle;
+      op.source0 = handleOffset(instruction.source0);
+      op.immediate = instruction.immediate;
+    }
+    break;
+  case OBELISK_RT_DB_HANDLE_ID:
+    if (destination.valid && handle(instruction.source0)) {
+      op.kind = kFastHandleID;
+      use(destination, op.destination, kFastDestinationFourState);
+      op.source0 = handleOffset(instruction.source0);
+    }
+    break;
+  case OBELISK_RT_DB_LOAD_STATE:
+    if (destination.valid && handle(instruction.source0)) {
+      op.kind = kFastLoadState;
+      use(destination, op.destination, kFastDestinationFourState);
+      op.source0 = handleOffset(instruction.source0);
+    }
+    break;
+  case OBELISK_RT_DB_STORE_STATE: {
+    bool reportsChange =
+        (instruction.flags & OBELISK_RT_DB_STORE_STATE_CHANGED) != 0;
+    if (source1.valid && handle(instruction.source0) &&
+        (instruction.flags &
+         ~(OBELISK_RT_DB_STORE_STATE_CHANGED |
+           OBELISK_RT_DB_STORE_STATE_CONTINUOUS |
+           OBELISK_RT_DB_STORE_STATE_DEFER_NET_RESOLUTION)) == 0 &&
+        (!reportsChange || destination.valid)) {
+      op.kind = kFastStoreState;
+      op.width = static_cast<uint8_t>(source1.width);
+      op.source0 = handleOffset(instruction.source0);
+      use(source1, op.source1, kFastSource1FourState);
+      if (reportsChange) {
+        op.destination = destination.offset;
+        if (destination.fourState)
+          op.fourState |= kFastDestinationFourState;
+        op.sourceWidth = static_cast<uint8_t>(destination.width);
+      }
+    }
+    break;
+  }
+  default:
+    break;
+  }
+  return op;
+}
+
+/// The handle register fields: kind, base, start, end.
+struct FastHandle {
+  uint32_t kind;
+  uint64_t base;
+  int64_t start, end;
+};
+
+inline FastHandle fastHandle(const uint8_t *data, uint32_t offset) {
+  FastHandle handle;
+  std::memcpy(&handle.kind, data + offset, 4);
+  std::memcpy(&handle.base, data + offset + 8, 8);
+  std::memcpy(&handle.start, data + offset + 16, 8);
+  std::memcpy(&handle.end, data + offset + 24, 8);
+  return handle;
+}
+
+/// Resolves a static state for `op`, caching the result. The caller holds
+/// the context mutex. Returns false when the state is unknown or out of the
+/// execution's state planes (the general path reports the error).
+inline bool fastStaticState(const FastOp &op, obelisk_rt_context *context,
+                            uint32_t id) {
+  if (op.staticID == id && id != 0)
+    return true;
+  auto found = context->nativeStaticStates.find(id);
+  if (found == context->nativeStaticStates.end() || !context->execution ||
+      found->second.bitOffset > context->execution->state_bit_count ||
+      found->second.bitWidth >
+          context->execution->state_bit_count - found->second.bitOffset)
+    return false;
+  op.staticID = id;
+  op.staticOffset = found->second.bitOffset;
+  op.staticWidth = found->second.bitWidth;
+  return true;
+}
+
+/// Resolves a canonical (not local, not automatic) state view of `width`
+/// bits for a scalar access: its first bit in the canonical planes and the
+/// handle the access publishes under. The caller holds the context mutex.
+inline bool fastCanonicalView(const FastOp &op, obelisk_rt_context *context,
+                              const FastHandle &handle, uint64_t width,
+                              uint64_t &storageBit, uint64_t &published) {
+  uint32_t id = 0;
+  int64_t begin = 0;
+  bool boundedStatic = decodeStaticHandle(handle.base, id, begin);
+  if (!boundedStatic)
+    begin = static_cast<int64_t>(handle.base);
+  if (begin > handle.end || handle.start < 0 || handle.start < begin ||
+      handle.start > handle.end ||
+      width > static_cast<uint64_t>(handle.end - handle.start))
+    return false;
+  uint64_t absolute = static_cast<uint64_t>(handle.start);
+  uint64_t available = context->stateValue.size() * 64;
+  storageBit = absolute;
+  if (boundedStatic) {
+    if (!fastStaticState(op, context, id))
+      return false;
+    available = op.staticWidth;
+    storageBit = op.staticOffset + absolute;
+  }
+  if (absolute > available || width > available - absolute ||
+      storageBit + width > context->stateValue.size() * 64 ||
+      storageBit + width > context->stateUnknown.size() * 64)
+    return false;
+  published = boundedStatic ? encodeStaticHandle(id, handle.start) : absolute;
+  return true;
+}
+
+/// Runs a decoded instruction. Returns false, with nothing changed, when its
+/// dynamic precondition fails; the caller then runs the general path. A
+/// failure after an instruction took effect returns true and sets `status`.
+inline bool executeFastOp(const FastOp &op, uint8_t *data,
+                          uint8_t *canonicalFrame, uint64_t canonicalFrameSize,
+                          obelisk_rt_context *context, uint64_t &pc,
+                          obelisk_rt_status &status) {
+  bool source0FourState = (op.fourState & kFastSource0FourState) != 0;
+  bool source1FourState = (op.fourState & kFastSource1FourState) != 0;
+  uint64_t mask = fastMask(op.width);
+  switch (op.kind) {
+  case kFastConstant:
+    fastStoreWord(data, op.destination, op.immediate);
+    if (op.fourState & kFastDestinationFourState)
+      fastStoreWord(data, op.destination + 8, op.immediate2);
+    break;
+  case kFastMove:
+    fastStoreWord(data, op.destination, fastLoad(data, op.source0));
+    if (op.fourState & kFastDestinationFourState)
+      fastStoreWord(data, op.destination + 8, fastLoad(data, op.source0 + 8));
+    break;
+  case kFastJump:
+    pc = op.immediate;
+    return true;
+  case kFastBranch: {
+    uint64_t value, unknown;
+    fastRead(data, op.destination,
+             (op.fourState & kFastDestinationFourState) != 0, op.width, value,
+             unknown);
+    if (unknown != 0 || value != 0) {
+      pc = op.immediate;
+      return true;
+    }
+    break;
+  }
+  case kFastNot: {
+    uint64_t value, unknown;
+    fastRead(data, op.source0, source0FourState, op.width, value, unknown);
+    fastWrite(data, op, ~value & ~unknown, unknown);
+    break;
+  }
+  case kFastAnd:
+  case kFastOr:
+  case kFastXor: {
+    uint64_t lv, lu, rv, ru;
+    fastRead(data, op.source0, source0FourState, op.width, lv, lu);
+    fastRead(data, op.source1, source1FourState, op.width, rv, ru);
+    uint64_t lk = ~lu, rk = ~ru;
+    if (op.kind == kFastAnd) {
+      uint64_t knownZero = (~lv & lk) | (~rv & rk);
+      uint64_t knownOne = (lv & lk) & (rv & rk);
+      fastWrite(data, op, knownOne, ~(knownZero | knownOne));
+    } else if (op.kind == kFastOr) {
+      uint64_t knownOne = (lv & lk) | (rv & rk);
+      uint64_t knownZero = (~lv & lk) & (~rv & rk);
+      fastWrite(data, op, knownOne, ~(knownZero | knownOne));
+    } else {
+      fastWrite(data, op, (lv ^ rv) & ~(lu | ru), lu | ru);
+    }
+    break;
+  }
+  case kFastAdd:
+  case kFastSub: {
+    uint64_t lv, lu, rv, ru;
+    fastRead(data, op.source0, source0FourState, op.width, lv, lu);
+    fastRead(data, op.source1, source1FourState, op.width, rv, ru);
+    if (lu | ru)
+      fastWrite(data, op, 0, UINT64_MAX);
+    else
+      fastWrite(data, op, op.kind == kFastAdd ? lv + rv : lv - rv, 0);
+    break;
+  }
+  case kFastShl:
+  case kFastLshr:
+  case kFastAshr: {
+    uint64_t value, unknown, amount, amountUnknown;
+    fastRead(data, op.source0, source0FourState, op.width, value, unknown);
+    fastRead(data, op.source1, source1FourState, op.reserved, amount,
+             amountUnknown);
+    if (amountUnknown != 0) {
+      fastWrite(data, op, 0, UINT64_MAX);
+      break;
+    }
+    bool oversized = amount >= op.width;
+    if (op.kind == kFastShl) {
+      fastWrite(data, op, oversized ? 0 : value << amount,
+                oversized ? 0 : unknown << amount);
+    } else {
+      bool arithmetic = op.kind == kFastAshr;
+      uint64_t fill = oversized ? mask : mask & ~(mask >> amount);
+      uint64_t signValue =
+          arithmetic && ((value >> (op.width - 1)) & 1) ? fill : 0;
+      uint64_t signUnknown =
+          arithmetic && ((unknown >> (op.width - 1)) & 1) ? fill : 0;
+      fastWrite(data, op, (oversized ? 0 : value >> amount) | signValue,
+                (oversized ? 0 : unknown >> amount) | signUnknown);
+    }
+    break;
+  }
+  case kFastExtract: {
+    uint64_t value, unknown;
+    fastRead(data, op.source0, source0FourState, op.sourceWidth, value,
+             unknown);
+    uint64_t low = op.immediate;
+    uint64_t count = low < op.sourceWidth
+                         ? std::min<uint64_t>(op.width, op.sourceWidth - low)
+                         : 0;
+    uint64_t kept = fastMask(static_cast<uint32_t>(count));
+    // A static resize may sign extend; its padding is never X otherwise.
+    bool signExtend = (op.flags & 1) != 0;
+    uint64_t pad = mask & ~kept;
+    uint64_t padValue =
+        signExtend && ((value >> (op.sourceWidth - 1)) & 1) ? pad : 0;
+    uint64_t padUnknown =
+        signExtend && ((unknown >> (op.sourceWidth - 1)) & 1) ? pad : 0;
+    uint64_t shiftedValue = count ? (value >> low) & kept : 0;
+    uint64_t shiftedUnknown = count ? (unknown >> low) & kept : 0;
+    fastWrite(data, op, shiftedValue | padValue, shiftedUnknown | padUnknown);
+    break;
+  }
+  case kFastConcat: {
+    uint64_t lv, lu, rv, ru;
+    uint32_t rightWidth = static_cast<uint32_t>(op.immediate);
+    fastRead(data, op.source0, source0FourState, op.width - rightWidth, lv, lu);
+    fastRead(data, op.source1, source1FourState, rightWidth, rv, ru);
+    fastWrite(data, op, rv | (rightWidth < 64 ? lv << rightWidth : 0),
+              ru | (rightWidth < 64 ? lu << rightWidth : 0));
+    break;
+  }
+  case kFastCompare: {
+    uint64_t lv, lu, rv, ru;
+    fastRead(data, op.source0, source0FourState, op.sourceWidth, lv, lu);
+    fastRead(data, op.source1, source1FourState, op.sourceWidth, rv, ru);
+    uint16_t predicate = op.flags;
+    bool deterministic = predicate == OBELISK_RT_DB_CMP_CASE_EQ ||
+                         predicate == OBELISK_RT_DB_CMP_CASE_NE ||
+                         predicate == OBELISK_RT_DB_CMP_CASEZ_EQ ||
+                         predicate == OBELISK_RT_DB_CMP_CASEXZ_EQ;
+    bool wildcard = predicate == OBELISK_RT_DB_CMP_WILD_EQ ||
+                    predicate == OBELISK_RT_DB_CMP_WILD_NE;
+    bool value = false, unknownResult = false;
+    if (!deterministic && !wildcard && (lu | ru)) {
+      if (predicate == OBELISK_RT_DB_CMP_EQ ||
+          predicate == OBELISK_RT_DB_CMP_NE) {
+        if (((lv ^ rv) & ~(lu | ru)) != 0) {
+          fastWrite(data, op, predicate == OBELISK_RT_DB_CMP_NE, 0);
+          break;
+        }
+      }
+      fastWrite(data, op, 0, 1);
+      break;
+    }
+    bool negativeLeft = (lv >> (op.sourceWidth - 1)) & 1;
+    bool negativeRight = (rv >> (op.sourceWidth - 1)) & 1;
+    bool signedOrder = predicate >= OBELISK_RT_DB_CMP_SLT &&
+                       predicate <= OBELISK_RT_DB_CMP_SGE;
+    int compared = lv == rv ? 0 : lv < rv ? -1 : 1;
+    if (signedOrder && negativeLeft != negativeRight)
+      compared = negativeLeft ? -1 : 1;
+    switch (predicate) {
+    case OBELISK_RT_DB_CMP_EQ:
+      value = compared == 0;
+      break;
+    case OBELISK_RT_DB_CMP_NE:
+      value = compared != 0;
+      break;
+    case OBELISK_RT_DB_CMP_ULT:
+    case OBELISK_RT_DB_CMP_SLT:
+      value = compared < 0;
+      break;
+    case OBELISK_RT_DB_CMP_ULE:
+    case OBELISK_RT_DB_CMP_SLE:
+      value = compared <= 0;
+      break;
+    case OBELISK_RT_DB_CMP_UGT:
+    case OBELISK_RT_DB_CMP_SGT:
+      value = compared > 0;
+      break;
+    case OBELISK_RT_DB_CMP_UGE:
+    case OBELISK_RT_DB_CMP_SGE:
+      value = compared >= 0;
+      break;
+    case OBELISK_RT_DB_CMP_CASE_EQ:
+    case OBELISK_RT_DB_CMP_CASE_NE:
+      value =
+          (lv == rv && lu == ru) == (predicate == OBELISK_RT_DB_CMP_CASE_EQ);
+      break;
+    case OBELISK_RT_DB_CMP_CASEZ_EQ:
+    case OBELISK_RT_DB_CMP_CASEXZ_EQ: {
+      uint64_t ignored = predicate == OBELISK_RT_DB_CMP_CASEZ_EQ
+                             ? (lu & lv) | (ru & rv)
+                             : lu | ru;
+      value = (~ignored & ((lu ^ ru) | (lv ^ rv))) == 0;
+      break;
+    }
+    default: {
+      // Wildcard equality: X/Z bits of the right operand match anything.
+      uint64_t compared = ~ru;
+      bool mismatch = ((lv ^ rv) & ~lu & compared) != 0;
+      unknownResult = !mismatch && (lu & compared) != 0;
+      value = !mismatch == (predicate == OBELISK_RT_DB_CMP_WILD_EQ);
+      break;
+    }
+    }
+    if (unknownResult)
+      fastWrite(data, op, 0, 1);
+    else
+      fastWrite(data, op, value, 0);
+    break;
+  }
+  case kFastSelect: {
+    uint64_t cv, cu;
+    fastRead(data, op.source2, (op.fourState & kFastSource2FourState) != 0, 1,
+             cv, cu);
+    if (cu == 0) {
+      uint32_t source = cv != 0 ? op.source0 : op.source1;
+      fastStoreWord(data, op.destination, fastLoad(data, source));
+      if (op.fourState & kFastDestinationFourState)
+        fastStoreWord(data, op.destination + 8, fastLoad(data, source + 8));
+      break;
+    }
+    if (op.flags != OBELISK_RT_DB_SELECT_FOUR_STATE) {
+      fastWrite(data, op, 0, UINT64_MAX);
+      break;
+    }
+    uint64_t lv, lu, rv, ru;
+    fastRead(data, op.source0, source0FourState, op.width, lv, lu);
+    fastRead(data, op.source1, source1FourState, op.width, rv, ru);
+    uint64_t mismatch = lu | ru | (lv ^ rv);
+    fastWrite(data, op, ~mismatch & lv, mismatch);
+    break;
+  }
+  case kFastLoadFrame:
+  case kFastStoreFrame: {
+    uint64_t transfer = op.immediate2 >> 8;
+    uint64_t plane = op.immediate2 & 0xff;
+    if (!canonicalFrame || op.immediate > canonicalFrameSize ||
+        transfer > canonicalFrameSize - op.immediate)
+      return false;
+    bool fourState = (op.fourState & kFastDestinationFourState) != 0;
+    uint8_t *frameValue = canonicalFrame + op.immediate;
+    uint8_t *registerValue = data + op.destination;
+    if (op.kind == kFastLoadFrame) {
+      uint64_t value = 0, unknown = 0;
+      fastCopy(reinterpret_cast<uint8_t *>(&value), frameValue, plane);
+      if (fourState)
+        fastCopy(reinterpret_cast<uint8_t *>(&unknown), frameValue + op.source1,
+                 plane);
+      // A transfer narrower than the register zero-fills the rest of it.
+      fastStoreWord(registerValue, 0, value);
+      if (fourState)
+        fastStoreWord(registerValue, 8, unknown);
+    } else {
+      fastCopy(frameValue, registerValue, plane);
+      if (fourState)
+        fastCopy(frameValue + op.source1, registerValue + 8, plane);
+    }
+    break;
+  }
+  case kFastLoadFrameHandle: {
+    if (!canonicalFrame || op.immediate > canonicalFrameSize ||
+        8 > canonicalFrameSize - op.immediate)
+      return false;
+    uint64_t stable = fastLoad(canonicalFrame + op.immediate, 0);
+    uint32_t kind = op.flags;
+    int64_t width = static_cast<int64_t>(op.immediate2);
+    uint32_t id = 0;
+    int64_t offset = 0;
+    // Null and dynamic events and automatic views take the general path.
+    if ((kind == OBELISK_RT_DESCRIPTOR_EVENT && stable == UINT64_MAX) ||
+        isDynamicEventHandle(kind, stable) ||
+        decodeAutomaticHandle(stable, id, offset))
+      return false;
+    int64_t begin = 0, start = kInvalidHandleStart, end = 0;
+    uint64_t base = 0;
+    if (decodeStaticHandle(stable, id, offset)) {
+      if (!context || kind > OBELISK_RT_DESCRIPTOR_DRIVER)
+        return false;
+      {
+        // Registration rejects ID zero, so it never names a cached state.
+        std::lock_guard<std::recursive_mutex> lock(context->mutex);
+        if (op.staticID != id || id == 0) {
+          auto found = context->nativeStaticStates.find(id);
+          if (found == context->nativeStaticStates.end())
+            return false;
+          op.staticID = id;
+          op.staticOffset = found->second.bitOffset;
+          op.staticWidth = found->second.bitWidth;
+        }
+      }
+      if (width <= 0 || op.staticWidth > uint64_t{INT64_MAX} ||
+          offset > INT64_MAX - width)
+        return false;
+      start = offset;
+      int64_t available = static_cast<int64_t>(op.staticWidth);
+      int64_t requestedEnd = start + width;
+      if (requestedEnd <= 0) {
+        begin = end = 0;
+      } else if (start >= available) {
+        begin = end = available;
+      } else {
+        begin = std::max<int64_t>(0, start);
+        end = std::min<int64_t>(available, requestedEnd);
+      }
+      base = encodeStaticHandle(id, begin);
+      if (base == UINT64_MAX)
+        return false;
+    } else if (decodeGlobalHandle(stable, start)) {
+      if (kind <= OBELISK_RT_DESCRIPTOR_DRIVER) {
+        int64_t available =
+            context && context->execution &&
+                    context->execution->state_bit_count <= uint64_t{INT64_MAX}
+                ? static_cast<int64_t>(context->execution->state_bit_count)
+                : 0;
+        if (width <= 0 || start > INT64_MAX - width) {
+          start = kInvalidHandleStart;
+        } else {
+          begin = std::max<int64_t>(0, start);
+          end = std::min<int64_t>(available, start + width);
+          if (begin > end)
+            begin = end;
+        }
+      } else {
+        begin = start;
+        end = start == INT64_MAX ? start : start + 1;
+      }
+      std::memcpy(&base, &begin, 8);
+    } else {
+      return false;
+    }
+    uint8_t *address = data + op.destination;
+    std::memset(address, 0, 32);
+    std::memcpy(address, &kind, 4);
+    std::memcpy(address + 8, &base, 8);
+    std::memcpy(address + 16, &start, 8);
+    std::memcpy(address + 24, &end, 8);
+    break;
+  }
+  case kFastStoreFrameHandle: {
+    if (!canonicalFrame || op.immediate > canonicalFrameSize ||
+        8 > canonicalFrameSize - op.immediate)
+      return false;
+    uint64_t stable = UINT64_MAX;
+    if (!encodeCanonicalHandle(data + op.source0, stable))
+      return false;
+    std::memcpy(canonicalFrame + op.immediate, &stable, 8);
+    break;
+  }
+  case kFastHandleID: {
+    FastHandle handle = fastHandle(data, op.source0);
+    uint32_t descriptorKind =
+        handle.kind & ~(kLocalHandleKind | kAutomaticHandleKind);
+    bool nullEvent =
+        handle.kind == OBELISK_RT_DESCRIPTOR_EVENT && handle.start == -1;
+    if (handle.start == kInvalidHandleStart)
+      return false;
+    uint64_t raw = nullEvent ? UINT64_MAX : static_cast<uint64_t>(handle.start);
+    bool dynamicEvent = isDynamicEventHandle(descriptorKind, raw);
+    uint64_t stable = nullEvent      ? UINT64_MAX
+                      : dynamicEvent ? raw
+                                     : encodeGlobalHandle(handle.start);
+    uint32_t id = 0;
+    int64_t begin = 0;
+    if (!nullEvent && !dynamicEvent &&
+        (handle.kind & kAutomaticHandleKind) != 0) {
+      if (!decodeAutomaticHandle(handle.base, id, begin))
+        return false;
+      stable = encodeAutomaticHandle(id, handle.start);
+    } else if (!nullEvent && !dynamicEvent &&
+               decodeStaticHandle(handle.base, id, begin)) {
+      stable = encodeStaticHandle(id, handle.start);
+    }
+    if (stable == UINT64_MAX && !nullEvent)
+      return false;
+    fastWrite(data, op, stable, 0);
+    break;
+  }
+  case kFastLoadState: {
+    FastHandle handle = fastHandle(data, op.source0);
+    if (!context || handle.kind < OBELISK_RT_DESCRIPTOR_STORAGE ||
+        handle.kind > OBELISK_RT_DESCRIPTOR_DRIVER)
+      return false;
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    uint64_t storageBit = 0, published = 0;
+    // Clock-condition publications overlay canonical reads per bit.
+    if ((context->observerForcesCanonicalPlane &&
+         context->conditionPublication) ||
+        !fastCanonicalView(op, context, handle, op.width, storageBit,
+                           published))
+      return false;
+    fastWrite(data, op,
+              loadPackedBits(context->stateValue, storageBit, op.width),
+              loadPackedBits(context->stateUnknown, storageBit, op.width));
+    break;
+  }
+  case kFastStoreState: {
+    FastHandle handle = fastHandle(data, op.source0);
+    if (!context || handle.kind != OBELISK_RT_DESCRIPTOR_STORAGE ||
+        context->activeExecRegion == OBELISK_RT_REGION_POSTPONED)
+      return false;
+    uint64_t newValue, newUnknown;
+    fastRead(data, op.source1, source1FourState, op.width, newValue,
+             newUnknown);
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    uint64_t at = 0, published = 0;
+    if (obelisk_rt_has_conditional_signal_waiters(context) ||
+        !fastCanonicalView(op, context, handle, op.width, at, published))
+      return false;
+    // A force or procedural assign owning any stored bit takes the general
+    // path, which skips those bits.
+    for (const std::vector<uint64_t> *mask :
+         {&context->forceMask, &context->assignMask})
+      if (!mask->empty() && (mask->size() * 64 < at + op.width ||
+                             loadPackedBits(*mask, at, op.width) != 0))
+        return false;
+    uint64_t oldValue = loadPackedBits(context->stateValue, at, op.width);
+    uint64_t oldUnknown = loadPackedBits(context->stateUnknown, at, op.width);
+    if (op.flags & OBELISK_RT_DB_STORE_STATE_CONTINUOUS) {
+      if (context->continuousMask.empty()) {
+        size_t limbs = context->stateValue.size();
+        context->continuousMask.assign(limbs, 0);
+        context->continuousValue.assign(limbs, 0);
+        if (context->twoState())
+          context->continuousUnknown.assignZero(limbs);
+        else
+          context->continuousUnknown.assign(limbs, 0);
+      }
+      storePackedBits(context->continuousValue, at, op.width, newValue);
+      storePackedBits(context->continuousUnknown, at, op.width, newUnknown);
+      storePackedBits(context->continuousMask, at, op.width, UINT64_MAX);
+    }
+    storePackedBits(context->stateValue, at, op.width, newValue);
+    storePackedBits(context->stateUnknown, at, op.width, newUnknown);
+    obelisk_rt_sync_native_state_range_unlocked(context, at, op.width);
+    uint64_t differs = (oldValue ^ newValue) | (oldUnknown ^ newUnknown);
+    if (differs != 0) {
+      // transitionEdges, a word at a time.
+      uint64_t oldZero = ~oldUnknown & ~oldValue;
+      uint64_t oldOne = ~oldUnknown & oldValue;
+      uint64_t newZero = ~newUnknown & ~newValue;
+      uint64_t newOne = ~newUnknown & newValue;
+      PackedSignalTransitionBuffer edges(op.width);
+      storePackedBytes(edges.changed(), 0, op.width, differs);
+      storePackedBytes(edges.posedge(), 0, op.width,
+                       differs &
+                           ((oldZero & ~newZero) | (oldUnknown & newOne)));
+      storePackedBytes(edges.negedge(), 0, op.width,
+                       differs & ((oldOne & ~newOne) | (oldUnknown & newZero)));
+      uint64_t sequence = 0;
+      if (!obelisk_rt_publish_signal_transition_batch_unlocked(
+              context, published, op.width, edges.changed(), edges.posedge(),
+              edges.negedge(), 0, &sequence)) {
+        status = context->schedulerStatus;
+        return true;
+      }
+      obelisk_rt_invalidate_signal_snapshots_unlocked(context, published,
+                                                      op.width);
+      if (!obelisk_rt_notify_observer_signal_unlocked(context, published,
+                                                      op.width)) {
+        status = context->schedulerStatus;
+        return true;
+      }
+      if (++context->schedulerEpoch == 0)
+        context->schedulerEpoch = 1;
+    }
+    if (op.flags & OBELISK_RT_DB_STORE_STATE_CHANGED) {
+      FastOp changedOp = op;
+      changedOp.width = op.sourceWidth;
+      bool reported =
+          differs != 0 &&
+          (op.flags & OBELISK_RT_DB_STORE_STATE_DEFER_NET_RESOLUTION) == 0;
+      fastWrite(data, changedOp, reported, 0);
+    }
+    break;
+  }
+  default:
+    return false;
+  }
+  ++pc;
+  return true;
+}
+
+/// The fast-path plan of `frame`'s function, decoded on its first execution,
+/// or null when the image is not the context's validated image.
+const FastOp *fastPlan(const Image &image, const Frame &frame,
+                       obelisk_rt_context *context) {
+  if (!context || !context->designBytecodeImageValidated ||
+      context->designBytecodeImage.data != image.data ||
+      frame.function.instructionCount == 0 ||
+      frame.functionIndex >= image.functionCount)
+    return nullptr;
+  std::lock_guard<std::recursive_mutex> lock(context->mutex);
+  auto &plans = context->designBytecodePlans;
+  if (plans.size() != image.functionCount)
+    plans.assign(static_cast<size_t>(image.functionCount), {});
+  std::vector<FastOp> &plan = plans[frame.functionIndex];
+  if (plan.empty()) {
+    plan.reserve(static_cast<size_t>(frame.function.instructionCount));
+    for (uint64_t index = 0; index != frame.function.instructionCount; ++index)
+      plan.push_back(decodeFastOp(
+          image, frame.function,
+          instructionAt(image, frame.function.firstInstruction + index)));
+  }
+  return plan.data();
+}
+
 std::optional<uint64_t> continuationPC(const Image &image,
                                        const Function &function,
                                        uint32_t continuation);
@@ -486,9 +1446,17 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
   uint64_t begin = frame.function.firstInstruction;
   uint64_t end = begin + frame.function.instructionCount;
   uint64_t pc = startPC;
+  const FastOp *plan = fastPlan(image, frame, context);
   while (pc >= begin && pc < end) {
     if (!budget.consume())
       return OBELISK_RT_STEP_LIMIT;
+    obelisk_rt_status fastStatus = OBELISK_RT_OK;
+    if (plan && executeFastOp(plan[pc - begin], frame.data, canonicalFrame,
+                              canonicalFrameSize, context, pc, fastStatus)) {
+      if (fastStatus != OBELISK_RT_OK)
+        return fastStatus;
+      continue;
+    }
     Instruction instruction = instructionAt(image, pc++);
     auto layout = [&](uint32_t reg) {
       return layoutAt(image, frame.function, reg);
@@ -524,9 +1492,9 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       break;
     case OBELISK_RT_DB_CONSTANT: {
       Layout destination = layout(instruction.destination);
-      std::memcpy(frame.data + destination.offset,
-                  image.data + image.constants + instruction.immediate,
-                  destination.size);
+      copyRegisterBytes(frame.data + destination.offset,
+                        image.data + image.constants + instruction.immediate,
+                        destination.size);
       if ((destination.kind == OBELISK_RT_DBREG_BITS ||
            destination.kind == OBELISK_RT_DBREG_LOGIC) &&
           destination.width % 64 != 0) {
@@ -588,14 +1556,16 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       Logic result{1, destination.kind == OBELISK_RT_DBREG_LOGIC, {0}, {0}};
       bool anyKnownOne = false, anyKnownZero = false, unknown = false;
       bool parity = false;
-      for (uint64_t bitIndex = 0; bitIndex != input.width; ++bitIndex) {
-        bool u = bit(input.unknown, bitIndex);
-        bool v = bit(input.value, bitIndex);
-        unknown |= u;
-        anyKnownOne |= !u && v;
-        anyKnownZero |= !u && !v;
-        if (!u)
-          parity ^= v;
+      for (size_t index = 0; index != input.value.size(); ++index) {
+        uint64_t valid = index + 1 == input.value.size()
+                             ? finalMask(input.width)
+                             : UINT64_MAX;
+        uint64_t u = input.unknown[index] & valid;
+        uint64_t v = input.value[index] & valid;
+        unknown |= u != 0;
+        anyKnownOne |= (v & ~u) != 0;
+        anyKnownZero |= (~v & ~u & valid) != 0;
+        parity ^= (__builtin_popcountll(v & ~u) & 1) != 0;
       }
       bool value = false, resultUnknown = false;
       switch (instruction.flags) {
@@ -916,42 +1886,32 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         }
         case OBELISK_RT_DB_CMP_CASEZ_EQ:
         case OBELISK_RT_DB_CMP_CASEXZ_EQ: {
+          if (right.width != left.width)
+            return OBELISK_RT_INVALID_BYTECODE;
           bool equal = true;
-          for (uint32_t bitIndex = 0; bitIndex < left.width; ++bitIndex) {
-            bool leftUnknown = bit(left.unknown, bitIndex);
-            bool rightUnknown = bit(right.unknown, bitIndex);
-            bool leftValue = bit(left.value, bitIndex);
-            bool rightValue = bit(right.value, bitIndex);
-            bool wildcard = false;
-            if (instruction.flags == OBELISK_RT_DB_CMP_CASEZ_EQ)
-              wildcard =
-                  (leftUnknown && leftValue) || (rightUnknown && rightValue);
-            else
-              wildcard = leftUnknown || rightUnknown;
-            if (!wildcard &&
-                (leftUnknown != rightUnknown || leftValue != rightValue)) {
-              equal = false;
-              break;
-            }
+          for (size_t index = 0; equal && index != left.value.size(); ++index) {
+            uint64_t lu = left.unknown[index], ru = right.unknown[index];
+            uint64_t lv = left.value[index], rv = right.value[index];
+            uint64_t wildcard = instruction.flags == OBELISK_RT_DB_CMP_CASEZ_EQ
+                                    ? (lu & lv) | (ru & rv)
+                                    : lu | ru;
+            equal = (~wildcard & ((lu ^ ru) | (lv ^ rv))) == 0;
           }
           value = equal;
           break;
         }
         case OBELISK_RT_DB_CMP_WILD_EQ:
         case OBELISK_RT_DB_CMP_WILD_NE: {
+          if (right.width != left.width)
+            return OBELISK_RT_INVALID_BYTECODE;
           bool knownMismatch = false;
           bool relevantUnknown = false;
-          for (uint32_t bitIndex = 0; bitIndex < left.width; ++bitIndex) {
-            if (bit(right.unknown, bitIndex))
-              continue;
-            if (bit(left.unknown, bitIndex)) {
-              relevantUnknown = true;
-              continue;
-            }
-            if (bit(left.value, bitIndex) != bit(right.value, bitIndex)) {
-              knownMismatch = true;
-              break;
-            }
+          // X/Z bits of the right operand are wildcards.
+          for (size_t index = 0; index != left.value.size(); ++index) {
+            uint64_t compared = ~right.unknown[index];
+            relevantUnknown |= (left.unknown[index] & compared) != 0;
+            knownMismatch |= ((left.value[index] ^ right.value[index]) &
+                              ~left.unknown[index] & compared) != 0;
           }
           if (!knownMismatch && relevantUnknown) {
             result = allX(1, result.fourState);
@@ -978,14 +1938,15 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           Logic right = read(instruction.source1);
           Logic result{left.width, true, LimbVector(limbCount(left.width)),
                        LimbVector(limbCount(left.width))};
-          for (uint32_t bitIndex = 0; bitIndex < left.width; ++bitIndex) {
-            bool leftValue = bit(left.value, bitIndex);
-            bool leftUnknown = bit(left.unknown, bitIndex);
-            bool mismatch = leftUnknown || bit(right.unknown, bitIndex) ||
-                            leftValue != bit(right.value, bitIndex);
-            setBit(result.value, bitIndex, !mismatch && leftValue);
-            setBit(result.unknown, bitIndex, mismatch);
+          if (right.width != left.width)
+            return OBELISK_RT_INVALID_BYTECODE;
+          for (size_t index = 0; index != result.value.size(); ++index) {
+            uint64_t mismatch = left.unknown[index] | right.unknown[index] |
+                                (left.value[index] ^ right.value[index]);
+            result.value[index] = ~mismatch & left.value[index];
+            result.unknown[index] = mismatch;
           }
+          mask(result);
           write(instruction.destination, result);
         } else {
           write(instruction.destination,
@@ -1049,35 +2010,33 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         write(instruction.destination, result);
         break;
       }
-      for (uint64_t bitIndex = 0; bitIndex != destination.width; ++bitIndex) {
-        bool inRange = false;
-        uint64_t source = 0;
-        if (negative) {
-          if (bitIndex >= negativeMagnitude) {
-            source = bitIndex - negativeMagnitude;
-            inRange = source < input.width;
-          }
-        } else if (low != UINT64_MAX && bitIndex <= UINT64_MAX - low) {
-          source = low + bitIndex;
-          inRange = source < input.width;
-        }
-        if (!inRange) {
-          // Static resize operations use source1 == invalid and may sign
-          // extend. Dynamic selections instead pad every out-of-range bit
-          // with X (or zero for a two-state result).
-          bool signExtend = instruction.source1 == kInvalidRegister &&
-                            (instruction.flags & 1) != 0 && input.width != 0;
-          setBit(result.value, bitIndex,
-                 signExtend && bit(input.value, input.width - 1));
-          setBit(result.unknown, bitIndex,
-                 signExtend ? bit(input.unknown, input.width - 1)
-                            : (instruction.source1 != kInvalidRegister &&
-                               result.fourState));
-          continue;
-        }
-        setBit(result.value, bitIndex, bit(input.value, source));
-        setBit(result.unknown, bitIndex, bit(input.unknown, source));
+      // Result bits [first, first + count) come from input bits [source,
+      // source + count); every other result bit is out of range.
+      uint64_t width = destination.width;
+      uint64_t first = 0, source = 0, count = 0;
+      if (negative) {
+        first = std::min<uint64_t>(negativeMagnitude, width);
+        count = std::min<uint64_t>(width - first, input.width);
+      } else if (low < input.width) {
+        source = low;
+        count = std::min<uint64_t>(width, input.width - low);
       }
+      // Static resize operations use source1 == invalid and may sign extend.
+      // Dynamic selections instead pad every out-of-range bit with X (or zero
+      // for a two-state result).
+      bool signExtend = instruction.source1 == kInvalidRegister &&
+                        (instruction.flags & 1) != 0 && input.width != 0;
+      bool padValue = signExtend && bit(input.value, input.width - 1);
+      bool padUnknown = signExtend ? bit(input.unknown, input.width - 1)
+                                   : (instruction.source1 != kInvalidRegister &&
+                                      result.fourState);
+      fillBits(result.value, 0, first, padValue);
+      fillBits(result.unknown, 0, first, padUnknown);
+      copyBits(result.value, first, input.value, source, count);
+      copyBits(result.unknown, first, input.unknown, source, count);
+      fillBits(result.value, first + count, width - first - count, padValue);
+      fillBits(result.unknown, first + count, width - first - count,
+               padUnknown);
       write(instruction.destination, result);
       break;
     }
@@ -1317,15 +2276,12 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
                    destination.kind == OBELISK_RT_DBREG_LOGIC,
                    LimbVector(limbCount(destination.width)),
                    LimbVector(limbCount(destination.width))};
-      for (uint64_t bitIndex = 0; bitIndex != right.width; ++bitIndex) {
-        setBit(result.value, bitIndex, bit(right.value, bitIndex));
-        setBit(result.unknown, bitIndex, bit(right.unknown, bitIndex));
-      }
-      for (uint64_t bitIndex = 0; bitIndex != left.width; ++bitIndex) {
-        setBit(result.value, right.width + bitIndex, bit(left.value, bitIndex));
-        setBit(result.unknown, right.width + bitIndex,
-               bit(left.unknown, bitIndex));
-      }
+      if (uint64_t{left.width} + right.width != destination.width)
+        return OBELISK_RT_INVALID_BYTECODE;
+      copyBits(result.value, 0, right.value, 0, right.width);
+      copyBits(result.unknown, 0, right.unknown, 0, right.width);
+      copyBits(result.value, right.width, left.value, 0, left.width);
+      copyBits(result.unknown, right.width, left.unknown, 0, left.width);
       write(instruction.destination, result);
       break;
     }
@@ -1363,22 +2319,21 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           low = dynamic.value[0];
         }
       }
-      for (uint64_t bitIndex = 0; bitIndex != inserted.width; ++bitIndex) {
-        uint64_t destination = 0;
-        if (negative) {
-          if (bitIndex < negativeMagnitude)
-            continue;
-          destination = bitIndex - negativeMagnitude;
-        } else {
-          if (bitIndex > UINT64_MAX - low)
-            break;
-          destination = low + bitIndex;
+      // Inserted bits [source, source + count) replace base bits
+      // [first, first + count); bits falling outside the base are dropped.
+      uint64_t first = 0, source = 0, count = 0;
+      if (negative) {
+        if (negativeMagnitude < inserted.width) {
+          source = negativeMagnitude;
+          count = std::min<uint64_t>(inserted.width - negativeMagnitude,
+                                     base.width);
         }
-        if (destination >= base.width)
-          break;
-        setBit(base.value, destination, bit(inserted.value, bitIndex));
-        setBit(base.unknown, destination, bit(inserted.unknown, bitIndex));
+      } else if (low < base.width) {
+        first = low;
+        count = std::min<uint64_t>(inserted.width, base.width - low);
       }
+      copyBits(base.value, first, inserted.value, source, count);
+      copyBits(base.unknown, first, inserted.unknown, source, count);
       write(instruction.destination, base);
       break;
     }
@@ -1939,9 +2894,6 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
           bool newUnknown;
         };
         std::vector<PendingTransition> transitions;
-        if (!local && !isLoad)
-          transitions.reserve(static_cast<size_t>(std::min<uint64_t>(
-              value.width, std::numeric_limits<size_t>::max())));
         if (isOverride) {
           // A Tier-3 force/assign can be followed immediately by a native
           // fragment or foreign reentry. Revoke direct addressing before
@@ -2058,7 +3010,139 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
             }
           }
         }
-        for (uint64_t bitIndex = packedLoad ? value.width : 0;
+        // An automatic variable's planes are bytes. A fully bounded load of
+        // one reads them a word at a time too.
+        bool packedAutomaticLoad =
+            isLoad && automatic && start >= 0 && start >= begin &&
+            start <= end && value.width <= static_cast<uint64_t>(end - start);
+        if (packedAutomaticLoad) {
+          uint64_t absolute = static_cast<uint64_t>(start);
+          if (absolute > automaticState->bitWidth ||
+              value.width > automaticState->bitWidth - absolute)
+            return OBELISK_RT_INVALID_HANDLE;
+          uint64_t bytes = (absolute + value.width + 7) / 8;
+          packedAutomaticLoad = bytes <= automaticState->value.size() &&
+                                bytes <= automaticState->unknown.size();
+          if (packedAutomaticLoad)
+            for (uint64_t bitIndex = 0; bitIndex < value.width;
+                 bitIndex += 64) {
+              uint64_t width = std::min<uint64_t>(64, value.width - bitIndex);
+              value.value[bitIndex / 64] = loadPackedBytes(
+                  automaticState->value.data(), absolute + bitIndex, width);
+              value.unknown[bitIndex / 64] = loadPackedBytes(
+                  automaticState->unknown.data(), absolute + bitIndex, width);
+            }
+        }
+        // A fully bounded canonical or automatic store that no force,
+        // assignment, override or conditional waiter observes per bit updates
+        // both planes (and a continuous driver's record) and computes its
+        // edges a word at a time. Every other store keeps the per-bit path
+        // below.
+        bool packedStore = !isLoad && !local && !isOverride &&
+                           !dynamicOverride && !realValue &&
+                           !equalStringContents && start >= 0 &&
+                           start >= begin && start <= end &&
+                           value.width <= static_cast<uint64_t>(end - start) &&
+                           !obelisk_rt_has_conditional_signal_waiters(context);
+        uint64_t packedStoreBit = 0;
+        if (packedStore && automatic) {
+          uint64_t absolute = static_cast<uint64_t>(start);
+          uint64_t bytes = (absolute + value.width + 7) / 8;
+          packedStoreBit = absolute;
+          packedStore = absolute <= automaticState->bitWidth &&
+                        value.width <= automaticState->bitWidth - absolute &&
+                        bytes <= automaticState->value.size() &&
+                        bytes <= automaticState->unknown.size();
+        } else if (packedStore) {
+          uint64_t absolute = static_cast<uint64_t>(start);
+          uint64_t available = boundedStatic ? staticState->bitWidth
+                                             : context->stateValue.size() * 64;
+          packedStoreBit =
+              boundedStatic ? staticState->bitOffset + absolute : absolute;
+          // Whether a force or procedural-assign mask claims any stored bit.
+          auto overlaps = [&](const std::vector<uint64_t> &mask) {
+            if (mask.empty())
+              return false;
+            if (mask.size() * 64 < packedStoreBit + value.width)
+              return true;
+            for (uint64_t bitIndex = 0; bitIndex < value.width; bitIndex += 64)
+              if (loadPackedBits(
+                      mask, packedStoreBit + bitIndex,
+                      std::min<uint64_t>(64, value.width - bitIndex)) != 0)
+                return true;
+            return false;
+          };
+          packedStore =
+              absolute <= available && value.width <= available - absolute &&
+              packedStoreBit + value.width <= context->stateValue.size() * 64 &&
+              packedStoreBit + value.width <=
+                  context->stateUnknown.size() * 64 &&
+              !overlaps(context->forceMask) && !overlaps(context->assignMask);
+        }
+        PackedSignalTransitionBuffer packedTransitions(packedStore ? value.width
+                                                                   : 0);
+        bool packedTransition = false;
+        if (packedStore) {
+          for (uint64_t bitIndex = 0; bitIndex < value.width; bitIndex += 64) {
+            uint64_t width = std::min<uint64_t>(64, value.width - bitIndex);
+            uint64_t at = packedStoreBit + bitIndex;
+            uint64_t newValue =
+                value.value[bitIndex / 64] & packedWidthMask(width);
+            uint64_t newUnknown =
+                value.unknown[bitIndex / 64] & packedWidthMask(width);
+            uint64_t oldValue = 0, oldUnknown = 0;
+            if (automatic) {
+              oldValue =
+                  loadPackedBytes(automaticState->value.data(), at, width);
+              oldUnknown =
+                  loadPackedBytes(automaticState->unknown.data(), at, width);
+              storePackedBytes(automaticState->value.data(), at, width,
+                               newValue);
+              storePackedBytes(automaticState->unknown.data(), at, width,
+                               newUnknown);
+            } else {
+              oldValue = loadPackedBits(context->stateValue, at, width);
+              oldUnknown = loadPackedBits(context->stateUnknown, at, width);
+              if (isContinuous) {
+                storePackedBits(context->continuousValue, at, width, newValue);
+                storePackedBits(context->continuousUnknown, at, width,
+                                newUnknown);
+                storePackedBits(context->continuousMask, at, width, UINT64_MAX);
+              }
+              storePackedBits(context->stateValue, at, width, newValue);
+              storePackedBits(context->stateUnknown, at, width, newUnknown);
+            }
+            uint64_t differs =
+                (oldValue ^ newValue) | (oldUnknown ^ newUnknown);
+            if (differs == 0)
+              continue;
+            changed = true;
+            packedTransition = true;
+            // transitionEdges, a word at a time.
+            uint64_t oldZero = ~oldUnknown & ~oldValue;
+            uint64_t oldOne = ~oldUnknown & oldValue;
+            uint64_t newZero = ~newUnknown & ~newValue;
+            uint64_t newOne = ~newUnknown & newValue;
+            storePackedBytes(packedTransitions.changed(), bitIndex, width,
+                             differs);
+            storePackedBytes(
+                packedTransitions.posedge(), bitIndex, width,
+                differs & ((oldZero & ~newZero) | (oldUnknown & newOne)));
+            storePackedBytes(packedTransitions.negedge(), bitIndex, width,
+                             differs &
+                                 ((oldOne & ~newOne) | (oldUnknown & newZero)));
+          }
+          if (value.width != 0 && !automatic) {
+            mirroredBegin = packedStoreBit;
+            mirroredEnd = packedStoreBit + value.width;
+          }
+        }
+        if (!local && !isLoad && !packedStore)
+          transitions.reserve(static_cast<size_t>(std::min<uint64_t>(
+              value.width, std::numeric_limits<size_t>::max())));
+        for (uint64_t bitIndex =
+                 packedLoad || packedAutomaticLoad || packedStore ? value.width
+                                                                  : 0;
              bitIndex != value.width; ++bitIndex) {
           bool valid = bitIndex <= uint64_t{INT64_MAX} &&
                        start <= INT64_MAX - static_cast<int64_t>(bitIndex);
@@ -2228,6 +3312,24 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
         // A blocking assignment publishes its complete packed value before
         // any observer samples it. Preserve per-bit edges in one range batch
         // instead of repeating the subscription lookup for every packed bit.
+        if (packedTransition) {
+          uint64_t handle =
+              automatic       ? (automaticBase & ~uint64_t{UINT32_MAX}) |
+                                    static_cast<uint32_t>(start)
+              : boundedStatic ? encodeStaticHandle(staticID, start)
+                              : static_cast<uint64_t>(start);
+          uint64_t sequence = 0;
+          if (!obelisk_rt_publish_signal_transition_batch_unlocked(
+                  context, handle, value.width, packedTransitions.changed(),
+                  packedTransitions.posedge(), packedTransitions.negedge(), 0,
+                  &sequence))
+            return context->schedulerStatus;
+          obelisk_rt_invalidate_signal_snapshots_unlocked(context, handle,
+                                                          value.width);
+          if (!obelisk_rt_notify_observer_signal_unlocked(context, handle,
+                                                          value.width))
+            return context->schedulerStatus;
+        }
         if (!transitions.empty()) {
           uint64_t firstBit = transitions.front().bitIndex;
           uint64_t publicationWidth =

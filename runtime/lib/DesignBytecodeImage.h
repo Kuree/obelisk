@@ -173,6 +173,27 @@ struct Instruction {
   uint64_t immediate = 0;
 };
 
+/// One instruction decoded for the interpreter's fast path: its scalar
+/// operands (two- or four-state registers of at most 64 bits) resolved to frame
+/// byte offsets once, so executing it decodes neither the instruction nor its
+/// layouts. A four-state register keeps its unknown plane eight bytes after
+/// its value. Kind 0 runs the general implementation instead.
+struct FastOp {
+  uint8_t kind = 0;
+  /// Bit 0..3: destination, source0, source1, source2 are four-state.
+  uint8_t fourState = 0;
+  uint8_t width = 0;       // destination (or transferred register) width
+  uint8_t sourceWidth = 0; // first source width
+  uint16_t flags = 0;      // the instruction's flags
+  uint16_t reserved = 0;
+  uint32_t destination = 0, source0 = 0, source1 = 0, source2 = 0;
+  uint64_t immediate = 0, immediate2 = 0;
+  /// The last static state an operand resolved to. Static registrations are
+  /// insert-only and immutable, so a match stays valid for the context.
+  mutable uint32_t staticID = 0;
+  mutable uint64_t staticOffset = 0, staticWidth = 0;
+};
+
 struct Continuation {
   uint32_t function = 0, id = 0;
   uint64_t instruction = 0;
@@ -204,15 +225,50 @@ inline uint8_t decodeDriverResolution(uint32_t argument) {
 }
 
 uint32_t functionHomeRegion(const Function &function);
-uint32_t read32(const uint8_t *data);
-uint64_t read64(const uint8_t *data);
+
+// Little-endian image fields. The interpreter decodes an instruction and its
+// operand layouts on every step, so these stay inline.
+inline uint16_t read16(const uint8_t *data) {
+  return uint16_t{data[0]} |
+         static_cast<uint16_t>(static_cast<uint16_t>(data[1]) << 8);
+}
+inline uint32_t read32(const uint8_t *data) {
+  uint32_t value = 0;
+  for (unsigned byte = 0; byte != 4; ++byte)
+    value |= uint32_t{data[byte]} << (byte * 8);
+  return value;
+}
+inline uint64_t read64(const uint8_t *data) {
+  uint64_t value = 0;
+  for (unsigned byte = 0; byte != 8; ++byte)
+    value |= uint64_t{data[byte]} << (byte * 8);
+  return value;
+}
+
+constexpr uint64_t kLayoutSize = 40;
+constexpr uint64_t kInstructionSize =
+    OBELISK_RT_DESIGN_BYTECODE_INSTRUCTION_SIZE;
+
+inline Layout layoutAt(const Image &image, const Function &function,
+                       uint32_t index) {
+  const uint8_t *data =
+      image.data + image.layouts + (function.firstLayout + index) * kLayoutSize;
+  return {data[0],          data[1],           read32(data + 4),
+          read64(data + 8), read64(data + 16), read64(data + 24)};
+}
+
+inline Instruction instructionAt(const Image &image, uint64_t index) {
+  const uint8_t *data = image.data + image.code + index * kInstructionSize;
+  return {read16(data),      read16(data + 2),  read32(data + 4),
+          read32(data + 8),  read32(data + 12), read32(data + 16),
+          read32(data + 20), read64(data + 24)};
+}
+
 bool parseImage(const obelisk_rt_design_bytecode_entry_v1 &entry, Image &image,
                 bool inventoryOnly = false);
 bool validateImage(const Image &image);
 Function functionAt(const Image &image, uint32_t index);
 Continuation continuationAt(const Image &image, uint64_t index);
-Layout layoutAt(const Image &image, const Function &function, uint32_t index);
-Instruction instructionAt(const Image &image, uint64_t index);
 IntrinsicSignature intrinsicAt(const Image &image, uint32_t index);
 IntrinsicSite siteAt(const Image &image, uint32_t index);
 CaptureRecord captureAt(const Image &image, uint64_t index);

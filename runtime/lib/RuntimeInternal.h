@@ -2682,6 +2682,9 @@ struct obelisk_rt_context {
   bool designDatabaseRegistered = false;
   obelisk::designbytecode::Image designBytecodeImage;
   bool designBytecodeImageValidated = false;
+  // Fast-path plans of designBytecodeImage's functions, indexed by function
+  // and decoded on first execution (empty: not decoded yet).
+  std::vector<std::vector<obelisk::designbytecode::FastOp>> designBytecodePlans;
   void *vpiState = nullptr;
   // Waveform dump plan, shadow planes, and output buffer. Allocated on the
   // first $dumpfile/$dumpvars and owned by the context.
