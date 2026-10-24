@@ -1557,6 +1557,12 @@ obelisk_rt_v1_scheduler_handoff_pending(obelisk_rt_context *context) {
              : 0;
 }
 
+/// Whether `keys` holds a repeated value.
+template <typename Key> static bool hasDuplicateKey(std::vector<Key> keys) {
+  std::sort(keys.begin(), keys.end());
+  return std::adjacent_find(keys.begin(), keys.end()) != keys.end();
+}
+
 extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
     obelisk_rt_context *context, const obelisk_rt_native_schedule_plan *plan) {
   if (!context || !plan ||
@@ -1705,9 +1711,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
           entry.bit_width > root.bit_width)
         return OBELISK_RT_INVALID_ARGUMENT;
     }
-    for (uint32_t previous = 0; previous != index; ++previous)
-      if (nbaRoots[previous].static_state == root.static_state)
-        return OBELISK_RT_INVALID_ARGUMENT;
   }
   for (uint64_t index = 0; index != nbaSiteCount; ++index) {
     const obelisk_rt_static_nba_site &site = nbaSites[index];
@@ -1760,8 +1763,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
         (((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_EVAL) != 0) &&
          !kernel.active_mask))
       return OBELISK_RT_INVALID_ARGUMENT;
-    for (uint32_t previous = 0; previous != index; ++previous) {
-      const obelisk_rt_native_clock_kernel &other = clockKernels[previous];
+    // Kernels are strictly increasing; the order is transitive, so each
+    // kernel need only follow its predecessor.
+    if (index != 0) {
+      const obelisk_rt_native_clock_kernel &other = clockKernels[index - 1];
       if (std::tuple{other.static_state, other.low_bit, other.bit_width,
                      other.edge} >= std::tuple{kernel.static_state,
                                                kernel.low_bit, kernel.bit_width,
@@ -1784,11 +1789,24 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
         (merged.kernel < clockKernelCount &&
          merged.bit / 64 >= clockKernels[merged.kernel].ingress_word_count))
       return OBELISK_RT_INVALID_ARGUMENT;
-    for (uint64_t previous = 0; previous != index; ++previous)
-      if (mergedFragments[previous].kernel == merged.kernel &&
-          mergedFragments[previous].bit == merged.bit)
-        return OBELISK_RT_INVALID_ARGUMENT;
   }
+  // Each static state has one NBA root, and each kernel bit one merged
+  // fragment. Sorting keeps installation linearithmic for plans with tens of
+  // thousands of entries.
+  OBELISK_RT_TRY {
+    std::vector<uint32_t> rootStates(nbaRootCount);
+    for (uint32_t index = 0; index != nbaRootCount; ++index)
+      rootStates[index] = nbaRoots[index].static_state;
+    std::vector<std::pair<uint32_t, uint32_t>> mergedBits(
+        static_cast<size_t>(mergedFragmentCount));
+    for (uint64_t index = 0; index != mergedFragmentCount; ++index)
+      mergedBits[index] = {mergedFragments[index].kernel,
+                           mergedFragments[index].bit};
+    if (hasDuplicateKey(std::move(rootStates)) ||
+        hasDuplicateKey(std::move(mergedBits)))
+      return OBELISK_RT_INVALID_ARGUMENT;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
   uint64_t scopedActorCount = 0;
   for (uint64_t index = 0; index != actorRootCount; ++index) {
     const obelisk_rt_static_actor_root &entry = actorRoots[index];

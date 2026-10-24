@@ -4810,6 +4810,64 @@ TEST(Scheduler, AOTClockKernelIngressSuppressesDuplicateBits) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, AOTInstallRejectsRepeatedKeysAnywhereInItsTables) {
+  // Installation checks uniqueness by sorting and kernel order against each
+  // predecessor, so a repeated key is rejected wherever it appears.
+  AOTTestState state;
+  uint64_t ingress[2] = {};
+  obelisk_rt_native_clock_kernel clocks[] = {
+      {1, OBELISK_RT_WAIT_EDGE_POSEDGE, 0, 1, ingress, 2, 0},
+      {1, OBELISK_RT_WAIT_EDGE_NEGEDGE, 0, 1, ingress, 2, 0},
+      {2, OBELISK_RT_WAIT_EDGE_POSEDGE, 0, 1, ingress, 2, 0},
+  };
+  obelisk_rt_native_merged_fragment merged[] = {
+      {0, 0, 0, 1, 0, 0},
+      {0, 0, 1, 1, 0, 0},
+      {0, 0, 0, 2, 0, 0},
+  };
+  obelisk_rt_static_nba_root roots[] = {
+      {17, 1, 1, nullptr},
+      {18, 2, 1, nullptr},
+  };
+  obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 1);
+  plan.clock_kernels = clocks;
+  plan.clock_kernel_count = std::size(clocks);
+  plan.merged_fragments = merged;
+  plan.merged_fragment_count = std::size(merged);
+  plan.nba_roots = roots;
+  plan.nba_root_count = std::size(roots);
+  plan.timeslot_coordinator = clockCoordinator;
+
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 2;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 2, 1, 1),
+            OBELISK_RT_OK);
+  merged[2].bit = 1;
+  EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+            OBELISK_RT_INVALID_ARGUMENT);
+  merged[2].bit = 2;
+  std::swap(clocks[1], clocks[2]);
+  EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+            OBELISK_RT_INVALID_ARGUMENT);
+  std::swap(clocks[1], clocks[2]);
+  clocks[1] = clocks[0];
+  EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+            OBELISK_RT_INVALID_ARGUMENT);
+  clocks[1].edge = OBELISK_RT_WAIT_EDGE_NEGEDGE;
+  roots[1].static_state = 1;
+  EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan),
+            OBELISK_RT_INVALID_ARGUMENT);
+  roots[1].static_state = 2;
+  EXPECT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, AOTCleanSuperstepRequiresACompleteStaticPlan) {
   AOTTestState state;
   obelisk_rt_native_schedule_plan plan = makeAOTPlan(state);
