@@ -178,9 +178,9 @@ module attributes {
 // CHECK: llvm.cond_br {{.*}}, ^[[EXECUTE:bb[0-9]+]], ^{{bb[0-9]+}}
 // CHECK: ^[[EXECUTE]]:
 // CHECK: llvm.store
-// CHECK-NEXT: {{.*}}llvm.call @__obelisk_direct_fragment_3_9.__obelisk_execute.two_state.__obelisk_trusted
+// CHECK-NEXT: llvm.call @body0.__obelisk_two_state_0(
 // CHECK-NOT: llvm.call @__obelisk_eval_kernel_promotion_ready
-// CHECK: llvm.call @__obelisk_direct_fragment_4_12.__obelisk_execute.two_state.__obelisk_trusted
+// CHECK: llvm.call @body1.__obelisk_two_state_0(
 // CHECK: llvm.call @__obelisk_eval_kernel_promotion_ready_v1(
 
 // The mixed variant replaces one domain's sample with X. That owner cannot

@@ -46,7 +46,9 @@
 // CHECK-NEXT: llvm.return %[[UNAVAILABLE]]
 // CHECK: llvm.store %{{.*}}, %arg2 {{.*}} : i1, !llvm.ptr
 // CHECK-NEXT: llvm.call @__obelisk_direct_fragment_{{.*}}.__obelisk_execute(%arg0)
-// CHECK: llvm.call @__obelisk_direct_fragment_{{.*}}.__obelisk_execute.two_state.__obelisk_trusted(%arg0) {schedule.eval.proven_two_state_call}
+// The proven two-state call's trivial trusted wrapper is inlined, so the
+// segment calls the owner's path dispatcher directly.
+// CHECK: llvm.call @__obelisk_eval_path_dispatch_v1_{{[0-9]+}}(%arg0) {schedule.eval.direct_call}
 // CHECK: llvm.cond_br %{{.*}}, ^{{bb[0-9]+}}, ^[[FAIL]](%{{.*}} : i32)
 // CHECK: llvm.cond_br %{{.*}}, ^[[NONE]], ^[[CONTINUE]]
 

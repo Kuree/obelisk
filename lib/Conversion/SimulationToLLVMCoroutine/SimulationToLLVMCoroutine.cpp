@@ -3499,6 +3499,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       }
   }
   size_t reused = 0;
+  SmallVector<std::pair<LLVM::LLVMFuncOp, ArrayRef<LLVM::CallOp>>>
+      trustedClones;
   for (auto &[operation, calls] : trustedWrapperCalls) {
     auto wrapper = cast<LLVM::LLVMFuncOp>(operation);
     bool recursive = false;
@@ -3535,6 +3537,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     wrapperSymbols.insert(clone);
     for (LLVM::CallOp call : calls)
       call.setCallee(clone.getSymName());
+    trustedClones.emplace_back(clone, calls);
   }
   if (native::has<native::DebugTiming>(module))
     llvm::errs() << "obelisk trusted executor wrappers: reused=" << reused
@@ -3609,6 +3612,39 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     emitCall(twoState, route.twoState);
     emitCall(fourState, route.fourStateFallback);
     call.erase();
+  }
+
+  // A trusted wrapper is now its selected body's call plus a constant status.
+  // Its callers are dispatch segments in other native partitions, where its
+  // alwaysinline attribute cannot apply, so each activation would take an
+  // extra out-of-line branch. Inline such a trivial body at its proven call
+  // sites; the wrapper then stays only for address uses.
+  for (auto [wrapper, wrapperCalls] : trustedClones) {
+    if (!wrapper.getBody().hasOneBlock())
+      continue;
+    Block &body = wrapper.getBody().front();
+    unsigned forwardedCalls = 0;
+    bool trivial = llvm::all_of(body, [&](Operation &operation) {
+      if (auto call = dyn_cast<LLVM::CallOp>(operation))
+        return call.getCallee() && call.getOpBundleSizes().empty() &&
+               ++forwardedCalls == 1;
+      return isa<LLVM::ConstantOp, LLVM::ZeroOp, LLVM::UndefOp, LLVM::ReturnOp>(
+          operation);
+    });
+    if (!trivial || forwardedCalls != 1)
+      continue;
+    auto terminator = cast<LLVM::ReturnOp>(body.getTerminator());
+    for (LLVM::CallOp call : wrapperCalls) {
+      IRMapping mapping;
+      mapping.map(body.getArguments(), call.getArgOperands());
+      builder.setInsertionPoint(call);
+      for (Operation &operation : body.without_terminator())
+        builder.clone(operation, mapping);
+      for (auto [result, value] :
+           llvm::zip_equal(call.getResults(), terminator.getOperands()))
+        result.replaceAllUsesWith(mapping.lookupOrDefault(value));
+      call.erase();
+    }
   }
 
   // IEEE 1800-2023 6.8, 6.11.2, 9.4.2, 38.34: access-level inductive proofs

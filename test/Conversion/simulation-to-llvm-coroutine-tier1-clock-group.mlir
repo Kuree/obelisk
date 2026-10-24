@@ -99,8 +99,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
 // CHECK-NOT: llvm.call @obelisk_rt_
 // CHECK: llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1
-// CHECK: llvm.call @__obelisk_direct_fragment_1_1.__obelisk_execute
-// CHECK: llvm.call @__obelisk_direct_fragment_1_1.__obelisk_execute.two_state
+// CHECK: llvm.call @__obelisk_direct_fragment_1_1.__obelisk_execute(
+// The proven call's trivial trusted wrapper is inlined: the dispatcher calls
+// the selected two-state body directly.
+// CHECK: llvm.call @update.__obelisk_eval_body_0.__obelisk_two_state_0(%arg1) {schedule.eval.direct_call}
 // CHECK-NOT: llvm.call @obelisk_rt_
 // CHECK: llvm.return
 // The selected call carries the owner proof; no enclosing controller variant

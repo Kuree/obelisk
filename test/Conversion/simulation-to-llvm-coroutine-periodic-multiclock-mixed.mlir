@@ -3,7 +3,7 @@
 // The crossing value is a mixed known/unknown constant instead of a load.
 // CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
 // CHECK: llvm.call @__obelisk_direct_fragment_3_9.__obelisk_execute(
-// CHECK-NOT: llvm.call @__obelisk_direct_fragment_3_9.__obelisk_execute.two_state
+// CHECK-NOT: llvm.call @body0.__obelisk_two_state_0
 // CHECK: %[[PENDING:.*]] = llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1
 // CHECK-NEXT: %[[BITS:.*]] = llvm.load %[[PENDING]] {{.*}} : !llvm.ptr -> i64
 // CHECK-NEXT: %[[BIT:.*]] = llvm.mlir.constant(2 : i64)
@@ -18,7 +18,7 @@
 // CHECK-NEXT: {{.*}}llvm.call @__obelisk_eval_kernel_promotion_ready_v1(%[[OWNER]])
 // CHECK: ^[[FAST]](%{{.*}}: i64, %{{.*}}: i64):
 // CHECK: llvm.store
-// CHECK-NEXT: {{.*}}llvm.call @__obelisk_direct_fragment_4_12.__obelisk_execute.two_state.__obelisk_trusted
+// CHECK-NEXT: llvm.call @body1.__obelisk_two_state_0(
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

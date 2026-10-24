@@ -12,15 +12,18 @@
 // CHECK-COUNT-4: llvm.mlir.global internal @__obelisk_aot_model_active_v1_{{[0-3]}}()
 // CHECK-NOT: llvm.mlir.global internal @__obelisk_aot_model_active_v1_
 // CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// CHECK: llvm.call @__obelisk_direct_fragment_{{[0-9]+_[0-9]+}}.__obelisk_execute.two_state.__obelisk_trusted(
+// CHECK: llvm.call @writer{{[0-9]}}.__obelisk_eval_body_0.__obelisk_two_state_0(
+// CHECK-NEXT: llvm.mlir.constant(0 : i32)
 // CHECK-NEXT: llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
 // CHECK-NOT: llvm.mlir.addressof
 // CHECK: llvm.br
-// CHECK: llvm.call @__obelisk_direct_fragment_{{[0-9]+_[0-9]+}}.__obelisk_execute.two_state.__obelisk_trusted(
+// CHECK: llvm.call @writer{{[0-9]}}.__obelisk_eval_body_0.__obelisk_two_state_0(
+// CHECK-NEXT: llvm.mlir.constant(0 : i32)
 // CHECK-NEXT: llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
 // CHECK-NOT: llvm.mlir.addressof
 // CHECK: llvm.br
-// CHECK: llvm.call @__obelisk_direct_fragment_{{[0-9]+_[0-9]+}}.__obelisk_execute.two_state.__obelisk_trusted(
+// CHECK: llvm.call @writer{{[0-9]}}.__obelisk_eval_body_0.__obelisk_two_state_0(
+// CHECK-NEXT: llvm.mlir.constant(0 : i32)
 // CHECK-NEXT: llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
 // CHECK-NOT: llvm.mlir.addressof
 // CHECK: llvm.br
