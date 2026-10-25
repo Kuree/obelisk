@@ -256,14 +256,15 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
       bool effectsSafe = llvm::all_of(effects, [&](Attribute raw) {
         auto effect = cast<schedule::ComputeEffectAttr>(raw);
         bool net = effect.getResource() == schedule::ComputeResourceKind::Net;
-        // IEEE 1800-2023 6.6.1, 4.9.1: an isolated wire with one full-width,
-        // strong, undelayed driver can publish its value in the same Active
-        // sweep. Reuse the connectivity proof; connected, competing, weak,
-        // delayed and user-defined resolution remains an execution boundary.
-        // Retain each source activation and its exact transition publication.
+        // IEEE 1800-2023 6.6.1, 4.9.1: an isolated wire whose strong,
+        // undelayed drivers partition its bits can publish in one Active
+        // sweep. Each source keeps its own ready predicate and exact
+        // transition publication. Connected, overlapping, weak, delayed and
+        // user-defined resolution remains an execution boundary.
         bool simpleNet =
             !clocked && net &&
-            stateLayout.isolatedSingleDriverNets.contains(effect.getDescriptor());
+            stateLayout.isolatedPartitionedDriverNets.contains(
+                effect.getDescriptor());
         // IEEE 1800-2023 4.5-4.7, 10.4.2: consecutive Active evaluations
         // may stage their NBAs in this order, but cannot commit them early.
         // Immediate stores need the separate trigger/observer proof below.

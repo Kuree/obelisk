@@ -319,6 +319,8 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
   if (!designs.empty()) {
     layout.isolatedSingleDriverNets =
         getIsolatedSingleDriverNets(designs.front());
+    layout.isolatedPartitionedDriverNets =
+        getIsolatedPartitionedDriverNets(designs.front());
     NetConnectivityAnalysis connectivity(designs.front());
     DenseMap<uint64_t, SmallVector<std::optional<std::array<uint64_t, 3>>>>
         declaredDelays;

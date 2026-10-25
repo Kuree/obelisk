@@ -62,8 +62,10 @@ module native_eval_dispatch_segments;
   end
 endmodule
 
-// SEGMENTS-DAG: __obelisk_eval_dispatch_v1.segment_0
-// SEGMENTS-DAG: __obelisk_eval_dispatch_v1.segment_1
+// Ranked groups may absorb a whole segment. Require two distinct surviving
+// dispatch segments without depending on the removed segment's number.
+// SEGMENTS-DAG: __obelisk_eval_dispatch_v1.segment_{{[0-9]+}}
+// SEGMENTS-DAG: __obelisk_eval_dispatch_v1.segment_{{[0-9]+}}
 // SEGMENTS-DAG: __obelisk_eval_ranked_group_
 // CHECK: round 0 count 1 chain 00
 // CHECK-NEXT: round 1 count 2 chain xx

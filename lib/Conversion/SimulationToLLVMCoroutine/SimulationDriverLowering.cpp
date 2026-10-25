@@ -1212,9 +1212,20 @@ public:
           Value oldValue = loadStatePlane(rewriter, op.getLoc(), netHandle,
                                           type, "__obelisk_state_value", false,
                                           layout.bitCount, &layout);
-          // The unknown plane of an integer net is permanently zero.
+          // IEEE 1800-2023 6.3.1, 6.6.1: a certified known drive preserves
+          // knownness on its exclusive bits. Other disjoint drivers do not
+          // participate in this slice's resolution. The entry certificate
+          // covers the old net value; the four-state path still publishes
+          // X/Z changes and invalidates that certificate.
+          bool known =
+              !memberNet.fourState ||
+              (schedule::has<schedule::Field::EvalInductiveTwoStateAccess>(op) &&
+               affectedDriver && affectedDriver->netId == memberNet.id &&
+               layout.isolatedPartitionedDriverNets.contains(memberNet.id) &&
+               first.contributions.size() == 1 &&
+               first.contributions.front().driver == affectedDriver);
           Value oldUnknown =
-              memberNet.fourState
+              !known
                   ? loadStatePlane(rewriter, op.getLoc(), netHandle, type,
                                    "__obelisk_state_unknown", true,
                                    layout.bitCount, &layout)
@@ -1232,7 +1243,7 @@ public:
                inRunOrder(index, publishValue),
                inRunOrder(index, publishUnknown), memberNet.fourState,
                resolveDirectStaticStateRange(netHandle, width, &layout), width,
-               memberNet.fourState});
+               !known});
         }
       }
     };

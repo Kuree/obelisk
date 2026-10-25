@@ -13,7 +13,8 @@ using namespace mlir;
 
 namespace obelisk::analysis {
 
-DenseSet<uint64_t> getIsolatedSingleDriverNets(sim::SimDesignOp design) {
+static DenseSet<uint64_t> getIsolatedDriverNets(sim::SimDesignOp design,
+                                                bool allowPartitions) {
   DenseSet<uint64_t> connected, result;
   DenseMap<uint64_t, SmallVector<sim::SimDriverDeclOp>> drivers;
   for (Operation &op : design.getBody().front()) {
@@ -31,20 +32,52 @@ DenseSet<uint64_t> getIsolatedSingleDriverNets(sim::SimDesignOp design) {
     auto found = drivers.find(net.getId());
     if (!width || connected.contains(net.getId()) || net.getNettypeAttr() ||
         net.getResolutionKind() != sim::NetResolutionKind::Wire ||
-        found == drivers.end() || found->second.size() != 1)
+        found == drivers.end() ||
+        (!allowPartitions && found->second.size() != 1))
       continue;
     if (auto delays = net.getPropagationDelays())
       if (llvm::any_of(*delays, [](int64_t delay) { return delay != -1; }))
         continue;
-    auto driver = found->second.front();
-    if (sim::getProvenanceSpan(driver.getType()) == width &&
-        driver.getDrivenLow().value_or(0) == 0 &&
-        uint64_t(driver.getDrivenWidth().value_or(*width)) == *width &&
-        driver.getStrength0() == sim::Strength::Strong &&
-        driver.getStrength1() == sim::Strength::Strong)
+    SmallVector<std::pair<uint64_t, uint64_t>> ranges;
+    bool valid = true;
+    for (auto driver : found->second) {
+      uint64_t low = driver.getDrivenLow().value_or(0);
+      uint64_t size = driver.getDrivenWidth().value_or(*width);
+      if (sim::getProvenanceSpan(driver.getType()) != width || !size ||
+          low > *width || size > *width - low ||
+          driver.getStrength0() != sim::Strength::Strong ||
+          driver.getStrength1() != sim::Strength::Strong) {
+        valid = false;
+        break;
+      }
+      ranges.emplace_back(low, low + size);
+    }
+    if (!valid)
+      continue;
+    llvm::sort(ranges);
+    uint64_t end = 0;
+    for (auto range : ranges) {
+      if (range.first != end) {
+        valid = false;
+        break;
+      }
+      end = range.second;
+    }
+    // IEEE 1800-2023 6.6.1: resolution is per bit. A partition into strong
+    // contributions is a collection of independent wire copies. Requiring
+    // full coverage also excludes persistent undriven Z holes from this proof.
+    if (valid && end == *width)
       result.insert(net.getId());
   }
   return result;
+}
+
+DenseSet<uint64_t> getIsolatedSingleDriverNets(sim::SimDesignOp design) {
+  return getIsolatedDriverNets(design, /*allowPartitions=*/false);
+}
+
+DenseSet<uint64_t> getIsolatedPartitionedDriverNets(sim::SimDesignOp design) {
+  return getIsolatedDriverNets(design, /*allowPartitions=*/true);
 }
 
 NetConnectivityAnalysis::NetConnectivityAnalysis(sim::SimDesignOp design) {

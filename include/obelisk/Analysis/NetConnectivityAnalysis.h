@@ -24,6 +24,12 @@ namespace obelisk::analysis {
 /// driver's value (IEEE 1800-2023 6.6.1). Shared by scheduling and lowering.
 llvm::DenseSet<uint64_t> getIsolatedSingleDriverNets(sim::SimDesignOp design);
 
+/// The same plain-wire topology, allowing strong drivers that partition the
+/// net's bits without overlap or holes. Every bit still has exactly one
+/// contributor; each source activation retains its own sensitivity.
+llvm::DenseSet<uint64_t>
+getIsolatedPartitionedDriverNets(sim::SimDesignOp design);
+
 struct NetBit {
   uint64_t net = 0;
   uint64_t offset = 0;

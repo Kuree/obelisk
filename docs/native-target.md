@@ -347,6 +347,13 @@ range state; an unknown parallel edge still invalidates a known-only range.
 Only isolated full-width strong single-driver wires can treat a driver
 publication as the resolved net value; connected, delayed, resolved, or competing
 drivers retain their original scheduling.
+Late ranked groups also admit plain wires whose strong, undelayed drivers
+partition all bits without overlap. Each source keeps its own ready predicate,
+and the group certificate covers its inputs and the old net value. Certified
+drives omit redundant X/Z publication for their exclusive slices; the fallback
+retains X/Z changes. Overlapping drivers, undriven holes, connections, delays,
+weak strengths, and writable VPI retain their boundaries (IEEE 1800-2023 4.9.1,
+6.3.1, 6.6.1, 38.34).
 
 Hierarchy boundaries and the legacy 64-bit dirty-mask limit do not restrict a
 proved DAG. Genuine value feedback, incomplete assignments, state-dependent
