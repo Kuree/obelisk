@@ -7,6 +7,8 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
+#include <optional>
+
 using namespace mlir;
 
 namespace obelisk::detail {
@@ -34,7 +36,17 @@ void emitScalarNBACommitLoop(OpBuilder &b, ModuleOp module,
   auto gep = [&](Value base, Type type, Value index) -> Value {
     return LLVM::GEPOp::create(b, loc, ptr, type, base, ValueRange{index});
   };
-  auto table = [&](StringRef suffix, ArrayRef<uint64_t> data) {
+  struct IntegerColumn {
+    std::string name;
+    std::optional<uint64_t> uniform;
+  };
+  auto table = [&](StringRef suffix, ArrayRef<uint64_t> data) -> IntegerColumn {
+    // Specialize only when every entry agrees, including unselected roots.
+    // Doing this before native partitioning keeps the constant available to
+    // simplification. The NBA order, four-state values and publication boundary
+    // are unchanged (IEEE 1800-2023 4.3, 4.6, 6.3.1, 10.4.2).
+    if (!data.empty() && llvm::all_equal(data))
+      return {{}, data.front()};
     OpBuilder::InsertionGuard guard(b);
     b.setInsertionPointToStart(module.getBody());
     std::string name = ("__obelisk_eval_nba_commit_" + suffix).str();
@@ -42,10 +54,13 @@ void emitScalarNBACommitLoop(OpBuilder &b, ModuleOp module,
     LLVM::GlobalOp::create(b, loc, LLVM::LLVMArrayType::get(i64, data.size()),
                            true, LLVM::Linkage::Internal, name,
                            DenseIntElementsAttr::get(tensor, data), 8);
-    return name;
+    return {std::move(name), std::nullopt};
   };
-  auto load = [&](StringRef name, Value index) -> Value {
-    return LLVM::LoadOp::create(b, loc, i64, gep(address(name), i64, index), 8);
+  auto load = [&](const IntegerColumn &column, Value index) -> Value {
+    if (column.uniform)
+      return c(*column.uniform);
+    return LLVM::LoadOp::create(b, loc, i64,
+                                gep(address(column.name), i64, index), 8);
   };
   auto band = [&](Value a, Value d) -> Value {
     return arith::AndIOp::create(b, loc, a, d);
