@@ -9,24 +9,24 @@ extern uint8_t __obelisk_state_unknown[];
 extern uint8_t __obelisk_eval_kernel_promotion_latched_v1[];
 extern uint64_t __obelisk_eval_promotion_pending_mask_v1[];
 bool __obelisk_eval_kernel_promotion_ready_v1(uint64_t);
-extern uint8_t __obelisk_eval_selected_variant_v1_0;
-extern uint8_t __obelisk_eval_selected_variant_v1_63;
-extern uint8_t __obelisk_eval_selected_variant_v1_64;
-extern uint64_t __obelisk_eval_route_promotion_pending_v1[];
-extern uint8_t __obelisk_eval_route_promotion_dirty_v1;
-int __obelisk_eval_route_promotion_boundary_v1(int);
 void __obelisk_eval_promotion_invalidate_range_v1(uint64_t, uint64_t);
 void __obelisk_eval_promotion_recheck_range_v1(uint64_t, uint64_t);
 }
 
 int main() {
-  // The fixture has one byte-aligned clock followed by 65 packed data bits.
-  // Each writer's RHS reads that clock and its own destination bit.
-  std::memset(__obelisk_state_unknown, 0, 10);
-  auto &pending = __obelisk_eval_route_promotion_pending_v1;
-  auto boundary = [] {
-    assert(__obelisk_eval_route_promotion_boundary_v1(0) == 0);
-  };
+  // Routes share the owner cache. Owners follow symbol order
+  // (writer0, writer1, writer10, ...), independently of source order.
+  unsigned writers[65];
+  for (unsigned i = 0; i != 65; ++i)
+    writers[i] = i;
+  std::sort(writers, writers + 65, [](unsigned a, unsigned b) {
+    char lhs[3], rhs[3];
+    std::snprintf(lhs, sizeof(lhs), "%u", a);
+    std::snprintf(rhs, sizeof(rhs), "%u", b);
+    return std::strcmp(lhs, rhs) < 0;
+  });
+  auto &pending = __obelisk_eval_promotion_pending_mask_v1;
+  auto &latches = __obelisk_eval_kernel_promotion_latched_v1;
   auto change = [](unsigned bit, bool unknown) {
     uint8_t mask = 1u << (bit % 8);
     if (unknown) {
@@ -37,77 +37,43 @@ int main() {
       __obelisk_eval_promotion_recheck_range_v1(bit, 1);
     }
   };
+  std::memset(__obelisk_state_unknown, 0, 10);
   assert(pending[0] == UINT64_MAX && pending[1] == 1);
-  assert(__obelisk_eval_route_promotion_boundary_v1(-1) == -1);
-  assert(pending[0] == UINT64_MAX && pending[1] == 1);
-  boundary();
-  auto known0 = __obelisk_eval_selected_variant_v1_0;
-  auto known63 = __obelisk_eval_selected_variant_v1_63;
-  auto known64 = __obelisk_eval_selected_variant_v1_64;
-  assert(known0 && known63 && known64);
+  for (unsigned owner = 0; owner != 65; ++owner)
+    assert(__obelisk_eval_kernel_promotion_ready_v1(owner));
   assert(!pending[0] && !pending[1]);
-  assert(!__obelisk_eval_route_promotion_dirty_v1);
 
-  // Touch only the second word. An unsuccessful boundary must leave its work
-  // pending, and a failed proof is consumed without repeatedly rescanning it.
-  change(72, true);
+  // A failed proof in word one must remain independent of word zero.
+  unsigned bit64 = writers[64] + 8, bit63 = writers[63] + 8;
+  change(bit64, true);
   assert(!pending[0] && pending[1] == 1);
-  assert(__obelisk_eval_route_promotion_dirty_v1);
-  assert(__obelisk_eval_selected_variant_v1_0 == known0);
-  assert(__obelisk_eval_selected_variant_v1_63 == known63);
-  assert(__obelisk_eval_selected_variant_v1_64 != known64);
-  assert(__obelisk_eval_route_promotion_boundary_v1(-1) == -1);
-  assert(!pending[0] && pending[1] == 1);
-  boundary();
-  assert(!pending[0] && !pending[1]);
-  assert(!__obelisk_eval_route_promotion_dirty_v1);
+  assert(latches[0] && latches[63] && !latches[64]);
+  assert(!__obelisk_eval_kernel_promotion_ready_v1(64));
+  __obelisk_state_unknown[bit64 / 8] &= ~(1u << (bit64 % 8));
+  change(bit63, true);
+  assert(!__obelisk_eval_kernel_promotion_ready_v1(63));
+  assert(!latches[64]);
+  assert(pending[0] == (uint64_t{1} << 63) && pending[1] == 1);
+  change(bit64, false);
+  assert(__obelisk_eval_kernel_promotion_ready_v1(64));
+  assert(!latches[63] && !pending[1]);
+  change(bit63, false);
+  assert(__obelisk_eval_kernel_promotion_ready_v1(63));
 
-  // Deliberately withhold recovery notification for bit 72. Processing word
-  // zero must neither inspect nor promote the failed route in word one.
-  __obelisk_state_unknown[9] = 0;
-  change(71, true);
-  assert(pending[0] == (uint64_t{1} << 63) && !pending[1]);
-  boundary();
-  assert(__obelisk_eval_selected_variant_v1_63 != known63);
-  assert(__obelisk_eval_selected_variant_v1_64 != known64);
-  change(72, false);
-  assert(!pending[0] && pending[1] == 1);
-  boundary();
-  assert(__obelisk_eval_selected_variant_v1_64 == known64);
-  assert(__obelisk_eval_selected_variant_v1_63 != known63);
-  change(71, false);
-  boundary();
-  assert(__obelisk_eval_selected_variant_v1_63 == known63);
-
-  // Shared input loss affects both words; unused packed padding affects none.
+  // A shared input invalidates both words; padding belongs to neither.
   change(0, true);
   assert(pending[0] == UINT64_MAX && pending[1] == 1);
-  boundary();
-  assert(__obelisk_eval_selected_variant_v1_0 != known0);
-  assert(__obelisk_eval_selected_variant_v1_63 != known63);
-  assert(__obelisk_eval_selected_variant_v1_64 != known64);
+  for (unsigned owner = 0; owner != 65; ++owner)
+    assert(!__obelisk_eval_kernel_promotion_ready_v1(owner));
   change(0, false);
-  boundary();
+  for (unsigned owner = 0; owner != 65; ++owner)
+    assert(__obelisk_eval_kernel_promotion_ready_v1(owner));
   change(1, true);
   assert(!pending[0] && !pending[1]);
-  assert(!__obelisk_eval_route_promotion_dirty_v1);
-  boundary();
-  assert(__obelisk_eval_selected_variant_v1_0 == known0);
-  assert(__obelisk_eval_selected_variant_v1_63 == known63);
-  assert(__obelisk_eval_selected_variant_v1_64 == known64);
+  assert(latches[0] && latches[63] && latches[64]);
   assert(__obelisk_state_unknown[0] == 2);
-  // Kernel certificates use independent latch and pending state. Exercise
-  // every packed bit, both bitmap words, and the unused neighboring bits.
-  // Kernel owners follow symbol order (writer0, writer1, writer10, ...).
-  unsigned writers[65];
-  for (unsigned i = 0; i != 65; ++i)
-    writers[i] = i;
-  std::sort(writers, writers + 65, [](unsigned a, unsigned b) {
-    char lhs[3], rhs[3];
-    std::snprintf(lhs, sizeof(lhs), "%u", a);
-    std::snprintf(rhs, sizeof(rhs), "%u", b);
-    return std::strcmp(lhs, rhs) < 0;
-  });
+
+  // Exhaust every packed bit, both bitmap words and unused neighbors.
   for (unsigned bit = 0; bit != 80; ++bit) {
     std::memset(__obelisk_state_unknown, 0, 10);
     __obelisk_eval_promotion_recheck_range_v1(0, 80);

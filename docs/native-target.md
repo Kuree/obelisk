@@ -359,6 +359,16 @@ Overlapping drivers, undriven holes, connections, delays,
 weak strengths, and writable VPI retain their boundaries (IEEE 1800-2023 4.9.1,
 6.3.1, 6.6.1, 38.34).
 
+Function routes reuse an eval owner's knownness cache when both certificates
+cover exactly the same physical bits. Coverage is normalized without filling
+gaps or partial-word padding. The route queries that owner cache on entry,
+including before the scheduled owner has run, and uses its existing X/Z
+invalidation. It creates no duplicate selector, pending bit or reverse-index
+dependency. Routes with different coverage retain independent certificates;
+their pending bits are numbered separately from function identities. Sharing
+the cache preserves four-state values and the ordering of actual writes
+(IEEE 1800-2023 6.3.1, 6.8, 38.34).
+
 Hierarchy boundaries and the legacy 64-bit dirty-mask limit do not restrict a
 proved DAG. Genuine value feedback, incomplete assignments, state-dependent
 resumption, or unproved termination retain their existing execution. The

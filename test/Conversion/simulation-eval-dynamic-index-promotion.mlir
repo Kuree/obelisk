@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
-// RUN: FileCheck %s < %t.mlir
+// RUN: FileCheck %s --implicit-check-not=__obelisk_eval_selected_variant_v1_ < %t.mlir
 
 // A write through an invalid index performs no operation (IEEE 1800-2023
 // 7.4.6), so a dynamic store needs no bounds proof to preserve known state:
@@ -84,7 +84,7 @@ module attributes {
   }
 }
 // CHECK-DAG: llvm.func @lane.__obelisk_eval_body_0.__obelisk_two_state_0
-// CHECK-DAG: llvm.mlir.global internal @__obelisk_eval_selected_variant_v1_0
+// CHECK-DAG: llvm.mlir.global internal @__obelisk_eval_kernel_promotion_latched_v1
 // CHECK-DAG: llvm.func @lane.__obelisk_eval_body_0(%arg0: !llvm.ptr) attributes {{{.*}}schedule.eval.conditionally_two_state
 // The whole memory [16,32) guards both accesses; the indices and the output
 // follow it.

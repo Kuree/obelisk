@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
 // RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | diff %t.mlir -
-// RUN: FileCheck %s --implicit-check-not=__obelisk_eval_kernel_promotion_ready_v1_ < %t.mlir
+// RUN: FileCheck %s --implicit-check-not=__obelisk_eval_selected_variant_v1_ --implicit-check-not=__obelisk_eval_kernel_promotion_ready_v1_ < %t.mlir
 // RUN: FileCheck %s --check-prefix=RANGE < %t.mlir
 // RUN: FileCheck %s --check-prefix=KERNEL < %t.mlir
 // RUN: FileCheck %s --check-prefix=VARIANT --implicit-check-not=__obelisk_eval_function_route_v1_ --implicit-check-not=__obelisk_eval_variant_dispatch_v1_ < %t.mlir
@@ -12,9 +12,9 @@
 // Overlapping views must be scanned as an exact union. Neither partial-byte
 // boundary nor the gap to another range may contribute unrelated X/Z bits
 // to promotion evidence, regardless of the generated scan's load widths.
+// Both routes share the existing owner certificates; no duplicate scan.
 // CHECK-LABEL: llvm.func @__obelisk_eval_route_promotion_scan_v1
-// CHECK: llvm.load
-// CHECK: llvm.icmp "eq"
+// CHECK-NEXT: llvm.return
 
 // Write-only NBA destinations at 432 and 440 have separate commit certificates
 // and must not extend the activation's input ranges (LRM 4.9.4, 10.4.2).
@@ -155,10 +155,9 @@ module attributes {
   }
 }
 
-// VARIANT: llvm.mlir.global internal @__obelisk_eval_selected_variant_v1_0(0 : i8)
 // VARIANT-LABEL: llvm.func @__obelisk_direct_fragment_2_12.__obelisk_execute(
-// VARIANT: llvm.mlir.addressof @__obelisk_eval_selected_variant_v1_0
-// VARIANT: llvm.load {{.*}} : !llvm.ptr -> i8
+// VARIANT: %[[OWNER:.*]] = llvm.mlir.constant(1 : i64)
+// VARIANT: llvm.call @__obelisk_eval_kernel_promotion_ready_v1(%[[OWNER]])
 // VARIANT: llvm.cond_br
 // VARIANT: llvm.call @work.__obelisk_eval_body_0.__obelisk_two_state_0
 // VARIANT: llvm.call @__obelisk_eval_four_state_fallback_v1_0

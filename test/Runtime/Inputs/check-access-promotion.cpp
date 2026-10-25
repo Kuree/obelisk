@@ -12,10 +12,9 @@
 
 extern "C" {
 extern uint8_t __obelisk_state_value[], __obelisk_state_unknown[];
-extern uint8_t __obelisk_eval_selected_variant_v1_0;
+extern uint8_t __obelisk_eval_kernel_promotion_latched_v1[];
 extern uint8_t __obelisk_eval_step_four_state_fallback_v1;
-extern uint64_t __obelisk_eval_route_promotion_pending_v1[];
-void __obelisk_eval_route_promotion_scan_v1();
+extern uint64_t __obelisk_eval_promotion_pending_mask_v1[];
 void __obelisk_eval_promotion_invalidate_range_v1(uint64_t, uint64_t);
 void __obelisk_eval_promotion_recheck_range_v1(uint64_t, uint64_t);
 bool __obelisk_eval_kernel_promotion_ready_v1(uint64_t);
@@ -47,14 +46,15 @@ static void initialize() {
     }
   }
   __obelisk_eval_promotion_invalidate_range_v1(0, 72);
-  __obelisk_eval_route_promotion_scan_v1();
-  assert(__obelisk_eval_selected_variant_v1_0);
-  assert(__obelisk_eval_kernel_promotion_ready_v1(0));
+  // Enter the route before its scheduled owner has run. It must refresh
+  // the shared certificate on demand, without an eager route scan.
+  assert(!__obelisk_eval_kernel_promotion_latched_v1[0]);
   uint8_t before[9];
   std::memcpy(before, __obelisk_state_unknown, 9);
   __obelisk_eval_step_four_state_fallback_v1 = 0;
   assert(execute(nullptr) == 0);
   assert(!__obelisk_eval_step_four_state_fallback_v1);
+  assert(__obelisk_eval_kernel_promotion_latched_v1[0]);
   assert((__obelisk_state_value[8] & 7) == expected);
   assert(std::memcmp(before, __obelisk_state_unknown, 9) == 0);
 }
@@ -69,10 +69,10 @@ int main() {
     setBit(__obelisk_state_unknown, bit, true);
     std::memcpy(before, __obelisk_state_unknown, 9);
     __obelisk_eval_promotion_invalidate_range_v1(bit, 1);
-    assert(bool(__obelisk_eval_route_promotion_pending_v1[0]) ==
-           certified(bit));
-    __obelisk_eval_route_promotion_scan_v1();
-    assert(bool(__obelisk_eval_selected_variant_v1_0) == !certified(bit));
+    assert(bool(__obelisk_eval_promotion_pending_mask_v1[0]) == certified(bit));
+    (void)__obelisk_eval_kernel_promotion_ready_v1(0);
+    assert(bool(__obelisk_eval_kernel_promotion_latched_v1[0]) ==
+           !certified(bit));
     assert(__obelisk_eval_kernel_promotion_ready_v1(0) == !certified(bit));
     assert(std::memcmp(before, __obelisk_state_unknown, 9) == 0);
     if (!certified(bit)) {
@@ -91,20 +91,20 @@ int main() {
     setBit(__obelisk_state_unknown, 35, true);
     setBit(__obelisk_state_value, 35, z);
     __obelisk_eval_promotion_invalidate_range_v1(35, 1);
-    __obelisk_eval_route_promotion_scan_v1();
-    assert(!__obelisk_eval_selected_variant_v1_0);
+    (void)__obelisk_eval_kernel_promotion_ready_v1(0);
+    assert(!__obelisk_eval_kernel_promotion_latched_v1[0]);
     __obelisk_eval_step_four_state_fallback_v1 = 0;
     assert(execute(nullptr) == 0);
     assert(__obelisk_eval_step_four_state_fallback_v1);
     assert(__obelisk_state_unknown[8] & 1);
     setBit(__obelisk_state_unknown, 35, false);
     __obelisk_eval_promotion_recheck_range_v1(35, 1);
-    __obelisk_eval_route_promotion_scan_v1();
-    assert(!__obelisk_eval_selected_variant_v1_0);
+    (void)__obelisk_eval_kernel_promotion_ready_v1(0);
+    assert(!__obelisk_eval_kernel_promotion_latched_v1[0]);
     assert(execute(nullptr) == 0);
     assert((__obelisk_state_unknown[8] & 7) == 0);
-    __obelisk_eval_route_promotion_scan_v1();
-    assert(__obelisk_eval_selected_variant_v1_0);
+    (void)__obelisk_eval_kernel_promotion_ready_v1(0);
+    assert(__obelisk_eval_kernel_promotion_latched_v1[0]);
     assert(__obelisk_eval_kernel_promotion_ready_v1(0));
   }
   std::puts("access footprint promotion passed");

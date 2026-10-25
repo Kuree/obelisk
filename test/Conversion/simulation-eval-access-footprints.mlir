@@ -1,6 +1,8 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
-// RUN: FileCheck %s < %t.mlir
+// RUN: FileCheck %s --implicit-check-not=__obelisk_eval_selected_variant_v1_ < %t.mlir
 
+// The function route shares its exact owner certificate (LRM 6.3.1, 6.8);
+// it must not create another selector or reverse-index dependency.
 // Only off-diagonal matrix elements are reachable. The whole-array guard
 // must exclude the uninitialized diagonal while retaining the output root, so
 // an X/Z store to the diagonal does not unpromote the kernel. Stores publish
@@ -92,7 +94,7 @@ module attributes {
   }
 }
 // CHECK-DAG: llvm.func @lane.__obelisk_eval_body_0.__obelisk_two_state_0
-// CHECK-DAG: llvm.mlir.global internal @__obelisk_eval_selected_variant_v1_0
+// CHECK-DAG: llvm.mlir.global internal @__obelisk_eval_kernel_promotion_latched_v1
 // Matrix is at bit 32. Its reached relative intervals are [3,12), [15,24).
 // Output [64,67) remains required, including its unknown-plane store contract.
 // CHECK-DAG: schedule.eval.local_promotion_ranges = array<i64: 35, 9, 47, 9, 64, 3>

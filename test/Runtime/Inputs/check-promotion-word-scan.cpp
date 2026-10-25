@@ -12,11 +12,8 @@
 
 extern "C" {
 extern uint8_t __obelisk_state_unknown[];
-extern uint8_t __obelisk_eval_selected_variant_v1_0;
-extern uint8_t __obelisk_eval_selected_variant_v1_1;
 extern uint8_t __obelisk_eval_kernel_promotion_latched_v1[];
 extern uint64_t __obelisk_eval_promotion_pending_mask_v1[];
-extern uint64_t __obelisk_eval_route_promotion_pending_v1[];
 extern uint8_t __obelisk_eval_promotion_latched_v1;
 extern uint8_t __obelisk_eval_step_four_state_fallback_v1;
 extern uint64_t __obelisk_eval_fast_nba_roots_v1[];
@@ -34,8 +31,12 @@ void executeOtherFourStateWork(void *) asm(
     OBELISK_TEST_SYMBOL("other_work.__obelisk_eval_body_0"));
 void __obelisk_eval_promotion_invalidate_mask_v1(uint64_t, uint64_t);
 bool __obelisk_eval_kernel_promotion_ready_v1(uint64_t);
-void __obelisk_eval_route_promotion_scan_v1();
 void __obelisk_eval_promotion_invalidate_range_v1(uint64_t, uint64_t);
+}
+
+static void refreshProofs() {
+  (void)__obelisk_eval_kernel_promotion_ready_v1(0);
+  (void)__obelisk_eval_kernel_promotion_ready_v1(1);
 }
 
 static bool certified(unsigned bit) {
@@ -50,26 +51,25 @@ int main() {
   constexpr unsigned bytes = (bits + 16) / 8;
   std::memset(__obelisk_state_unknown, 0, bytes);
   __obelisk_eval_promotion_recheck_range_v1(0, bytes * 8);
-  __obelisk_eval_route_promotion_scan_v1();
-  auto known = __obelisk_eval_selected_variant_v1_0;
-  auto otherKnown = __obelisk_eval_selected_variant_v1_1;
+  refreshProofs();
+  auto known = __obelisk_eval_kernel_promotion_latched_v1[1];
+  auto otherKnown = __obelisk_eval_kernel_promotion_latched_v1[0];
   assert(known && otherKnown);
   // Exercise the emitted reverse index through its real runtime helper.
   // Every certified bit invalidates this route, while holes and partial-byte
   // neighbors preserve it. Invalidation must never alter canonical X/Z state.
   for (unsigned bit = 0; bit != bits; ++bit) {
-    __obelisk_eval_route_promotion_scan_v1();
-    assert(__obelisk_eval_selected_variant_v1_0 == known);
-    assert(__obelisk_eval_selected_variant_v1_1 == otherKnown);
+    refreshProofs();
+    assert(__obelisk_eval_kernel_promotion_latched_v1[1] == known);
+    assert(__obelisk_eval_kernel_promotion_latched_v1[0] == otherKnown);
     assert(__obelisk_eval_kernel_promotion_ready_v1(0));
     assert(__obelisk_eval_kernel_promotion_ready_v1(1));
     assert(__obelisk_eval_promotion_pending_mask_v1[0] == 0);
     __obelisk_eval_promotion_invalidate_range_v1(bit, 1);
-    assert(__obelisk_eval_route_promotion_pending_v1[0] ==
-           (unsigned(certified(bit)) | (unsigned(bit >= 400) << 1)));
-    assert((__obelisk_eval_selected_variant_v1_0 != known) == certified(bit));
+    assert((__obelisk_eval_kernel_promotion_latched_v1[1] != known) ==
+           certified(bit));
     bool otherAffected = bit >= 400;
-    assert((__obelisk_eval_selected_variant_v1_1 != otherKnown) ==
+    assert((__obelisk_eval_kernel_promotion_latched_v1[0] != otherKnown) ==
            otherAffected);
     assert(__obelisk_eval_kernel_promotion_latched_v1[0] == !otherAffected);
     assert(__obelisk_eval_kernel_promotion_latched_v1[1] == !certified(bit));
@@ -78,15 +78,16 @@ int main() {
     for (unsigned byte = 0; byte != bytes; ++byte)
       assert(__obelisk_state_unknown[byte] == 0);
   }
-  __obelisk_eval_route_promotion_scan_v1();
+  refreshProofs();
   auto check = [&] {
     bool expectedKnown = true;
     for (unsigned bit = 0; bit != bits; ++bit)
       if (certified(bit) &&
           (__obelisk_state_unknown[bit / 8] & (1u << (bit % 8))))
         expectedKnown = false;
-    __obelisk_eval_route_promotion_scan_v1();
-    assert((__obelisk_eval_selected_variant_v1_0 == known) == expectedKnown);
+    refreshProofs();
+    assert((__obelisk_eval_kernel_promotion_latched_v1[1] == known) ==
+           expectedKnown);
     bool otherExpectedKnown = true;
     for (unsigned bit = 400; bit != bits; ++bit)
       if (__obelisk_state_unknown[bit / 8] & (1u << (bit % 8)))
@@ -183,54 +184,49 @@ int main() {
   std::memset(__obelisk_state_unknown, 0, bytes);
   __obelisk_eval_promotion_recheck_range_v1(0, bytes * 8);
   auto promote = [&] {
-    __obelisk_eval_route_promotion_scan_v1();
+    refreshProofs();
     assert(__obelisk_eval_kernel_promotion_ready_v1(0));
     assert(__obelisk_eval_kernel_promotion_ready_v1(1));
   };
   promote();
   executeFourStateWork(nullptr);
-  assert((__obelisk_eval_route_promotion_pending_v1[0] != 0) == 0);
   assert(__obelisk_eval_promotion_pending_mask_v1[0] == 0);
   __obelisk_state_unknown[11 / 8] |= 1u << (11 % 8);
   __obelisk_eval_promotion_invalidate_range_v1(11, 1);
-  __obelisk_eval_route_promotion_scan_v1();
-  assert((__obelisk_eval_route_promotion_pending_v1[0] != 0) == 0);
+  refreshProofs();
   executeFourStateWork(nullptr);
   assert(__obelisk_state_unknown[168 / 8] & 1);
-  assert((__obelisk_eval_route_promotion_pending_v1[0] != 0) == 1);
-  assert(__obelisk_eval_selected_variant_v1_1 == otherKnown);
+  assert(__obelisk_eval_kernel_promotion_latched_v1[0] == otherKnown);
   assert(__obelisk_eval_kernel_promotion_latched_v1[0] == 1);
-  __obelisk_eval_route_promotion_scan_v1();
+  refreshProofs();
   executeFourStateWork(nullptr);
-  assert((__obelisk_eval_route_promotion_pending_v1[0] != 0) == 0);
   __obelisk_state_unknown[11 / 8] = 0;
   __obelisk_eval_promotion_invalidate_range_v1(11, 1);
-  __obelisk_eval_route_promotion_scan_v1();
+  refreshProofs();
   executeFourStateWork(nullptr);
   assert(__obelisk_state_unknown[168 / 8] == 0);
-  assert((__obelisk_eval_route_promotion_pending_v1[0] != 0) == 1);
   promote();
-  assert(__obelisk_eval_selected_variant_v1_0 == known);
+  assert(__obelisk_eval_kernel_promotion_latched_v1[1] == known);
 
   // Recovery preserves positive aggregate certificates; only a subsequent
   // loss may clear them. Their inputs are known at this test boundary.
   __obelisk_eval_promotion_latched_v1 = 1;
   __obelisk_eval_promotion_recheck_range_v1(11, 1);
   assert(__obelisk_eval_promotion_latched_v1 == 1);
-  assert(__obelisk_eval_selected_variant_v1_0 == known);
-  assert(__obelisk_eval_selected_variant_v1_1 == otherKnown);
+  assert(__obelisk_eval_kernel_promotion_latched_v1[1] == known);
+  assert(__obelisk_eval_kernel_promotion_latched_v1[0] == otherKnown);
 
   // A sparse word must not expand to a bounding interval: bit 384 is a gap,
   // bit 400 belongs only to the second proof. Also exercise a complete run
   // of 64 bits, whose length must never become an undefined shift by 64.
   __obelisk_eval_promotion_invalidate_mask_v1(356, (uint64_t{1} << 28) |
                                                        (uint64_t{1} << 44));
-  assert(__obelisk_eval_selected_variant_v1_0 == known);
-  assert(__obelisk_eval_selected_variant_v1_1 != otherKnown);
+  assert(__obelisk_eval_kernel_promotion_latched_v1[1] == known);
+  assert(__obelisk_eval_kernel_promotion_latched_v1[0] != otherKnown);
   promote();
   __obelisk_eval_promotion_invalidate_mask_v1(320, UINT64_MAX);
-  assert(__obelisk_eval_selected_variant_v1_0 != known);
-  assert(__obelisk_eval_selected_variant_v1_1 == otherKnown);
+  assert(__obelisk_eval_kernel_promotion_latched_v1[1] != known);
+  assert(__obelisk_eval_kernel_promotion_latched_v1[0] == otherKnown);
   // NBA destination proofs are distinct, even if a source kernel's proof is
   // already false. Root ordering is private; exactly one of two bits must
   // survive each disjoint destination write, including a partial-byte write.
@@ -255,35 +251,44 @@ int main() {
   assert(remainingRoot == 1 || remainingRoot == 2);
   executeFourStateWork(nullptr);
   assert(__obelisk_state_unknown[432 / 8] == 0x81);
-  assert(__obelisk_eval_selected_variant_v1_1 == otherKnown);
+  assert(__obelisk_eval_kernel_promotion_latched_v1[0] == otherKnown);
   assert(__obelisk_eval_kernel_promotion_latched_v1[0] == 1);
   assert(__obelisk_eval_four_state_nba_handoff_v1(nullptr, nullptr, nullptr) ==
          0);
   assert(__obelisk_state_unknown[432 / 8] == 0);
   assert(__obelisk_eval_fast_nba_roots_v1[0] == remainingRoot);
-  assert(__obelisk_eval_selected_variant_v1_1 == otherKnown);
+  assert(__obelisk_eval_kernel_promotion_latched_v1[0] == otherKnown);
   assert(__obelisk_eval_kernel_promotion_latched_v1[0] == 1);
   // Only the NBA destination changed; neither activation reads it.
-  assert(__obelisk_eval_route_promotion_pending_v1[0] == 0);
-  // Enter through the actual four-state route wrapper with known inputs.
-  // Conservative route invalidation does not mean an NBA destination changed.
-  // Record staged four-state provenance without discarding either root proof.
+  // A route uses the shared proof on demand. Invalidating a known input
+  // must refresh the certificate without executing the scheduled owner.
   promote();
   __obelisk_eval_promotion_invalidate_range_v1(11, 1);
-  auto fallback = __obelisk_eval_selected_variant_v1_0;
-  assert(fallback != known);
+  assert(__obelisk_eval_kernel_promotion_latched_v1[1] != known);
   __obelisk_eval_fast_nba_roots_v1[0] = 3;
   __obelisk_eval_step_four_state_fallback_v1 = 0;
   assert(executeSelectedWork(nullptr) == 0);
+  assert(__obelisk_eval_step_four_state_fallback_v1 == 0);
+  assert(__obelisk_eval_kernel_promotion_latched_v1[1] == known);
+  // An actual X must still choose the four-state body. Its constant NBA
+  // payload remains known even though the activation input is not.
+  __obelisk_state_unknown[11 / 8] |= 1u << (11 % 8);
+  __obelisk_eval_promotion_invalidate_range_v1(11, 1);
+  assert(executeSelectedWork(nullptr) == 0);
   assert(__obelisk_eval_step_four_state_fallback_v1 == 1);
   assert(__obelisk_eval_fast_nba_roots_v1[0] == 3);
-  assert(__obelisk_eval_selected_variant_v1_1 == otherKnown);
+  assert(__obelisk_eval_kernel_promotion_latched_v1[0] == otherKnown);
   // IEEE 1800-2023 6.3.1: four-state payloads can be known. The same proof
   // survives the barrier even when every root has four-state provenance.
   __obelisk_eval_step_four_state_nba_roots_v1[0] = 3;
   assert(__obelisk_eval_four_state_nba_handoff_v1(nullptr, nullptr, nullptr) ==
          0);
   assert(__obelisk_eval_fast_nba_roots_v1[0] == 3);
+  __obelisk_state_unknown[11 / 8] = 0;
+  __obelisk_eval_promotion_recheck_range_v1(11, 1);
+  executeFourStateWork(nullptr);
+  assert(__obelisk_eval_four_state_nba_handoff_v1(nullptr, nullptr, nullptr) ==
+         0);
   // IEEE 1800-2023 4.9.4, 10.4.2: staging X preserves the destination until
   // the NBA region. The commit revokes its proof and preserves the other root.
   __obelisk_state_unknown[400 / 8] = 0x81;
@@ -316,28 +321,20 @@ int main() {
   assert(executeTrustedWork(nullptr) == 0);
   assert(__obelisk_eval_step_four_state_fallback_v1 == 0);
   assert(__obelisk_eval_fast_nba_roots_v1[0] == 3);
-  // A failed proof is consumed once. Changing its bytes without reporting a
-  // mutation must not silently rescan it when an unrelated route is queued.
-  // Reporting recovery then queues exactly that failed route, not its peer.
-  __obelisk_eval_route_promotion_scan_v1();
+  // Querying an unrelated owner must not refresh this failed proof. The
+  // exact owner query rechecks its negative hint and sees recovery.
+  refreshProofs();
   __obelisk_state_unknown[11 / 8] |= 1u << (11 % 8);
   __obelisk_eval_promotion_invalidate_range_v1(11, 1);
-  assert(__obelisk_eval_route_promotion_pending_v1[0] == 1);
-  __obelisk_eval_route_promotion_scan_v1();
-  assert(__obelisk_eval_selected_variant_v1_0 != known);
-  assert(__obelisk_eval_route_promotion_pending_v1[0] == 0);
+  assert(!__obelisk_eval_kernel_promotion_ready_v1(1));
+  assert(__obelisk_eval_promotion_pending_mask_v1[0] == 2);
   __obelisk_state_unknown[11 / 8] = 0;
   __obelisk_eval_promotion_invalidate_range_v1(400, 1);
-  assert(__obelisk_eval_route_promotion_pending_v1[0] == 2);
-  __obelisk_eval_route_promotion_scan_v1();
-  assert(__obelisk_eval_selected_variant_v1_0 != known);
-  assert(__obelisk_eval_selected_variant_v1_1 == otherKnown);
+  assert(__obelisk_eval_kernel_promotion_ready_v1(0));
+  assert(__obelisk_eval_kernel_promotion_latched_v1[1] != known);
+  assert(__obelisk_eval_promotion_pending_mask_v1[0] == 2);
   __obelisk_eval_promotion_recheck_range_v1(11, 1);
-  assert(__obelisk_eval_route_promotion_pending_v1[0] == 1);
-  __obelisk_eval_route_promotion_scan_v1();
-  assert(__obelisk_eval_selected_variant_v1_0 == known);
-  assert(__obelisk_eval_route_promotion_pending_v1[0] == 0);
-  __obelisk_eval_promotion_recheck_range_v1(400, 1);
-  assert(__obelisk_eval_route_promotion_pending_v1[0] == 0);
+  assert(__obelisk_eval_kernel_promotion_ready_v1(1));
+  assert(__obelisk_eval_promotion_pending_mask_v1[0] == 0);
   std::puts("promotion word scans passed");
 }

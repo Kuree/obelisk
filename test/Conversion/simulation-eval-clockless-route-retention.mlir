@@ -1,13 +1,13 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
 // RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | diff %t.mlir -
-// RUN: FileCheck %s --implicit-check-not=__obelisk_periodic_clock_plan_v1 --implicit-check-not=__obelisk_eval_function_route_v1_ --implicit-check-not=__obelisk_eval_variant_dispatch_v1_ < %t.mlir
+// RUN: FileCheck %s --implicit-check-not=__obelisk_eval_selected_variant_v1_ --implicit-check-not=__obelisk_periodic_clock_plan_v1 --implicit-check-not=__obelisk_eval_function_route_v1_ --implicit-check-not=__obelisk_eval_variant_dispatch_v1_ < %t.mlir
 
 // The design of simulation-periodic-reset-publication.mlir with unequal clock
 // phases, which keep the clockless event-driven wrapper instead of a periodic
 // plan. That hot wrapper must not reseed variant selectors or pending proofs
 // either; the plan-installation invalidator remains responsible for fresh
 // executions. Function routes need no generated variant dispatch.
-// CHECK-DAG: llvm.mlir.global internal @__obelisk_eval_selected_variant_v1_0
+// CHECK-DAG: llvm.mlir.global internal @__obelisk_eval_kernel_promotion_latched_v1
 // CHECK-DAG: llvm.mlir.global internal @__obelisk_eval_route_promotion_pending_v1
 // CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
 // CHECK-NOT: @__obelisk_eval_selected_variant_v1_

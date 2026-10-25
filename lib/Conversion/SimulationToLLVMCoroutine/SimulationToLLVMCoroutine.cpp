@@ -2320,6 +2320,32 @@ LogicalResult NativePipelineAnalysis::materialize() {
 
 } // namespace detail
 namespace {
+/// Canonical physical coverage, retaining gaps and partial boundary bits.
+/// Both kinds of promotion certificate describe only unknown-plane reads.
+DenseI64ArrayAttr canonicalPromotionCoverage(DenseI64ArrayAttr ranges) {
+  auto encoded = ranges.asArrayRef();
+  if (encoded.size() % 2)
+    return {};
+  SmallVector<std::pair<int64_t, int64_t>> intervals;
+  for (size_t index = 0; index < encoded.size(); index += 2) {
+    int64_t begin = encoded[index], width = encoded[index + 1];
+    if (begin < 0 || width <= 0 || width > INT64_MAX - begin)
+      return {};
+    intervals.emplace_back(begin, begin + width);
+  }
+  llvm::sort(intervals);
+  SmallVector<int64_t> merged;
+  for (auto [begin, end] : intervals) {
+    if (!merged.empty() && begin <= merged[merged.size() - 2] + merged.back())
+      merged.back() = std::max(merged.back(), end - merged[merged.size() - 2]);
+    else {
+      merged.push_back(begin);
+      merged.push_back(end - begin);
+    }
+  }
+  return DenseI64ArrayAttr::get(ranges.getContext(), merged);
+}
+
 LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   // Variants are prepared before the final coordinator eligibility proof.
   // A declined plan has no generated callers or same-slot resume target.
@@ -2396,6 +2422,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     std::string dispatcherName;
     std::string fourStateFallbackName;
     std::string checkpointBodyName;
+    std::optional<uint64_t> sharedKernel;
+    uint64_t pendingBit = 0;
   };
   SmallVector<Route, 0> routes;
   bool routeError = false;
@@ -2470,7 +2498,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
          (Twine("__obelisk_eval_four_state_fallback_v1_") + Twine(routeIndex))
              .str(),
          (Twine("__obelisk_eval_checkpoint_body_v1_") + Twine(routeIndex))
-             .str()});
+             .str(),
+         {}});
   });
   if (routeError)
     return failure();
@@ -2520,12 +2549,65 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       "__obelisk_eval_route_promotion_scan_v1";
   constexpr StringLiteral routePromotionBoundaryName =
       "__obelisk_eval_route_promotion_boundary_v1";
-  const uint64_t routeWordCount = (routes.size() + 63) / 64;
   auto hasPersistentSelector = [](const Route &route) {
     return !route.pathKnownProbe ||
            (route.independentEntry &&
             ::obelisk::schedule::has<schedule::Field::EvalInfallible>(
                 route.twoState));
+  };
+  // IEEE 1800-2023 6.3.1, 6.8: knownness depends on these exact physical
+  // bits, not the identity of the consumer. Share an existing owner proof
+  // only when its complete coverage equals the route's coverage. The owner
+  // already revokes its latch at every X/Z publication, including VPI writes
+  // (38.34).
+  // Readiness performs a fresh scan if necessary, so a route may use this
+  // proof before the corresponding scheduled owner has ever executed.
+  DenseMap<Attribute, uint64_t> kernelProofs;
+  if (auto latches = inputSymbols.lookup<LLVM::GlobalOp>(
+          "__obelisk_eval_kernel_promotion_latched_v1"))
+    if (auto dependencies = ::obelisk::schedule::get<
+            ::obelisk::schedule::Field::EvalKernelProofDependencies>(latches))
+      for (Attribute attr : dependencies) {
+        auto dependency = cast<schedule::KernelProofDependencyAttr>(attr);
+        if (auto coverage = canonicalPromotionCoverage(dependency.getRanges()))
+          kernelProofs.try_emplace(coverage, dependency.getLatch().getUInt());
+      }
+  SmallVector<Route *> independentRoutes;
+  size_t sharedCount = 0;
+  for (Route &route : routes) {
+    if (!hasPersistentSelector(route))
+      continue;
+    auto coverage = canonicalPromotionCoverage(route.ranges);
+    auto found = coverage ? kernelProofs.find(coverage) : kernelProofs.end();
+    if (found != kernelProofs.end()) {
+      route.sharedKernel = found->second;
+      ++sharedCount;
+    } else {
+      route.pendingBit = independentRoutes.size();
+      independentRoutes.push_back(&route);
+    }
+  }
+  auto hasIndependentSelector = [&](const Route &route) {
+    return hasPersistentSelector(route) && !route.sharedKernel;
+  };
+  if (native::has<native::DebugTiming>(module))
+    llvm::errs() << "obelisk eval proof sharing: shared=" << sharedCount
+                 << " independent=" << independentRoutes.size() << '\n';
+  const uint64_t routeWordCount =
+      std::max<uint64_t>(1, (independentRoutes.size() + 63) / 64);
+  auto routeKnown = [&](OpBuilder &b, Location loc,
+                        const Route &route) -> Value {
+    if (route.sharedKernel)
+      return LLVM::CallOp::create(b, loc, TypeRange{b.getI1Type()},
+                                  detail::kernelPromotionReadyName,
+                                  ValueRange{detail::llvmConstant(
+                                      b, loc, i64, *route.sharedKernel)})
+          .getResult();
+    Value selected = LLVM::LoadOp::create(
+        b, loc, i8,
+        LLVM::AddressOfOp::create(b, loc, pointer, route.selectorName), 1);
+    return LLVM::ICmpOp::create(b, loc, LLVM::ICmpPredicate::ne, selected,
+                                detail::llvmConstant(b, loc, i8, 0));
   };
   const bool needsRouteSummary = routeWordCount > 1;
   builder.setInsertionPointToStart(module.getBody());
@@ -2536,9 +2618,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
                            LLVM::Linkage::Internal, routePromotionDirtyName,
                            builder.getI8IntegerAttr(1), 1);
   SmallVector<uint64_t> initialRoutePending(routeWordCount, 0);
-  for (auto [index, route] : llvm::enumerate(routes))
-    if (hasPersistentSelector(route) &&
-        (!route.ranges.empty() || route.independentEntry))
+  for (auto [index, route] : llvm::enumerate(independentRoutes))
+    if (!route->ranges.empty() || route->independentEntry)
       initialRoutePending[index / 64] |= uint64_t{1} << (index % 64);
   auto pendingType = LLVM::LLVMArrayType::get(i64, routeWordCount);
   auto routePending = LLVM::GlobalOp::create(
@@ -2622,7 +2703,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   // Publish route symbols in source order. Checkpoint source copies and
   // source-body fracture happen here, before any worker reads those bodies.
   // Each worker then owns only the already-declared helpers for one route.
-  for (auto [routeIndex, route] : llvm::enumerate(routes)) {
+  for (Route &route : routes) {
     auto declareHelper = [&](LLVM::LLVMFuncOp source, StringRef name) {
       builder.setInsertionPointToEnd(module.getBody());
       auto helper = LLVM::LLVMFuncOp::create(builder, source.getLoc(), name,
@@ -2682,7 +2763,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       route.fourStateFallback =
           declareHelper(route.fourState, route.fourStateFallbackName);
     }
-    if (hasPersistentSelector(route)) {
+    if (hasIndependentSelector(route)) {
       builder.setInsertionPointToStart(module.getBody());
       auto global = LLVM::GlobalOp::create(
           builder, route.twoState.getLoc(), i8, false, LLVM::Linkage::Internal,
@@ -2692,9 +2773,9 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       if (!route.ranges.empty())
         ::obelisk::schedule::set<
             ::obelisk::schedule::Field::EvalRouteProofDependencies>(
-            global,
-            schedule::RouteProofDependencyAttr::get(
-                context, route.ranges, builder.getI64IntegerAttr(routeIndex)));
+            global, schedule::RouteProofDependencyAttr::get(
+                        context, route.ranges,
+                        builder.getI64IntegerAttr(route.pendingBit)));
     }
   }
 
@@ -2738,14 +2819,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
         // probe, but cannot latch this selector until their NBA has committed.
         Block *probe = new Block;
         route.dispatcher.getBody().push_back(probe);
-        Value selected = LLVM::LoadOp::create(
-            builder, route.twoState.getLoc(), i8,
-            LLVM::AddressOfOp::create(builder, route.twoState.getLoc(), pointer,
-                                      route.selectorName),
-            1);
-        Value promoted = LLVM::ICmpOp::create(
-            builder, route.twoState.getLoc(), LLVM::ICmpPredicate::ne, selected,
-            detail::llvmConstant(builder, route.twoState.getLoc(), i8, 0));
+        Value promoted = routeKnown(builder, route.twoState.getLoc(), route);
         LLVM::CondBrOp::create(builder, route.twoState.getLoc(), promoted,
                                known, probe);
         builder.setInsertionPointToStart(probe);
@@ -3167,22 +3241,24 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   routePromotionScan->setAttr(
       "passthrough", builder.getArrayAttr({builder.getStringAttr("noinline"),
                                            builder.getStringAttr("cold")}));
-  uint64_t directScanCost = 16 * routes.size();
-  for (const auto &route : routes) {
-    auto encoded = route.ranges.asArrayRef();
+  uint64_t directScanCost = 16 * independentRoutes.size();
+  for (const auto *route : independentRoutes) {
+    auto encoded = route->ranges.asArrayRef();
     for (size_t i = 0; i < encoded.size(); i += 2)
       directScanCost += 8 + 4 * ((encoded[i] % 8 + encoded[i + 1] + 7) / 8);
   }
   // Cost includes pointer-table initialization as well as the shared loop.
   // Small proof sets keep direct scans; large ranges never expand per byte.
-  if (directScanCost > 256 + 9 * routes.size()) {
+  if (independentRoutes.empty()) {
+    builder.setInsertionPointToStart(routePromotionScan.addEntryBlock(builder));
+    LLVM::ReturnOp::create(builder, module.getLoc(), ValueRange{});
+  } else if (directScanCost > 256 + 9 * independentRoutes.size()) {
     SmallVector<detail::NativeRoutePromotion> compact;
-    for (const auto &route : routes) {
+    for (const auto *route : independentRoutes) {
       detail::NativeRoutePromotion record;
-      if (hasPersistentSelector(route) &&
-          (!route.ranges.empty() || route.independentEntry)) {
-        record.selector = route.selectorName;
-        auto encoded = route.ranges.asArrayRef();
+      if (!route->ranges.empty() || route->independentEntry) {
+        record.selector = route->selectorName;
+        auto encoded = route->ranges.asArrayRef();
         for (size_t i = 0; i < encoded.size(); i += 2)
           record.ranges.push_back(
               {uint64_t(encoded[i]), uint64_t(encoded[i + 1])});
@@ -3245,11 +3321,11 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       LLVM::StoreOp::create(builder, location,
                             detail::llvmConstant(builder, location, i64, 0),
                             address, 8);
-      uint64_t end = std::min<uint64_t>(routes.size(), (word + 1) * 64);
+      uint64_t end =
+          std::min<uint64_t>(independentRoutes.size(), (word + 1) * 64);
       for (uint64_t index = word * 64; index != end; ++index) {
-        Route &route = routes[index];
-        if (!hasPersistentSelector(route) ||
-            (route.ranges.empty() && !route.independentEntry))
+        Route &route = *independentRoutes[index];
+        if (route.ranges.empty() && !route.independentEntry)
           continue;
         Block *scan = new Block, *nextRoute = new Block;
         fragment.push_back(scan);
@@ -3419,7 +3495,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
                                       routePromotionDirtyName),
             1);
       for (Route &route : routes) {
-        if (!hasPersistentSelector(route))
+        if (!hasIndependentSelector(route))
           continue;
         LLVM::StoreOp::create(
             builder, returnOp.getLoc(),
@@ -3593,14 +3669,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     Block *twoState = builder.createBlock(continuation);
     Block *fourState = builder.createBlock(continuation);
     builder.setInsertionPointToEnd(entry);
-    Value selected = LLVM::LoadOp::create(
-        builder, location, i8,
-        LLVM::AddressOfOp::create(builder, location, pointer,
-                                  route.selectorName),
-        1);
-    Value known = LLVM::ICmpOp::create(
-        builder, location, LLVM::ICmpPredicate::ne, selected,
-        detail::llvmConstant(builder, location, i8, 0));
+    Value known = routeKnown(builder, location, route);
     LLVM::CondBrOp::create(builder, location, known, twoState, fourState);
     auto emitCall = [&](Block *block, LLVM::LLVMFuncOp callee) {
       builder.setInsertionPointToStart(block);
