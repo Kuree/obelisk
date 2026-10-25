@@ -1,12 +1,12 @@
 // RUN: obelisk -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s -o %t.ll 2> %t.diag
 // RUN: FileCheck %s --check-prefix=PROOF < %t.diag
-// RUN: FileCheck %s --check-prefix=IR < %t.ll
+// RUN: FileCheck %s --check-prefix=IR --implicit-check-not='call i32 @obelisk_rt_v1_scheduler_execute_aot_actor' --implicit-check-not='call i32 @obelisk_rt_v1_scheduler_packed_slice_nba' < %t.ll
 // RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
 // RUN: %t.auto | FileCheck %s --check-prefix=OUTPUT
 
-// An ordered NBA owner checkpoints to the runtime while other actors remain
-// in the generated eval island. IEEE 1800-2023 4.6(b), 9.4.2 and 10.4.2:
-// preserve the intermediate edges as well as the final value.
+// The generated ordered queue owns repeated writes, including a bounded
+// dynamic packed slice. IEEE 1800-2023 4.6(b), 9.4.2 and 10.4.2: preserve
+// the intermediate edges as well as the final value without a checkpoint.
 module native_partial_auto_fallback_ordered_nba;
   logic clk = 0;
   logic [127:0] wide = 0;
@@ -37,8 +37,10 @@ module native_partial_auto_fallback_ordered_nba;
   end
 endmodule
 
-// PROOF: ordered NBA boundary:
+// PROOF-NOT: ordered NBA boundary:
+// PROOF: obelisk fusion planning:
+// PROOF-NOT: ordered NBA boundary:
 // PROOF-NOT: partial eval disabled
-// IR: call i32 @obelisk_rt_v1_scheduler_execute_aot_actor
+// IR: @__obelisk_eval_ordered_nba_queue_v1 = internal global
 // IR: define {{.*}}i32 @__obelisk_eval_dispatch_v1
 // OUTPUT: ordered low=4f500000 high=4 low_edges=4 upper_edges=2

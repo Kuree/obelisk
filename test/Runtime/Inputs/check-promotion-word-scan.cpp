@@ -20,6 +20,7 @@ extern uint64_t __obelisk_eval_route_promotion_pending_v1[];
 extern uint8_t __obelisk_eval_promotion_latched_v1;
 extern uint8_t __obelisk_eval_step_four_state_fallback_v1;
 extern uint64_t __obelisk_eval_fast_nba_roots_v1[];
+extern uint64_t __obelisk_eval_step_four_state_nba_roots_v1[];
 int __obelisk_eval_four_state_nba_handoff_v1(void *, void *, void *);
 void __obelisk_eval_promotion_recheck_range_v1(uint64_t, uint64_t);
 int executeSelectedWork(void *) asm(
@@ -29,6 +30,8 @@ int executeTrustedWork(void *) asm(
                         "execute.two_state.__obelisk_trusted"));
 void executeFourStateWork(void *) asm(
     OBELISK_TEST_SYMBOL("work.__obelisk_eval_body_0"));
+void executeOtherFourStateWork(void *) asm(
+    OBELISK_TEST_SYMBOL("other_work.__obelisk_eval_body_0"));
 void __obelisk_eval_promotion_invalidate_mask_v1(uint64_t, uint64_t);
 bool __obelisk_eval_kernel_promotion_ready_v1(uint64_t);
 void __obelisk_eval_route_promotion_scan_v1();
@@ -263,6 +266,32 @@ int main() {
   assert(__obelisk_eval_step_four_state_fallback_v1 == 1);
   assert(__obelisk_eval_fast_nba_roots_v1[0] == 3);
   assert(__obelisk_eval_selected_variant_v1_1 == otherKnown);
+  // IEEE 1800-2023 6.3.1: four-state payloads can be known. The same proof
+  // survives the barrier even when every root has four-state provenance.
+  __obelisk_eval_step_four_state_nba_roots_v1[0] = 3;
+  assert(__obelisk_eval_four_state_nba_handoff_v1(nullptr, nullptr, nullptr) ==
+         0);
+  assert(__obelisk_eval_fast_nba_roots_v1[0] == 3);
+  // IEEE 1800-2023 4.9.4, 10.4.2: staging X preserves the destination until
+  // the NBA region. The commit revokes its proof and preserves the other root.
+  __obelisk_state_unknown[400 / 8] = 0x81;
+  __obelisk_eval_promotion_invalidate_range_v1(400, 8);
+  executeOtherFourStateWork(nullptr);
+  assert(__obelisk_state_unknown[440 / 8] == 0);
+  assert(__obelisk_eval_fast_nba_roots_v1[0] == 3);
+  assert(__obelisk_eval_four_state_nba_handoff_v1(nullptr, nullptr, nullptr) ==
+         0);
+  assert(__obelisk_state_unknown[440 / 8] == 0x81);
+  uint64_t preservedRoot = __obelisk_eval_fast_nba_roots_v1[0];
+  assert(preservedRoot == 1 || preservedRoot == 2);
+  __obelisk_state_unknown[400 / 8] = 0;
+  __obelisk_eval_promotion_recheck_range_v1(400, 8);
+  executeOtherFourStateWork(nullptr);
+  assert(__obelisk_eval_four_state_nba_handoff_v1(nullptr, nullptr, nullptr) ==
+         0);
+  assert(__obelisk_state_unknown[440 / 8] == 0);
+  assert(__obelisk_eval_fast_nba_roots_v1[0] == preservedRoot);
+  __obelisk_eval_fast_nba_roots_v1[0] = 3;
   // The same direct selector enters the promoted branch after recovery,
   // without recording four-state provenance or resetting destination proofs.
   promote();

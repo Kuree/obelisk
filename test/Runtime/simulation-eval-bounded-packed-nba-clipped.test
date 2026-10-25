@@ -1,0 +1,26 @@
+// RUN: obelisk-opt %S/../Conversion/simulation-eval-bounded-packed-nba.mlir --pass-pipeline='builtin.module(test-obelisk-edit-attributes{has=test.byte_stride operand=1 constant="9 : i64"},test-obelisk-edit-attributes{has=test.loop_limit operand=1 constant="9 : i64"},test-obelisk-edit-attributes{op=simulation.bytes.constant set={value = "words %b %b"}},simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines,materialize-runtime-byte-globals)' | obelisk-translate --mlir-to-llvmir -o %t.UPPER.ll
+// RUN: opt %t.UPPER.ll -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' -S -o %t.UPPER.opt.ll
+// RUN: %target_cxx -O3 %t.UPPER.opt.ll %runtime_link_flags -o %t.UPPER.exe && %t.UPPER.exe | FileCheck %s --check-prefix=UPPER
+// RUN: obelisk-opt %S/../Conversion/simulation-eval-bounded-packed-nba.mlir --pass-pipeline='builtin.module(test-obelisk-edit-attributes{has=test.byte_stride operand=1 constant="-1 : i64"},test-obelisk-edit-attributes{has=test.loop_limit operand=1 constant="9 : i64"},test-obelisk-edit-attributes{op=simulation.bytes.constant set={value = "words %b %b"}},simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines,materialize-runtime-byte-globals)' | obelisk-translate --mlir-to-llvmir -o %t.LOWER.ll
+// RUN: opt %t.LOWER.ll -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' -S -o %t.LOWER.opt.ll
+// RUN: %target_cxx -O3 %t.LOWER.opt.ll %runtime_link_flags -o %t.LOWER.exe && %t.LOWER.exe | FileCheck %s --check-prefix=LOWER
+
+// IEEE 1800-2023 11.5.1: clip to the selected 64-bit parent at both
+// boundaries; a wholly out-of-range write has no effect. Neither the next
+// nor previous array element may be overwritten. Keep invalid array indices
+// inert (7.4.5) and preserve payload X/Z (6.3.1) and repeated NBA order
+// (4.6(b), 4.9.4). A nine-iteration loop includes a fully invalid select.
+
+// UPPER: words 1x10100101x10100101x10100101x10100101x10100101x10100101x10100101 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+// UPPER-NEXT: words 1x10100101x10100101x10100101x10100101x10100101x10100101x10100101 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+// UPPER-NEXT: words 1x10100101x10100101x10100101x10100101x10100101x10100101x10100101 zxzzzzzzzzxzzzzzzzzxzzzzzzzzxzzzzzzzzxzzzzzzzzxzzzzzzzzxzzzzzzzz
+// UPPER-NEXT: words 1x10100101x10100101x10100101x10100101x10100101x10100101x10100101 zxzzzzzzzzxzzzzzzzzxzzzzzzzzxzzzzzzzzxzzzzzzzzxzzzzzzzzxzzzzzzzz
+// UPPER-NEXT: words 1x10100101x10100101x10100101x10100101x10100101x10100101x10100101 zxzzzzzzzzxzzzzzzzzxzzzzzzzzxzzzzzzzzxzzzzzzzzxzzzzzzzzxzzzzzzzz
+// UPPER-NEXT: words xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx zxzzzzzzzzxzzzzzzzzxzzzzzzzzxzzzzzzzzxzzzzzzzzxzzzzzzzzxzzzzzzzz
+
+// LOWER: words xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx11111111 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+// LOWER-NEXT: words xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx11111111 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+// LOWER-NEXT: words xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx11111111 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxzzzzzzzz
+// LOWER-NEXT: words xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx11111111 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxzzzzzzzz
+// LOWER-NEXT: words xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx11111111 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxzzzzzzzz
+// LOWER-NEXT: words xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxzzzzzzzz

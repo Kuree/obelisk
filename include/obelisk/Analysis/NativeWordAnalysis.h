@@ -10,6 +10,7 @@
 #include <optional>
 namespace obelisk::sim {
 class SimFuncOp;
+class SimRefDynExtractOp;
 }
 namespace obelisk::analysis {
 /// Dependence on one independently bounded unit-stride induction variable.
@@ -51,6 +52,11 @@ public:
   bool isReachable(mlir::Operation *op);
   std::optional<mlir::ConstantIntRanges> getRange(mlir::Operation *op,
                                                   mlir::Value value);
+  /// Every known selector addresses the complete packed slice within its
+  /// immediate parent view. Unknown selectors still require the ordinary
+  /// invalid-reference guard; this does not prove an enclosing array valid
+  /// (IEEE 1800-2023 7.4.5, 11.5.1).
+  bool containsPackedSlice(sim::SimRefDynExtractOp view);
 
 private:
   struct Impl;

@@ -543,11 +543,13 @@ public:
                            uint64_t stateBitCount,
                            const NativeStaticNBAPlan *staticPlan,
                            const NativeStateLayout *stateLayout,
-                           bool staticSitesEnabled, bool guardedClaims)
+                           bool staticSitesEnabled, bool guardedClaims,
+                           const DenseSet<Operation *> &completePackedSliceNBAs)
       : OpConversionPattern(converter, context, PatternBenefit(2)),
         stateBitCount(stateBitCount), staticPlan(staticPlan),
         stateLayout(stateLayout), staticSitesEnabled(staticSitesEnabled),
-        guardedClaims(guardedClaims) {}
+        guardedClaims(guardedClaims),
+        completePackedSliceNBAs(completePackedSliceNBAs) {}
 
   LogicalResult
   matchAndRewrite(sim::SimNBAEnqueueOp op, OneToNOpAdaptor adaptor,
@@ -559,6 +561,12 @@ public:
     auto view = op.getDestination().getDefiningOp<sim::SimRefDynExtractOp>();
     if (!view || adaptor.getValue().empty() ||
         adaptor.getDestination().size() != 1)
+      return failure();
+    // IEEE 1800-2023 11.5.1: the source range proof excludes partial overlap
+    // with this packed view. Ordinary NBA lowering retains X/Z and enclosing
+    // array guards (7.4.5), captures the target and value now (4.9.4, 10.4.2),
+    // and stages the complete payload in the AOT queue.
+    if (completePackedSliceNBAs.contains(op))
       return failure();
     std::optional<unsigned> baseWidth =
         sim::getPackedWidth(view.getInput().getType().getElementType());
@@ -1011,6 +1019,7 @@ private:
   const NativeStateLayout *stateLayout = nullptr;
   bool staticSitesEnabled = false;
   bool guardedClaims = false;
+  const DenseSet<Operation *> &completePackedSliceNBAs;
 };
 
 // Compare both canonical planes within the exact captured target. The byte
@@ -1769,7 +1778,9 @@ void populateNBAToLLVMConversionPatterns(RewritePatternSet &patterns,
                                          const NativeStaticNBAPlan *staticPlan,
                                          const NativeStateLayout *stateLayout,
                                          bool staticSitesEnabled,
-                                         bool guardedClaims, bool evalCeiling) {
+                                         bool guardedClaims, bool evalCeiling,
+                                         const DenseSet<Operation *>
+                                             &completePackedSliceNBAs) {
   patterns.add<InertialDriverConversion>(converter, patterns.getContext(),
                                          stateBitCount);
   patterns.add<InertialPathDriverConversion>(converter, patterns.getContext(),
@@ -1782,7 +1793,8 @@ void populateNBAToLLVMConversionPatterns(RewritePatternSet &patterns,
       converter, patterns.getContext(), stateBitCount);
   patterns.add<PackedSliceNBAConversion>(converter, patterns.getContext(),
                                          stateBitCount, staticPlan, stateLayout,
-                                         staticSitesEnabled, guardedClaims);
+                                         staticSitesEnabled, guardedClaims,
+                                         completePackedSliceNBAs);
   patterns.add<ImmediateNBAConversion>(
       converter, patterns.getContext(), stateBitCount, staticPlan,
       staticSitesEnabled, guardedClaims, evalCeiling);

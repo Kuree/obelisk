@@ -5220,31 +5220,12 @@ FailureOr<bool> makeNativeEvalPlan(
                                            builder.getStringAttr("cold")}));
   Block *handoffEntry = evalFourStateNBAHandoff.addEntryBlock(builder);
   builder.setInsertionPointToStart(handoffEntry);
-  if (nbaTaintWordCount != 0) {
-    Value taintBase = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                evalStepFourStateNBARootsName);
-    Value fastRootsBase = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                    evalFastNBARootsName);
-    for (uint32_t word = 0; word != nbaTaintWordCount; ++word) {
-      Value taint =
-          LLVM::LoadOp::create(builder, location, i64,
-                               byteGEP(builder, location, taintBase,
-                                       uint64_t{word} * sizeof(uint64_t)),
-                               8);
-      Value fastAddress = byteGEP(builder, location, fastRootsBase,
-                                  uint64_t{word} * sizeof(uint64_t));
-      Value fastRoots =
-          LLVM::LoadOp::create(builder, location, i64, fastAddress, 8);
-      LLVM::StoreOp::create(
-          builder, location,
-          arith::AndIOp::create(
-              builder, location, fastRoots,
-              arith::XOrIOp::create(
-                  builder, location, taint,
-                  llvmConstant(builder, location, i64, UINT64_MAX))),
-          fastAddress, 8);
-    }
-  }
+  // IEEE 1800-2023 6.3.1: four-state values also include 0 and 1, so
+  // four-state provenance does not imply a destination becomes unknown.
+  // The canonical stores publish their actual X/Z changes after value-domain
+  // cloning, including dynamic and partial writes. Those publications revoke
+  // exactly the affected destination proofs before fanout (4.5, 10.4.2).
+  // Retain positive proofs across known-to-known four-state commits.
   auto fourStateCall = LLVM::CallOp::create(
       builder, location, TypeRange{i32},
       SymbolRefAttr::get(context, nbaCommitName),

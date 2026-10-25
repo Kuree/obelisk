@@ -541,6 +541,22 @@ NativeWordRangeAnalysis::getRange(Operation *op, Value value) {
                                    : std::nullopt;
 }
 
+bool NativeWordRangeAnalysis::containsPackedSlice(sim::SimRefDynExtractOp view) {
+  // IEEE 1800-2023 11.5.1: a partial out-of-range write updates only the
+  // in-range bits. Prove containment in the immediate view, not its wider
+  // storage root, before omitting that clipping mask.
+  auto parent = sim::getPackedWidth(view.getInput().getType().getElementType());
+  auto width = sim::getPackedWidth(view.getType().getElementType());
+  if (!parent || !width || *width > *parent)
+    return false;
+  auto range = getRange(view, view.getLowBit());
+  if (!range || range->smin().isNegative())
+    return false;
+  // Compare without truncating a parent bound to a narrow selector type.
+  unsigned bits = std::max<unsigned>(64, range->smax().getBitWidth());
+  return range->smax().zextOrTrunc(bits).ule(APInt(bits, *parent - *width));
+}
+
 NativeWordAnalysis::NativeWordAnalysis(sim::SimFuncOp function,
                                        const BoundedLoop &loop,
                                        NativeWordRangeAnalysis &ranges,

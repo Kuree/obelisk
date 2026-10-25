@@ -1,4 +1,5 @@
 #include "NativePipeline.h"
+#include "obelisk/Analysis/NativeWordAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -743,9 +744,14 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
           });
       }
     }
-    // The queue record carries a dynamic bit offset, so an array element of
-    // a captured root is as addressable as a fixed slice. A packed dynamic
-    // slice still needs a generated owner for its variable width mask.
+    // A queue record carries a dynamic bit offset and a fixed payload width.
+    // A packed selection needs no clipping mask when its complete payload
+    // fits its immediate parent view. Prove this before assigning ownership;
+    // packed lowering independently rechecks it on the final function CFG
+    // (IEEE 1800-2023 11.5.1). The queue still captures each target and value
+    // at enqueue and commits repeated sites in execution order (4.9.4, 4.6(b)).
+    DenseMap<Operation *, std::unique_ptr<analysis::NativeWordRangeAnalysis>>
+        sliceRanges;
     auto fixedReference = [](Value destination) {
       while (destination) {
         if (destination.getDefiningOp<sim::SimContextStorageOp>())
@@ -789,15 +795,28 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
       // payload wider than one record is staged as consecutive 64-bit chunks
       // within the bounds of the chunk-site encoding (evalNBAChunkSite).
       auto function = enqueue->getParentOfType<sim::SimFuncOp>();
+      Value target = enqueue.getDestination();
+      bool completeSlice = true;
+      if (auto view = target.getDefiningOp<sim::SimRefDynExtractOp>()) {
+        completeSlice = false;
+        if (function) {
+          auto &ranges = sliceRanges[function];
+          if (!ranges)
+            ranges =
+                std::make_unique<analysis::NativeWordRangeAnalysis>(function);
+          completeSlice = ranges->containsPackedSlice(view);
+        }
+        target = view.getInput();
+      }
       if (!width || *width == 0 ||
           (*width > 64 && (site.getId() >= (uint64_t{1} << 48) ||
                            (*width + 63) / 64 >= (uint64_t{1} << 15))) ||
           enqueue.getDelay() || site.getTiming() || !function ||
           function.getHomeRegion() != sim::EventRegion::Active ||
           enqueue->getParentRegion() != &function.getBody() ||
-          enqueue.getDestination().getDefiningOp<sim::SimRefDynExtractOp>() ||
+          !completeSlice ||
           (!staticNBAPlan.independentSiteWrites[root->second] &&
-           !fixedReference(enqueue.getDestination())))
+           !fixedReference(target)))
         queuePayloadSupported[root->second] = 0;
     });
     SmallVector<uint8_t> orderedRootClosed(staticNBAPlan.roots.size(), 1);

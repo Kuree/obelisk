@@ -4,6 +4,7 @@
 #include "SimulationLocalStorageLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 #include "obelisk/Analysis/LocalStorageAnalysis.h"
+#include "obelisk/Analysis/NativeWordAnalysis.h"
 #include "obelisk/Analysis/ParallelWalk.h"
 #include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
@@ -308,6 +309,7 @@ LogicalResult lowerPackedSimulationOperations(
   // is consumed by the access patterns before their source ops are erased.
   DenseMap<Operation *, NativeStateAccessInfo> stateAccesses;
   DenseSet<Operation *> inBoundsSelections;
+  DenseSet<Operation *> completePackedSliceNBAs;
   DenseSet<Value> byteAddressableState;
   FailureOr<uint64_t> stateDomainFunctionLimit =
       getNativeStateDomainFunctionLimit(module);
@@ -331,13 +333,31 @@ LogicalResult lowerPackedSimulationOperations(
   });
   std::vector<analysis::HandleDataflowResult> handleProofs(
       proofFunctions.size());
+  std::vector<SmallVector<Operation *>> completeSliceProofs(proofFunctions.size());
   parallelForEach(
       context, llvm::seq<size_t>(0, proofFunctions.size()), [&](size_t index) {
         auto function = proofFunctions[index];
         auto design = function->getParentOfType<sim::SimDesignOp>();
         handleProofs[index] =
             designHandleInputs.find(design)->second->analyze(function);
+        // Freeze containment on the source CFG before conversion rewrites
+        // handles. Each worker owns its solver and result; no proof is
+        // inferred from a partially converted operation (LRM 11.5.1).
+        std::unique_ptr<analysis::NativeWordRangeAnalysis> sliceRanges;
+        function.walk([&](sim::SimNBAEnqueueOp enqueue) {
+          auto view =
+              enqueue.getDestination().getDefiningOp<sim::SimRefDynExtractOp>();
+          if (!view)
+            return;
+          if (!sliceRanges)
+            sliceRanges =
+                std::make_unique<analysis::NativeWordRangeAnalysis>(function);
+          if (sliceRanges->containsPackedSlice(view))
+            completeSliceProofs[index].push_back(enqueue);
+        });
       });
+  for (const auto &proofs : completeSliceProofs)
+    completePackedSliceNBAs.insert(proofs.begin(), proofs.end());
   for (const auto &handles : handleProofs) {
     nativeTwoStateValues.insert(handles.knownLogicValues.begin(),
                                 handles.knownLogicValues.end());
@@ -1076,7 +1096,7 @@ LogicalResult lowerPackedSimulationOperations(
     populateNBAToLLVMConversionPatterns(
         patterns, c, stateLayout.bitCount, staticNBAPlan, &selectedLayout,
         staticNBAPlan != nullptr, vpiAllowsWrite && !cleanEval,
-        experimentalTwoState);
+        experimentalTwoState, completePackedSliceNBAs);
   };
   RewritePatternSet packedPatterns(context);
   populatePackedPatterns(packedConverter, packedPatterns);

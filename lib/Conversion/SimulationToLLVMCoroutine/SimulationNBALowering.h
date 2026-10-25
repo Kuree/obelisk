@@ -11,6 +11,7 @@
 #include "mlir/IR/PatternMatch.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <cstdint>
@@ -119,7 +120,9 @@ void populateNBAToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
                                          const NativeStaticNBAPlan *staticPlan,
                                          const NativeStateLayout *stateLayout,
                                          bool staticSitesEnabled,
-                                         bool guardedClaims, bool evalCeiling);
+                                         bool guardedClaims, bool evalCeiling,
+                                         const llvm::DenseSet<mlir::Operation *>
+                                             &completePackedSliceNBAs);
 mlir::FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
     mlir::ModuleOp module, const NativeStateLayout &stateLayout,
     mlir::ArrayRef<schedule::ComputeNBACommitAttr> orderedCommits,

@@ -146,8 +146,8 @@ module attributes {
       %value = simulation.ref.load %input : !simulation.ref<!simulation.logic<16>> -> !simulation.logic<16>
       simulation.ref.store %value to %output : !simulation.logic<16>, !simulation.ref<!simulation.logic<16>>
       %nba = simulation.context.storage %ctx[8] : !simulation.ref<!simulation.logic<8>>
-      %zero = simulation.logic.constant 0 : i8, 0 : i8 : !simulation.logic<8>
-      simulation.nba.enqueue %zero to %nba : (!simulation.logic<8>, !simulation.ref<!simulation.logic<8>>) -> ()
+      %low = simulation.logic.extract %value from 0 : !simulation.logic<16> -> !simulation.logic<8>
+      simulation.nba.enqueue %low to %nba : (!simulation.logic<8>, !simulation.ref<!simulation.logic<8>>) -> ()
       cf.br ^wait
     }
   }

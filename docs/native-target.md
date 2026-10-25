@@ -730,6 +730,17 @@ including clipped partial and invalid selections. Mixed-region accumulators
 retain their validity and dirty bit until their own barrier. Privacy is not
 inferred from hierarchy or port visibility.
 
+The generated ordered NBA queue also accepts dynamically selected packed
+slices when scoped integer ranges prove the entire payload fits its immediate
+parent view. Planning and packed conversion independently establish that
+containment on their source CFGs. An enclosing array selection still retains
+its invalid-index and X/Z guards (IEEE 1800-2023 7.4.5); a potentially clipped
+packed selection retains the clipping path (11.5.1). Each execution captures
+its own target and payload (4.9.4, 10.4.2), including repeated loop sites, and
+the queue commits them in execution order (4.6(b)). A contained byte write to
+a dynamically indexed memory therefore need not move its clock group out of
+the AOT eval loop.
+
 A separate whole-design reader inventory can prove that a storage root has
 no reads or watches in any activation. Combined with the private influence
 proof, a complete executable may remove an immediate plain NBA enqueue

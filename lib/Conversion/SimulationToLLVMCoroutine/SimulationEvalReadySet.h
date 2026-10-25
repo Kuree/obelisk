@@ -104,6 +104,37 @@ inline void materializeEvalReadyIndexes(mlir::OpBuilder &builder,
         builder, loc, minimum,
         ownerWordAddress(builder, loc, base, layout.cacheOffset()), 8);
   }
+  if (!added && layout.hasSummaries() &&
+      !builder.getBlock()->getParentOp()->hasTrait<OpTrait::SingleBlock>()) {
+    // Consuming work can only clear summary bits. A nonempty child keeps its
+    // parent bit set, so stop as soon as a level remains nonempty. The leaf
+    // is already authoritative; the cache may stay stale-low, and every
+    // observer still sees exact summaries (IEEE 1800-2023 4.5--4.7).
+    Block *entry = builder.getBlock();
+    Block *done = entry->splitBlock(builder.getInsertionPoint());
+    builder.setInsertionPointToEnd(entry);
+    unsigned child = word;
+    for (unsigned level = 1; level != layout.levels; ++level) {
+      Block *update = new Block;
+      done->getParent()->getBlocks().insert(done->getIterator(), update);
+      Value empty = arith::CmpIOp::create(
+          builder, loc, arith::CmpIPredicate::eq, next, zero);
+      cf::CondBranchOp::create(builder, loc, empty, update, ValueRange{}, done,
+                               ValueRange{});
+      builder.setInsertionPointToStart(update);
+      unsigned parent = layout.offsets[level] + child / 64;
+      uint64_t bit = uint64_t{1} << (child % 64);
+      next = arith::AndIOp::create(
+          builder, loc, loadOwnerWord(builder, loc, base, parent),
+          llvmConstant(builder, loc, i64, ~bit));
+      LLVM::StoreOp::create(builder, loc, next,
+                            ownerWordAddress(builder, loc, base, parent), 8);
+      child /= 64;
+    }
+    cf::BranchOp::create(builder, loc, done);
+    builder.setInsertionPointToStart(done);
+    return;
+  }
   unsigned child = word;
   for (unsigned level = 1; level != layout.levels; ++level) {
     Value nonempty = arith::CmpIOp::create(
