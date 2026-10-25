@@ -15,7 +15,9 @@
 
 // A reversed pass connection (second RUN) publishes the same aliases.
 // Without the connection (third RUN), step4 is a separate island.
-// DISCONNECTED-LABEL: obelisk eval boundary: owner=2 island=0 body=step3.__obelisk_eval_body_0 successors={{$}}
+// Step3's now-isolated single-driver wire can join its producer group
+// (IEEE 1800-2023 4.9.1, 6.6.1); this must not invent a route to step4.
+// DISCONNECTED-LABEL: obelisk eval dependency: owner=2 island=0 body=step3.__obelisk_eval_body_0 successors={{$}}
 // DISCONNECTED-NEXT: obelisk eval boundary: owner=3 island=3 body=step4.__obelisk_eval_body_0 successors=4{{$}}
 
 !ref = !simulation.ref<i1>

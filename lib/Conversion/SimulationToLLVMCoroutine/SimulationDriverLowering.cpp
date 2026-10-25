@@ -828,9 +828,21 @@ public:
         Value oldUnknown;
         Value value;
         Value unknown;
+        bool known;
       };
       SmallVector<BulkPublication, 2> bulkPublications;
       for (const NativeStateLayout::Net *net : bulkNets) {
+        // IEEE 1800-2023 6.3.1, 6.6.1: the activation input certificate proves
+        // this isolated net and its new value known. Its zero unknown plane
+        // remains valid without another check at each drive. Connected or
+        // competing contributions have no such implication. Keep the driver
+        // contribution stores above for canonical state and force/release
+        // (10.6.2); writable VPI retains the activation's clean-state guard.
+        bool known =
+            !net->fourState ||
+            (schedule::has<schedule::Field::EvalInductiveTwoStateAccess>(op) &&
+             affectedDriver && affectedDriver->netId == net->id &&
+             layout.isolatedSingleDriverNets.contains(net->id));
         Value netHandle = arith::ConstantOp::create(
             rewriter, op.getLoc(), rewriter.getI64Type(),
             rewriter.getI64IntegerAttr(
@@ -839,7 +851,7 @@ public:
                                         driveType, "__obelisk_state_value",
                                         false, layout.bitCount, &layout);
         Value oldUnknown =
-            net->fourState
+            !known
                 ? loadStatePlane(rewriter, op.getLoc(), netHandle, driveType,
                                  "__obelisk_state_unknown", true,
                                  layout.bitCount, &layout)
@@ -857,7 +869,7 @@ public:
               integerConstant(APInt::getZero(driveType.getWidth()));
         }
         bulkPublications.push_back({net, netHandle, oldValue, oldUnknown,
-                                    publishValue, publishUnknown});
+                                    publishValue, publishUnknown, known});
       }
       // Publish every collapsed-net member before notifying any observer, just
       // like the scalar resolver below, so an alias transition is atomic.
@@ -865,10 +877,11 @@ public:
         Value valueChanged = storeStatePlane(
             rewriter, op.getLoc(), publication.handle, publication.value,
             "__obelisk_state_value", layout.bitCount, &layout);
-        // The unknown plane of an integer net is permanently zero, including
-        // after external writes. Do not touch it for every known publication.
+        // A two-state net's unknown plane is permanently zero. A certified
+        // four-state net stays known for this activation; its fallback still
+        // publishes X/Z transitions and invalidates the certificate.
         Value unknownChanged =
-            publication.net->fourState
+            !publication.known
                 ? storeStatePlane(rewriter, op.getLoc(), publication.handle,
                                   publication.unknown,
                                   "__obelisk_state_unknown", layout.bitCount,

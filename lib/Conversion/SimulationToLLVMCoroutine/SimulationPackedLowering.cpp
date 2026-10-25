@@ -550,6 +550,16 @@ LogicalResult lowerPackedSimulationOperations(
           } else if (auto nba = dyn_cast<sim::SimNBAEnqueueOp>(operation)) {
             destination = nba.getDestination();
             stored = nba.getValue();
+          } else if (auto drive = dyn_cast<sim::SimDriverDriveOp>(operation)) {
+            // IEEE 1800-2023 6.3.1, 6.6.1: a known drive preserves a
+            // certified single-driver net's knownness. The lowering also
+            // checks isolation before omitting the net's unknown-plane work.
+            destination = drive.getDriver();
+            stored = drive.getValue();
+          } else if (auto drive =
+                         dyn_cast<sim::SimDriverDriveChangedOp>(operation)) {
+            destination = drive.getDriver();
+            stored = drive.getValue();
           }
           if (!destination ||
               !guardedDomains.isTwoStateWithInductiveRoots(stored))

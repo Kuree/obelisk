@@ -401,6 +401,16 @@ its executor cannot join a helper. Net resolution, strengths, delays and event
 observers still execute through that original boundary. Unknown resources or
 unmapped ranges retain conservative dependencies on every candidate.
 
+An isolated wire with one full-width, strong, undelayed driver may join a
+ranked group (4.9.1, 6.6.1). The planner reuses the connectivity proof and
+requires direct handles without overrides or runtime transition observers.
+Each source keeps its activation and transition publication. The group's input
+certificate can cover both the drive value and the resolved net's zero unknown
+plane, avoiding a separate X/Z probe at every drive (6.3.1). The four-state
+fallback still publishes X/Z changes and revokes affected certificates. Driver
+contributions remain canonical for force/release (10.6.2). Writable VPI retains
+individual override-aware entries (38.34); read-only VPI can use the group.
+
 The scheduling proof follows IEEE 1800-2023 4.5 (activation and region
 boundaries), 4.6 (procedural source order and ordered NBAs), and 4.7 (permitted
 interleaving between processes). A topological order may select a legal

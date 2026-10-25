@@ -255,6 +255,15 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
                         outputs != activationInputs.mayWrites.end();
       bool effectsSafe = llvm::all_of(effects, [&](Attribute raw) {
         auto effect = cast<schedule::ComputeEffectAttr>(raw);
+        bool net = effect.getResource() == schedule::ComputeResourceKind::Net;
+        // IEEE 1800-2023 6.6.1, 4.9.1: an isolated wire with one full-width,
+        // strong, undelayed driver can publish its value in the same Active
+        // sweep. Reuse the connectivity proof; connected, competing, weak,
+        // delayed and user-defined resolution remains an execution boundary.
+        // Retain each source activation and its exact transition publication.
+        bool simpleNet =
+            !clocked && net &&
+            stateLayout.isolatedSingleDriverNets.contains(effect.getDescriptor());
         // IEEE 1800-2023 4.5-4.7, 10.4.2: consecutive Active evaluations
         // may stage their NBAs in this order, but cannot commit them early.
         // Immediate stores need the separate trigger/observer proof below.
@@ -264,21 +273,28 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
         if (effect.getEffect() != schedule::ComputeEffectKind::Read &&
             effect.getEffect() != schedule::ComputeEffectKind::Write &&
             effect.getEffect() != schedule::ComputeEffectKind::Watch &&
+            !(simpleNet &&
+              effect.getEffect() == schedule::ComputeEffectKind::Drive) &&
             !(clocked &&
               effect.getEffect() == schedule::ComputeEffectKind::NBA))
           return false;
-        if (effect.getResource() != schedule::ComputeResourceKind::Storage ||
+        if ((effect.getResource() != schedule::ComputeResourceKind::Storage &&
+             !simpleNet) ||
             effect.getTarget() != schedule::ComputeTargetKind::Descriptor ||
             (!clocked && effect.getDynamic() &&
              (!activation ||
               effect.getEffect() == schedule::ComputeEffectKind::Watch)) ||
             effect.getDeferred() || !effect.getWidth())
           return false;
-        auto handle = stateLayout.storage.find(effect.getDescriptor());
+        const auto &handles = net ? stateLayout.nets : stateLayout.storage;
+        auto handle = handles.find(effect.getDescriptor());
         obelisk_rt_stable_handle_v1 decoded{};
-        if (handle == stateLayout.storage.end() ||
+        if (handle == handles.end() ||
             !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
             decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.offset)
+          return false;
+        if (net && (!stateLayout.directHandles.contains(decoded.id) ||
+                    stateLayout.guardedHandles.contains(decoded.id)))
           return false;
         auto width = widths.find(decoded.id);
         if (width == widths.end() || effect.getLow() >= width->second ||
@@ -299,7 +315,8 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
         }
         Range range{decoded.id, effect.getLow(),
                     effect.getLow() + effect.getWidth()};
-        if (effect.getEffect() == schedule::ComputeEffectKind::Write) {
+        if (effect.getEffect() == schedule::ComputeEffectKind::Write ||
+            effect.getEffect() == schedule::ComputeEffectKind::Drive) {
           if (fanout.runtimeTransitionStates.contains(decoded.id))
             return false;
           if (clocked) {

@@ -31,7 +31,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     simulation.net.decl 1 in 0 : !simulation.logic<8> design
     simulation.net.connect.decl 0 in 0 0[0] to 1[0] width 8 reversed = false
     simulation.net.decl 2 in 0 : !simulation.logic<8> design
+    // Keep the producer as a strength-aware boundary (LRM 6.3.2, 28.11),
+    // even when plain single-driver wires are admitted to ranked groups.
     simulation.driver.decl 1 in 0 drives 2 : !simulation.logic<8> design
+      {strength0 = 3 : i32, strength1 = 3 : i32}
     simulation.driver.decl 0 in 0 drives 0 : !simulation.logic<8> design
     simulation.storage.decl 4 in 0 : !simulation.logic<8> design
     simulation.storage.decl 5 in 0 : !simulation.logic<8> design
