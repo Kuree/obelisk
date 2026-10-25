@@ -957,6 +957,8 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
       ActivationMemoryAnalysis::DependencyMode::ReachingValues);
   const llvm::DenseSet<uint64_t> &glitchInsensitive =
       combinational.getGlitchInsensitiveStorage();
+  // Diagnostics: roots refused as observed, by the observer that exposes them.
+  DenseMap<StringAttr, unsigned> observedRootsBy;
   DenseMap<StringAttr, bool> transparentCache;
   auto isTransparent = [&](StringAttr name) {
     auto [found, inserted] = transparentCache.try_emplace(name, false);
@@ -1785,6 +1787,8 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
           }
           if (!glitchInsensitive.contains(root)) {
             refuse("root observed");
+            if (report)
+              ++observedRootsBy[combinational.getGlitchObserver(root)];
             continue;
           }
           if (isExposed(root)) {
@@ -2599,10 +2603,39 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
                    << " delayed=" << delayed.count()
                    << " clock_reads=" << redirectedClockReads << '\n';
   }
-  if (report)
+  if (report) {
     for (auto &[reason, total] : rejections)
       llvm::errs() << "obelisk clocked kernel rejection: " << reason << " = "
                    << total << '\n';
+    // The processes whose observation keeps the most roots on their NBAs.
+    DenseMap<int64_t, StringRef> hierarchies;
+    for (auto unit : design.getBody().front().getOps<sim::SimCodeUnitDeclOp>())
+      hierarchies[unit.getId()] = unit.getHierarchicalName();
+    SmallVector<std::pair<unsigned, StringAttr>> observers;
+    for (auto &[observer, total] : observedRootsBy)
+      observers.emplace_back(total, observer);
+    llvm::sort(observers, [](const auto &a, const auto &b) {
+      return std::make_pair(b.first, a.second.getValue()) <
+             std::make_pair(a.first, b.second.getValue());
+    });
+    for (auto [total, observer] : ArrayRef(observers).take_front(12)) {
+      StringRef hierarchy;
+      std::string reason;
+      if (auto function = observer ? symbols.lookup<sim::SimFuncOp>(observer)
+                                   : sim::SimFuncOp{}) {
+        if (IntegerAttr unit = function.getCodeUnitIdAttr())
+          hierarchy = hierarchies.lookup(unit.getInt());
+        CombinationalFusionFailure failure;
+        if (!combinational.analyze(function, provenance, /*interleaved=*/true,
+                                   &failure, /*finalValuesOnly=*/true))
+          reason = failure.getMessage();
+      }
+      llvm::errs() << "obelisk clocked kernel observed roots: observer="
+                   << (observer ? observer.getValue() : "<unknown>")
+                   << " hierarchy=\"" << hierarchy << "\" roots=" << total
+                   << " reason=" << reason << '\n';
+    }
+  }
   if (changed)
     design.removeComputeGraphAttr();
 }

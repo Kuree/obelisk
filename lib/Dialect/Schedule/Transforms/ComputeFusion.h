@@ -98,6 +98,11 @@ public:
   /// fixpoint, computed on first use. Net roots carry the activation-memory
   /// net tag.
   const llvm::DenseSet<uint64_t> &getGlitchInsensitiveStorage() const;
+  /// The opaque observer that keeps `root` out of the glitch-insensitive
+  /// storage, when one was recorded; diagnostics only.
+  mlir::StringAttr getGlitchObserver(uint64_t root) const {
+    return glitchObservers.lookup(root);
+  }
 
 private:
   bool unsupported = false;
