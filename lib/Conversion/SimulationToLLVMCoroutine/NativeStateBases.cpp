@@ -1,17 +1,11 @@
 //===- NativeStateBases.cpp - Address native state through one base -------===//
 //
-// Native state lives in one internal global per plane, and lowering addresses
-// every root as a constant offset from it. LLVM folds those into constant
-// expressions, so code generation materializes the global's address together
-// with each offset, again in every block that accesses it. Loading each
-// plane's address once per function from a global the optimizer cannot see
-// through keeps every access a GEP instruction off that base: CodeGenPrepare
-// then rebases nearby offsets onto shared bases that serve the whole
-// function. Within a single block, code generation already folds the smallest
-// offset into the plane address and reaches the others with immediates, which
-// an opaque base would prevent, so only functions that access state in several
-// blocks change. The base global is written only by its static initializer, so
-// the load is invariant, and it is dereferenceable for the whole plane.
+// Native state lives in one internal global per plane. Loading each plane's
+// address once keeps accesses as GEPs off a shared base rather than constant
+// expressions that code generation rematerializes in each block. These opaque
+// pointer loads lose the original global's alias identity, so record that the
+// two physical plane allocations are separate storage. Single-block functions
+// keep direct addresses, and coroutines do not carry a base across suspension.
 //
 //===----------------------------------------------------------------------===//
 
@@ -57,10 +51,12 @@ LogicalResult addressNativeStateThroughBases(ModuleOp module) {
     if (!base) {
       if (symbols.lookup(name))
         return global.emitError("native state base symbol is not a global");
-      // The optimizer must not fold loads of the base to the plane address.
+      // The private constant has only its static initializer. The externally
+      // initialized flag keeps LLVM from folding the pointer into each use;
+      // it does not install a writer or change the initialized address.
       builder.setInsertionPointAfter(global);
       base = LLVM::GlobalOp::create(builder, global.getLoc(), pointer,
-                                    /*isConstant=*/false,
+                                    /*isConstant=*/true,
                                     LLVM::Linkage::Internal, name, Attribute(),
                                     /*alignment=*/8);
       base.setExternallyInitialized(true);
@@ -69,10 +65,25 @@ LogicalResult addressNativeStateThroughBases(ModuleOp module) {
       Value address =
           LLVM::AddressOfOp::create(builder, global.getLoc(), pointer, plane);
       LLVM::ReturnOp::create(builder, global.getLoc(), address);
-    } else if (base.getGlobalType() != pointer ||
-               !base.getExternallyInitialized()) {
-      return base.emitError("native state base must be an externally "
-                            "initialized pointer");
+    } else {
+      Region &initializer = base.getInitializerRegion();
+      LLVM::AddressOfOp address;
+      LLVM::ReturnOp result;
+      if (initializer.hasOneBlock() &&
+          initializer.front().getOperations().size() == 2) {
+        address = dyn_cast<LLVM::AddressOfOp>(initializer.front().front());
+        result = dyn_cast<LLVM::ReturnOp>(initializer.front().back());
+      }
+      if (base.getGlobalType() != pointer || !base.getConstant() ||
+          base.getLinkage() != LLVM::Linkage::Internal ||
+          !base.getExternallyInitialized() ||
+          base.getAlignment().value_or(0) < 8 || base.getAddrSpace() != 0 ||
+          !address || !result || result.getNumOperands() != 1 ||
+          result.getOperand(0) != address.getResult() ||
+          address.getGlobalName() != plane)
+        return base.emitError(
+            "native state base must be a private externally initialized "
+            "aligned constant pointer initialized to its plane address");
     }
     bases[global.getSymNameAttr()] = {base.getSymNameAttr(),
                                       array.getNumElements()};
@@ -109,6 +120,8 @@ LogicalResult addressNativeStateThroughBases(ModuleOp module) {
     if (blocks.size() < 2)
       return;
     builder.setInsertionPointToStart(&function.getBody().front());
+    SmallVector<Value, 2> loadedBases;
+    SmallVector<uint64_t, 2> planeBytes;
     for (auto &[plane, addresses] : uses) {
       Base base = bases.lookup(plane);
       Location location = addresses.front().getLoc();
@@ -120,8 +133,36 @@ LogicalResult addressNativeStateThroughBases(ModuleOp module) {
                                        /*isInvariant=*/true);
       load.setDereferenceableAttr(
           LLVM::DereferenceableAttr::get(context, base.bytes, false));
+      loadedBases.push_back(load);
+      planeBytes.push_back(base.bytes);
       for (LLVM::AddressOfOp address : addresses)
         address.replaceAllUsesWith(load.getResult());
+    }
+    if (loadedBases.size() == 2) {
+      // The bases point to different global allocations, not different source
+      // signals within one allocation. LLVM's separate_storage assumption
+      // restores that fact without restricting unknown pointer arguments or
+      // overlapping accesses in one plane. Addresses and ordered value/X/Z
+      // effects remain identical (IEEE 1800-2023 4.3, 4.6, 6.3.1).
+      // Repeat the existing dereferenceable facts in the same assumption:
+      // otherwise LLVM 22 InstCombine can sink a base load and drop the
+      // separate_storage bundle before redundant-load elimination sees it.
+      Location location = function.getLoc();
+      Value condition = LLVM::ConstantOp::create(
+          builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+      SmallVector<Value, 2> left{loadedBases[0],
+                                 LLVM::ConstantOp::create(builder, location,
+                                                          builder.getI64Type(),
+                                                          planeBytes[0])};
+      SmallVector<Value, 2> right{loadedBases[1],
+                                  LLVM::ConstantOp::create(builder, location,
+                                                           builder.getI64Type(),
+                                                           planeBytes[1])};
+      SmallVector<ValueRange, 3> bundles{loadedBases, left, right};
+      LLVM::AssumeOp::create(
+          builder, location, condition, bundles,
+          builder.getStrArrayAttr(
+              {"separate_storage", "dereferenceable", "dereferenceable"}));
     }
     for (auto &[plane, addresses] : uses)
       for (LLVM::AddressOfOp address : addresses)
