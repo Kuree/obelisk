@@ -21,7 +21,8 @@ using namespace mlir;
 
 namespace obelisk::detail {
 
-/// Prove and materialize a finite computation as dense, predicated dataflow.
+/// Prove a finite computation, using dense predicated dataflow when its
+/// overlapping physical windows fit bounded SSA slots, or retaining its CFG.
 /// The lattice at each CFG edge is (reachable, block arguments, memory slots).
 /// Joins select the state of the actual predecessor, including pending bits.
 /// Untaken branches retain their old outputs, even after a foreign deposit.
@@ -29,10 +30,11 @@ namespace obelisk::detail {
 /// source-certified redundant evaluation is already explicit in the CFG.
 ///
 /// Only nontrapping pure expressions may execute speculatively. Exact static
-/// loads/stores become SSA and publish at return. Calls, opaque effects,
-/// loops and unproved memory accesses reject the candidate. Overlapping exact
-/// byte windows share one canonical SSA slot using the target's byte order.
-/// The original ranked executor remains authoritative on rejection.
+/// loads/stores in the dense form become SSA and publish at return. Calls,
+/// opaque effects, loops and unproved memory accesses reject the candidate.
+/// Overlapping exact byte windows share one canonical SSA slot using the
+/// target's byte order. The original ranked executor remains authoritative on
+/// rejection.
 bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
                                     SymbolTable &symbols, uint64_t budget) {
   // Publication lowering can leave unused context loads. Remove dead code
@@ -175,6 +177,47 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
   }
   if (slots.empty() || originalOperations > budget)
     return reject("empty memory or operation budget");
+  if (indegree[&function.getBody().front()] != 0)
+    return false;
+  order.push_back(&function.getBody().front());
+  for (size_t i = 0; i < order.size(); ++i)
+    for (Block *next : order[i]->getSuccessors())
+      if (--indegree[next] == 0)
+        order.push_back(next);
+  if (order.size() != function.getBody().getBlocks().size())
+    return reject("cyclic/unreachable CFG");
+  // A transitive alias window can be much wider than any individual access.
+  // Keep the proved CFG for these groups instead of expanding narrow stores
+  // into wide read/modify/write operations. Every original memory operation,
+  // branch and publication remains at its original point (IEEE 1800-2023 4.3
+  // and 4.6), including the untouched X/Z bits in neighboring bytes (6.3.1).
+  // The caller installs the same complete two-state certificate guard and
+  // retains the ordinary per-member executor when that certificate fails.
+  StringRef windowGlobal;
+  uint64_t windowBegin = 0, windowEnd = 0;
+  bool wideAliases = false;
+  for (const auto &[key, id] : rangeIndex) {
+    const Slot &slot = slots[id];
+    uint64_t end = slot.offset + slot.type.getWidth() / 8;
+    if (windowGlobal == slot.global && windowEnd > slot.offset) {
+      windowEnd = std::max(windowEnd, end);
+      wideAliases |= windowEnd - windowBegin > 32;
+    } else {
+      windowGlobal = slot.global;
+      windowBegin = slot.offset;
+      windowEnd = end;
+    }
+  }
+  if (wideAliases) {
+    Builder builder(function.getContext());
+    schedule::set<schedule::Field::EvalControlFlowDataflow>(
+        function, builder.getUnitAttr());
+    schedule::set<schedule::Field::EvalRefreshGroupProofs>(
+        function, builder.getUnitAttr());
+    schedule::set<schedule::Field::EvalDataflowSlots>(
+        function, builder.getI64IntegerAttr(slots.size()));
+    return true;
+  }
   // Canonicalize proven physical aliases with a sorted interval sweep. This
   // never unions copy-connected descriptors: both accesses must resolve to
   // literal overlapping bytes of the same authoritative global. Preserve the
@@ -221,15 +264,6 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
   std::map<std::pair<std::string, uint64_t>, unsigned> slotIndex;
   for (auto [id, slot] : llvm::enumerate(slots))
     slotIndex.try_emplace(std::pair{slot.global, slot.offset}, id);
-  if (indegree[&function.getBody().front()] != 0)
-    return false;
-  order.push_back(&function.getBody().front());
-  for (size_t i = 0; i < order.size(); ++i)
-    for (Block *next : order[i]->getSuccessors())
-      if (--indegree[next] == 0)
-        order.push_back(next);
-  if (order.size() != function.getBody().getBlocks().size())
-    return reject("cyclic/unreachable CFG");
   // Copying lattice values is much cheaper than emitting instructions. Do
   // not reject a small computation merely because its exact memory inventory
   // crosses many blocks. Bound analysis work separately; the original and

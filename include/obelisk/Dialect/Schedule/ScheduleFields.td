@@ -113,6 +113,13 @@ def EvalPathProbeRoutes : ScheduleField<"EvalPathProbeRoutes", "schedule.eval.pa
     "::mlir::ArrayAttr">;
 def EvalPredicatedDataflow : ScheduleField<"EvalPredicatedDataflow", "schedule.eval.predicated_dataflow",
     "::mlir::UnitAttr">;
+// A closed group retaining its proved control flow and exact memory accesses.
+def EvalControlFlowDataflow : ScheduleField<"EvalControlFlowDataflow", "schedule.eval.control_flow_dataflow",
+    "::mlir::UnitAttr">;
+// Profitability hint for a group using control flow to avoid eager evaluation.
+// Refresh pending proofs before its computation; the same X/Z proof is required.
+def EvalRefreshGroupProofs : ScheduleField<"EvalRefreshGroupProofs", "schedule.eval.refresh_group_proofs",
+    "::mlir::UnitAttr">;
 def EvalPreserveNbaUnknown : ScheduleField<"EvalPreserveNbaUnknown", "schedule.eval.preserve_nba_unknown",
     "::mlir::UnitAttr">;
 def EvalPrivateHelper : ScheduleField<"EvalPrivateHelper", "schedule.eval.private_helper",

@@ -372,6 +372,21 @@ foreign mutation and unproved source revisions retain their predicates.
 This lets ordinary SSA forwarding remove intermediate copies without inventing
 source activations with observable effects.
 
+Exact overlapping byte accesses share an SSA slot when their connected
+window fits within 32 bytes. A group with a wider window keeps its original
+branches and exact loads/stores, avoiding wide read/modify/write operations
+for narrow stores. It still requires the complete finite-effect, memory-range
+and operation-budget proof. Every original path and ordered update remains
+intact, including neighboring X/Z bytes (IEEE 1800-2023 4.3, 4.6, 6.3.1).
+These groups refresh pending owner certificates before taking a fallback;
+other groups keep their existing policy.
+
+An inactive member can have known inputs whose certificate has never been
+queried. The cold check visits only the group's pending bits and stops at the
+first failed proof; a cached success keeps the existing bitmap check. Queries
+inspect canonical X/Z and update proof caches without activating source
+processes (IEEE 1800-2023 4.3, 6.3.1, 6.11.2).
+
 Function routes reuse an eval owner's knownness cache when both certificates
 cover exactly the same physical bits. Coverage is normalized without filling
 gaps or partial-word padding. The route queries that owner cache on entry,

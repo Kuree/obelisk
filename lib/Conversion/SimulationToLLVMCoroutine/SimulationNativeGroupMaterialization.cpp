@@ -1699,6 +1699,79 @@ inlineGroupBody(LLVM::LLVMFuncOp function, const SymbolTable &symbols,
   return {remaining, materialized};
 }
 
+void emitGroupDomainGuard(OpBuilder &builder, Location loc,
+                          ArrayRef<std::pair<unsigned, uint64_t>> masks,
+                          SymbolTable &symbols, bool refreshPending,
+                          Block *known, ValueRange arguments, Block *fallback) {
+  auto i64 = builder.getI64Type();
+  Value zero = llvmConstant(builder, loc, i64, 0);
+  Value proof = LLVM::AddressOfOp::create(
+      builder, loc, LLVM::LLVMPointerType::get(builder.getContext()),
+      "__obelisk_eval_promotion_pending_mask_v1");
+  Value needed = zero;
+  SmallVector<std::pair<unsigned, Value>> words;
+  for (auto [word, mask] : masks) {
+    Value bits = LLVM::AndOp::create(builder, loc,
+                                     loadOwnerWord(builder, loc, proof, word),
+                                     llvmConstant(builder, loc, i64, mask));
+    words.emplace_back(word, bits);
+    needed = LLVM::OrOp::create(builder, loc, needed, bits);
+  }
+  Value cached =
+      LLVM::ICmpOp::create(builder, loc, LLVM::ICmpPredicate::eq, needed, zero);
+  auto ready = symbols.lookup<LLVM::LLVMFuncOp>(kernelPromotionReadyName);
+  if (!refreshPending || !ready || ready.isExternal() ||
+      ready.getFunctionType() !=
+          LLVM::LLVMFunctionType::get(builder.getI1Type(), {i64}, false)) {
+    LLVM::CondBrOp::create(builder, loc, cached, known, arguments, fallback,
+                           ValueRange{});
+    return;
+  }
+  // A pending certificate can be unqueried, even after its inputs became
+  // known during initialization. Refresh all needed group members, including
+  // inactive ones, before choosing the group body. This only inspects
+  // canonical X/Z and updates proof caches; it executes no source activation (IEEE
+  // 1800-2023 4.3, 6.3.1, 6.11.2). The first failed proof keeps the fallback.
+  Region *region = builder.getBlock()->getParent();
+  auto block = [&](bool argument = false) {
+    auto *result = new Block;
+    region->push_back(result);
+    if (argument)
+      result->addArgument(i64, loc);
+    return result;
+  };
+  Block *refresh = block();
+  LLVM::CondBrOp::create(builder, loc, cached, known, arguments, refresh,
+                         ValueRange{});
+  builder.setInsertionPointToStart(refresh);
+  for (auto [word, bits] : words) {
+    Block *nextBit = block(true), *inspect = block(), *nextWord = block();
+    LLVM::BrOp::create(builder, loc, ValueRange{bits}, nextBit);
+    builder.setInsertionPointToStart(nextBit);
+    Value remaining = nextBit->getArgument(0);
+    Value empty = LLVM::ICmpOp::create(builder, loc, LLVM::ICmpPredicate::eq,
+                                       remaining, zero);
+    LLVM::CondBrOp::create(builder, loc, empty, nextWord, ValueRange{}, inspect,
+                           ValueRange{});
+    builder.setInsertionPointToStart(inspect);
+    Value bit =
+        LLVM::CountTrailingZerosOp::create(builder, loc, i64, remaining, true);
+    Value owner = LLVM::AddOp::create(
+        builder, loc, bit,
+        llvmConstant(builder, loc, i64, uint64_t{word} * 64));
+    Value tail = LLVM::AndOp::create(
+        builder, loc, remaining,
+        LLVM::SubOp::create(builder, loc, remaining,
+                            llvmConstant(builder, loc, i64, 1)));
+    Value proved = LLVM::CallOp::create(builder, loc, ready, ValueRange{owner})
+                       .getResult();
+    LLVM::CondBrOp::create(builder, loc, proved, nextBit, ValueRange{tail},
+                           fallback, ValueRange{});
+    builder.setInsertionPointToStart(nextWord);
+  }
+  LLVM::BrOp::create(builder, loc, arguments, known);
+}
+
 } // namespace
 
 /// Materialize certified activation bodies before native partitioning. The
@@ -2002,8 +2075,9 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
         symbols.erase(function);
         continue;
       }
-      // One value-domain check for the whole predicated computation. A
-      // pending proof retains the ordinary per-member path, allowing the
+      // One value-domain check for the whole predicated computation. Refresh
+      // unqueried certificates before treating a pending bit as unknown. A
+      // failed proof retains the ordinary per-member path, allowing the
       // unaffected members to remain two-state. Activation predicates are
       // still evaluated inside the dataflow body; no cached coherence fact
       // can be invalidated by a known VPI deposit.
@@ -2025,6 +2099,9 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
           return failure();
         finalized.insert(original);
       }
+      if (schedule::has<schedule::Field::EvalRefreshGroupProofs>(function))
+        schedule::set<schedule::Field::EvalRefreshGroupProofs>(
+            original, UnitAttr::get(module.getContext()));
       if (refinedChildren.contains(original)) {
         // The parent owns this child's selection point. Keeping another
         // guarded wrapper on the fast path would add a call boundary which
@@ -2050,6 +2127,7 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
                         ::obelisk::schedule::Field::EvalSsaValueRanges,
                         ::obelisk::schedule::Field::EvalSsaUnknownRanges,
                         ::obelisk::schedule::Field::EvalPredicatedDataflow,
+                        ::obelisk::schedule::Field::EvalControlFlowDataflow,
                         ::obelisk::schedule::Field::EvalDataflowSlots,
                         ::obelisk::schedule::Field::EvalCoalescedSlots,
                         ::obelisk::schedule::Field::EvalCacheHintWords}) {
@@ -2082,24 +2160,16 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
       APInt mask(width, 0);
       for (int32_t owner : members.asArrayRef())
         mask.setBit(owner);
-      Value pending = LLVM::AddressOfOp::create(
-          builder, loc, LLVM::LLVMPointerType::get(module.getContext()),
-          "__obelisk_eval_promotion_pending_mask_v1");
-      Value needed = llvmConstant(builder, loc, builder.getI64Type(), 0);
+      SmallVector<std::pair<unsigned, uint64_t>> masks;
       for (unsigned word = 0; word < mask.getNumWords(); ++word) {
         uint64_t bits = ownerMaskWord(mask, word);
-        if (!bits)
-          continue;
-        Value selected = LLVM::AndOp::create(
-            builder, loc, loadOwnerWord(builder, loc, pending, word),
-            llvmConstant(builder, loc, builder.getI64Type(), bits));
-        needed = LLVM::OrOp::create(builder, loc, needed, selected);
+        if (bits)
+          masks.emplace_back(word, bits);
       }
-      Value known = LLVM::ICmpOp::create(
-          builder, loc, LLVM::ICmpPredicate::eq, needed,
-          llvmConstant(builder, loc, builder.getI64Type(), 0));
-      LLVM::CondBrOp::create(builder, loc, known, oldEntry,
-                             guard->getArguments(), fallback, ValueRange{});
+      emitGroupDomainGuard(
+          builder, loc, masks, symbols,
+          schedule::has<schedule::Field::EvalRefreshGroupProofs>(original),
+          oldEntry, guard->getArguments(), fallback);
       builder.setInsertionPointToStart(fallback);
       LLVM::CallOp::create(builder, loc, TypeRange{}, function.getSymName(),
                            guard->getArguments());
@@ -2177,28 +2247,15 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
       builder.setInsertionPointToStart(execute);
       if (auto fast = ::obelisk::schedule::get<
               ::obelisk::schedule::Field::EvalDataflowExecutor>(child)) {
-        Value proof = LLVM::AddressOfOp::create(
-            builder, parent.getLoc(),
-            LLVM::LLVMPointerType::get(module.getContext()),
-            "__obelisk_eval_promotion_pending_mask_v1");
-        Value needed =
-            llvmConstant(builder, parent.getLoc(), builder.getI64Type(), 0);
-        for (auto [word, mask] : masks) {
-          Value bits = LLVM::AndOp::create(
-              builder, parent.getLoc(),
-              loadOwnerWord(builder, parent.getLoc(), proof, word),
-              llvmConstant(builder, parent.getLoc(), builder.getI64Type(),
-                           mask));
-          needed = LLVM::OrOp::create(builder, parent.getLoc(), needed, bits);
-        }
-        Value known = LLVM::ICmpOp::create(
-            builder, parent.getLoc(), LLVM::ICmpPredicate::eq, needed,
-            llvmConstant(builder, parent.getLoc(), builder.getI64Type(), 0));
         auto *collapsed = new Block, *fallback = new Block;
         parent.getBody().push_back(collapsed);
         parent.getBody().push_back(fallback);
-        LLVM::CondBrOp::create(builder, parent.getLoc(), known, collapsed,
-                               ValueRange{}, fallback, ValueRange{});
+        SmallVector<std::pair<unsigned, uint64_t>> domains(masks.begin(),
+                                                           masks.end());
+        emitGroupDomainGuard(
+            builder, parent.getLoc(), domains, symbols,
+            schedule::has<schedule::Field::EvalRefreshGroupProofs>(child),
+            collapsed, {}, fallback);
         builder.setInsertionPointToStart(collapsed);
         LLVM::CallOp::create(builder, parent.getLoc(), TypeRange{},
                              fast.getValue(), entry->getArguments());

@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s --obelisk-materialize-native-eval-groups -o %t.mlir
-// RUN: FileCheck %s --implicit-check-not=dataflow_executor --implicit-check-not=dataflow_candidate --implicit-check-not=predicated_dataflow < %t.mlir
+// RUN: FileCheck %s --implicit-check-not=dataflow_executor --implicit-check-not=dataflow_candidate --implicit-check-not=predicated_dataflow --implicit-check-not=control_flow_dataflow < %t.mlir
 // CHECK: llvm.func @group()
 // CHECK: llvm.return
 // CHECK: llvm.func @called_candidate()
@@ -62,9 +62,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.store %result, %base : i8, !llvm.ptr
     llvm.return
   }
-  llvm.func @overlap() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @group} {
+  llvm.func @out_of_bounds() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @group} {
     %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
-    %byte = llvm.getelementptr %base[31] : (!llvm.ptr) -> !llvm.ptr, i8
+    %byte = llvm.getelementptr %base[63] : (!llvm.ptr) -> !llvm.ptr, i8
     %value = llvm.load %base : !llvm.ptr -> i256
     %low = llvm.trunc %value : i256 to i16
     llvm.store %low, %byte : i16, !llvm.ptr
@@ -72,9 +72,14 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
   llvm.func @loop() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @group} {
     %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %cross = llvm.getelementptr %base[31] : (!llvm.ptr) -> !llvm.ptr, i8
     %one = llvm.mlir.constant(1 : i8) : i8
     llvm.br ^body
   ^body:
+    // A wide alias window does not bypass the finite-CFG proof.
+    %wide = llvm.load %base : !llvm.ptr -> i256
+    %low = llvm.trunc %wide : i256 to i16
+    llvm.store %low, %cross : i16, !llvm.ptr
     %value = llvm.load %base : !llvm.ptr -> i8
     %next = llvm.add %value, %one : i8
     llvm.store %next, %base : i8, !llvm.ptr
