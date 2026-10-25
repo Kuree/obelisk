@@ -7,6 +7,7 @@
 #include "llvm/ADT/TypeSwitch.h"
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/Transforms/NativeTransforms.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
@@ -792,10 +793,21 @@ llvm::DenseSet<StringAttr> schedule::collectRepeatableCombinationalActivations(
   design.walk([&](sim::SimSpawnOp spawn) {
     spawns[spawn.getCalleeAttr().getAttr()].push_back(spawn);
   });
+  // Only the distribution is reported: a remark per process would serialize
+  // the design once per rejected process.
+  bool report = native::has<native::DebugTiming>(
+      design->getParentOfType<ModuleOp>());
+  llvm::StringMap<uint64_t> rejections;
+  auto reject = [&](StringRef reason) {
+    if (report)
+      ++rejections[reason];
+  };
   design.walk([&](sim::SimFuncOp function) {
     auto instances = spawns.find(function.getSymNameAttr());
-    if (instances == spawns.end() || instances->second.size() != 1)
+    if (instances == spawns.end())
       return;
+    if (instances->second.size() != 1)
+      return reject("shared body");
     auto spawn = instances->second.front();
     auto initializer = spawn->getParentOfType<sim::SimFuncOp>();
     // The initializer entry executes once. A syntactically unique spawn in
@@ -803,10 +815,20 @@ llvm::DenseSet<StringAttr> schedule::collectRepeatableCombinationalActivations(
     if (!initializer ||
         initializer.getEntryKind() != sim::EntryKind::RootInitializer ||
         spawn->getBlock() != &initializer.getBody().front())
+      return reject("spawn outside the root initializer entry");
+    CombinationalFusionFailure failure;
+    auto body = combinational.analyze(function, handles, /*interleaved=*/true,
+                                      report ? &failure : nullptr);
+    if (!body || !body->structured) {
+      if (report) {
+        std::string message = failure.getMessage();
+        // Storage identities and operation names vary per process; the
+        // histogram needs the class of failure.
+        reject(message.empty() ? "no structured activation"
+                               : StringRef(message).split(" on storage ").first);
+      }
       return;
-    auto body = combinational.analyze(function, handles, /*interleaved=*/true);
-    if (!body || !body->structured)
-      return;
+    }
     const auto &memory = body->structured->getMemory();
     // IEEE 1800-2023 4.3, 4.9.1, 9.2.2.2 and 9.4.2: these processes run at
     // initialization and watch every live input. With no pending input change,
@@ -817,10 +839,25 @@ llvm::DenseSet<StringAttr> schedule::collectRepeatableCombinationalActivations(
     // sensitivities, foreign mutation and non-equivalent initial execution.
     // A code owner is not itself a unique actor: distinct instances may have
     // different immutable captures and compete for the same output.
-    if (!memory.getRepeatedWrites().empty() || memory.hasMixedPrivateWrites())
-      return;
+    if (!memory.getRepeatedWrites().empty())
+      return reject("repeated writes");
+    if (memory.hasMixedPrivateWrites())
+      return reject("mixed private writes");
     result.insert(function.getSymNameAttr());
   });
+  if (report) {
+    SmallVector<StringRef> ordered;
+    for (const auto &entry : rejections)
+      ordered.push_back(entry.first());
+    llvm::sort(ordered, [&](StringRef lhs, StringRef rhs) {
+      return std::make_pair(rejections.lookup(rhs), rhs) <
+             std::make_pair(rejections.lookup(lhs), lhs);
+    });
+    for (StringRef reason : ordered)
+      llvm::errs() << "obelisk repeatable rejection: count="
+                   << rejections.lookup(reason) << " reason=" << reason
+                   << '\n';
+  }
   return result;
 }
 

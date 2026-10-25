@@ -374,6 +374,13 @@ Within a closed two-state dataflow group, a source activation may omit its
 ready predicate only when the shared combinational analysis proves complete
 sensitivity, exclusive complete outputs, equivalent initial/resume evaluation,
 one actor spawned in the root initializer entry, and no repeated publication.
+A continuous drive counts as an exclusive complete output when its bits have
+no other strong, undelayed contribution: the isolated wire has one driver, its
+drivers partition it, or the slice lies within one sparse contribution. Per-bit
+resolution then makes re-driving unchanged inputs write the value the net
+already holds (6.6.1). Overlapping drivers, collapsed connections, delays, weak
+strengths and dynamic selectors into a sparse net keep their resolution and
+stay unproved.
 Its initialized outputs already hold the computed
 values whenever its inputs have not changed, so an extra evaluation changes
 neither state nor events (IEEE 1800-2023 4.3, 4.9.1, 9.2.2.2, 9.4.2).

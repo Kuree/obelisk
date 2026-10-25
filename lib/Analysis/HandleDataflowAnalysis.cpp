@@ -501,7 +501,7 @@ HandleResultCache &getHandleResultCache() {
 HandleDataflowAnalysis::HandleDataflowAnalysis(sim::SimDesignOp design) {
   // Build the immutable normalization snapshot before parallel consumers run.
   if (design) {
-    isolatedDrivenNets = getIsolatedSingleDriverNets(design);
+    drivers = getIsolatedWireDriverTopology(design);
     for (auto driver : design.getOps<sim::SimDriverDeclOp>())
       driverNets[driver.getId()] = driver.getNetId();
   }

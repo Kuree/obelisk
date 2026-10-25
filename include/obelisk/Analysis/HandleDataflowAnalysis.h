@@ -5,6 +5,7 @@
 
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
+#include "obelisk/Analysis/NetConnectivityAnalysis.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -93,12 +94,29 @@ public:
   HandleDataflowResult analyze(sim::SimFuncOp function) const;
   HandleFacts derive(sim::SimFuncOp function) const;
   bool hasIsolatedSingleDriver(uint64_t net) const {
-    return isolatedDrivenNets.contains(net);
+    return drivers.singleDriverNets.contains(net);
+  }
+  /// The bits [low, low + width) of `net` have exactly one strong, undelayed
+  /// contribution, so a drive of them is a plain write of the resolved value
+  /// (IEEE 1800-2023 6.6.1): the isolated net has one driver, its drivers
+  /// partition it, or the slice lies within one sparse contribution. Undriven
+  /// bits of a sparse net stay z and are never claimed.
+  bool hasExclusiveDriverSlice(uint64_t net, uint64_t low,
+                               uint64_t width) const {
+    if (drivers.partitionedDriverNets.contains(net))
+      return true;
+    auto sparse = drivers.sparseDriverRanges.find(net);
+    if (sparse == drivers.sparseDriverRanges.end() || !width ||
+        low > UINT64_MAX - width)
+      return false;
+    return llvm::any_of(sparse->second, [&](auto range) {
+      return low >= range.first && low + width <= range.second;
+    });
   }
 
 private:
   llvm::DenseMap<uint64_t, uint64_t> driverNets;
-  llvm::DenseSet<uint64_t> isolatedDrivenNets;
+  IsolatedWireDriverTopology drivers;
   /// Order-independent digest of `driverNets`, part of each memoized
   /// function revision.
   uint64_t driverDigest = 0;

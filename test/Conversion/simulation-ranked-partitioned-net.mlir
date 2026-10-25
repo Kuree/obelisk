@@ -13,7 +13,9 @@
 // preserves the low nibble, including X/Z (6.3.1). No unconditional early
 // statement fusion is part of this fixture.
 // TRACE: obelisk ranked groups: candidates=4 groups=1 segments=0 members=4
-// TRACE: obelisk repeatable ranked members: 2
+// Each driver owns an exclusive strong contribution, so re-driving it with
+// unchanged inputs changes no bit (6.6.1): all four members are repeatable.
+// TRACE: obelisk repeatable ranked members: 4 unconditional=4
 // TRACE: obelisk group dataflow: __obelisk_eval_ranked_group_0.dataflow accepted=1
 // GROUP-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
 // GROUP-SAME: schedule.eval.predicated_dataflow
@@ -23,9 +25,9 @@
 // GROUP: %[[STATE:.*]] = llvm.mlir.addressof @__obelisk_state_value
 // GROUP: llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1
 // GROUP: llvm.cond_br
-// The complete copy and sink activations need no inactive-value selects:
-// their contribution, resolved net and output receive the same SSA value.
-// The disjoint drivers still retain their original activation predicates.
+// No member needs an inactive-value select or a ready predicate: the
+// contribution, resolved net and output receive the same SSA value, and the
+// group consumes its pending bits once before returning.
 // GROUP-DAG: %[[DRIVER:.*]] = llvm.getelementptr %[[STATE]][7]
 // GROUP-DAG: %[[NET:.*]] = llvm.getelementptr %[[STATE]][5]
 // GROUP-DAG: %[[OUTPUT:.*]] = llvm.getelementptr %[[STATE]][2]
@@ -37,6 +39,7 @@
 // GROUP: llvm.store %[[VALUE:[a-zA-Z0-9_]+]], %[[DRIVER]]
 // GROUP-NEXT: llvm.store %[[VALUE]], %[[NET]]
 // GROUP-NEXT: llvm.store %[[VALUE]], %[[OUTPUT]]
+// GROUP-NEXT: llvm.store %{{.*}}, %{{.*}} {alignment = 1 : i64} : i64, !llvm.ptr
 // GROUP-NEXT: llvm.return
 // GROUP: llvm.call @__obelisk_eval_ranked_group_0.fallback
 // GROUP-LABEL: llvm.func @__obelisk_eval_ranked_group_0.fallback(

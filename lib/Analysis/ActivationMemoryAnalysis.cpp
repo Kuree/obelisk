@@ -1888,10 +1888,17 @@ private:
                       /*publication=*/{});
       return success();
     }
+    // A drive is a write only where this driver is the sole strong
+    // contribution (IEEE 1800-2023 6.6.1); any other resolution stays an
+    // unsupported effect. A dynamic selector may leave the driver's own
+    // partition on a sparse net, so it keeps the single-driver requirement.
     if (isa<sim::SimDriverDriveOp>(op) &&
         (!fact || !fact->descriptor ||
          fact->resource != schedule::ComputeResourceKind::Net ||
-         !provenance.hasIsolatedSingleDriver(*fact->descriptor)))
+         !(provenance.hasIsolatedSingleDriver(*fact->descriptor) ||
+           (!fact->dynamic &&
+            provenance.hasExclusiveDriverSlice(*fact->descriptor, fact->low,
+                                               fact->width)))))
       return failure();
     auto root = fact && fact->descriptor
                     ? ActivationMemoryAnalysis::getRoot(fact->resource,

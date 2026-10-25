@@ -13,6 +13,9 @@
 // IEEE 1800-2023 6.6/6.7, 6.6.1, 4.9.1 and 9.4.2.
 // TRACE: obelisk sparse scheduling nets: 1
 // TRACE: obelisk ranked groups: candidates=4 groups=1 segments=0 members=4
+// Each sparse driver owns its bit alone (6.6.1), so every member is repeatable
+// and the group runs all of them without ready predicates.
+// TRACE: obelisk repeatable ranked members: 4 unconditional=4
 // TRACE: obelisk eval dependency: owner=0 island=0 body=source_low.__obelisk_eval_body_0 successors=2
 // TRACE: obelisk eval dependency: owner=1 island=0 body=source_high.__obelisk_eval_body_0 successors=2
 // TRACE: obelisk eval dependency: owner=2 island=0 body=copy.__obelisk_eval_body_0 successors=3
