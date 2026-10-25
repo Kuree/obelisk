@@ -163,4 +163,116 @@ TEST(PromotionRangeIndex, NBACertificatesAndRecoveryAreIndependent) {
   EXPECT_EQ(routePending, 0u);
 }
 
+TEST(PromotionBucketIndex, BudgetAndEncodingRejectUnboundedExpansion) {
+  obelisk::runtime::PromotionBucketIndex buckets;
+  auto build = [&](std::vector<obelisk_rt_native_promotion_dependency> entries,
+                   uint64_t budget) {
+    return obelisk::runtime::buildPromotionBucketIndex(entries, budget,
+                                                       buckets);
+  };
+  EXPECT_FALSE(build({}, 1024));
+  EXPECT_FALSE(build({{1, 1, 0, 0}}, 1024));
+  EXPECT_FALSE(build({{0, 1, 0, uint64_t{1} << 48}}, 1024));
+  EXPECT_FALSE(build({{UINT64_MAX - 1, UINT64_MAX, 0, 0}}, UINT64_MAX));
+  EXPECT_FALSE(build({{0, 1024 * 1024, 0, 0}}, 1024));
+  EXPECT_FALSE(build({{1024 * 1024, 1024 * 1024 + 1, 0, 0}}, 1024));
+  EXPECT_TRUE(buckets.starts.empty());
+  EXPECT_TRUE(buckets.records.empty());
+  EXPECT_TRUE(build({{63, 65, 0, (uint64_t{1} << 48) - 1}}, 28));
+  EXPECT_EQ(buckets.starts, (std::vector<uint32_t>{0, 1, 2}));
+  EXPECT_EQ(buckets.records[0] & 65535, (63u << 8) | 64);
+  EXPECT_EQ(buckets.records[1] & 65535, 1u);
+  EXPECT_EQ(buckets.records[0] >> 16, (uint64_t{1} << 48) - 1);
+  EXPECT_FALSE(build({{63, 65, 0, 0}}, 27));
+  EXPECT_TRUE(buckets.starts.empty());
+}
+
+TEST(PromotionBucketIndex, RandomQueriesMatchIndependentScalarOverlap) {
+  std::mt19937_64 random(0xbac4e7);
+  for (unsigned trial = 0; trial != 24; ++trial) {
+    std::vector<obelisk_rt_native_promotion_dependency> original;
+    for (unsigned index = 0; index != 400; ++index) {
+      uint64_t begin = random() % 8192;
+      original.push_back(
+          {begin, begin + 1 + random() % 512, 0, random() % 129});
+    }
+    auto entries = original;
+    ASSERT_TRUE(buildPromotionRangeIndex(entries, 9000, 129));
+    obelisk::runtime::PromotionBucketIndex buckets;
+    ASSERT_TRUE(
+        obelisk::runtime::buildPromotionBucketIndex(entries, 65536, buckets));
+    for (unsigned query = 0; query != 256; ++query) {
+      uint64_t begin = random() % 16384;
+      uint64_t width = query % 31 ? random() % 600 : UINT64_MAX;
+      uint64_t end = width > UINT64_MAX - begin ? UINT64_MAX : begin + width;
+      std::set<uint64_t> expected, actual;
+      if (width)
+        for (auto entry : original)
+          if (entry.begin < end && begin < entry.end)
+            expected.insert(entry.certificate);
+      obelisk::runtime::visitPromotionBucketDependencies(
+          buckets.starts.data(), buckets.records.data(),
+          buckets.starts.size() - 1, begin, width,
+          [&](uint64_t id) { actual.insert(id); });
+      EXPECT_EQ(actual, expected);
+    }
+  }
+}
+
+TEST(PromotionBucketIndex, RuntimeActionsMatchIntervalIndex) {
+  // Include duplicate certificate visits across buckets, holes, the high word
+  // bit, a failed and a valid latch, an NBA bit, and a function-pointer route.
+  std::vector<obelisk_rt_native_promotion_dependency> entries{{0, 130, 0, 0},
+                                                              {63, 68, 0, 1},
+                                                              {60, 66, 0, 2},
+                                                              {192, 193, 0, 0},
+                                                              {257, 300, 0, 3}};
+  ASSERT_TRUE(buildPromotionRangeIndex(entries, 320, 4));
+  obelisk::runtime::PromotionBucketIndex buckets;
+  ASSERT_TRUE(
+      obelisk::runtime::buildPromotionBucketIndex(entries, 1024, buckets));
+  for (uint64_t offset :
+       {0u, 60u, 63u, 64u, 65u, 129u, 130u, 192u, 257u, 319u, 320u})
+    for (uint64_t width : {0u, 1u, 4u, 64u, 65u, 256u})
+      for (bool recover : {false, true}) {
+        uint8_t latch[2][2] = {{0, 1}, {0, 1}};
+        uint64_t words[2][2] = {{0, UINT64_MAX}, {0, UINT64_MAX}};
+        auto firstRoute = recover ? fourStateRoute : promotedRoute;
+        obelisk_rt_native_promotion_invalidate routes[] = {firstRoute,
+                                                           firstRoute};
+        unsigned aggregate[2];
+        for (unsigned variant = 0; variant != 2; ++variant) {
+          obelisk_rt_native_promotion_certificate certificates[] = {
+              {&latch[variant][0], &words[variant][0], 1, nullptr, nullptr},
+              {&latch[variant][1], &words[variant][0], uint64_t{1} << 63,
+               nullptr, nullptr},
+              {nullptr, &words[variant][1], 2, nullptr, nullptr},
+              {nullptr, &words[variant][0], 4, &routes[variant],
+               fourStateRoute}};
+          aggregateInvalidations = 0;
+          if (variant) {
+            auto action =
+                recover ? obelisk_rt_v1_native_promotion_recheck_buckets
+                        : obelisk_rt_v1_native_promotion_invalidate_buckets;
+            action(buckets.starts.data(), buckets.records.data(),
+                   buckets.starts.size() - 1, certificates, invalidateAggregate,
+                   offset, width);
+          } else {
+            auto action =
+                recover ? obelisk_rt_v1_native_promotion_recheck_ranges
+                        : obelisk_rt_v1_native_promotion_invalidate_ranges;
+            action(entries.data(), entries.size(), certificates,
+                   invalidateAggregate, offset, width);
+          }
+          aggregate[variant] = aggregateInvalidations;
+        }
+        EXPECT_EQ(latch[0][0], latch[1][0]);
+        EXPECT_EQ(latch[0][1], latch[1][1]);
+        EXPECT_EQ(words[0][0], words[1][0]);
+        EXPECT_EQ(words[0][1], words[1][1]);
+        EXPECT_EQ(routes[0], routes[1]);
+        EXPECT_EQ(aggregate[0], aggregate[1]);
+      }
+}
+
 } // namespace

@@ -63,6 +63,8 @@ bool readinessTransparentCall(Operation *op) {
          callee == "obelisk_rt_v1_coverage_point_hit" ||
          callee == "obelisk_rt_v1_native_promotion_invalidate_ranges" ||
          callee == "obelisk_rt_v1_native_promotion_recheck_ranges" ||
+         callee == "obelisk_rt_v1_native_promotion_invalidate_buckets" ||
+         callee == "obelisk_rt_v1_native_promotion_recheck_buckets" ||
          callee == "obelisk_rt_v1_native_state_mark_unknown" ||
          callee == "obelisk_rt_v1_native_state_refresh_unknown_summary";
 }

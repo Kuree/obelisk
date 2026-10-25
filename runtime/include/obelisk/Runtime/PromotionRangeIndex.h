@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <tuple>
 #include <vector>
 
@@ -90,6 +91,90 @@ inline void visitPromotionRangeDependencies(
     }
   };
   visit(visit, 0, count);
+}
+
+// Optional compiler-built index for narrow queries. Each 64-bit bucket owns
+// an ascending slice of packed (certificate:48, begin:8, end:8) records. Bounds
+// are relative to the bucket; end may equal 64. The byte budget includes both
+// arrays and prevents sparse or very wide dependencies from expanding the IR.
+struct PromotionBucketIndex {
+  std::vector<uint32_t> starts;
+  std::vector<uint64_t> records;
+};
+
+inline bool buildPromotionBucketIndex(
+    const std::vector<obelisk_rt_native_promotion_dependency> &entries,
+    uint64_t maxBytes, PromotionBucketIndex &result) {
+  result = {};
+  if (entries.empty() || maxBytes < sizeof(uint32_t))
+    return false;
+  uint64_t end = 0, count = 0;
+  for (const auto &entry : entries) {
+    if (entry.begin >= entry.end || entry.certificate >> 48)
+      return false;
+    end = std::max(end, entry.end);
+    uint64_t added = (entry.end - 1) / 64 - entry.begin / 64 + 1;
+    if (added > UINT32_MAX - count)
+      return false;
+    count += added;
+  }
+  // The rounded extent must remain representable by the query helper.
+  if (end > UINT64_MAX - 63)
+    return false;
+  uint64_t buckets = (end + 63) / 64;
+  if (buckets > maxBytes / sizeof(uint32_t) - 1 ||
+      buckets >= std::numeric_limits<size_t>::max())
+    return false;
+  uint64_t prefixBytes = (buckets + 1) * sizeof(uint32_t);
+  if (count > (maxBytes - prefixBytes) / sizeof(uint64_t) ||
+      count > std::numeric_limits<size_t>::max())
+    return false;
+  result.starts.resize(buckets + 1);
+  for (const auto &entry : entries)
+    for (uint64_t bucket = entry.begin / 64; bucket <= (entry.end - 1) / 64;
+         ++bucket)
+      ++result.starts[bucket + 1];
+  for (uint64_t bucket = 1; bucket <= buckets; ++bucket)
+    result.starts[bucket] += result.starts[bucket - 1];
+  result.records.resize(count);
+  auto next = result.starts;
+  for (const auto &entry : entries)
+    for (uint64_t bucket = entry.begin / 64; bucket <= (entry.end - 1) / 64;
+         ++bucket) {
+      uint64_t base = bucket * 64;
+      uint64_t low = entry.begin > base ? entry.begin - base : 0;
+      uint64_t high = std::min(entry.end - base, uint64_t{64});
+      result.records[next[bucket]++] =
+          (entry.certificate << 16) | (low << 8) | high;
+    }
+  return true;
+}
+
+// IEEE 1800-2023 6.3.1, 6.11.2, 38.34: preserve every intersecting proof for
+// X/Z changes, including overlapping aliases and cross-bucket writes. Repeated
+// certificate visits are idempotent, just as in the interval index. No state
+// access, allocation, actor, design callback or scheduler entry occurs here.
+template <typename Invalidate>
+inline void visitPromotionBucketDependencies(const uint32_t *starts,
+                                             const uint64_t *records,
+                                             uint64_t bucketCount,
+                                             uint64_t offset, uint64_t width,
+                                             Invalidate &&invalidate) {
+  if (!width || offset >= bucketCount * 64)
+    return;
+  uint64_t end = width > UINT64_MAX - offset ? UINT64_MAX : offset + width;
+  end = std::min(end, bucketCount * 64);
+  for (uint64_t bucket = offset / 64; bucket <= (end - 1) / 64; ++bucket) {
+    uint64_t base = bucket * 64;
+    uint64_t low = offset > base ? offset - base : 0;
+    uint64_t high = std::min(end - base, uint64_t{64});
+    for (uint32_t index = starts[bucket]; index != starts[bucket + 1];
+         ++index) {
+      uint64_t record = records[index];
+      if (((record >> 8) & 255) < high && (record & 255) > low)
+        invalidate(record >> 16);
+    }
+  }
 }
 
 } // namespace obelisk::runtime

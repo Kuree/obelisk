@@ -3692,6 +3692,23 @@ void obelisk_rt_v1_native_promotion_recheck_ranges(
     obelisk_rt_native_promotion_invalidate request_recheck, uint64_t bit_offset,
     uint64_t bit_width);
 
+// Equivalent narrow-query helpers over an optional compiler-verified bucket
+// index. starts has bucket_count + 1 uint32_t entries. Each packed uint64_t
+// record has certificate ID in bits 16..63 and relative begin/end in bits
+// 8..15/0..7. Bucket width is 64; its rounded extent cannot overflow uint64_t.
+// Both helpers preserve the existing idempotent proof actions and invoke only
+// the generated aggregate metadata action, once when any dependency overlaps.
+void obelisk_rt_v1_native_promotion_invalidate_buckets(
+    const uint32_t *starts, const uint64_t *records, uint64_t bucket_count,
+    const obelisk_rt_native_promotion_certificate *certificates,
+    obelisk_rt_native_promotion_invalidate invalidate_aggregate,
+    uint64_t bit_offset, uint64_t bit_width);
+void obelisk_rt_v1_native_promotion_recheck_buckets(
+    const uint32_t *starts, const uint64_t *records, uint64_t bucket_count,
+    const obelisk_rt_native_promotion_certificate *certificates,
+    obelisk_rt_native_promotion_invalidate request_recheck, uint64_t bit_offset,
+    uint64_t bit_width);
+
 typedef struct obelisk_rt_native_schedule_plan {
   uint32_t size;
   uint64_t graph_layout_checksum;

@@ -417,6 +417,8 @@ bool pendingRuntimeTransparent(LLVM::CallOp call,
       *callee == "obelisk_rt_v1_eval_nba_reserve" ||
       *callee == "obelisk_rt_v1_native_promotion_invalidate_ranges" ||
       *callee == "obelisk_rt_v1_native_promotion_recheck_ranges" ||
+      *callee == "obelisk_rt_v1_native_promotion_invalidate_buckets" ||
+      *callee == "obelisk_rt_v1_native_promotion_recheck_buckets" ||
       // The unknown summary's rescan reads CURRENT unknown planes, which
       // pending NBAs do not touch, and only changes summary bits.
       *callee == "obelisk_rt_v1_native_state_refresh_unknown_summary" ||

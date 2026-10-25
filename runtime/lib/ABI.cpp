@@ -1591,6 +1591,16 @@ ABI_FUNCTION(obelisk_rt_v1_native_promotion_recheck_ranges,
                       const obelisk_rt_native_promotion_certificate *,
                       obelisk_rt_native_promotion_invalidate, uint64_t,
                       uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_native_promotion_invalidate_buckets,
+             void (*)(const uint32_t *, const uint64_t *, uint64_t,
+                      const obelisk_rt_native_promotion_certificate *,
+                      obelisk_rt_native_promotion_invalidate, uint64_t,
+                      uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_native_promotion_recheck_buckets,
+             void (*)(const uint32_t *, const uint64_t *, uint64_t,
+                      const obelisk_rt_native_promotion_certificate *,
+                      obelisk_rt_native_promotion_invalidate, uint64_t,
+                      uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_install_aot,
              obelisk_rt_status (*)(obelisk_rt_context *,
                                    const obelisk_rt_native_schedule_plan *));

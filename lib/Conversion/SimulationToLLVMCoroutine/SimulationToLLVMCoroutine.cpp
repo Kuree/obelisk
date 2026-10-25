@@ -264,6 +264,8 @@ bool isEvalClosureRuntimeCall(LLVM::CallOp call, LLVM::LLVMFuncOp function,
       // state, advance time, or re-enter the scheduler.
       *callee == "obelisk_rt_v1_native_promotion_invalidate_ranges" ||
       *callee == "obelisk_rt_v1_native_promotion_recheck_ranges" ||
+      *callee == "obelisk_rt_v1_native_promotion_invalidate_buckets" ||
+      *callee == "obelisk_rt_v1_native_promotion_recheck_buckets" ||
       // The unknown summary's rescan reads the generated unknown
       // plane and clears summary bits; marking only sets them.
       // Neither executes actors, publishes, or re-enters scheduling.

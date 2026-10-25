@@ -405,6 +405,13 @@ their pending bits are numbered separately from function identities. Sharing
 the cache preserves four-state values and the ordering of actual writes
 (IEEE 1800-2023 6.3.1, 6.8, 38.34).
 
+Large reverse proof indexes can use immutable 64-bit buckets for narrow X/Z
+changes. Each record retains its exact bit bounds and certificate identity;
+overlapping proofs receive the same idempotent updates as the interval index.
+The compiler bounds the extra table storage, and wide queries retain interval
+lookup. Both paths finish before dependent computation (IEEE 1800-2023 4.3,
+6.3.1, 6.11.2, 38.34).
+
 Hierarchy boundaries and the legacy 64-bit dirty-mask limit do not restrict a
 proved DAG. Genuine value feedback, incomplete assignments, state-dependent
 resumption, or unproved termination retain their existing execution. The

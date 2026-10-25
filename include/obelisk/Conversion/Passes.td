@@ -349,6 +349,22 @@ def ConvertNativeFunctionBodyPass
   let dependentDialects = ["mlir::LLVM::LLVMDialect", "mlir::math::MathDialect"];
 }
 
+def MaterializeNativePromotionRangeIndexPass
+    : Pass<"materialize-native-promotion-range-index", "mlir::ModuleOp"> {
+  let summary = "Materialize verified reverse dependencies for native proofs";
+  let description = [{
+    Consumes typed kernel, route and NBA proof dependencies after native
+    specialization. Defines the declared invalidation/recheck hooks and their
+    immutable interval tables. Large bounded indexes additionally use compact
+    buckets for narrow queries; wide queries retain the interval lookup. The
+    coroutine conversion invokes this same materializer before publishing
+    unknown-plane writes.
+  }];
+  let dependentDialects = ["mlir::LLVM::LLVMDialect"];
+  let options = [Option<"bucketMinEntries", "bucket-min-entries", "uint64_t",
+                        "4096", "Minimum dependency count for compact buckets">];
+}
+
 def AddressNativeStateThroughBasesPass
     : Pass<"address-native-state-through-bases", "mlir::ModuleOp"> {
   let summary = "Address native state planes through one base per function";

@@ -270,7 +270,9 @@ enum class NativeSchedulePlanField : int64_t {
   Count,
 };
 
-mlir::LogicalResult materializeNativePromotionRangeIndex(mlir::ModuleOp module);
+mlir::LogicalResult
+materializeNativePromotionRangeIndex(mlir::ModuleOp module,
+                                     uint64_t bucketMinEntries = 4096);
 mlir::LogicalResult materializeNativePromotionWrites(mlir::ModuleOp module);
 bool materializeNativeGroupDataflow(mlir::LLVM::LLVMFuncOp function,
                                     mlir::SymbolTable &symbols,

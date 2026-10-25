@@ -1,6 +1,7 @@
 //===- SimulationPromotionRangeIndex.cpp - Scoped proof invalidation -----===//
 
 #include "SimulationPackedLowering.h"
+#include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
@@ -14,9 +15,15 @@
 
 using namespace mlir;
 
+namespace obelisk {
+#define GEN_PASS_DEF_MATERIALIZENATIVEPROMOTIONRANGEINDEXPASS
+#include "obelisk/Conversion/Passes.h.inc"
+} // namespace obelisk
+
 namespace obelisk::detail {
 
-LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
+LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
+                                                   uint64_t bucketMinEntries) {
   auto hook = module.lookupSymbol<LLVM::LLVMFuncOp>(
       "__obelisk_eval_promotion_invalidate_range_v1");
   if (!hook)
@@ -312,6 +319,67 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
                                            reset.getSymName()),
                  entry->getArgument(0), entry->getArgument(1)});
   LLVM::ReturnOp::create(builder, location, ValueRange{});
+
+  // Keep small trees compact and cap additional immutable storage at twice
+  // the interval table. Narrow generated mask runs then avoid a logarithmic
+  // tree walk; wide deposits retain the interval index. Both paths apply the
+  // same proof actions before dependent evaluation (IEEE 1800-2023 4.3,
+  // 6.3.1, 6.11.2, 38.34), with no new state copies or scheduler boundary.
+  runtime::PromotionBucketIndex buckets;
+  if (entries.size() >= bucketMinEntries && entries.size() <= UINT64_MAX / 64 &&
+      runtime::buildPromotionBucketIndex(entries, entries.size() * 64,
+                                         buckets)) {
+    builder.setInsertionPointToStart(module.getBody());
+    auto i32 = builder.getI32Type();
+    auto starts = LLVM::GlobalOp::create(
+        builder, location, LLVM::LLVMArrayType::get(i32, buckets.starts.size()),
+        true, LLVM::Linkage::Internal, "__obelisk_eval_proof_bucket_starts_v1",
+        DenseIntElementsAttr::get(
+            RankedTensorType::get({int64_t(buckets.starts.size())}, i32),
+            ArrayRef<uint32_t>(buckets.starts)),
+        4);
+    auto records = LLVM::GlobalOp::create(
+        builder, location,
+        LLVM::LLVMArrayType::get(i64, buckets.records.size()), true,
+        LLVM::Linkage::Internal, "__obelisk_eval_proof_bucket_records_v1",
+        DenseIntElementsAttr::get(
+            RankedTensorType::get({int64_t(buckets.records.size())}, i64),
+            ArrayRef<uint64_t>(buckets.records)),
+        8);
+    auto specialize = [&](LLVM::LLVMFuncOp function, Block *head,
+                          LLVM::LLVMFuncOp aggregate, StringRef helperName) {
+      Block *wide = head->splitBlock(head->begin());
+      Block *narrow = new Block;
+      function.getBody().push_back(narrow);
+      builder.setInsertionPointToEnd(head);
+      Value small = LLVM::ICmpOp::create(
+          builder, location, LLVM::ICmpPredicate::ule, head->getArgument(1),
+          llvmConstant(builder, location, i64, 64));
+      LLVM::CondBrOp::create(builder, location, small, narrow, wide);
+      builder.setInsertionPointToStart(narrow);
+      auto helper = getOrDeclareLLVMFunction(
+          module, helperName, voidType,
+          {pointer, pointer, i64, pointer, pointer, i64, i64});
+      LLVM::CallOp::create(
+          builder, location, helper,
+          ValueRange{
+              LLVM::AddressOfOp::create(builder, location, pointer,
+                                        starts.getSymName()),
+              LLVM::AddressOfOp::create(builder, location, pointer,
+                                        records.getSymName()),
+              llvmConstant(builder, location, i64, buckets.starts.size() - 1),
+              LLVM::AddressOfOp::create(builder, location, pointer,
+                                        actions.getSymName()),
+              LLVM::AddressOfOp::create(builder, location, pointer,
+                                        aggregate.getSymName()),
+              head->getArgument(0), head->getArgument(1)});
+      LLVM::ReturnOp::create(builder, location, ValueRange{});
+    };
+    specialize(hook, entry, reset,
+               "obelisk_rt_v1_native_promotion_invalidate_buckets");
+    specialize(recheck, recheckEntry, request,
+               "obelisk_rt_v1_native_promotion_recheck_buckets");
+  }
   return success();
 }
 
@@ -654,3 +722,20 @@ std::unique_ptr<Pass> createPublishNativeFunctionProofsPass() {
 }
 
 } // namespace obelisk::detail
+
+namespace obelisk {
+namespace {
+class MaterializeNativePromotionRangeIndexPass final
+    : public impl::MaterializeNativePromotionRangeIndexPassBase<
+          MaterializeNativePromotionRangeIndexPass> {
+public:
+  using Base::Base;
+
+  void runOnOperation() override {
+    if (failed(detail::materializeNativePromotionRangeIndex(getOperation(),
+                                                            bucketMinEntries)))
+      signalPassFailure();
+  }
+};
+} // namespace
+} // namespace obelisk

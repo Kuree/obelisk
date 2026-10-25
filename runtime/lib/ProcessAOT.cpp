@@ -262,6 +262,33 @@ void invalidateNativeStaticSpecializationFastUnlocked(
   *plan->specialization_fast = 0;
 }
 
+static void invalidatePromotionCertificate(
+    const obelisk_rt_native_promotion_certificate &certificate) {
+  if (certificate.latch || certificate.route_slot) {
+    if (certificate.latch)
+      *certificate.latch = 0;
+    if (certificate.word)
+      *certificate.word |= certificate.mask;
+    if (certificate.route_slot)
+      std::memcpy(certificate.route_slot, &certificate.fallback,
+                  sizeof(certificate.fallback));
+  } else if (certificate.word) {
+    *certificate.word &= ~certificate.mask;
+  }
+}
+
+static void recheckPromotionCertificate(
+    const obelisk_rt_native_promotion_certificate &certificate) {
+  bool failed = certificate.latch && !*certificate.latch;
+  if (certificate.route_slot) {
+    obelisk_rt_native_promotion_invalidate selected;
+    std::memcpy(&selected, certificate.route_slot, sizeof(selected));
+    failed = selected == certificate.fallback;
+  }
+  if (failed && certificate.word)
+    *certificate.word |= certificate.mask;
+}
+
 extern "C" void obelisk_rt_v1_native_promotion_invalidate_ranges(
     const obelisk_rt_native_promotion_dependency *dependencies,
     uint64_t dependencyCount,
@@ -271,18 +298,7 @@ extern "C" void obelisk_rt_v1_native_promotion_invalidate_ranges(
   bool affected = false;
   visitPromotionRangeDependencies(
       dependencies, dependencyCount, bitOffset, bitWidth, [&](uint64_t id) {
-        const auto &certificate = certificates[id];
-        if (certificate.latch || certificate.route_slot) {
-          if (certificate.latch)
-            *certificate.latch = 0;
-          if (certificate.word)
-            *certificate.word |= certificate.mask;
-          if (certificate.route_slot)
-            std::memcpy(certificate.route_slot, &certificate.fallback,
-                        sizeof(certificate.fallback));
-        } else if (certificate.word) {
-          *certificate.word &= ~certificate.mask;
-        }
+        invalidatePromotionCertificate(certificates[id]);
         affected = true;
       });
   if (affected)
@@ -298,15 +314,37 @@ extern "C" void obelisk_rt_v1_native_promotion_recheck_ranges(
   bool affected = false;
   visitPromotionRangeDependencies(
       dependencies, dependencyCount, bitOffset, bitWidth, [&](uint64_t id) {
-        const auto &certificate = certificates[id];
-        bool failed = certificate.latch && !*certificate.latch;
-        if (certificate.route_slot) {
-          obelisk_rt_native_promotion_invalidate selected;
-          std::memcpy(&selected, certificate.route_slot, sizeof(selected));
-          failed = selected == certificate.fallback;
-        }
-        if (failed && certificate.word)
-          *certificate.word |= certificate.mask;
+        recheckPromotionCertificate(certificates[id]);
+        affected = true;
+      });
+  if (affected)
+    requestRecheck();
+}
+
+extern "C" void obelisk_rt_v1_native_promotion_invalidate_buckets(
+    const uint32_t *starts, const uint64_t *records, uint64_t bucketCount,
+    const obelisk_rt_native_promotion_certificate *certificates,
+    obelisk_rt_native_promotion_invalidate invalidateAggregate,
+    uint64_t bitOffset, uint64_t bitWidth) {
+  bool affected = false;
+  visitPromotionBucketDependencies(
+      starts, records, bucketCount, bitOffset, bitWidth, [&](uint64_t id) {
+        invalidatePromotionCertificate(certificates[id]);
+        affected = true;
+      });
+  if (affected)
+    invalidateAggregate();
+}
+
+extern "C" void obelisk_rt_v1_native_promotion_recheck_buckets(
+    const uint32_t *starts, const uint64_t *records, uint64_t bucketCount,
+    const obelisk_rt_native_promotion_certificate *certificates,
+    obelisk_rt_native_promotion_invalidate requestRecheck, uint64_t bitOffset,
+    uint64_t bitWidth) {
+  bool affected = false;
+  visitPromotionBucketDependencies(
+      starts, records, bucketCount, bitOffset, bitWidth, [&](uint64_t id) {
+        recheckPromotionCertificate(certificates[id]);
         affected = true;
       });
   if (affected)
