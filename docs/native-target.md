@@ -411,8 +411,16 @@ union is scanned again. This preserves four-state values and the existing
 evaluation boundary (IEEE 1800-2023 4.5, 4.6, 6.3.1, 38.34).
 These groups retain their original ready branches and ordered canonical accesses
 after the same finite-effect, alias and materialization-budget checks as dense
-dataflow. Inactive members do no computation. Rejected or refined groups retain
-their original member-based guards.
+dataflow. Repeatable members run unconditionally in the certified body as
+well: with no pending input change they rewrite the values their exclusive
+outputs already hold, which is no update event (4.4.1), so the certificate
+decides only the value domain. A publication whose every destination is such a
+member of the same group is removed after inlining; the member runs after its
+producers in the proved order. Publications to predicated members, other
+groups, runtime observers and the four-state fallback are kept, and the
+fallback keeps every member predicate (4.6, 9.4.2). Inactive predicated
+members do no computation. Rejected or refined groups retain their original
+member-based guards.
 
 Function routes reuse an eval owner's knownness cache when both certificates
 cover exactly the same physical bits. Coverage is normalized without filling

@@ -134,6 +134,8 @@ def EvalProvenTwoStateCall : ScheduleField<"EvalProvenTwoStateCall", "schedule.e
     "::mlir::UnitAttr">;
 def EvalRankedMembers : ScheduleField<"EvalRankedMembers", "schedule.eval.ranked_members",
     "::mlir::DenseI32ArrayAttr">;
+def EvalUnconditionalMembers : ScheduleField<"EvalUnconditionalMembers", "schedule.eval.unconditional_members",
+    "::mlir::DenseI32ArrayAttr">;
 def EvalRawCaptures : ScheduleField<"EvalRawCaptures", "schedule.eval.raw_captures",
     "::mlir::UnitAttr">;
 def EvalReadyWordCount : ScheduleField<"EvalReadyWordCount", "schedule.eval.ready_word_count",

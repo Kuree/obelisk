@@ -382,6 +382,7 @@ mlir::FailureOr<ResolvedNativeEvalPlan> resolveNativeEvalPlan(
     mlir::ArrayRef<NativePeriodicAlias> periodicAliases);
 struct NativeGroupPromotionReport {
   llvm::SmallVector<std::string> diagnostics;
+  uint64_t elidedUnconditionalPublications = 0;
 };
 mlir::FailureOr<std::shared_ptr<NativeGroupPromotionReport>>
 materializeNativeEvalGroupBodies(mlir::ModuleOp module,
@@ -397,6 +398,12 @@ mlir::FailureOr<NativeRankedGroupPlan> planNativeRankedGroups(
     mlir::ModuleOp module, const NativeEvalCoordinatorPlan &plan,
     mlir::ArrayRef<llvm::SmallVector<NativePromotionRange>> ranges,
     uint64_t stateBits);
+/// Removes pending-set publications of a dataflow candidate whose every
+/// destination is one of its own unconditional (repeatable) members: those
+/// members execute whenever the group executes, after their producers. Returns
+/// the number of removed publications. Call after member bodies are inlined and
+/// before readiness actions are lowered.
+unsigned elideUnconditionalMemberPublications(mlir::LLVM::LLVMFuncOp function);
 
 mlir::LogicalResult
 materializeNativeEvalDispatch(mlir::ModuleOp module,

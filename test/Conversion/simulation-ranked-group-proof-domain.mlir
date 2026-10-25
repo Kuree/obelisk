@@ -23,12 +23,13 @@
 // CHECK-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
 // CHECK-SAME: schedule.eval.control_flow_dataflow
 // CHECK-SAME: schedule.eval.group_proof_domain = #schedule.group_proof_dependency<domain = 0 : i64, members = [1, 2, 3, 4, 5, 6, 7, 8], ranges = [8, 72]>
+// CHECK-SAME: schedule.eval.unconditional_members = array<i32: 1, 2, 3, 4, 5, 6, 7, 8>
 // CHECK: llvm.call @__obelisk_eval_group_promotion_ready_v1
 // CHECK: llvm.cond_br
-// CHECK: schedule.eval.activation_entry = 1 : i32
-// CHECK: llvm.cond_br
-// CHECK: schedule.eval.activation_entry = 8 : i32
-// CHECK: llvm.cond_br
+// Every member is repeatable: the certified body runs all of them in rank
+// order without reading their pending bits (see
+// simulation-ranked-group-unconditional.mlir for the mixed case).
+// CHECK-NOT: schedule.eval.activation_entry
 // CHECK-NOT: __obelisk_eval_kernel_promotion_ready_v1
 // CHECK-LABEL: llvm.func @__obelisk_eval_ranked_group_0.fallback(
 // CHECK: llvm.call @__obelisk_eval_kernel_promotion_ready_v1

@@ -12,6 +12,7 @@
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/Matchers.h"
 #include "llvm/ADT/StringMap.h"
 #include <optional>
 
@@ -218,6 +219,7 @@ materializeNativeRankedGroups(ModuleOp module,
   SmallVector<const NativeRankedEvalNode *> members;
   unsigned groupID = 0;
   unsigned clockedMembers = 0;
+  unsigned unconditionalMembers = 0;
   struct Chunk {
     std::string name;
     SmallVector<uint32_t> owners;
@@ -455,6 +457,7 @@ materializeNativeRankedGroups(ModuleOp module,
       builder.setInsertionPointToStart(entry);
       ready = LLVM::AddressOfOp::create(builder, loc, pointer,
                                         evalModelIngressName);
+      SmallVector<int32_t> unconditional;
       for (const auto *node : members) {
         uint32_t owner = node->owner;
         Value bit =
@@ -470,14 +473,21 @@ materializeNativeRankedGroups(ModuleOp module,
                                   llvmConstant(builder, loc, i64, 0));
         // The source-revision proof covers complete sensitivity, exclusive
         // outputs, and absence of repeated publications. Repeating this pure
-        // computation when inactive is observationally inert (LRM 4.3, 9.4.2).
-        // This candidate still needs the lowered nontrapping/effect proof.
-        // An independent group certificate proves knownness, not activation.
-        // Retain the source ready predicate for its CFG candidate so inactive
-        // members need not compute. The same ordered ready consumption and
-        // publications remain at the original points (LRM 4.6 and 9.4.2).
-        if (node->repeatable && !proof)
+        // computation when inactive is observationally inert: it writes the
+        // values its outputs already hold, which is no update event (IEEE
+        // 1800-2023 4.3, 4.4.1, 4.9.1, 9.2.2.2, 9.4.2). This candidate still
+        // needs the lowered nontrapping/effect proof. An independent group
+        // certificate proves knownness, not activation, so it does not
+        // change this decision. Such a member runs whenever the group runs,
+        // in its proved rank order; publications from earlier members to it
+        // are therefore redundant and are removed after inlining (see
+        // elideUnconditionalMemberPublications). Its pending bit is still
+        // the ingress that selects this group and is consumed here.
+        if (node->repeatable) {
           active = llvmConstant(builder, loc, builder.getI1Type(), 1);
+          unconditional.push_back(owner);
+          ++unconditionalMembers;
+        }
         Block *execute = new Block, *next = new Block;
         candidate.getBody().push_back(execute);
         candidate.getBody().push_back(next);
@@ -491,6 +501,10 @@ materializeNativeRankedGroups(ModuleOp module,
         builder.setInsertionPointToStart(next);
       }
       LLVM::ReturnOp::create(builder, loc, ValueRange{});
+      if (!unconditional.empty())
+        ::obelisk::schedule::set<
+            ::obelisk::schedule::Field::EvalUnconditionalMembers>(
+            candidate, builder.getDenseI32ArrayAttr(unconditional));
     }
     members.clear();
   };
@@ -516,7 +530,7 @@ materializeNativeRankedGroups(ModuleOp module,
                                      return node.repeatable &&
                                             !executors[node.owner].empty();
                                    })
-                 << '\n';
+                 << " unconditional=" << unconditionalMembers << '\n';
     // Tie runtime entry counts back to the actual native ownership plan.
     // Include owners without direct fragments as well. Their compute-node
     // IDs retain the source graph's global scheduling rank.
@@ -537,8 +551,75 @@ materializeNativeRankedGroups(ModuleOp module,
       llvm::interleaveComma(node.successors, llvm::errs());
       llvm::errs() << '\n';
     }
+    llvm::errs() << "obelisk eval repeatable owners:";
+    for (const auto &node : plan.rankedNodes)
+      if (node.repeatable)
+        llvm::errs() << ' ' << node.owner;
+    llvm::errs() << '\n';
   }
   return executors;
+}
+
+unsigned elideUnconditionalMemberPublications(LLVM::LLVMFuncOp function) {
+  auto members = ::obelisk::schedule::get<
+      ::obelisk::schedule::Field::EvalUnconditionalMembers>(function);
+  auto ingress =
+      ::obelisk::schedule::get<::obelisk::schedule::Field::EvalGroupIngress>(
+          function);
+  if (!members || members.empty() || !ingress)
+    return 0;
+  // Pending bits of unconditional members, per ingress word.
+  DenseMap<uint64_t, uint64_t> unconditional;
+  for (int32_t owner : members.asArrayRef()) {
+    if (owner < 0)
+      return 0;
+    unconditional[uint64_t(owner) / 64] |= uint64_t{1} << (owner % 64);
+  }
+  // The bits a mask can add: a constant, or a select between constants (the
+  // inline publication form `select(triggered, bit, 0)`). Anything else may
+  // publish to a member that still has its predicate, so it is kept.
+  auto constantBits = [](Value mask) -> std::optional<uint64_t> {
+    APInt value;
+    if (matchPattern(mask, m_ConstantInt(&value)))
+      return value.getZExtValue();
+    Value yesValue, noValue;
+    if (auto select = mask.getDefiningOp<arith::SelectOp>()) {
+      yesValue = select.getTrueValue();
+      noValue = select.getFalseValue();
+    } else if (auto select = mask.getDefiningOp<LLVM::SelectOp>()) {
+      yesValue = select.getTrueValue();
+      noValue = select.getFalseValue();
+    } else {
+      return std::nullopt;
+    }
+    APInt yes, no;
+    if (!matchPattern(yesValue, m_ConstantInt(&yes)) ||
+        !matchPattern(noValue, m_ConstantInt(&no)))
+      return std::nullopt;
+    return (yes | no).getZExtValue();
+  };
+  SmallVector<schedule::NativeReadyUpdateOp> redundant;
+  function.walk([&](schedule::NativeReadyUpdateOp update) {
+    if (update.getConsume())
+      return;
+    auto base = update.getBase().getDefiningOp<LLVM::AddressOfOp>();
+    if (!base || base.getGlobalName() != ingress.getValue())
+      return;
+    std::optional<uint64_t> bits = constantBits(update.getMask());
+    auto word = unconditional.find(update.getWord());
+    if (!bits || !*bits || word == unconditional.end() ||
+        (*bits & ~word->second) != 0)
+      return;
+    redundant.push_back(update);
+  });
+  // The publication's change/edge computation becomes dead with it; ordinary
+  // dead-code elimination removes it before the dataflow proof. The member's
+  // own store, and every publication to a predicated member, another group,
+  // a runtime observer or the four-state fallback, remain (IEEE 1800-2023
+  // 4.6, 9.4.2).
+  for (auto update : redundant)
+    update.erase();
+  return redundant.size();
 }
 
 } // namespace obelisk::detail

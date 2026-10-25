@@ -1,0 +1,27 @@
+// RUN: obelisk-opt %S/../Conversion/simulation-ranked-group-unconditional.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines,materialize-runtime-byte-globals)' | obelisk-translate --mlir-to-llvmir -o %t.ll
+// RUN: opt %t.ll -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' -S -o %t.o0.ll && %target_cxx -O0 %t.o0.ll %runtime_link_flags -o %t.o0
+// RUN: env OBELISK_RT_VERIFY_UNKNOWN_SUMMARY=1 %t.o0 | FileCheck %s
+// RUN: opt %t.ll -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' -S -o %t.o3.ll && %target_cxx -O3 %t.o3.ll %runtime_link_flags -o %t.o3
+// RUN: env OBELISK_RT_VERIFY_UNKNOWN_SUMMARY=1 %t.o3 | FileCheck %s
+
+// The unconditional members propagate through the certified body, the X and Z
+// drives take the predicated four-state fallback, and the observer outside the
+// group is woken exactly when link7's output changes: Z + 8 is the same X as
+// X + 8, so there is no tap at time 6.
+// CHECK: driver 10
+// CHECK-NEXT: tap 10
+// CHECK-NEXT: chain 10
+// CHECK-NEXT: driver x
+// CHECK-NEXT: tap x
+// CHECK-NEXT: chain x
+// CHECK-NEXT: driver z
+// CHECK-NEXT: chain x
+// CHECK-NEXT: driver 1000
+// CHECK-NEXT: tap 16
+// CHECK-NEXT: chain 16
+// CHECK-NEXT: driver 1010
+// CHECK-NEXT: tap 18
+// CHECK-NEXT: chain 18
+// CHECK-NEXT: driver 1100
+// CHECK-NEXT: tap 20
+// CHECK-NEXT: chain 20

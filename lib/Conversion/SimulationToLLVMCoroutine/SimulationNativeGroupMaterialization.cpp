@@ -2051,6 +2051,12 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
     // Do not retain a consumed operation pointer across that allocation.
     if (inlined != preInlined.end())
       preInlined.erase(inlined);
+    // Publications from inlined members to this candidate's unconditional
+    // members are redundant: those members run after their producers in the
+    // same activation. Remove them while the typed actions still name their
+    // destination word and bits.
+    report->elidedUnconditionalPublications +=
+        elideUnconditionalMemberPublications(function);
     // Member effects are now visible in one CFG. Combine semantic readiness
     // reads/updates before expanding indexes or predicating the computation.
     if (failed(lowerNativeScheduleActionsToLLVM(function, &symbolTables)))
@@ -2180,7 +2186,8 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
                         ::obelisk::schedule::Field::EvalControlFlowDataflow,
                         ::obelisk::schedule::Field::EvalDataflowSlots,
                         ::obelisk::schedule::Field::EvalCoalescedSlots,
-                        ::obelisk::schedule::Field::EvalCacheHintWords}) {
+                        ::obelisk::schedule::Field::EvalCacheHintWords,
+                        ::obelisk::schedule::Field::EvalUnconditionalMembers}) {
         Attribute slow = schedule::get<Attribute>(original, name),
                   fast = schedule::get<Attribute>(function, name);
         schedule::remove(original, name);
@@ -2367,6 +2374,9 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
   for (auto [index, residual] : llvm::enumerate(residuals))
     inputs.residuals.try_emplace(residual.first,
                                  std::make_pair(residual.second, index));
+  if (native::has<native::DebugTiming>(module))
+    llvm::errs() << "obelisk unconditional member publications elided: "
+                 << report->elidedUnconditionalPublications << '\n';
   return report;
 }
 

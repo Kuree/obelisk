@@ -239,6 +239,12 @@ SmallVector<LLVM::LLVMFuncOp> splitNativeEvalGroup(LLVM::LLVMFuncOp original,
       ::obelisk::schedule::has<::obelisk::schedule::Field::EvalGroupChildren>(
           original))
     return {};
+  // A publication from one member to an unconditional member of the same
+  // candidate has been removed: the consumer runs whenever the candidate runs.
+  // Children have their own entries, so such a pair must not be separated.
+  if (::obelisk::schedule::has<
+          ::obelisk::schedule::Field::EvalUnconditionalMembers>(candidate))
+    return {};
   bool executionBoundary = false;
   candidate.walk([&](Operation *operation) {
     executionBoundary |=
