@@ -25,6 +25,7 @@
 // GROUP-NOT: llvm.cond_br
 // GROUP-NOT: llvm.br
 // GROUP-NOT: llvm.switch
+// GROUP-NOT: @__obelisk_state_unknown
 // GROUP: llvm.return
 // GROUP: llvm.call @__obelisk_eval_ranked_group_0.fallback
 // GROUP-LABEL: llvm.func @__obelisk_eval_ranked_group_0.fallback(
@@ -34,7 +35,13 @@
 // proof. Writable VPI retains override-aware source boundaries (38.34).
 // BOUNDARY-DAG: obelisk eval boundary: owner={{[0-9]+}} island={{[0-9]+}} body=source.__obelisk_eval_body_0
 // BOUNDARY-DAG: obelisk eval boundary: owner={{[0-9]+}} island={{[0-9]+}} body=source_high.__obelisk_eval_body_0
-// VPI: llvm.func @__obelisk_eval_dispatch_v1(
+// Even the clean two-state body must clear the contribution's unknown bits:
+// a known net deposit can hide an unknown underlying driver (38.34).
+// VPI-LABEL: llvm.func @source.__obelisk_eval_body_0.__obelisk_clean.__obelisk_two_state_0(
+// VPI: llvm.mlir.addressof @__obelisk_state_unknown
+// VPI: llvm.store
+// VPI: llvm.return
+// VPI-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
 
 !byte = !simulation.logic<8>
 !ref = !simulation.ref<!byte>

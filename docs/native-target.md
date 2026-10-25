@@ -351,7 +351,11 @@ Late ranked groups also admit plain wires whose strong, undelayed drivers
 partition all bits without overlap. Each source keeps its own ready predicate,
 and the group certificate covers its inputs and the old net value. Certified
 drives omit redundant X/Z publication for their exclusive slices; the fallback
-retains X/Z changes. Overlapping drivers, undriven holes, connections, delays,
+retains X/Z changes. The same certificate proves the corresponding driver X/Z
+bits zero when the original layout rules out overrides. Driver padding and
+writable-VPI clean bodies retain their unknown stores: a net deposit need not
+change the underlying contribution (38.34).
+Overlapping drivers, undriven holes, connections, delays,
 weak strengths, and writable VPI retain their boundaries (IEEE 1800-2023 4.9.1,
 6.3.1, 6.6.1, 38.34).
 

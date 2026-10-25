@@ -464,13 +464,15 @@ public:
   using Base = OpConversionPattern<DriveOp>;
   using OneToNOpAdaptor = typename Base::OneToNOpAdaptor;
 
-  DriverDriveConversion(const TypeConverter &converter, MLIRContext *context,
-                        const NativeStateLayout &layout,
-                        std::shared_ptr<const DriverLookupIndex> index,
-                        std::shared_ptr<const NativeStateLayout> cleanLayout,
-                        std::shared_ptr<const DriverLookupIndex> cleanIndex,
-                        std::shared_ptr<const DriverLookupIndex> resolutionIndex)
-      : Base(converter, context), layout(layout), index(std::move(index)),
+  DriverDriveConversion(
+      const TypeConverter &converter, MLIRContext *context,
+      const NativeStateLayout &layout, const NativeStateLayout &originalLayout,
+      std::shared_ptr<const DriverLookupIndex> index,
+      std::shared_ptr<const NativeStateLayout> cleanLayout,
+      std::shared_ptr<const DriverLookupIndex> cleanIndex,
+      std::shared_ptr<const DriverLookupIndex> resolutionIndex)
+      : Base(converter, context), layout(layout),
+        originalLayout(originalLayout), index(std::move(index)),
         cleanLayout(std::move(cleanLayout)), cleanIndex(std::move(cleanIndex)),
         resolutionIndex(std::move(resolutionIndex)) {
     // Guard materialization creates two marked drives, each lowered once.
@@ -567,6 +569,24 @@ public:
         return nullptr;
       return lookup.driverByID.lookup(static_cast<uint64_t>(id.getInt()));
     };
+    const NativeStateLayout::Driver *affectedDriver =
+        getDriver(native::get<native::DriverId>(op));
+    std::optional<uint64_t> updateLow;
+    if (auto low = native::get<native::DriverLow>(op);
+        low && !low.getValue().isNegative() &&
+        low.getValue().getActiveBits() <= 64) {
+      updateLow = low.getValue().getZExtValue();
+    } else {
+      std::optional<uint64_t> encodedHandle =
+          resolveCFGConstantInteger(adaptor.getDriver().front());
+      obelisk_rt_stable_handle_v1 decodedHandle{};
+      if (affectedDriver && encodedHandle &&
+          obelisk_rt_stable_handle_decode(*encodedHandle, &decodedHandle) &&
+          decodedHandle.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
+          decodedHandle.id == affectedDriver->handleID &&
+          decodedHandle.offset >= 0)
+        updateLow = static_cast<uint64_t>(decodedHandle.offset);
+    }
     IntegerType driveType = rewriter.getIntegerType(*sourceWidth);
     if (isa<FloatType>(sourceType))
       driveValue = arith::BitcastOp::create(rewriter, op.getLoc(), driveType,
@@ -588,6 +608,38 @@ public:
     if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveDelayedNetOp>)
       storeLayout = nullptr;
     bool userRaw = sim::has<sim::metadata::UserNetRawDrive>(op);
+    bool knownContribution = false;
+    if constexpr (!std::is_same_v<DriveOp, sim::SimDriverDriveDelayedNetOp>) {
+      if (!userRaw && affectedDriver && updateLow &&
+          !schedule::has<schedule::Field::DeferNetResolution>(op) &&
+          schedule::has<schedule::Field::EvalInductiveTwoStateAccess>(op) &&
+          layout.isolatedPartitionedDriverNets.contains(
+              affectedDriver->netId)) {
+        const auto *net = lookup.netByID.lookup(affectedDriver->netId);
+        uint64_t begin = affectedDriver->drivenLow;
+        uint64_t end = begin + affectedDriver->drivenWidth;
+        // IEEE 1800-2023 6.3.1, 6.6.1: without overrides, a strong exclusive
+        // contribution equals its net bits at activation entry. The net
+        // certificate proves these driver X/Z bits zero; the known-preserving
+        // closure and this known RHS preserve them through the activation.
+        // Limit this to contributing bits, not undriven driver padding.
+        // Writable VPI deposits can break that equality (38.34), even when
+        // the net is known and a clean-environment guard later succeeds.
+        // Require direct handles in the ORIGINAL layout, not its clean copy.
+        knownContribution =
+            net && *updateLow >= begin && *updateLow <= end &&
+            *sourceWidth <= end - *updateLow &&
+            originalLayout.directHandles.contains(affectedDriver->handleID) &&
+            originalLayout.directHandles.contains(net->handleID) &&
+            !originalLayout.guardedHandles.contains(affectedDriver->handleID) &&
+            !originalLayout.guardedHandles.contains(net->handleID);
+      }
+    }
+    IntegerType i1 = rewriter.getI1Type();
+    auto boolean = [&](bool value) {
+      return arith::ConstantOp::create(rewriter, op.getLoc(), i1,
+                                       rewriter.getBoolAttr(value));
+    };
     Value oldRawValue;
     Value oldRawUnknown;
     if (userRaw) {
@@ -601,14 +653,13 @@ public:
     Value driveValueChanged = storeStatePlane(
         rewriter, op.getLoc(), adaptor.getDriver().front(), driveValue,
         "__obelisk_state_value", layout.bitCount, storeLayout);
-    Value driveUnknownChanged = storeStatePlane(
-        rewriter, op.getLoc(), adaptor.getDriver().front(), driveUnknown,
-        "__obelisk_state_unknown", layout.bitCount, storeLayout);
-    IntegerType i1 = rewriter.getI1Type();
-    auto boolean = [&](bool value) {
-      return arith::ConstantOp::create(rewriter, op.getLoc(), i1,
-                                       rewriter.getBoolAttr(value));
-    };
+    Value driveUnknownChanged =
+        knownContribution
+            ? boolean(false)
+            : storeStatePlane(rewriter, op.getLoc(),
+                              adaptor.getDriver().front(), driveUnknown,
+                              "__obelisk_state_unknown", layout.bitCount,
+                              storeLayout);
     Value rawChanged = arith::OrIOp::create(
         rewriter, op.getLoc(), driveValueChanged, driveUnknownChanged);
     Value changed = boolean(false);
@@ -745,26 +796,6 @@ public:
     // the address remains dynamic, leave the set absent and retain the
     // conservative whole-net lowering below.
     std::optional<DenseSet<std::pair<uint64_t, uint64_t>>> affectedComponents;
-    const NativeStateLayout::Driver *affectedDriver = nullptr;
-    auto driverID = native::get<native::DriverId>(op);
-    if (driverID)
-      affectedDriver = getDriver(driverID);
-    std::optional<uint64_t> updateLow;
-    if (auto low = native::get<native::DriverLow>(op);
-        low && !low.getValue().isNegative() &&
-        low.getValue().getActiveBits() <= 64) {
-      updateLow = low.getValue().getZExtValue();
-    } else {
-      std::optional<uint64_t> encodedHandle =
-          resolveCFGConstantInteger(adaptor.getDriver().front());
-      obelisk_rt_stable_handle_v1 decodedHandle{};
-      if (affectedDriver && encodedHandle &&
-          obelisk_rt_stable_handle_decode(*encodedHandle, &decodedHandle) &&
-          decodedHandle.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
-          decodedHandle.id == affectedDriver->handleID &&
-          decodedHandle.offset >= 0)
-        updateLow = static_cast<uint64_t>(decodedHandle.offset);
-    }
     if (affectedDriver && updateLow) {
       if (*updateLow <= affectedDriver->width &&
           *sourceWidth <= affectedDriver->width - *updateLow) {
@@ -1624,6 +1655,7 @@ public:
 
 private:
   const NativeStateLayout &layout;
+  const NativeStateLayout &originalLayout;
   std::shared_ptr<const DriverLookupIndex> index;
   std::shared_ptr<const NativeStateLayout> cleanLayout;
   std::shared_ptr<const DriverLookupIndex> cleanIndex;
@@ -1691,9 +1723,9 @@ void annotateStaticDriverNets(ModuleOp module,
     annotate(drive);
 }
 
-void populateDriverToLLVMConversionPatterns(RewritePatternSet &patterns,
-                                            TypeConverter &converter,
-                                            const NativeStateLayout &layout) {
+void populateDriverToLLVMConversionPatterns(
+    RewritePatternSet &patterns, TypeConverter &converter,
+    const NativeStateLayout &layout, const NativeStateLayout &originalLayout) {
   std::shared_ptr<const DriverLookupIndex> index;
   bool hasBulkCandidate =
       !layout.hasPassSwitch && llvm::any_of(layout.driverLayouts, [&](auto &d) {
@@ -1720,8 +1752,8 @@ void populateDriverToLLVMConversionPatterns(RewritePatternSet &patterns,
   patterns.add<DriverDriveConversion<sim::SimDriverDriveOp>,
                DriverDriveConversion<sim::SimDriverDriveDelayedNetOp>,
                DriverDriveConversion<sim::SimDriverDriveChangedOp>>(
-      converter, patterns.getContext(), layout, index, cleanLayout, cleanIndex,
-      resolutionIndex);
+      converter, patterns.getContext(), layout, originalLayout, index,
+      cleanLayout, cleanIndex, resolutionIndex);
 }
 
 } // namespace obelisk::detail

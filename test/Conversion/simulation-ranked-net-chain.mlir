@@ -24,6 +24,7 @@
 // GROUP-NOT: llvm.cond_br
 // GROUP-NOT: llvm.br
 // GROUP-NOT: llvm.switch
+// GROUP-NOT: @__obelisk_state_unknown
 // GROUP: llvm.return
 // GROUP: llvm.call @__obelisk_eval_ranked_group_0.fallback
 // GROUP-LABEL: llvm.func @__obelisk_eval_ranked_group_0.fallback(

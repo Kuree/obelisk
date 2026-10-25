@@ -1102,7 +1102,8 @@ LogicalResult lowerPackedSimulationOperations(
                                              dataLayout);
     populateManagedToLLVMConversionPatterns(
         patterns, c, dataLayout, stateLayout.bitCount, *classLowering);
-    populateDriverToLLVMConversionPatterns(patterns, c, selectedLayout);
+    populateDriverToLLVMConversionPatterns(patterns, c, selectedLayout,
+                                           stateLayout);
     populateNBAToLLVMConversionPatterns(
         patterns, c, stateLayout.bitCount, staticNBAPlan, &selectedLayout,
         staticNBAPlan != nullptr, vpiAllowsWrite && !cleanEval,

@@ -530,9 +530,9 @@ void populateStateReadWriteToLLVMConversionPatterns(
     const NativeStateLayout *layout = nullptr);
 void annotateStaticDriverNets(mlir::ModuleOp module,
                               const NativeStateLayout &layout);
-void populateDriverToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
-                                            mlir::TypeConverter &converter,
-                                            const NativeStateLayout &layout);
+void populateDriverToLLVMConversionPatterns(
+    mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
+    const NativeStateLayout &layout, const NativeStateLayout &originalLayout);
 void materializeNativeSchedulerGlobals(mlir::ModuleOp module);
 void markLikelyTrue(mlir::cf::CondBranchOp branch);
 void recordStaticSpecializationCFGBlocks(
