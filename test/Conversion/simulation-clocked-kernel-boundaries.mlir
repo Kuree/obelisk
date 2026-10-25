@@ -189,7 +189,8 @@ module attributes {native.debug_timing} {
     // CHECK-NOT: simulation.nba.enqueue
     // CHECK: simulation.ref.store
     // REPORT: obelisk clocked kernel: __obelisk_clocked_0_1_0 members=1 eligible=1
-    // REPORT-NEXT: obelisk clocked kernel rejection: member accesses its clock = 1
+    // REPORT-DAG: obelisk clocked kernel rejection: member accesses its clock = 1
+    // REPORT-DAG: obelisk clocked kernel rejection: member accesses its clock: read of another alias = 1
     simulation.func private @count(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %a: !byteref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 4 : i64} {
       cf.br ^wait
     ^wait:

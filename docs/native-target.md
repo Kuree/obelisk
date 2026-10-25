@@ -911,6 +911,16 @@ seeds consumer readiness directly and restores canonical driver contributions
 before a runtime handoff; shared calendar slots maintain those contributions
 before every drain.
 
+A member whose only access to a root of its clock class is a read of the
+copy it waits on is admitted, and the kernel reads the class source in its
+place. In the reference algorithm the member runs after its copy's update
+event, when the copy equals its source (23.3.3, 4.9.1); the source is current
+whenever the kernel runs because every copy wakes on it, while another copy
+may not have been updated yet. A 2-state source feeding a 4-state port is
+read through its exact widening. Reads of other copies, complemented chains,
+reads through calls or copies, other type differences and any write to a
+clock root keep the member a process of its own.
+
 Inside the kernel an NBA becomes a store at its statement when the store is
 invisible until the NBA region would have applied it (4.3):
 

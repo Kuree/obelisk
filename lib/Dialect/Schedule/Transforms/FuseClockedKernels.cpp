@@ -175,6 +175,12 @@ struct Member {
   /// A read whose root is unresolved.
   bool unresolvedRead = false;
   SmallVector<unsigned> fusedArguments;
+  /// Whole-root reads of `clock` in the body, and whether a call or copy may
+  /// read it without such an operation.
+  SmallVector<Operation *> clockReads;
+  bool opaqueClockRead = false;
+  /// The kernel redirects `clockReads` to the clock's source root.
+  bool redirectClockReads = false;
 };
 
 bool isSuspension(Operation *operation) {
@@ -1061,6 +1067,14 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
   DenseMap<uint64_t, Type> storageTypes;
   for (auto declaration : design.getBody().front().getOps<sim::SimStorageDeclOp>())
     storageTypes[declaration.getId()] = declaration.getType();
+  DenseMap<uint64_t, Type> netTypes;
+  for (auto declaration : design.getBody().front().getOps<sim::SimNetDeclOp>())
+    netTypes[declaration.getId()] = declaration.getType();
+  auto rootType = [&](uint64_t root) -> Type {
+    if (root >= ActivationMemoryAnalysis::netRootTag)
+      return netTypes.lookup(root & ~ActivationMemoryAnalysis::netRootTag);
+    return storageTypes.lookup(root);
+  };
   auto initialLevel = [&](uint64_t root) -> unsigned {
     if (root >= ActivationMemoryAnalysis::netRootTag)
       return Unknown;
@@ -1219,6 +1233,30 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
       reject("member tier");
       continue;
     }
+    // The explicit reads of the member's own clock. A message that prints the
+    // clock is the common case. Calls and copies may read it without such an
+    // operation, which the kernel cannot redirect.
+    for (Block *block : member.bodyBlocks)
+      block->walk([&](Operation *operation) {
+        if (isa<sim::SimCallOp, sim::SimRefCopyOp>(operation)) {
+          member.opaqueClockRead = true;
+          return;
+        }
+        std::optional<uint64_t> root;
+        if (auto load = dyn_cast<sim::SimRefLoadOp>(operation)) {
+          root = wholeStorageRoot(load.getReference(), facts);
+        } else if (auto read = dyn_cast<sim::SimNetReadOp>(operation)) {
+          auto found = facts.find(read.getNet());
+          if (found != facts.end() && found->second.descriptor &&
+              found->second.resource == schedule::ComputeResourceKind::Net &&
+              !found->second.dynamic && found->second.low == 0 &&
+              found->second.width == found->second.rootWidth)
+            root = ActivationMemoryAnalysis::getRoot(
+                schedule::ComputeResourceKind::Net, *found->second.descriptor);
+        }
+        if (root && *root == member.clock)
+          member.clockReads.push_back(operation);
+      });
     collectPreamble(member);
     // Members are equivalent when their edge events coincide in every time
     // slot, including the time-zero updates of copies (4.9.1, 23.3.3.3).
@@ -1422,14 +1460,55 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
         aliasRoots.insert(member.clockChain.begin(), member.clockChain.end());
       }
       auto isAlias = [&](uint64_t root) { return aliasRoots.contains(root); };
-      size_t count = members.size();
-      llvm::erase_if(members, [&](const Member &member) {
-        return llvm::any_of(member.reads, isAlias) ||
-               llvm::any_of(member.writes, isAlias) ||
-               llvm::any_of(member.nbaWrites, isAlias);
+      // A member that only reads its own watched clock can join: in the
+      // reference algorithm it runs after that copy's update event, when the
+      // copy equals the class source (23.3.3, 4.9.1), and the source is
+      // current whenever the kernel runs because every copy wakes on it. The
+      // kernel therefore redirects those reads to the source root (below).
+      // Writes, reads of other aliases, complemented chains, opaque reads and
+      // a source of another type keep the member a process of its own.
+      auto source = [&](uint64_t root) {
+        const auto &copies = phases.getCopies();
+        for (auto copy = copies.find(root); copy != copies.end();
+             copy = copies.find(root))
+          root = copy->second.source;
+        return root;
+      };
+      auto clockAccess = [&](StringRef detail) {
+        ++rejections["member accesses its clock"];
+        if (report)
+          ++rejections[("member accesses its clock: " + detail).str()];
+        return true;
+      };
+      llvm::erase_if(members, [&](Member &member) {
+        if (llvm::any_of(member.writes, isAlias) ||
+            llvm::any_of(member.nbaWrites, isAlias))
+          return clockAccess("write");
+        if (llvm::none_of(member.reads, isAlias))
+          return false;
+        if (llvm::any_of(member.reads, [&](uint64_t root) {
+              return root != member.clock && isAlias(root);
+            }))
+          return clockAccess("read of another alias");
+        if (member.opaqueClockRead)
+          return clockAccess("opaque read");
+        if (member.clockReads.empty())
+          return clockAccess("no whole-root read");
+        if (member.inverted)
+          return clockAccess("complemented chain");
+        // A copy is its source or, for a 2-state source feeding a 4-state
+        // port, its exact widening (23.3.3; `logic.from_bits` maps 0/1 only).
+        Type type = rootType(source(member.origin));
+        if (!type || llvm::any_of(member.clockReads, [&](Operation *read) {
+              Type produced = read->getResult(0).getType();
+              return produced != type &&
+                     !(type.isInteger(1) && isClockBit(produced) &&
+                       !isa<IntegerType>(produced));
+            }))
+          return clockAccess("source type");
+        member.redirectClockReads = true;
+        return false;
       });
-      if (count != members.size())
-        rejections["member accesses its clock"] += count - members.size();
       if (members.empty())
         continue;
     }
@@ -1994,6 +2073,57 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
           builder.clone(operation, mappings[index]);
       }
     }
+    // Reads of a member's own clock see the class source, which is current
+    // when the kernel runs; the member's copy may not have been updated yet
+    // (admission above, 23.3.3, 4.9.1).
+    unsigned redirectedClockReads = 0;
+    for (unsigned index : sequence) {
+      Member &member = members[index];
+      if (!member.redirectClockReads)
+        continue;
+      uint64_t root = member.origin;
+      for (auto copy = phases.getCopies().find(root);
+           copy != phases.getCopies().end();
+           copy = phases.getCopies().find(root))
+        root = copy->second.source;
+      Value context;
+      for (BlockArgument argument :
+           member.function.getBody().front().getArguments())
+        if (isa<sim::ContextType>(argument.getType()))
+          context = mappings[index].lookup(argument);
+      if (!context)
+        return design.emitError("clocked kernel member without a context"),
+               signalPassFailure();
+      for (Operation *read : member.clockReads) {
+        Operation *cloned =
+            mappings[index].lookup(read->getResult(0)).getDefiningOp();
+        OpBuilder redirect(cloned);
+        Type produced = read->getResult(0).getType();
+        Type type = rootType(root);
+        Value value;
+        if (root >= ActivationMemoryAnalysis::netRootTag) {
+          Value net = sim::SimContextNetOp::create(
+              redirect, cloned->getLoc(),
+              sim::NetType::get(design.getContext(), type), context,
+              redirect.getI64IntegerAttr(
+                  root & ~ActivationMemoryAnalysis::netRootTag));
+          value = sim::SimNetReadOp::create(redirect, cloned->getLoc(), type,
+                                            net);
+        } else {
+          Value reference = sim::SimContextStorageOp::create(
+              redirect, cloned->getLoc(),
+              sim::RefType::get(design.getContext(), type), context, root);
+          value = sim::SimRefLoadOp::create(redirect, cloned->getLoc(), type,
+                                            reference);
+        }
+        if (type != produced)
+          value = sim::SimLogicFromBitsOp::create(redirect, cloned->getLoc(),
+                                                 produced, value);
+        cloned->getResult(0).replaceAllUsesWith(value);
+        cloned->erase();
+        ++redirectedClockReads;
+      }
+    }
     removeTerminationPolls(kernel);
 
     builder.setInsertionPoint(plan.insertionSpawn);
@@ -2466,7 +2596,8 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
                    << " retained=" << unsupported.count()
                    << " snapshots=" << snapshots.size()
                    << " deferred=" << plan.deferred
-                   << " delayed=" << delayed.count() << '\n';
+                   << " delayed=" << delayed.count()
+                   << " clock_reads=" << redirectedClockReads << '\n';
   }
   if (report)
     for (auto &[reason, total] : rejections)
