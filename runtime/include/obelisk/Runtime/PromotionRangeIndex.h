@@ -67,17 +67,27 @@ inline void visitPromotionRangeDependencies(
     return;
   uint64_t end = width > UINT64_MAX - offset ? UINT64_MAX : offset + width;
   auto visit = [&](auto &&self, uint64_t low, uint64_t high) -> void {
-    if (low == high || entries[low].begin >= end)
-      return;
-    uint64_t middle = low + (high - low) / 2;
-    const auto &entry = entries[middle];
-    if (entry.subtree_end <= offset)
-      return;
-    self(self, low, middle);
-    if (entry.begin < end && entry.end > offset)
-      invalidate(entry.certificate);
-    if (entry.begin < end)
-      self(self, middle + 1, high);
+    while (low != high && entries[low].begin < end) {
+      uint64_t middle = low + (high - low) / 2;
+      const auto &entry = entries[middle];
+      if (entry.subtree_end <= offset)
+        return;
+      // IEEE 1800-2023 6.3.1, 38.34: X/Z changes must reach every affected
+      // proof, including overlapping ranges. Sorted starts exclude this
+      // entry and its right subtree together, so descend left without a call.
+      if (entry.begin >= end) {
+        high = middle;
+        continue;
+      }
+      // Keep in-order visits, skipping disjoint left trees before recursion
+      // and visiting the right subtree iteratively.
+      if (low != middle &&
+          entries[low + (middle - low) / 2].subtree_end > offset)
+        self(self, low, middle);
+      if (entry.end > offset)
+        invalidate(entry.certificate);
+      low = middle + 1;
+    }
   };
   visit(visit, 0, count);
 }
