@@ -70,6 +70,7 @@ struct NativeStateLayoutAnalysis {
   llvm::DenseMap<uint64_t, uint64_t> drivers;
   llvm::DenseSet<uint64_t> isolatedSingleDriverNets;
   llvm::DenseSet<uint64_t> isolatedPartitionedDriverNets;
+  IsolatedWireDriverTopology::SparseRanges isolatedSparseDriverRanges;
   llvm::DenseMap<uint64_t, uint64_t> storageOffsets;
   llvm::DenseMap<uint64_t, uint64_t> netOffsets;
   llvm::DenseMap<uint64_t, uint64_t> driverOffsets;

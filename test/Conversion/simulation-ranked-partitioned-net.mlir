@@ -2,7 +2,7 @@
 // RUN: FileCheck %s --check-prefix=TRACE < %t.trace
 // RUN: obelisk-opt %t.mlir --canonicalize --cse | FileCheck %s --check-prefix=GROUP
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-edit-attributes{has=test.high set={driven_low = 0 : i64, driven_width = 8 : i64}},simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=BOUNDARY
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-edit-attributes{has=test.high set={driven_low = 5 : i64, driven_width = 3 : i64}},simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=BOUNDARY
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-edit-attributes{has=test.high set={driven_low = 5 : i64, driven_width = 3 : i64}},simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=PARTIAL
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-edit-attributes{has=test.high set={strength0 = 3 : i32, strength1 = 3 : i32}},simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=BOUNDARY
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-edit-attributes{has=test.net set={propagation_delays = array<i64: 1, 1, 1>}},simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=BOUNDARY
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=full},convert-obelisk-sim-processes-to-llvm-coroutines)' 2> %t.full.trace | FileCheck %s --check-prefix=VPI --implicit-check-not=__obelisk_eval_ranked_group_
@@ -42,8 +42,14 @@
 // GROUP-LABEL: llvm.func @__obelisk_eval_ranked_group_0.fallback(
 // GROUP: llvm.call preserve_mostcc @__obelisk_eval_promotion_publish_unknown_v1
 // GROUP: llvm.return
-// Overlap, undriven holes, weak contributions, and delay fail the topology
-// proof. Writable VPI retains override-aware source boundaries (38.34).
+// Overlap, weak contributions, and delay fail the topology proof. Writable
+// VPI retains override-aware source boundaries (38.34). The sparse variant
+// admits valid readers/writers but keeps the high drive [4,8), which escapes
+// its declared contribution [5,8), as an ordered boundary.
+// PARTIAL: obelisk ranked groups: candidates=3 groups=1 segments=0 members=3
+// PARTIAL: obelisk eval boundary: owner=0 island=0 body=source_high.__obelisk_eval_body_0 successors=2
+// PARTIAL: obelisk eval dependency: owner=1 island=0 body=source.__obelisk_eval_body_0 successors=2
+// PARTIAL: obelisk eval dependency: owner=2 island=0 body=copy.__obelisk_eval_body_0 successors=3
 // BOUNDARY-DAG: obelisk eval boundary: owner={{[0-9]+}} island={{[0-9]+}} body=source.__obelisk_eval_body_0
 // BOUNDARY-DAG: obelisk eval boundary: owner={{[0-9]+}} island={{[0-9]+}} body=source_high.__obelisk_eval_body_0
 // Even the clean two-state body must clear the contribution's unknown bits:

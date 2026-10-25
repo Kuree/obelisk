@@ -317,10 +317,11 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
     return failure();
   }
   if (!designs.empty()) {
-    layout.isolatedSingleDriverNets =
-        getIsolatedSingleDriverNets(designs.front());
+    auto drivers = getIsolatedWireDriverTopology(designs.front());
+    layout.isolatedSingleDriverNets = std::move(drivers.singleDriverNets);
     layout.isolatedPartitionedDriverNets =
-        getIsolatedPartitionedDriverNets(designs.front());
+        std::move(drivers.partitionedDriverNets);
+    layout.isolatedSparseDriverRanges = std::move(drivers.sparseDriverRanges);
     NetConnectivityAnalysis connectivity(designs.front());
     DenseMap<uint64_t, SmallVector<std::optional<std::array<uint64_t, 3>>>>
         declaredDelays;

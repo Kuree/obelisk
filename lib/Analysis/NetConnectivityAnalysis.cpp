@@ -13,13 +13,14 @@ using namespace mlir;
 
 namespace obelisk::analysis {
 
-static DenseSet<uint64_t> getIsolatedDriverNets(sim::SimDesignOp design,
-                                                bool allowPartitions) {
-  DenseSet<uint64_t> connected, result;
+IsolatedWireDriverTopology
+getIsolatedWireDriverTopology(sim::SimDesignOp design) {
+  IsolatedWireDriverTopology result;
+  DenseSet<uint64_t> connected;
   DenseMap<uint64_t, SmallVector<sim::SimDriverDeclOp>> drivers;
   for (Operation &op : design.getBody().front()) {
     if (isa<sim::SimPassSwitchDeclOp>(op))
-      return {};
+      return result;
     if (auto connection = dyn_cast<sim::SimNetConnectDeclOp>(op)) {
       connected.insert(connection.getLhsNetId());
       connected.insert(connection.getRhsNetId());
@@ -32,8 +33,7 @@ static DenseSet<uint64_t> getIsolatedDriverNets(sim::SimDesignOp design,
     auto found = drivers.find(net.getId());
     if (!width || connected.contains(net.getId()) || net.getNettypeAttr() ||
         net.getResolutionKind() != sim::NetResolutionKind::Wire ||
-        found == drivers.end() ||
-        (!allowPartitions && found->second.size() != 1))
+        found == drivers.end())
       continue;
     if (auto delays = net.getPropagationDelays())
       if (llvm::any_of(*delays, [](int64_t delay) { return delay != -1; }))
@@ -56,28 +56,40 @@ static DenseSet<uint64_t> getIsolatedDriverNets(sim::SimDesignOp design,
       continue;
     llvm::sort(ranges);
     uint64_t end = 0;
+    bool complete = true;
     for (auto range : ranges) {
-      if (range.first != end) {
+      if (range.first < end) {
         valid = false;
         break;
       }
+      complete &= range.first == end;
       end = range.second;
     }
+    if (!valid)
+      continue;
     // IEEE 1800-2023 6.6.1: resolution is per bit. A partition into strong
     // contributions is a collection of independent wire copies. Requiring
     // full coverage also excludes persistent undriven Z holes from this proof.
-    if (valid && end == *width)
-      result.insert(net.getId());
+    if (complete && end == *width) {
+      result.partitionedDriverNets.insert(net.getId());
+      if (ranges.size() == 1)
+        result.singleDriverNets.insert(net.getId());
+    } else {
+      // LRM 6.6 and 6.7: the remaining bits stay Z. Keep sparse exclusivity
+      // separate from complete coverage so consumers cannot infer that a
+      // known contribution makes the whole net a two-state value.
+      result.sparseDriverRanges.try_emplace(net.getId(), std::move(ranges));
+    }
   }
   return result;
 }
 
 DenseSet<uint64_t> getIsolatedSingleDriverNets(sim::SimDesignOp design) {
-  return getIsolatedDriverNets(design, /*allowPartitions=*/false);
+  return getIsolatedWireDriverTopology(design).singleDriverNets;
 }
 
 DenseSet<uint64_t> getIsolatedPartitionedDriverNets(sim::SimDesignOp design) {
-  return getIsolatedDriverNets(design, /*allowPartitions=*/true);
+  return getIsolatedWireDriverTopology(design).partitionedDriverNets;
 }
 
 NetConnectivityAnalysis::NetConnectivityAnalysis(sim::SimDesignOp design) {

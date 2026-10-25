@@ -12,12 +12,28 @@
 
 #include <cstdint>
 #include <optional>
+#include <utility>
 
 namespace obelisk::sim {
 class SimDesignOp;
 }
 
 namespace obelisk::analysis {
+
+/// Disjoint strong contributions to isolated, undelayed plain wire nets.
+/// Sparse intervals are sorted [low, high) ranges. They certify exclusivity
+/// only within a contribution, never knownness or coverage of undriven bits.
+struct IsolatedWireDriverTopology {
+  using SparseRanges =
+      llvm::DenseMap<uint64_t,
+                     mlir::SmallVector<std::pair<uint64_t, uint64_t>>>;
+  llvm::DenseSet<uint64_t> singleDriverNets;
+  llvm::DenseSet<uint64_t> partitionedDriverNets;
+  SparseRanges sparseDriverRanges;
+};
+
+IsolatedWireDriverTopology
+getIsolatedWireDriverTopology(sim::SimDesignOp design);
 
 /// Plain, undelayed wire nets with one full-width strong driver, no collapsed
 /// connections, user resolution or pass switches. Their resolved value is the

@@ -110,6 +110,10 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
                    const NativeActivationInputs &activationInputs) {
   if (!graph)
     return {};
+  const auto &sparseWires = stateLayout.isolatedSparseDriverRanges;
+  if (native::has<native::DebugTiming>(module))
+    llvm::errs() << "obelisk sparse scheduling nets: " << sparseWires.size()
+                 << '\n';
   llvm::StringMap<sim::SimFuncOp> functions;
   module.walk([&](sim::SimFuncOp function) {
     functions.try_emplace(function.getSymName(), function);
@@ -265,10 +269,28 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
         // sweep. Each source keeps its own ready predicate and exact
         // transition publication. Connected, overlapping, weak, delayed and
         // user-defined resolution remains an execution boundary.
-        bool simpleNet =
-            !clocked && net &&
-            stateLayout.isolatedPartitionedDriverNets.contains(
-                effect.getDescriptor());
+        auto sparse = sparseWires.find(effect.getDescriptor());
+        bool sparseEffect =
+            sparse != sparseWires.end() &&
+            (effect.getEffect() == schedule::ComputeEffectKind::Read ||
+             effect.getEffect() == schedule::ComputeEffectKind::Watch);
+        if (sparse != sparseWires.end() &&
+            effect.getEffect() == schedule::ComputeEffectKind::Drive &&
+            effect.getWidth())
+          sparseEffect = llvm::any_of(sparse->second, [&](auto range) {
+            return effect.getLow() >= range.first &&
+                   effect.getLow() < range.second &&
+                   effect.getWidth() <= range.second - effect.getLow();
+          });
+        // LRM 6.6/6.7 leave undriven bits at Z. Preserve read/watch ranges,
+        // including holes; a drive must fit one exclusive contributor range.
+        // The original ready predicates and ordered publications still apply
+        // (4.6, 4.9.1, 9.2.2.2.1, 9.4.2). This scheduling fact does not extend
+        // the separate complete-coverage proof used by unknown-plane elision.
+        bool simpleNet = !clocked && net &&
+                         (stateLayout.isolatedPartitionedDriverNets.contains(
+                              effect.getDescriptor()) ||
+                          sparseEffect);
         // IEEE 1800-2023 4.5-4.7, 10.4.2: consecutive Active evaluations
         // may stage their NBAs in this order, but cannot commit them early.
         // Immediate stores need the separate trigger/observer proof below.
