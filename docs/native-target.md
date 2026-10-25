@@ -397,7 +397,12 @@ for narrow stores. It still requires the complete finite-effect, memory-range
 and operation-budget proof. Every original path and ordered update remains
 intact, including neighboring X/Z bytes (IEEE 1800-2023 4.3, 4.6, 6.3.1).
 These groups refresh pending owner certificates before taking a fallback;
-an independently certified group instead uses its shared query below.
+an independently certified group instead uses its shared query below. Such
+a certified group always keeps its CFG and speculates nothing, so its
+candidate is admitted with cold helper calls, private allocations and
+accesses the slot model cannot name: they execute exactly where the member
+bodies execute them. Only the finite-CFG and operation-budget proofs apply;
+the dense predicated form keeps its full speculation and slot requirements.
 
 An inactive member can have known inputs whose certificate has never been
 queried. The cold check visits only the group's pending bits and stops at the

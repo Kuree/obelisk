@@ -73,6 +73,11 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
           function);
   if (!ingress || function.empty())
     return false;
+  // With an independent group certificate the candidate keeps its CFG: no
+  // operation is speculated, so cold helper calls, private allocations and
+  // accesses the slot model cannot name are executed exactly where the member
+  // bodies execute them. Only the dense predicated form below needs every
+  // operation speculatable and every access an exact slot.
   const bool preserveReadyCFG =
       schedule::has<schedule::Field::EvalGroupProofDomain>(function);
   struct Slot {
@@ -148,8 +153,11 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
           return false;
         auto slot =
             identify(load.getAddr(), dyn_cast<IntegerType>(load.getType()));
-        if (!slot)
+        if (!slot) {
+          if (preserveReadyCFG)
+            continue;
           return reject("unproved load range", load);
+        }
         accesses[load] = *slot;
       } else if (auto store = dyn_cast<LLVM::StoreOp>(operation)) {
         if (store.getVolatile_() ||
@@ -157,27 +165,34 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
           return false;
         auto slot = identify(store.getAddr(),
                              dyn_cast<IntegerType>(store.getValue().getType()));
-        if (!slot)
+        if (!slot) {
+          if (preserveReadyCFG)
+            continue;
           return reject("unproved store range", store);
+        }
         accesses[store] = *slot;
         slots[*slot].written = true;
       } else if (isa<LLVM::BrOp, LLVM::CondBrOp, LLVM::ReturnOp>(operation)) {
         if (isa<LLVM::ReturnOp>(operation) && operation.getNumOperands())
           return reject("effect or unsafe speculation", &operation);
       } else if (!isa<LLVM::AddressOfOp, LLVM::GEPOp>(operation)) {
+        if (isa<LLVM::InvokeOp, LLVM::InlineAsmOp>(operation) ||
+            operation.hasTrait<OpTrait::IsTerminator>())
+          return reject("effect or unsafe speculation", &operation);
+        if (preserveReadyCFG)
+          continue;
         // Pure is insufficient: e.g. division by zero has immediate UB.
         // Speculatability also excludes potentially trapping instructions.
-        if (isa<LLVM::CallOp, LLVM::InvokeOp, LLVM::InlineAsmOp, LLVM::UDivOp,
-                LLVM::SDivOp, LLVM::URemOp, LLVM::SRemOp>(operation) ||
-            !isMemoryEffectFree(&operation) || !isSpeculatable(&operation) ||
-            operation.hasTrait<OpTrait::IsTerminator>())
+        if (isa<LLVM::CallOp, LLVM::UDivOp, LLVM::SDivOp, LLVM::URemOp,
+                LLVM::SRemOp>(operation) ||
+            !isMemoryEffectFree(&operation) || !isSpeculatable(&operation))
           return reject("effect or unsafe speculation", &operation);
       }
     }
     for (Block *next : block.getSuccessors())
       ++indegree[next];
   }
-  if (slots.empty() || originalOperations > budget)
+  if ((slots.empty() && !preserveReadyCFG) || originalOperations > budget)
     return reject("empty memory or operation budget");
   if (indegree[&function.getBody().front()] != 0)
     return false;
@@ -188,6 +203,21 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
         order.push_back(next);
   if (order.size() != function.getBody().getBlocks().size())
     return reject("cyclic/unreachable CFG");
+  if (preserveReadyCFG) {
+    // The independent exact-input certificate selects this already-proved
+    // two-state computation without per-member cache refresh. Keep the
+    // original ready branches and ordered accesses instead of eagerly
+    // evaluating inactive paths. This preserves source/event ordering and
+    // canonical X/Z storage (IEEE 1800-2023 4.6, 9.4.2, 6.3.1). The finite
+    // CFG and the operation budget were checked above; the dense alias,
+    // speculation and slot proofs below apply only to the predicated form.
+    Builder builder(function.getContext());
+    schedule::set<schedule::Field::EvalControlFlowDataflow>(
+        function, builder.getUnitAttr());
+    schedule::set<schedule::Field::EvalDataflowSlots>(
+        function, builder.getI64IntegerAttr(slots.size()));
+    return true;
+  }
   // A transitive alias window can be much wider than any individual access.
   // Keep the proved CFG for these groups instead of expanding narrow stores
   // into wide read/modify/write operations. Every original memory operation,
@@ -214,14 +244,12 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
     Builder builder(function.getContext());
     schedule::set<schedule::Field::EvalControlFlowDataflow>(
         function, builder.getUnitAttr());
-    if (!preserveReadyCFG)
-      schedule::set<schedule::Field::EvalRefreshGroupProofs>(
-          function, builder.getUnitAttr());
+    schedule::set<schedule::Field::EvalRefreshGroupProofs>(
+        function, builder.getUnitAttr());
     schedule::set<schedule::Field::EvalDataflowSlots>(
         function, builder.getI64IntegerAttr(slots.size()));
     return true;
   }
-  const uint64_t cfgSlots = slots.size();
   // Canonicalize proven physical aliases with a sorted interval sweep. This
   // never unions copy-connected descriptors: both accesses must resolve to
   // literal overlapping bytes of the same authoritative global. Preserve the
@@ -452,10 +480,9 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
       if (hints) {
         final[cacheID] = lower;
         slots[cacheID].written = true;
-        if (!preserveReadyCFG)
-          ::obelisk::schedule::set<
-              ::obelisk::schedule::Field::EvalCacheHintWords>(
-              function, builder.getI64IntegerAttr(hints));
+        ::obelisk::schedule::set<
+            ::obelisk::schedule::Field::EvalCacheHintWords>(
+            function, builder.getI64IntegerAttr(hints));
       }
     }
   }
@@ -467,22 +494,6 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
   // are discarded before connecting any call site to this representation.
   if (entry->getOperations().size() > budget)
     return reject("materialization budget");
-  if (preserveReadyCFG) {
-    // The independent exact-input certificate selects this already-proved
-    // two-state computation without per-member cache refresh. Keep the
-    // original ready branches and ordered accesses instead of eagerly
-    // evaluating inactive paths. This preserves source/event ordering and
-    // canonical X/Z storage (IEEE 1800-2023 4.6, 9.4.2, 6.3.1).
-    // All old effect, finite-CFG, alias, analysis and materialization budgets
-    // above still apply: choosing CFG representation relaxes no admission
-    // proof. The original body has not been changed while building the
-    // disposable dense representation.
-    schedule::set<schedule::Field::EvalControlFlowDataflow>(
-        function, builder.getUnitAttr());
-    schedule::set<schedule::Field::EvalDataflowSlots>(
-        function, builder.getI64IntegerAttr(cfgSlots));
-    return true;
-  }
   function.getBody().takeBody(replacement);
   ::obelisk::schedule::set<::obelisk::schedule::Field::EvalPredicatedDataflow>(
       function, builder.getUnitAttr());

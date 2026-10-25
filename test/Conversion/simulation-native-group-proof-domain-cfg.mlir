@@ -14,12 +14,12 @@
 // CHECK: llvm.cond_br
 // CHECK: llvm.store
 // CHECK: llvm.return
-// The original CFG fits this budget, but dense materialization does not.
-// Choosing the CFG representation must retain the same admission limit.
+// The original CFG fits this budget, but dense materialization would not.
+// The certified CFG representation adds no operations, so only the original
+// size is charged against the admission limit and the candidate is accepted.
 // BUDGET-LABEL: llvm.func @group()
-// BUDGET-NOT: schedule.eval.control_flow_dataflow
-// BUDGET-NOT: __obelisk_eval_group_promotion_ready_v1
-// BUDGET: llvm.mlir.addressof @slow_count
+// BUDGET-SAME: schedule.eval.control_flow_dataflow
+// BUDGET: llvm.call @__obelisk_eval_group_promotion_ready_v1
 // BUDGET: llvm.return
 
 #domain0 = #schedule.group_proof_dependency<domain = 0 : i64, members = [0, 1], ranges = [0, 24]>
