@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir 2> %t.trace
 // RUN: FileCheck %s --check-prefix=TRACE < %t.trace
-// RUN: FileCheck %s --check-prefix=GROUP < %t.mlir
+// RUN: obelisk-opt %t.mlir --canonicalize --cse | FileCheck %s --check-prefix=GROUP
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-edit-attributes{has=test.high set={driven_low = 0 : i64, driven_width = 8 : i64}},simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=BOUNDARY
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-edit-attributes{has=test.high set={driven_low = 5 : i64, driven_width = 3 : i64}},simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=BOUNDARY
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-edit-attributes{has=test.high set={strength0 = 3 : i32, strength1 = 3 : i32}},simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=BOUNDARY
@@ -13,20 +13,31 @@
 // preserves the low nibble, including X/Z (6.3.1). No unconditional early
 // statement fusion is part of this fixture.
 // TRACE: obelisk ranked groups: candidates=4 groups=1 segments=0 members=4
+// TRACE: obelisk repeatable ranked members: 2
 // TRACE: obelisk group dataflow: __obelisk_eval_ranked_group_0.dataflow accepted=1
 // GROUP-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
 // GROUP-SAME: schedule.eval.predicated_dataflow
 // GROUP-SAME: schedule.eval.ranked_members = array<i32: 0, 1, 2, 3>
 // One certificate gate covers the entire input group, including the net's
 // previous value. The certified path has no per-drive unknown publication.
+// GROUP: %[[STATE:.*]] = llvm.mlir.addressof @__obelisk_state_value
 // GROUP: llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1
 // GROUP: llvm.cond_br
+// The complete copy and sink activations need no inactive-value selects:
+// their contribution, resolved net and output receive the same SSA value.
+// The disjoint drivers still retain their original activation predicates.
+// GROUP-DAG: %[[DRIVER:.*]] = llvm.getelementptr %[[STATE]][7]
+// GROUP-DAG: %[[NET:.*]] = llvm.getelementptr %[[STATE]][5]
+// GROUP-DAG: %[[OUTPUT:.*]] = llvm.getelementptr %[[STATE]][2]
 // GROUP-NOT: llvm.call
 // GROUP-NOT: llvm.cond_br
 // GROUP-NOT: llvm.br
 // GROUP-NOT: llvm.switch
 // GROUP-NOT: @__obelisk_state_unknown
-// GROUP: llvm.return
+// GROUP: llvm.store %[[VALUE:[a-zA-Z0-9_]+]], %[[DRIVER]]
+// GROUP-NEXT: llvm.store %[[VALUE]], %[[NET]]
+// GROUP-NEXT: llvm.store %[[VALUE]], %[[OUTPUT]]
+// GROUP-NEXT: llvm.return
 // GROUP: llvm.call @__obelisk_eval_ranked_group_0.fallback
 // GROUP-LABEL: llvm.func @__obelisk_eval_ranked_group_0.fallback(
 // GROUP: llvm.call preserve_mostcc @__obelisk_eval_promotion_publish_unknown_v1

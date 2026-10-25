@@ -14,10 +14,33 @@
 #include "obelisk/Analysis/ActivationRegionAnalysis.h"
 #include "obelisk/Analysis/SSAValueAnalysis.h"
 #include "obelisk/Analysis/SourceMemoryAnalysis.h"
+#include "obelisk/Dialect/Schedule/Transforms/NativeTransforms.h"
 #include <memory>
 
 using namespace mlir;
 namespace {
+class RepeatableActivationTestPass
+    : public PassWrapper<RepeatableActivationTestPass,
+                         OperationPass<obelisk::sim::SimDesignOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(RepeatableActivationTestPass)
+  StringRef getArgument() const final {
+    return "test-obelisk-repeatable-activations";
+  }
+  void runOnOperation() final {
+    auto design = getOperation();
+    obelisk::analysis::HandleDataflowAnalysis handles(design);
+    auto repeatable =
+        obelisk::schedule::collectRepeatableCombinationalActivations(design,
+                                                                     handles);
+    design.walk([&](obelisk::sim::SimFuncOp function) {
+      llvm::errs() << "repeatable @" << function.getSymName() << " = "
+                   << repeatable.contains(function.getSymNameAttr()) << '\n';
+    });
+    markAllAnalysesPreserved();
+  }
+};
+
 class SourceMemoryForwardingTestPass
     : public PassWrapper<SourceMemoryForwardingTestPass,
                          OperationPass<ModuleOp>> {
@@ -444,6 +467,7 @@ private:
 };
 } // namespace
 void obelisk::registerActivationMemoryAnalysisTestPass() {
+  PassRegistration<RepeatableActivationTestPass>();
   PassRegistration<SourceMemoryForwardingTestPass>();
   PassRegistration<ActivationControlFlowTestPass>();
   PassRegistration<RegionValueDependencyTestPass>();

@@ -314,6 +314,12 @@ materializeNativeRankedGroups(ModuleOp module,
         Value active =
             arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ne, dirty,
                                   llvmConstant(builder, loc, i64, 0));
+        // The source-revision proof covers complete sensitivity, exclusive
+        // outputs, and absence of repeated publications. Repeating this pure
+        // computation when inactive is observationally inert (LRM 4.3, 9.4.2).
+        // This candidate still needs the lowered nontrapping/effect proof.
+        if (node->repeatable)
+          active = llvmConstant(builder, loc, builder.getI1Type(), 1);
         Block *execute = new Block, *next = new Block;
         candidate.getBody().push_back(execute);
         candidate.getBody().push_back(next);
@@ -392,6 +398,13 @@ materializeNativeRankedGroups(ModuleOp module,
         << llvm::count_if(executors,
                           [](const auto &name) { return !name.empty(); })
         << " clocked_members=" << clockedMembers << '\n';
+    llvm::errs() << "obelisk repeatable ranked members: "
+                 << llvm::count_if(ordered,
+                                   [&](const auto &node) {
+                                     return node.repeatable &&
+                                            !executors[node.owner].empty();
+                                   })
+                 << '\n';
     // Tie runtime entry counts back to the actual native ownership plan.
     // Include owners without direct fragments as well. Their compute-node
     // IDs retain the source graph's global scheduling rank.

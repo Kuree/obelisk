@@ -29,6 +29,7 @@ add_mlir_library(ObeliskSimulationToScheduleNative
   DEPENDS
   ObeliskConversionPassIncGen
   LINK_LIBS PUBLIC
+  ObeliskScheduleTransforms
   ObeliskSimulationIR
   ObeliskSimulationAnalysis
   MLIRArithDialect

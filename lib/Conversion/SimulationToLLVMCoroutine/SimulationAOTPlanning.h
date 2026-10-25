@@ -168,6 +168,9 @@ struct NativeRankedEvalNode {
   // Non-groupable owners still constrain the whole-program order. Emission
   // ends a segment here and leaves execution to the original dispatcher.
   bool boundary = false;
+  /// A source proof permits redundant evaluation after initialization when
+  /// no watched input changed. Only the closed two-state dataflow consumes it.
+  bool repeatable = false;
 };
 
 /// Activation-boundary inputs proved on the source revision before native
@@ -175,6 +178,7 @@ struct NativeRankedEvalNode {
 /// graph identity ties it to the same actor/effect inventory at resolution.
 struct NativeActivationInputs {
   schedule::ComputeGraphAttr sourceGraph;
+  llvm::DenseSet<mlir::StringAttr> repeatable;
   llvm::DenseMap<mlir::StringAttr, analysis::ActivationMemoryAnalysis::Ranges>
       liveIns;
   llvm::DenseMap<mlir::StringAttr, analysis::ActivationMemoryAnalysis::Ranges>

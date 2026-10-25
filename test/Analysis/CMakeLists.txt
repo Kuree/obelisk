@@ -35,6 +35,7 @@ add_mlir_library(ObeliskAnalysisTestPasses
   LINK_LIBS PUBLIC
   ObeliskCoverage
   ObeliskSimulationAnalysis
+  ObeliskScheduleTransforms
   ObeliskSimulationIR
   MLIRArithDialect
   MLIRAsmParser

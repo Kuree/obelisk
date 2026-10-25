@@ -7,6 +7,7 @@
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "obelisk/Dialect/Schedule/Transforms/NativeTransforms.h"
 
 #include "obelisk/Runtime/ActivationOrder.h"
 #include "obelisk/Runtime/StableHandle.h"
@@ -222,6 +223,7 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
         owner < plan.deferredOwners.size() && plan.deferredOwners[owner];
     clocked &= !deferred;
     DenseSet<StringAttr> summarizedActivations;
+    node.plan.repeatable = !clocked && activationInputs.sourceGraph == graph;
     bool safe = !deferred && llvm::all_of(direct.fragmentIDs, [&](uint32_t id) {
       auto fragment = fragments.find(id);
       if (fragment == fragments.end() ||
@@ -231,6 +233,8 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
           functions.lookup(fragment->second.getFunction().getValue());
       if (!function)
         return false;
+      node.plan.repeatable &=
+          activationInputs.repeatable.contains(function.getSymNameAttr());
       auto kind = function.getEntryKind();
       if (clocked ? kind != sim::EntryKind::Always &&
                         kind != sim::EntryKind::AlwaysFF
@@ -601,6 +605,11 @@ NativeActivationInputs collectNativeActivationInputs(sim::SimDesignOp design,
   if (!design || !(result.sourceGraph = design.getComputeGraphAttr()))
     return result;
   analysis::HandleDataflowAnalysis handles(design);
+  result.repeatable =
+      schedule::collectRepeatableCombinationalActivations(design, handles);
+  if (explain)
+    llvm::errs() << "obelisk repeatable activations: "
+                 << result.repeatable.size() << '\n';
   result.completeNBAWriters = true;
   SymbolTable symbols(design);
   llvm::MapVector<StringAttr, SmallVector<schedule::ComputeEffectAttr>>

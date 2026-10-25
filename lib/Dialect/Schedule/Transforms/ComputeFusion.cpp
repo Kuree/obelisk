@@ -7,6 +7,7 @@
 #include "llvm/ADT/TypeSwitch.h"
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Dialect/Schedule/Transforms/NativeTransforms.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -778,6 +779,48 @@ std::optional<CombinationalFusionBody> CombinationalFusionAnalysis::analyze(
   if (ready.size() != incoming.size())
     return std::nullopt;
   result.blocks = std::move(ready);
+  return result;
+}
+
+llvm::DenseSet<StringAttr> schedule::collectRepeatableCombinationalActivations(
+    sim::SimDesignOp design, const analysis::HandleDataflowAnalysis &handles) {
+  llvm::DenseSet<StringAttr> result;
+  CombinationalFusionAnalysis combinational(
+      design, handles,
+      analysis::ActivationMemoryAnalysis::DependencyMode::Inputs);
+  DenseMap<StringAttr, SmallVector<sim::SimSpawnOp, 1>> spawns;
+  design.walk([&](sim::SimSpawnOp spawn) {
+    spawns[spawn.getCalleeAttr().getAttr()].push_back(spawn);
+  });
+  design.walk([&](sim::SimFuncOp function) {
+    auto instances = spawns.find(function.getSymNameAttr());
+    if (instances == spawns.end() || instances->second.size() != 1)
+      return;
+    auto spawn = instances->second.front();
+    auto initializer = spawn->getParentOfType<sim::SimFuncOp>();
+    // The initializer entry executes once. A syntactically unique spawn in
+    // a loop or a dynamically called procedure is not a unique actor.
+    if (!initializer ||
+        initializer.getEntryKind() != sim::EntryKind::RootInitializer ||
+        spawn->getBlock() != &initializer.getBody().front())
+      return;
+    auto body = combinational.analyze(function, handles, /*interleaved=*/true);
+    if (!body || !body->structured)
+      return;
+    const auto &memory = body->structured->getMemory();
+    // IEEE 1800-2023 4.3, 4.9.1, 9.2.2.2 and 9.4.2: these processes run at
+    // initialization and watch every live input. With no pending input change,
+    // their complete, exclusive outputs already hold the computed values.
+    // A repeated write could still create an intermediate transition, even
+    // when the final value is unchanged. Keep its source activation predicate.
+    // The shared analysis also excludes state-dependent outputs, missing
+    // sensitivities, foreign mutation and non-equivalent initial execution.
+    // A code owner is not itself a unique actor: distinct instances may have
+    // different immutable captures and compete for the same output.
+    if (!memory.getRepeatedWrites().empty() || memory.hasMixedPrivateWrites())
+      return;
+    result.insert(function.getSymNameAttr());
+  });
   return result;
 }
 

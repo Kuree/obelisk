@@ -359,6 +359,19 @@ Overlapping drivers, undriven holes, connections, delays,
 weak strengths, and writable VPI retain their boundaries (IEEE 1800-2023 4.9.1,
 6.3.1, 6.6.1, 38.34).
 
+Within a closed two-state dataflow group, a source activation may omit its
+ready predicate only when the shared combinational analysis proves complete
+sensitivity, exclusive complete outputs, equivalent initial/resume evaluation,
+one actor spawned in the root initializer entry, and no repeated publication.
+Its initialized outputs already hold the computed
+values whenever its inputs have not changed, so an extra evaluation changes
+neither state nor events (IEEE 1800-2023 4.3, 4.9.1, 9.2.2.2, 9.4.2).
+The lowered body must also pass the existing nontrapping, finite-effect proof.
+Incomplete assignments, incoming output state, intermediate transitions,
+foreign mutation and unproved source revisions retain their predicates.
+This lets ordinary SSA forwarding remove intermediate copies without inventing
+source activations with observable effects.
+
 Function routes reuse an eval owner's knownness cache when both certificates
 cover exactly the same physical bits. Coverage is normalized without filling
 gaps or partial-word padding. The route queries that owner cache on entry,

@@ -24,8 +24,9 @@ namespace obelisk::detail {
 /// Prove and materialize a finite computation as dense, predicated dataflow.
 /// The lattice at each CFG edge is (reachable, block arguments, memory slots).
 /// Joins select the state of the actual predecessor, including pending bits.
-/// Thus an inactive actor retains its old outputs, even after a foreign
-/// deposit. No idempotence or inferred latch/always_comb invariant is assumed.
+/// Untaken branches retain their old outputs, even after a foreign deposit.
+/// This conversion infers no idempotence or latch/always_comb invariant: any
+/// source-certified redundant evaluation is already explicit in the CFG.
 ///
 /// Only nontrapping pure expressions may execute speculatively. Exact static
 /// loads/stores become SSA and publish at return. Calls, opaque effects,

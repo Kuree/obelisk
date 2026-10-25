@@ -2,19 +2,24 @@
 #define OBELISK_DIALECT_SCHEDULE_TRANSFORMS_NATIVE_TRANSFORMS_H
 #include "mlir/Support/LogicalResult.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include <cstdint>
 namespace mlir {
 class ModuleOp;
 class Operation;
 class SymbolTable;
 class SymbolTableCollection;
+class StringAttr;
 namespace LLVM {
 class AddressOfOp;
 class GlobalOp;
 } // namespace LLVM
-}
+} // namespace mlir
 namespace obelisk::sim {
 class SimDesignOp;
+}
+namespace obelisk::analysis {
+class HandleDataflowAnalysis;
 }
 namespace obelisk::detail {
 struct NativeStateLayout;
@@ -26,6 +31,14 @@ mlir::LogicalResult materializeEvalTwoStateVariants(
     const llvm::DenseMap<uint64_t, uint32_t> &actorSlots);
 } // namespace obelisk::detail
 namespace obelisk::schedule {
+/// Source activations whose extra evaluation, with no changed input, cannot
+/// change state or publish an event. Requires complete, exclusive, single
+/// writes, complete sensitivity, equivalent initial/resume computation, and
+/// exactly one spawn in the root initializer entry.
+/// The caller must retain the source revision and exclude foreign mutation.
+llvm::DenseSet<mlir::StringAttr> collectRepeatableCombinationalActivations(
+    sim::SimDesignOp design, const analysis::HandleDataflowAnalysis &handles);
+
 /// Resolves the module global an address-of names, like
 /// `AddressOfOp::getGlobal`. Serial callers cache lazily through a
 /// SymbolTableCollection; concurrent workers share one prebuilt module table,

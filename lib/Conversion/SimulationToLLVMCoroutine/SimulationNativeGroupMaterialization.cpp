@@ -1703,8 +1703,8 @@ inlineGroupBody(LLVM::LLVMFuncOp function, const SymbolTable &symbols,
 
 /// Materialize certified activation bodies before native partitioning. The
 /// original pending bits, source predicates, and boundary exits remain the
-/// schedule: neither a value snapshot nor an unconditional call sequence can
-/// replace that activation evidence (IEEE 1800-2023 4.3--4.7).
+/// schedule. Only an explicit source proof of inert redundant evaluation may
+/// remove an activation predicate (IEEE 1800-2023 4.3--4.7).
 ///
 /// Route specialization must run first. A durable two-state certificate then
 /// exposes a direct body; an unresolved route remains an executor boundary.
