@@ -17,6 +17,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/Transforms/CSE.h"
@@ -63,6 +64,139 @@ struct LoopNest {
   uint64_t originalCost;
   std::vector<LoopNest> children;
 };
+
+Value createInductionConstant(OpBuilder &builder, Location location, Type type,
+                              const APInt &value) {
+  if (auto logic = dyn_cast<sim::LogicType>(type)) {
+    auto integer = builder.getIntegerType(logic.getWidth());
+    return sim::SimLogicConstantOp::create(
+        builder, location, logic, builder.getIntegerAttr(integer, value),
+        builder.getIntegerAttr(integer, APInt::getZero(logic.getWidth())));
+  }
+  return arith::ConstantOp::create(builder, location, type,
+                                   builder.getIntegerAttr(type, value));
+}
+
+struct InitializerFunnel {
+  struct Edge {
+    Operation *terminator;
+    unsigned successor;
+  };
+  Block *header;
+  unsigned argument;
+  APInt initial;
+  SmallVector<Edge> edges;
+};
+
+// CFGLoopInfo merges a procedural recurrence with an enclosing process loop
+// when initial entry and resume both branch straight to its induction header.
+// Partition the incoming edges by a common known initializer, leaving exactly
+// one possible recurrence edge. This is only a normalization candidate: the
+// existing recognizer must still prove its test, step, finite CFG and SSA.
+SmallVector<InitializerFunnel> planInitializerFunnels(CFGLoop *loop) {
+  if (llvm::none_of(loop->getBlocks(), [](Block *block) {
+        return sim::isSuspensionOp(block->getTerminator());
+      }))
+    return {};
+  Block *header = loop->getHeader();
+  auto condition = dyn_cast<cf::CondBranchOp>(header->getTerminator());
+  if (!condition)
+    return {};
+  SmallVector<Value, 2> tested;
+  Value test = condition.getCondition();
+  if (auto compare = test.getDefiningOp<arith::CmpIOp>()) {
+    // Integer comparisons can put the induction on either side.
+    tested = {compare.getLhs(), compare.getRhs()};
+  } else {
+    if (auto truth = test.getDefiningOp<sim::SimLogicIsTrueOp>())
+      test = truth.getInput();
+    if (auto compare = test.getDefiningOp<sim::SimLogicCompareOp>())
+      test = compare.getLhs();
+    if (auto fromBits = test.getDefiningOp<sim::SimLogicFromBitsOp>())
+      test = fromBits.getInput();
+    tested.push_back(test);
+  }
+  SmallVector<BlockArgument, 2> inductions;
+  for (Value value : tested)
+    if (auto argument = dyn_cast<BlockArgument>(value);
+        argument && argument.getOwner() == header &&
+        isa<IntegerType, sim::LogicType>(argument.getType()) &&
+        !llvm::is_contained(inductions, argument))
+      inductions.push_back(argument);
+  auto knownInitializer = [](Value value) -> std::optional<APInt> {
+    APInt bits;
+    if (matchPattern(value, m_ConstantInt(&bits)))
+      return bits;
+    if (auto constant = value.getDefiningOp<sim::SimLogicConstantOp>();
+        constant && constant.getUnknown().isZero())
+      return constant.getValue();
+    return std::nullopt;
+  };
+  SmallVector<InitializerFunnel> plans;
+  for (BlockArgument argument : inductions) {
+    InitializerFunnel plan{header, argument.getArgNumber(), APInt(), {}};
+    std::optional<APInt> initial;
+    unsigned recurrenceEdges = 0;
+    bool externalEntry = false, internalEntry = false, rejected = false;
+    for (auto edge = header->pred_begin(); edge != header->pred_end(); ++edge) {
+      Operation *terminator = (*edge)->getTerminator();
+      unsigned successor = edge.getSuccessorIndex();
+      Value incoming;
+      if (auto branch = dyn_cast<cf::BranchOp>(terminator))
+        incoming = branch.getDestOperands()[plan.argument];
+      else if (auto branch = dyn_cast<cf::CondBranchOp>(terminator)) {
+        auto operands = successor == 0 ? branch.getTrueDestOperands()
+                                       : branch.getFalseDestOperands();
+        incoming = operands[plan.argument];
+      } else {
+        rejected = true;
+        break;
+      }
+      if (auto bits = knownInitializer(incoming)) {
+        if (initial && *initial != *bits) {
+          rejected = true;
+          break;
+        }
+        initial = *bits;
+        plan.edges.push_back({terminator, successor});
+        (loop->contains(*edge) ? internalEntry : externalEntry) = true;
+      } else if (isa<cf::BranchOp>(terminator) && loop->contains(*edge)) {
+        ++recurrenceEdges;
+      } else {
+        rejected = true;
+        break;
+      }
+    }
+    if (!rejected && externalEntry && internalEntry && recurrenceEdges == 1) {
+      plan.initial = *initial;
+      plans.push_back(std::move(plan));
+    }
+  }
+  return plans;
+}
+
+Block *materializeInitializerFunnel(const InitializerFunnel &plan,
+                                    const IRMapping &mapping) {
+  Block *header = mapping.lookup(plan.header);
+  auto *funnel = new Block;
+  header->getParent()->getBlocks().insert(header->getIterator(), funnel);
+  for (BlockArgument argument : header->getArguments())
+    funnel->addArgument(argument.getType(), argument.getLoc());
+  OpBuilder builder(funnel, funnel->end());
+  SmallVector<Value> operands(funnel->getArguments());
+  BlockArgument induction = header->getArgument(plan.argument);
+  // IEEE 1800-2023 4.6, 9.4.2 and 12.7.1: forward each edge's carried
+  // values and preserve every effect, recurrence and suspension edge. Only
+  // the identical typed initializer is rematerialized, never a design load.
+  // Its constant must stay visible to the recurrence proof after the funnel.
+  operands[plan.argument] = createInductionConstant(
+      builder, induction.getLoc(), induction.getType(), plan.initial);
+  cf::BranchOp::create(builder, header->getTerminator()->getLoc(), header,
+                       operands);
+  for (const auto &edge : plan.edges)
+    mapping.lookup(edge.terminator)->setSuccessor(funnel, edge.successor);
+  return header;
+}
 
 std::optional<LoopNest> planNest(CFGLoop *natural, ArrayRef<BoundedLoop> bounds,
                                  const DenseSet<Operation *> &latches,
@@ -150,13 +284,16 @@ SmallVector<IRMapping> replicateLoop(BoundedLoop &loop, unsigned trips) {
         mapping.map(arg, copy->addArgument(arg.getType(), arg.getLoc()));
     }
     // Make each induction binding explicit before cloning uses. This exposes
-    // dependent inner bounds without relying on block layout or CFG cleanup.
+    // dependent inner bounds and packed indices without relying on CFG cleanup.
+    // IEEE 1800-2023 4.6, 11.6.1 and 12.7.1: recognition proves an exact,
+    // fixed-width sequence with no X/Z induction bits. Keep that width and
+    // empty unknown plane while cloning every iteration's effects in order.
     OpBuilder constants(header->getParent()->getContext());
     constants.setInsertionPointToStart(mapping.lookup(header));
-    auto constant = arith::ConstantOp::create(
-        constants, loop.induction.getLoc(), loop.induction.getType(),
-        constants.getIntegerAttr(loop.induction.getType(), induction));
-    mapping.map(loop.induction, constant.getResult());
+    Value constant =
+        createInductionConstant(constants, loop.induction.getLoc(),
+                                loop.induction.getType(), induction);
+    mapping.map(loop.induction, constant);
     induction = loop.isAdd ? induction + loop.stride : induction - loop.stride;
     for (Block *block : blocks) {
       if (iteration == trips && block != header)
@@ -371,6 +508,32 @@ class ObeliskSimUnrollBoundedLoopsPass
       // 30000 AST nodes; one replicated operation is about one such node.
       constexpr uint64_t maximumConstruction = 30000;
       std::optional<uint64_t> baselineCost;
+      auto commitCandidate = [&](sim::SimFuncOp copy,
+                                 const LoopNest &nest) -> FailureOr<bool> {
+        if (!baselineCost) {
+          OwningOpRef<sim::SimFuncOp> baseline(
+              cast<sim::SimFuncOp>(function->clone()));
+          if (failed(simplifyCandidate(*baseline, patterns, layout)))
+            return failure();
+          baselineCost = analysis::getSimulationOperationCost(*baseline);
+        }
+        uint64_t expandedCost = analysis::getSimulationOperationCost(copy);
+        if (failed(simplifyCandidate(copy, patterns, layout)))
+          return failure();
+        uint64_t reducedCost = analysis::getSimulationOperationCost(copy);
+        uint64_t cost = nest.originalCost;
+        if (reducedCost >= *baselineCost)
+          cost += reducedCost - *baselineCost;
+        else
+          cost -= std::min(cost, *baselineCost - reducedCost);
+        if (cost > maximumLoopSize)
+          return false;
+        ++unrolledNests;
+        simplifiedCost += expandedCost - std::min(expandedCost, reducedCost);
+        function.getBody().takeBody(copy.getBody());
+        refused.clear();
+        return true;
+      };
       bool changed = false;
       for (CFGLoop *root : roots) {
         if (refused.contains(root->getHeader()))
@@ -380,13 +543,6 @@ class ObeliskSimUnrollBoundedLoopsPass
           refused.insert(root->getHeader());
           continue;
         }
-        if (!baselineCost) {
-          OwningOpRef<sim::SimFuncOp> baseline(
-              cast<sim::SimFuncOp>(function->clone()));
-          if (failed(simplifyCandidate(*baseline, patterns, layout)))
-            return signalPassFailure();
-          baselineCost = analysis::getSimulationOperationCost(*baseline);
-        }
         IRMapping mapping;
         OwningOpRef<sim::SimFuncOp> copy(
             cast<sim::SimFuncOp>(function->clone(mapping)));
@@ -394,28 +550,60 @@ class ObeliskSimUnrollBoundedLoopsPass
           refused.insert(root->getHeader());
           continue;
         }
-        uint64_t expandedCost = analysis::getSimulationOperationCost(*copy);
-        if (failed(simplifyCandidate(*copy, patterns, layout)))
+        auto committed = commitCandidate(*copy, *nest);
+        if (failed(committed))
           return signalPassFailure();
-        uint64_t reducedCost = analysis::getSimulationOperationCost(*copy);
-        uint64_t cost = nest->originalCost;
-        if (reducedCost >= *baselineCost)
-          cost += reducedCost - *baselineCost;
-        else
-          cost -= std::min(cost, *baselineCost - reducedCost);
-        if (cost > maximumLoopSize) {
+        if (!*committed) {
           refused.insert(root->getHeader());
           continue;
         }
-        ++unrolledNests;
-        simplifiedCost += expandedCost - std::min(expandedCost, reducedCost);
-        function.getBody().takeBody(copy->getBody());
         // Cleanup may fold a sibling header or expose another dependent bound.
         // All decisions refer to this new revision of the body.
-        refused.clear();
         changed = true;
         break;
       }
+      if (!changed)
+        for (CFGLoop *natural : loops.getLoopsInPreorder()) {
+          for (const auto &plan : planInitializerFunnels(natural)) {
+            // Normalize only a disposable candidate. Failed termination,
+            // SSA or profitability checks leave the original CFG unchanged.
+            IRMapping mapping;
+            OwningOpRef<sim::SimFuncOp> copy(
+                cast<sim::SimFuncOp>(function->clone(mapping)));
+            Block *header = materializeInitializerFunnel(plan, mapping);
+            auto candidateBounds =
+                analysis::analyzeBoundedLoops(copy->getBody());
+            DenseSet<Operation *> candidateLatches;
+            for (const auto &bound : candidateBounds)
+              candidateLatches.insert(bound.latch);
+            DominanceInfo candidateDominance(*copy);
+            CFGLoopInfo candidateLoops(
+                candidateDominance.getDomTree(&copy->getBody()));
+            CFGLoop *procedural = candidateLoops.getLoopFor(header);
+            if (!procedural || procedural->getHeader() != header)
+              continue;
+            auto nest = planNest(procedural, candidateBounds, candidateLatches,
+                                 // The new constant and branch coexist with
+                                 // the disposable replicated nest.
+                                 maximumConstruction - 2);
+            if (!nest)
+              continue;
+            IRMapping identity;
+            for (Block &block : copy->getBody())
+              identity.map(&block, &block);
+            if (!unrollNest(*copy, *nest, identity))
+              continue;
+            auto committed = commitCandidate(*copy, *nest);
+            if (failed(committed))
+              return signalPassFailure();
+            if (*committed) {
+              changed = true;
+              break;
+            }
+          }
+          if (changed)
+            break;
+        }
       if (!changed)
         break;
     }

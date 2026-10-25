@@ -1,4 +1,4 @@
-// RUN: obelisk -O3 --vpi=off -emit-sim %s -o %t.sim.mlir
+// RUN: obelisk -O2 --vpi=off -emit-sim %s -o %t.sim.mlir
 // RUN: FileCheck %s --check-prefix=LOOP < %t.sim.mlir
 // RUN: obelisk -O0 --execution-tier=native %s -o %t.o0
 // RUN: %t.o0 | FileCheck %s
@@ -7,9 +7,10 @@
 // RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
 
-// Keep the induction CFG available to dataflow and scheduling. A termination
-// certificate must not imply replication of simulation stores. LLVM may
-// subsequently unroll the lowered native loop using its target cost model.
+// Below O3, keep the induction CFG available to dataflow and scheduling. A
+// termination certificate alone must not imply replication of simulation
+// stores. O3 separately proves and budgets early replication; the executions
+// below must agree with the rolled O0 body and canonical bytecode.
 module induction_loop(input bit [7:0] source,
                       output bit [7:0] result [0:3]);
   always_comb

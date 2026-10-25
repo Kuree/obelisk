@@ -361,16 +361,19 @@ recognizeBoundedLoopImpl(Block *header,
   } else if (auto test = matchLogicInductionTest(condition.getCondition())) {
     if (auto fromBits = test->compared.getDefiningOp<sim::SimLogicFromBitsOp>())
       tested = fromBits.getInput();
-    else if (forMarking)
-      tested = unwrapUnsignedInduction(test->compared);
+    else
+      tested =
+          forMarking ? unwrapUnsignedInduction(test->compared) : test->compared;
   }
   auto induction = dyn_cast_or_null<BlockArgument>(tested);
   if (!induction || induction.getOwner() != header)
     return std::nullopt;
   bool fourState = isa_and_nonnull<sim::LogicType>(
       sim::getPackedScalarType(induction.getType()));
+  bool directLogic = isa<sim::LogicType>(induction.getType());
   auto packedWidth = sim::getPackedWidth(induction.getType());
-  if (!packedWidth || (!isa<IntegerType>(induction.getType()) && !forMarking))
+  if (!packedWidth ||
+      (!isa<IntegerType>(induction.getType()) && !directLogic && !forMarking))
     return std::nullopt;
   unsigned inductionWidth = *packedWidth;
   unsigned inductionIndex = induction.getArgNumber();
@@ -438,7 +441,8 @@ recognizeBoundedLoopImpl(Block *header,
       return std::nullopt;
     auto fromBits = test->compared.getDefiningOp<sim::SimLogicFromBitsOp>();
     if ((!fourState && (!fromBits || fromBits.getInput() != induction)) ||
-        (fourState && unwrapUnsignedInduction(test->compared) != induction))
+        (fourState && (forMarking ? unwrapUnsignedInduction(test->compared)
+                                  : test->compared) != induction))
       return std::nullopt;
     switch (test->kind) {
     case sim::CompareKind::SLT:
@@ -476,7 +480,8 @@ recognizeBoundedLoopImpl(Block *header,
       return std::nullopt;
     }
     limit = test->bound;
-    if (fourState) {
+    if (fourState && !(directLogic && test->compared == induction &&
+                       limit.getBitWidth() == inductionWidth)) {
       // The comparison sees a zero-extended unsigned counter. Retain the
       // recurrence's storage width, rather than proving a wider nonwrapping
       // sequence while its packed backedge actually wraps.
@@ -498,6 +503,10 @@ recognizeBoundedLoopImpl(Block *header,
   // The induction variable and the limit are compared as one width.
   if (limit.getBitWidth() != inductionWidth)
     limit = limit.zextOrTrunc(inductionWidth);
+  bool signedCompare = *predicate == arith::CmpIPredicate::slt ||
+                       *predicate == arith::CmpIPredicate::sle ||
+                       *predicate == arith::CmpIPredicate::sgt ||
+                       *predicate == arith::CmpIPredicate::sge;
   if (!forMarking)
     for (Operation &op : header->without_terminator())
       if (!testOperations.contains(&op) &&
@@ -562,8 +571,18 @@ recognizeBoundedLoopImpl(Block *header,
   APInt stride;
   bool isAdd;
   if (fourState) {
+    // IEEE 1800-2023 11.6.1 and 12.7.1: a known direct logic induction
+    // follows the same fixed-width recurrence as an integer induction. Prove
+    // its initializer, bound and step have empty unknown planes before using
+    // that fact. Replication and signed tests require the comparison and the
+    // update at the original width; the older unsigned marking path may also
+    // recognize zero-extension/truncation wrappers.
+    bool directStep = !forMarking || signedCompare;
     Value arithmetic = increment;
-    while (Operation *op = arithmetic.getDefiningOp()) {
+    while (!directStep) {
+      Operation *op = arithmetic.getDefiningOp();
+      if (!op)
+        break;
       if (isa<sim::SimPackedFlattenOp, sim::SimPackedUnflattenOp>(op)) {
         arithmetic = op->getOperand(0);
         continue;
@@ -592,15 +611,22 @@ recognizeBoundedLoopImpl(Block *header,
     if (!binary || (binary.getKind() != sim::BinaryKind::Add &&
                     binary.getKind() != sim::BinaryKind::Sub))
       return std::nullopt;
+    if (directStep && binary.getType() != induction.getType())
+      return std::nullopt;
     isAdd = binary.getKind() == sim::BinaryKind::Add;
+    auto isInduction = [&](Value value) {
+      return (directStep ? value : unwrapUnsignedInduction(value)) == induction;
+    };
     Value step;
-    if (unwrapUnsignedInduction(binary.getLhs()) == induction)
+    if (isInduction(binary.getLhs()))
       step = binary.getRhs();
-    else if (isAdd && unwrapUnsignedInduction(binary.getRhs()) == induction)
+    else if (isAdd && isInduction(binary.getRhs()))
       step = binary.getLhs();
     else
       return std::nullopt;
     if (!matchInductionConstant(step, stride))
+      return std::nullopt;
+    if (directStep && stride.getBitWidth() != inductionWidth)
       return std::nullopt;
     stride = stride.zextOrTrunc(inductionWidth);
   } else {
@@ -654,10 +680,7 @@ recognizeBoundedLoopImpl(Block *header,
   loop.stride = stride;
   loop.predicate = *predicate;
   loop.isAdd = isAdd;
-  loop.signedCompare = loop.predicate == arith::CmpIPredicate::slt ||
-                       loop.predicate == arith::CmpIPredicate::sle ||
-                       loop.predicate == arith::CmpIPredicate::sgt ||
-                       loop.predicate == arith::CmpIPredicate::sge;
+  loop.signedCompare = signedCompare;
   if (!matchInductionConstant(entryValue, loop.init)) {
     if (fourState || loop.predicate == arith::CmpIPredicate::eq ||
         loop.predicate == arith::CmpIPredicate::ne)
@@ -676,6 +699,8 @@ recognizeBoundedLoopImpl(Block *header,
                       loop.predicate == arith::CmpIPredicate::ule;
     loop.init = increasing ? loop.initMin : loop.initMax;
   } else {
+    if (directLogic && loop.init.getBitWidth() != inductionWidth)
+      return std::nullopt;
     loop.initMin = loop.initMax = loop.init;
   }
 
