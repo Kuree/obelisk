@@ -1097,8 +1097,8 @@ public:
     // a known quiescent boundary, so they can use fixed root/region metadata.
     // That function-level fact does not prove exclusive ownership of an NBA
     // accumulator, however: a coincident four-state writer may have staged X
-    // first. Only the per-access root proof may omit the zero unknown-plane
-    // overwrite needed to preserve last-writer semantics.
+    // first. Preserve the selected unknown-plane overwrite, including zero,
+    // to retain NBA execution order (IEEE 1800-2023 4.6(b), 10.4.2).
     // IEEE 1800-2023 4.4.2.4, 4.5: a shared runtime NBA barrier must see
     // validity, masks and region even when all payload bits are known.
     bool compactEvalMetadata =

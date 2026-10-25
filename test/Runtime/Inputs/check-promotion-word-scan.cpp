@@ -129,17 +129,28 @@ int main() {
   check();
 
   // The state plane includes guard bytes beyond the last root. Unknown
-  // padding is outside the proof, but its final live bit (447) must still
-  // defeat promotion, including repeated queries and recovery from a hint.
+  // padding is outside the proof. A write-only NBA destination (447) has a
+  // separate commit certificate, not an activation input (LRM 4.9.4, 10.4.2).
+  // The final live input bit (431) must still defeat activation promotion,
+  // including repeated queries and recovery from a hint.
   for (unsigned byte = 56; byte != 64; ++byte)
     __obelisk_state_unknown[byte] = 0xff;
   __obelisk_eval_promotion_invalidate_range_v1(448, 8);
   assert(__obelisk_eval_kernel_promotion_ready_v1(0));
+  __obelisk_eval_fast_nba_roots_v1[0] = 3;
   __obelisk_state_unknown[55] = 0x80;
   __obelisk_eval_promotion_invalidate_range_v1(447, 1);
+  assert(__obelisk_eval_kernel_promotion_ready_v1(0));
+  assert(__obelisk_eval_fast_nba_roots_v1[0] == 1 ||
+         __obelisk_eval_fast_nba_roots_v1[0] == 2);
+  __obelisk_state_unknown[53] = 0x80;
+  __obelisk_eval_promotion_invalidate_range_v1(431, 1);
   for (unsigned retry = 0; retry != 8; ++retry)
     assert(!__obelisk_eval_kernel_promotion_ready_v1(0));
   assert(__obelisk_eval_kernel_promotion_ready_v1(1));
+  __obelisk_state_unknown[53] = 0;
+  __obelisk_eval_promotion_recheck_range_v1(431, 1);
+  assert(__obelisk_eval_kernel_promotion_ready_v1(0));
   __obelisk_state_unknown[55] = 0;
   __obelisk_eval_promotion_recheck_range_v1(447, 1);
   assert(__obelisk_eval_kernel_promotion_ready_v1(0));
@@ -252,7 +263,8 @@ int main() {
   assert(__obelisk_eval_fast_nba_roots_v1[0] == remainingRoot);
   assert(__obelisk_eval_selected_variant_v1_1 == otherKnown);
   assert(__obelisk_eval_kernel_promotion_latched_v1[0] == 1);
-  assert((__obelisk_eval_route_promotion_pending_v1[0] != 0) == 1);
+  // Only the NBA destination changed; neither activation reads it.
+  assert(__obelisk_eval_route_promotion_pending_v1[0] == 0);
   // Enter through the actual four-state route wrapper with known inputs.
   // Conservative route invalidation does not mean an NBA destination changed.
   // Record staged four-state provenance without discarding either root proof.

@@ -21,7 +21,7 @@ void __obelisk_eval_promotion_recheck_range_v1(uint64_t, uint64_t);
 
 int main() {
   // The fixture has one byte-aligned clock followed by 65 packed data bits.
-  // Each writer's proof reads that clock and only its own destination bit.
+  // Each writer's RHS reads that clock and its own destination bit.
   std::memset(__obelisk_state_unknown, 0, 10);
   auto &pending = __obelisk_eval_route_promotion_pending_v1;
   auto boundary = [] {

@@ -60,8 +60,12 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     ^wait:
       simulation.suspend.change %clk to ^update : !clockref
     ^update:
-      %value = simulation.ref.load %clk : !clockref -> !bit
+      %clock_value = simulation.ref.load %clk : !clockref -> !bit
       %target = simulation.ref.extract %data from 0 {test.replicate_stride = {low_bit = 1 : i64}} : !dataref -> !clockref
+      // Give each owner a real input in addition to the shared clock. A
+      // write-only NBA destination is not an input (LRM 4.9.4, 10.4.2).
+      %old = simulation.ref.load %target : !clockref -> !bit
+      %value = simulation.logic.binary xor %clock_value, %old : !bit
       simulation.nba.enqueue %value to %target : (!bit, !clockref) -> ()
       cf.br ^wait
     }

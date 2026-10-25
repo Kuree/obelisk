@@ -16,8 +16,10 @@
 // CHECK: llvm.load
 // CHECK: llvm.icmp "eq"
 
-// KERNEL-DAG: llvm.mlir.global internal constant @__obelisk_eval_kernel_promotion_ranges_v1(dense<[6, 7, -65536, 281474976710655, 6, 7, -72057594037927936, -1, 0, 3, -2048, 4095, 2, 5, -1099511627776, 2199023255551, 5, 6, -1, -1, 6, 7, -281474976710656, 72057594037927935]>
-// KERNEL-DAG: llvm.mlir.global internal constant @__obelisk_eval_kernel_promotion_owners_v1(dense<[0, 2, 0, 1, 2, 6, 0, 2]>
+// Write-only NBA destinations at 432 and 440 have separate commit certificates
+// and must not extend the activation's input ranges (LRM 4.9.4, 10.4.2).
+// KERNEL-DAG: llvm.mlir.global internal constant @__obelisk_eval_kernel_promotion_ranges_v1(dense<[6, 7, -65536, 281474976710655, 0, 3, -2048, 4095, 2, 5, -1099511627776, 2199023255551, 5, 6, -1, -1]>
+// KERNEL-DAG: llvm.mlir.global internal constant @__obelisk_eval_kernel_promotion_owners_v1(dense<[0, 1, 0, 1, 1, 4, 0, 2]>
 // KERNEL-DAG: llvm.mlir.global internal @__obelisk_eval_kernel_promotion_hints_v1(dense<0> : tensor<4xi64>)
 // RANGE-DAG: llvm.mlir.global internal constant @__obelisk_eval_proof_dependencies_v1(dense<{{.*}}> : tensor<{{[0-9]+}}x4xi64>)
 // RANGE-DAG: llvm.mlir.global internal constant @__obelisk_eval_proof_certificates_v1

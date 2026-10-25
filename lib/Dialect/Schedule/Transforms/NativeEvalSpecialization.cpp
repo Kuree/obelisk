@@ -357,7 +357,7 @@ LogicalResult materializeEvalTwoStateVariants(
       auto found = provenance.find(handle);
       // A dynamic selection's range is the hull of every storage it can
       // address, and an invalid index addresses none: reads yield the element
-      // default and writes do nothing (IEEE 1800-2023 7.4.6, 11.5.1). The
+      // default and writes do nothing (IEEE 1800-2023 7.4.5, 11.5.1). The
       // value-domain proofs reject reads that may be invalid. A hull too wide
       // to scan on every readiness check is not guarded.
       if (found == provenance.end() || !found->second.descriptor)
@@ -546,16 +546,32 @@ LogicalResult materializeEvalTwoStateVariants(
           return;
         }
         if (auto nba = dyn_cast<sim::SimNBAEnqueueOp>(operation)) {
-          auto found = provenance.find(nba.getDestination());
-          if (found != provenance.end() && found->second.descriptor &&
-              domains->isInductivelyTwoState(found->second.resource,
-                                             *found->second.descriptor))
-            (void)selectRange(operation, nba.getDestination(), handles,
-                              footprints, inductiveRanges);
-          preserving &=
-              knownStateDomains->isTwoStateWithInductiveRoots(nba.getValue()) &&
-              selectRange(operation, nba.getDestination(), handles, footprints,
-                          localRanges);
+          // IEEE 1800-2023 4.9.4, 10.4.2: staging captures the RHS and target,
+          // not the target's previous contents. Reads used to compute either
+          // are inventoried separately. Do not make a write-only NBA range an
+          // activation input: untouched memory elements may remain X forever.
+          // Staging still overwrites captured unknown bits (4.6(b)); the NBA
+          // commit has its own destination certificate and clears canonical
+          // X/Z whenever that destination is not already known.
+          bool known =
+              knownStateDomains->isTwoStateWithInductiveRoots(nba.getValue());
+          // Keep the conservative closure for shared runtime-calendar
+          // handoffs. Input-only certificates are profitable with the fully
+          // generated barrier's independently latched destination proofs;
+          // changing the shared path also changes its partition/inlining cost.
+          if (::obelisk::schedule::has<
+                  ::obelisk::schedule::Field::EvalRuntimeCalendar>(module)) {
+            auto found = provenance.find(nba.getDestination());
+            if (found != provenance.end() && found->second.descriptor &&
+                domains->isInductivelyTwoState(found->second.resource,
+                                               *found->second.descriptor))
+              (void)selectRange(operation, nba.getDestination(), handles,
+                                footprints, inductiveRanges);
+            preserving &=
+                known && selectRange(operation, nba.getDestination(), handles,
+                                     footprints, localRanges);
+          } else
+            preserving &= known;
           return;
         }
         if (auto drive = dyn_cast<sim::SimDriverDriveOp>(operation)) {

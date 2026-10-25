@@ -411,6 +411,16 @@ fallback still publishes X/Z changes and revokes affected certificates. Driver
 contributions remain canonical for force/release (10.6.2). Writable VPI retains
 individual override-aware entries (38.34); read-only VPI can use the group.
 
+NBA staging captures the RHS value and target identity, so the fully generated
+barrier can omit a write-only destination from activation inputs (4.9.4,
+10.4.2). Reads of the destination
+or its selector remain in the input certificate. This allows a selected memory
+element to receive known values while untouched elements remain X. Staging
+overwrites the captured unknown bits to preserve NBA execution order (4.6(b)).
+The commit retains its separate destination certificate and canonical X/Z
+updates; an activation's known RHS does not prove the old destination known.
+Shared runtime-calendar handoffs retain their conservative state closure.
+
 The scheduling proof follows IEEE 1800-2023 4.5 (activation and region
 boundaries), 4.6 (procedural source order and ordered NBAs), and 4.7 (permitted
 interleaving between processes). A topological order may select a legal
