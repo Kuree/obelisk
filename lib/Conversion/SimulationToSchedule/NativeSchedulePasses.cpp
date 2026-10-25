@@ -1068,7 +1068,7 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
          staticFanoutPlan.entries) {
       // The periodic loop forwards an alias entry itself (see
       // isNativePeriodicAliasEntry).
-      if (isNativePeriodicAliasEntry(*stateLayout, periodicAliases, entry))
+      if (isNativePeriodicAliasEntry(periodicAliases, entry))
         continue;
       sim::SimFuncOp actor = actorsBySlot.lookup(entry.actor_slot);
       if (!actor) {

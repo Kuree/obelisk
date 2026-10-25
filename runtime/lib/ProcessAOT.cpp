@@ -1881,6 +1881,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
 
         auto queueFanout = [&](const obelisk_rt_static_fanout_entry &entry)
             -> obelisk_rt_status {
+          // IEEE 1800-2023 4.9.1, 9.4.2: the admitted forwarding tree is
+          // updated from this same root edge below before any consumer runs.
+          // A transitive forwarding actor does not need a second evaluation.
+          if (fanoutRoute(entry) == OBELISK_RT_FANOUT_PERIODIC_ALIAS)
+            return OBELISK_RT_OK;
           bool edgeMatches =
               entry.edge == OBELISK_RT_WAIT_EDGE_CHANGE ||
               entry.edge == OBELISK_RT_WAIT_EDGE_BOTH ||

@@ -3762,6 +3762,7 @@ FailureOr<bool> makeNativeEvalPlan(
         const obelisk_rt_static_fanout_entry &fanout =
             fanoutEntries[fanoutIndex];
         if (fanoutRoute(fanout) == OBELISK_RT_FANOUT_RUNTIME ||
+            fanoutRoute(fanout) == OBELISK_RT_FANOUT_PERIODIC_ALIAS ||
             (fanout.actor_slot == alias.getForwardingActorSlot() &&
              fanout.continuation == alias.getForwardingContinuation()) ||
             !periodicBitTouchesFanout(targetLocalBit, fanout) ||
@@ -4229,7 +4230,8 @@ FailureOr<bool> makeNativeEvalPlan(
         // A shared periodic driver enters the runtime every slot, so it also
         // maintains the driver's projection before that slot's drain.
         SmallVector<uint64_t, 2> aliasBits{alias.getTargetBitOffset()};
-        if (sharedPeriodic)
+        if (sharedPeriodic &&
+            alias.getDriverBitOffset() != alias.getTargetBitOffset())
           aliasBits.push_back(alias.getDriverBitOffset());
         for (uint64_t bitOffset : aliasBits) {
           Value aliasAddress =

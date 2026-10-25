@@ -300,9 +300,9 @@ struct NativeThreeTierPlan {
 /// multiple clocks can be ordered by their calendar deadlines.
 using NativePeriodicClock = schedule::PeriodicClockAttr;
 
-/// A proven one-bit, single-driver port projection of a periodic source.  The
-/// generated loop updates both canonical driver and resolved-net planes and
-/// seeds the target fanout directly, avoiding a forwarding actor per edge.
+/// A proven one-bit, single-writer copy in a tree rooted in a periodic source.
+/// The generated loop updates its target and seeds fanout directly, avoiding
+/// a forwarding actor per edge. Driver planes are restored at runtime handoffs.
 using NativePeriodicAlias = schedule::PeriodicAliasAttr;
 
 llvm::DenseMap<analysis::ClockBit, analysis::ClockFact>
@@ -333,7 +333,6 @@ buildNativeThreeTierPlan(mlir::ModuleOp module,
 /// True when the periodic clock plan forwards `entry` itself, so the generated
 /// eval coordinator needs no executor for it.
 bool isNativePeriodicAliasEntry(
-    const NativeStateLayout &stateLayout,
     mlir::ArrayRef<NativePeriodicAlias> periodicAliases,
     const obelisk_rt_static_fanout_entry &entry);
 mlir::FailureOr<NativeEvalOwnershipPlan> buildNativeEvalOwnershipPlan(

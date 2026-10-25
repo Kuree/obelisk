@@ -804,6 +804,21 @@ and a proven port copy changes its destination in the same phase as its
 source (23.3.3, 4.9.1), so members waiting on different copies of one clock
 can share the activation.
 
+The native periodic calendar also forwards trees of private scalar copies.
+Each admitted actor has one input, one identity store or drive, and one change
+wait on that input. Physical writer analysis must prove that it is the only
+writer of its target. Reachability follows admitted copies from an actual
+calendar source; an inferred periodic waveform alone does not remove a writer.
+Variable copies and bit-to-logic conversions can connect the source to a tree
+of exclusive, undelayed wire copies. Net resolution, competing writers and
+externally writable intermediate state remain execution boundaries.
+Initialization runs through the ordinary scheduler. Each generated edge then
+updates all admitted targets before running their consumers, a permitted Active
+ordering under IEEE 1800-2023 4.3, 4.9.1, 6.6.1 and 9.4.2. The generated loop
+seeds consumer readiness directly and restores canonical driver contributions
+before a runtime handoff; shared calendar slots maintain those contributions
+before every drain.
+
 Inside the kernel an NBA becomes a store at its statement when the store is
 invisible until the NBA region would have applied it (4.3):
 

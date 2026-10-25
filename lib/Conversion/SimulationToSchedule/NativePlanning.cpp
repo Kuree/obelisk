@@ -25,6 +25,8 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringMap.h"
 
+#include <memory>
+
 using namespace mlir;
 
 namespace obelisk::detail {
@@ -284,7 +286,7 @@ buildNativePeriodicAliasPlan(ModuleOp module,
     return aliases;
 
   auto descriptorFor = [](sim::SimFuncOp function, Value value,
-                          bool storage) -> std::optional<uint64_t> {
+                          sim::CaptureKind kind) -> std::optional<uint64_t> {
     if (auto argument = dyn_cast<BlockArgument>(value)) {
       if (argument.getOwner() != &function.getBody().front())
         return std::nullopt;
@@ -294,10 +296,13 @@ buildNativePeriodicAliasPlan(ModuleOp module,
         return descriptor.getValue().getZExtValue();
       return std::nullopt;
     }
-    if (storage)
+    if (kind == sim::CaptureKind::Storage)
       if (auto lookup = value.getDefiningOp<sim::SimContextStorageOp>())
         return lookup.getId();
-    if (!storage)
+    if (kind == sim::CaptureKind::Net)
+      if (auto lookup = value.getDefiningOp<sim::SimContextNetOp>())
+        return lookup.getId();
+    if (kind == sim::CaptureKind::Driver)
       if (auto lookup = value.getDefiningOp<sim::SimContextDriverOp>())
         return lookup.getId();
     return std::nullopt;
@@ -310,37 +315,54 @@ buildNativePeriodicAliasPlan(ModuleOp module,
     return decoded.id;
   };
 
+  std::unique_ptr<analysis::ClockInferenceAnalysis> copyProof;
   WalkResult walked = module.walk([&](sim::SimFuncOp function) {
     auto actor = actorSlots.find(function.getOperation());
     if (actor == actorSlots.end() || function.isExternal() ||
         function.getBody().empty())
       return WalkResult::advance();
 
-    SmallVector<sim::SimRefLoadOp> loads;
+    SmallVector<Operation *> loads;
     SmallVector<sim::SimDriverDriveOp> drives;
+    SmallVector<sim::SimRefStoreOp> stores;
     SmallVector<sim::SimSuspendChangeOp> waits;
     bool unsupported = false;
     function.walk([&](Operation *operation) {
       if (operation == function.getOperation())
         return;
-      if (auto load = dyn_cast<sim::SimRefLoadOp>(operation))
-        loads.push_back(load);
+      if (isa<sim::SimRefLoadOp, sim::SimNetReadOp>(operation))
+        loads.push_back(operation);
       else if (auto drive = dyn_cast<sim::SimDriverDriveOp>(operation))
         drives.push_back(drive);
+      else if (auto store = dyn_cast<sim::SimRefStoreOp>(operation))
+        stores.push_back(store);
       else if (auto wait = dyn_cast<sim::SimSuspendChangeOp>(operation))
         waits.push_back(wait);
       else if (!isa<sim::SimContextStorageOp, sim::SimContextDriverOp,
-                    sim::SimRefSubelementOp, cf::BranchOp>(operation))
+                    sim::SimContextNetOp, sim::SimRefSubelementOp,
+                    sim::SimLogicFromBitsOp, cf::BranchOp>(operation))
         unsupported = true;
     });
-    if (unsupported || loads.size() != 1 || drives.size() != 1 ||
-        waits.size() != 1)
+    if (unsupported || loads.size() != 1 ||
+        drives.size() + stores.size() != 1 || waits.size() != 1)
       return WalkResult::advance();
 
-    sim::SimRefLoadOp load = loads.front();
-    sim::SimDriverDriveOp drive = drives.front();
+    Operation *load = loads.front();
+    sim::SimDriverDriveOp drive =
+        drives.empty() ? sim::SimDriverDriveOp{} : drives.front();
+    sim::SimRefStoreOp store =
+        stores.empty() ? sim::SimRefStoreOp{} : stores.front();
+    Operation *publication =
+        drive ? drive.getOperation() : store.getOperation();
+    Value published = drive ? drive.getValue() : store.getValue();
+    if (auto conversion = published.getDefiningOp<sim::SimLogicFromBitsOp>())
+      published = conversion.getInput();
     sim::SimSuspendChangeOp wait = waits.front();
-    Value sourceReference = load.getReference();
+    bool sourceNet = isa<sim::SimNetReadOp>(load);
+    Value sourceReference =
+        sourceNet ? Value(cast<sim::SimNetReadOp>(load).getNet())
+                  : Value(cast<sim::SimRefLoadOp>(load).getReference());
+    Value loadedReference = sourceReference;
     uint64_t sourceLocalBitOffset = 0;
     while (auto view =
                sourceReference.getDefiningOp<sim::SimRefSubelementOp>()) {
@@ -377,32 +399,86 @@ buildNativePeriodicAliasPlan(ModuleOp module,
         sourceLocalBitOffset += low.getUInt();
       }
     }
-    if (unsupported || load->getBlock() != drive->getBlock() ||
+    if (unsupported || load->getBlock() != publication->getBlock() ||
         load->getBlock() != wait->getBlock() ||
-        drive.getValue() != load.getResult() ||
-        (wait.getWatched() != load.getReference() &&
+        published != load->getResult(0) ||
+        nativeStateWidth(published.getType()) != 1 ||
+        (wait.getWatched() != loadedReference &&
          wait.getWatched() != sourceReference) ||
         wait.getContinuation() != wait->getBlock() ||
         !wait.getContinuationOperands().empty())
       return WalkResult::advance();
 
-    std::optional<uint64_t> sourceDescriptor =
-        descriptorFor(function, sourceReference, true);
-    std::optional<uint64_t> driverDescriptor =
-        descriptorFor(function, drive.getDriver(), false);
-    if (!sourceDescriptor || !driverDescriptor)
+    std::optional<uint64_t> sourceDescriptor = descriptorFor(
+        function, sourceReference,
+        sourceNet ? sim::CaptureKind::Net : sim::CaptureKind::Storage);
+    if (!sourceDescriptor)
       return WalkResult::advance();
-    auto sourceHandle = stateLayout.storage.find(*sourceDescriptor);
-    auto sourceRootOffset = stateLayout.storageOffsets.find(*sourceDescriptor);
+    const auto &sourceHandles =
+        sourceNet ? stateLayout.nets : stateLayout.storage;
+    const auto &sourceOffsets =
+        sourceNet ? stateLayout.netOffsets : stateLayout.storageOffsets;
+    auto sourceHandle = sourceHandles.find(*sourceDescriptor);
+    auto sourceRootOffset = sourceOffsets.find(*sourceDescriptor);
+    if (sourceHandle == sourceHandles.end() ||
+        sourceRootOffset == sourceOffsets.end() ||
+        sourceLocalBitOffset > UINT64_MAX - sourceRootOffset->second)
+      return WalkResult::advance();
+    std::optional<uint32_t> sourceStatic =
+        decodeStaticRoot(sourceHandle->second);
+    auto site = wait.getSiteAttr();
+    if (!sourceStatic || !site || site.getId() == 0)
+      return WalkResult::advance();
+    analysis::ClockBit sourceBit{*sourceStatic, sourceRootOffset->second +
+                                                    sourceLocalBitOffset};
+    auto isExclusiveCopy = [&](analysis::ClockBit target) {
+      if (!copyProof)
+        copyProof = std::make_unique<analysis::ClockInferenceAnalysis>(
+            module, stateLayout, ArrayRef<analysis::PeriodicClockSeed>{});
+      auto source = copyProof->getCopySource(target);
+      return source && !source->inverted && source->bit == sourceBit;
+    };
+    if (store) {
+      auto targetDescriptor = descriptorFor(function, store.getReference(),
+                                            sim::CaptureKind::Storage);
+      if (!targetDescriptor)
+        return WalkResult::advance();
+      auto handle = stateLayout.storage.find(*targetDescriptor);
+      auto offset = stateLayout.storageOffsets.find(*targetDescriptor);
+      if (handle == stateLayout.storage.end() ||
+          offset == stateLayout.storageOffsets.end())
+        return WalkResult::advance();
+      auto target = decodeStaticRoot(handle->second);
+      auto bound = llvm::find_if(stateLayout.bounds, [&](const auto &bound) {
+        return target && bound.handleID == *target;
+      });
+      // IEEE 1800-2023 4.3, 4.9.1, 9.4.2: a private, single-writer variable
+      // copy has the same edge ordering as the wire tree. Its target is its
+      // only canonical plane. Equal driver/target offsets encode that no extra
+      // contribution needs reconstruction. Do not turn a slice or externally
+      // writable variable into a whole-root clock projection.
+      if (!target || bound == stateLayout.bounds.end() || bound->width != 1 ||
+          !stateLayout.directHandles.contains(*sourceStatic) ||
+          !stateLayout.directHandles.contains(*target) ||
+          stateLayout.guardedHandles.contains(*sourceStatic) ||
+          stateLayout.guardedHandles.contains(*target) ||
+          !isExclusiveCopy({*target, offset->second}))
+        return WalkResult::advance();
+      aliases.push_back(NativePeriodicAlias::get(
+          module.getContext(), *sourceStatic, actor->second, site.getId(),
+          *target, sourceBit.second, offset->second, offset->second));
+      return WalkResult::advance();
+    }
+    auto driverDescriptor =
+        descriptorFor(function, drive.getDriver(), sim::CaptureKind::Driver);
+    if (!driverDescriptor)
+      return WalkResult::advance();
     auto driverOffset = stateLayout.driverOffsets.find(*driverDescriptor);
     auto driver =
         llvm::find_if(stateLayout.driverLayouts, [&](const auto &candidate) {
           return candidate.id == *driverDescriptor;
         });
-    if (sourceHandle == stateLayout.storage.end() ||
-        sourceRootOffset == stateLayout.storageOffsets.end() ||
-        sourceLocalBitOffset > UINT64_MAX - sourceRootOffset->second ||
-        driverOffset == stateLayout.driverOffsets.end() ||
+    if (driverOffset == stateLayout.driverOffsets.end() ||
         driver == stateLayout.driverLayouts.end() || driver->width != 1 ||
         driver->drivenLow != 0 || driver->drivenWidth != 1)
       return WalkResult::advance();
@@ -411,19 +487,6 @@ buildNativePeriodicAliasPlan(ModuleOp module,
     if (driver->strength0 == sim::Strength::HighZ ||
         driver->strength1 == sim::Strength::HighZ)
       return WalkResult::advance();
-    std::optional<uint32_t> sourceStatic =
-        decodeStaticRoot(sourceHandle->second);
-    if (!sourceStatic)
-      return WalkResult::advance();
-    auto clock = llvm::find_if(periodicClocks, [&](const auto &candidate) {
-      uint64_t sourceBitOffset =
-          sourceRootOffset->second + sourceLocalBitOffset;
-      return candidate.getStaticState() == *sourceStatic &&
-             candidate.getBitOffset() == sourceBitOffset;
-    });
-    if (clock == periodicClocks.end())
-      return WalkResult::advance();
-
     // Directly updating a resolved net is equivalent to the drive only for a
     // one-bit net with this exact single driver.  This is the semantic fact an
     // effect summary cannot establish: the SSA body above additionally proves
@@ -443,9 +506,28 @@ buildNativePeriodicAliasPlan(ModuleOp module,
         netOffset == stateLayout.netOffsets.end())
       return WalkResult::advance();
     std::optional<uint32_t> targetStatic = decodeStaticRoot(netHandle->second);
-    auto site = wait.getSiteAttr();
-    if (!targetStatic || !site || site.getId() == 0)
+    // A single driver declaration does not establish a single writer: another
+    // process can write the same contribution. Check the physical write set
+    // for storage-to-net links too, including the root of a transitive tree.
+    if (!targetStatic || !isExclusiveCopy({*targetStatic, netOffset->second}))
       return WalkResult::advance();
+
+    if (sourceNet) {
+      // IEEE 1800-2023 4.3, 4.9.1, 6.6.1, 9.4.2: a tree of exclusive,
+      // undelayed wire copies can propagate each periodic edge before its
+      // consumers run. Keep initialization in the ordinary scheduler and
+      // reject overrides, resolution and competing writers. Clock inference
+      // checks physical writer coverage, not just this body's effect summary.
+      if (!stateLayout.isolatedSingleDriverNets.contains(*sourceDescriptor) ||
+          !stateLayout.isolatedSingleDriverNets.contains(driver->netId) ||
+          !stateLayout.directHandles.contains(*sourceStatic) ||
+          !stateLayout.directHandles.contains(*targetStatic) ||
+          !stateLayout.directHandles.contains(driver->handleID) ||
+          stateLayout.guardedHandles.contains(*sourceStatic) ||
+          stateLayout.guardedHandles.contains(*targetStatic) ||
+          stateLayout.guardedHandles.contains(driver->handleID))
+        return WalkResult::advance();
+    }
 
     aliases.push_back(NativePeriodicAlias::get(
         module.getContext(), *sourceStatic, actor->second, site.getId(),
@@ -455,6 +537,43 @@ buildNativePeriodicAliasPlan(ModuleOp module,
   });
   if (walked.wasInterrupted())
     return failure();
+  // Close only over forwarding bodies admitted above. A merely periodic
+  // waveform is insufficient: skipping an unsupported intermediate writer
+  // could expose its old value to a downstream clock consumer. Normalize the
+  // admitted tree to its calendar root so the existing loop and checkpoint
+  // reconstruction update every projection directly from that root.
+  DenseMap<analysis::ClockBit, SmallVector<unsigned>> consumers;
+  for (auto [index, alias] : llvm::enumerate(aliases))
+    consumers[{alias.getSourceStaticState(), alias.getSourceBitOffset()}]
+        .push_back(index);
+  DenseMap<analysis::ClockBit, analysis::ClockBit> roots;
+  SmallVector<analysis::ClockBit> worklist;
+  for (const auto &clock : periodicClocks) {
+    analysis::ClockBit bit{clock.getStaticState(), clock.getBitOffset()};
+    roots.try_emplace(bit, bit);
+    worklist.push_back(bit);
+  }
+  SmallVector<NativePeriodicAlias> reachable;
+  for (size_t cursor = 0; cursor < worklist.size(); ++cursor) {
+    auto source = worklist[cursor];
+    auto root = roots.lookup(source);
+    for (unsigned index : consumers[source]) {
+      auto alias = aliases[index];
+      analysis::ClockBit target{alias.getTargetStaticState(),
+                                alias.getTargetBitOffset()};
+      if (!roots.try_emplace(target, root).second)
+        continue;
+      reachable.push_back(NativePeriodicAlias::get(
+          module.getContext(), root.first, alias.getForwardingActorSlot(),
+          alias.getForwardingContinuation(), alias.getTargetStaticState(),
+          root.second, alias.getTargetBitOffset(), alias.getDriverBitOffset()));
+      worklist.push_back(target);
+    }
+  }
+  aliases = std::move(reachable);
+  if (native::has<native::DebugTiming>(module))
+    llvm::errs() << "obelisk periodic forwarding: aliases=" << aliases.size()
+                 << '\n';
   llvm::sort(aliases, [](const NativePeriodicAlias &lhs,
                          const NativePeriodicAlias &rhs) {
     return std::tuple(lhs.getSourceStaticState(), lhs.getSourceBitOffset(),
@@ -1116,23 +1235,14 @@ buildNativeThreeTierPlan(ModuleOp module,
   return result;
 }
 
-bool isNativePeriodicAliasEntry(const NativeStateLayout &stateLayout,
-                                ArrayRef<NativePeriodicAlias> periodicAliases,
+bool isNativePeriodicAliasEntry(ArrayRef<NativePeriodicAlias> periodicAliases,
                                 const obelisk_rt_static_fanout_entry &entry) {
   return llvm::any_of(periodicAliases, [&](const NativePeriodicAlias &alias) {
-    if (alias.getSourceStaticState() != entry.static_state ||
-        alias.getForwardingActorSlot() != entry.actor_slot ||
-        alias.getForwardingContinuation() != entry.continuation)
-      return false;
-    auto bound = llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
-      return candidate.handleID == entry.static_state;
-    });
-    if (bound == stateLayout.bounds.end() ||
-        alias.getSourceBitOffset() < bound->offset)
-      return false;
-    uint64_t localBit = alias.getSourceBitOffset() - bound->offset;
-    return entry.low_bit <= localBit &&
-           localBit - entry.low_bit < entry.bit_width;
+    // The planner proves this continuation has exactly one change wait on
+    // its copied input. SourceStaticState is now the transitive calendar root;
+    // the actor/site identity still names the original forwarding activation.
+    return alias.getForwardingActorSlot() == entry.actor_slot &&
+           alias.getForwardingContinuation() == entry.continuation;
   });
 }
 
@@ -1195,7 +1305,7 @@ buildNativeEvalOwnershipPlan(ModuleOp module,
   }
 
   for (const obelisk_rt_static_fanout_entry &entry : fanoutPlan.entries) {
-    if (isNativePeriodicAliasEntry(stateLayout, periodicAliases, entry)) {
+    if (isNativePeriodicAliasEntry(periodicAliases, entry)) {
       NativeEvalFanoutOwner owner{NativeEvalFanoutOwnerKind::PeriodicAlias,
                                   UINT32_MAX};
       result.fanoutOwners.push_back(owner);

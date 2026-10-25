@@ -85,10 +85,11 @@ endmodule
 // DIAG-SAME: periodic_preparations={{[1-9][0-9]*}}
 // DIAG-SAME: periodic_clocks_high_water=3
 
-// Each outlined owner has an independent promotion latch.  The generated
+// The scalar clock copy is forwarded by the calendar. Each remaining
+// outlined owner has an independent promotion latch.  The generated
 // scanner is a local masked-plane check and has no runtime edge.
-// LLVM-DAG: @__obelisk_eval_kernel_promotion_latched_v1 = internal {{.*}}global [7 x i8] zeroinitializer
-// LLVM-DAG: @__obelisk_eval_promotion_pending_mask_v1{{(\.0)?}} = internal {{.*}}global [1 x i64] [i64 127]
+// LLVM-DAG: @__obelisk_eval_kernel_promotion_latched_v1 = internal {{.*}}global [6 x i8] zeroinitializer
+// LLVM-DAG: @__obelisk_eval_promotion_pending_mask_v1{{(\.0)?}} = internal {{.*}}global [1 x i64] [i64 63]
 // LLVM-LABEL: define {{.*}}i1 @__obelisk_eval_kernel_promotion_scan_v1(
 // LLVM-NOT: call {{.*}}@obelisk_rt_
 // LLVM: store i8 1, ptr
@@ -104,7 +105,7 @@ endmodule
 // LLVM-NOT: call {{.*}}@obelisk_rt_
 // LLVM: store i8 {{.*}}, ptr @__obelisk_eval_promotion_latched_v1
 // LLVM: call void @llvm.memset{{.*}}@__obelisk_eval_kernel_promotion_latched_v1
-// LLVM: store i64 127, ptr @__obelisk_eval_promotion_pending_mask_v1{{(\.0)?}}
+// LLVM: store i64 63, ptr @__obelisk_eval_promotion_pending_mask_v1{{(\.0)?}}
 // LLVM: ret void
 
 // The shared dispatcher checks the ready mask against pending owners
