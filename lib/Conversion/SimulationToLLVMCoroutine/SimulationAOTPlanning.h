@@ -67,6 +67,10 @@ mlir::LogicalResult materializeNativeRoutePromotionScan(
 
 inline constexpr llvm::StringLiteral kernelPromotionReadyName =
     "__obelisk_eval_kernel_promotion_ready_v1";
+inline constexpr llvm::StringLiteral groupPromotionReadyName =
+    "__obelisk_eval_group_promotion_ready_v1";
+inline constexpr llvm::StringLiteral groupPromotionLatchName =
+    "__obelisk_eval_group_promotion_latched_v1";
 
 /// The one model-wide eval ready set. Every clock kernel publishes its owners
 /// into this bitset, so a fragment reached through several kernels still
@@ -79,6 +83,13 @@ mlir::LogicalResult materializeNativeKernelPromotionReadiness(
     mlir::ArrayRef<llvm::SmallVector<NativePromotionRange>> ranges,
     mlir::ArrayRef<std::string> twoStateExecutors,
     mlir::ArrayRef<obelisk_rt_native_merged_fragment> fragments);
+
+/// Consume the typed group-domain inventory on its private latch array. The
+/// same materializer runs at the ranked-plan boundary and as a standalone
+/// lowering phase. It creates no scheduler owners or pending bits.
+mlir::LogicalResult
+materializeNativeGroupPromotionReadiness(mlir::ModuleOp module);
+mlir::LogicalResult verifyNativeGroupProofDomains(mlir::ModuleOp module);
 
 /// A private AOT-only implementation of one stable actor continuation.  The
 /// wrapper executes the activation body without resuming the coroutine; the
@@ -171,6 +182,19 @@ struct NativeRankedEvalNode {
   /// A source proof permits redundant evaluation after initialization when
   /// no watched input changed. Only the closed two-state dataflow consumes it.
   bool repeatable = false;
+};
+
+/// Immutable code-size chunks, computed after native body rewriting using the
+/// existing ranked cost/order policy. A proof domain belongs to this exact
+/// chunk, independently of both owner numbering and later dataflow acceptance.
+struct NativeRankedGroupChunk {
+  llvm::SmallVector<NativeRankedEvalNode> members;
+  schedule::GroupProofDependencyAttr proof;
+  bool endsSegment = false;
+};
+struct NativeRankedGroupPlan {
+  llvm::SmallVector<NativeRankedGroupChunk> chunks;
+  llvm::SmallVector<schedule::GroupProofDependencyAttr> domains;
 };
 
 /// Activation-boundary inputs proved on the source revision before native
@@ -367,7 +391,12 @@ std::unique_ptr<mlir::Pass> createPromoteNativeGroupFunctionPass();
 
 mlir::FailureOr<llvm::SmallVector<std::string>>
 materializeNativeRankedGroups(mlir::ModuleOp module,
-                              const NativeEvalCoordinatorPlan &plan);
+                              const NativeEvalCoordinatorPlan &plan,
+                              const NativeRankedGroupPlan &groups);
+mlir::FailureOr<NativeRankedGroupPlan> planNativeRankedGroups(
+    mlir::ModuleOp module, const NativeEvalCoordinatorPlan &plan,
+    mlir::ArrayRef<llvm::SmallVector<NativePromotionRange>> ranges,
+    uint64_t stateBits);
 
 mlir::LogicalResult
 materializeNativeEvalDispatch(mlir::ModuleOp module,

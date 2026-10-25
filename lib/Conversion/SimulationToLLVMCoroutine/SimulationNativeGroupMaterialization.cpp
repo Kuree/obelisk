@@ -65,36 +65,36 @@ promoteScalarSlots(ArrayRef<PromotableAllocationOpInterface> allocations,
     return !access.getVolatile_() &&
            access.getOrdering() == LLVM::AtomicOrdering::not_atomic;
   };
-  bool direct = llvm::all_of(allocations, [&](PromotableAllocationOpInterface
-                                                  allocation) {
-    auto alloca = dyn_cast<LLVM::AllocaOp>(allocation.getOperation());
-    if (!alloca || !matchPattern(alloca.getArraySize(), m_One()) ||
-        (region && alloca->getParentRegion() != region) ||
-        alloca->getBlock() != &alloca->getParentRegion()->front())
-      return false;
-    region = alloca->getParentRegion();
-    Type type = alloca.getElemType();
-    for (OpOperand &use : alloca.getResult().getUses()) {
-      Operation *user = use.getOwner();
-      if (user->getParentRegion() != region)
-        return false;
-      if (auto load = dyn_cast<LLVM::LoadOp>(user)) {
-        if (load.getType() != type || !isPlain(load))
+  bool direct = llvm::all_of(
+      allocations, [&](PromotableAllocationOpInterface allocation) {
+        auto alloca = dyn_cast<LLVM::AllocaOp>(allocation.getOperation());
+        if (!alloca || !matchPattern(alloca.getArraySize(), m_One()) ||
+            (region && alloca->getParentRegion() != region) ||
+            alloca->getBlock() != &alloca->getParentRegion()->front())
           return false;
-      } else if (auto store = dyn_cast<LLVM::StoreOp>(user)) {
-        if (store.getAddr() != alloca.getResult() ||
-            store.getValue() == alloca.getResult() ||
-            store.getValue().getType() != type || !isPlain(store))
-          return false;
-      } else {
-        return false;
-      }
-    }
-    // mem2reg leaves an unused slot untouched.
-    if (!alloca.getResult().use_empty())
-      slots.push_back(alloca);
-    return true;
-  });
+        region = alloca->getParentRegion();
+        Type type = alloca.getElemType();
+        for (OpOperand &use : alloca.getResult().getUses()) {
+          Operation *user = use.getOwner();
+          if (user->getParentRegion() != region)
+            return false;
+          if (auto load = dyn_cast<LLVM::LoadOp>(user)) {
+            if (load.getType() != type || !isPlain(load))
+              return false;
+          } else if (auto store = dyn_cast<LLVM::StoreOp>(user)) {
+            if (store.getAddr() != alloca.getResult() ||
+                store.getValue() == alloca.getResult() ||
+                store.getValue().getType() != type || !isPlain(store))
+              return false;
+          } else {
+            return false;
+          }
+        }
+        // mem2reg leaves an unused slot untouched.
+        if (!alloca.getResult().use_empty())
+          slots.push_back(alloca);
+        return true;
+      });
   if (!direct)
     return tryToPromoteMemorySlots(allocations, builder, layout, dominance);
   if (slots.empty())
@@ -104,8 +104,7 @@ promoteScalarSlots(ArrayRef<PromotableAllocationOpInterface> allocations,
   for (auto [index, alloca] : llvm::enumerate(slots))
     slotOf.try_emplace(alloca.getResult(), index);
   // The slot an operation loads (true) or stores (false), if any.
-  auto access =
-      [&](Operation &op) -> std::optional<std::pair<unsigned, bool>> {
+  auto access = [&](Operation &op) -> std::optional<std::pair<unsigned, bool>> {
     Value address;
     bool load = isa<LLVM::LoadOp>(op);
     if (load)
@@ -175,8 +174,8 @@ promoteScalarSlots(ArrayRef<PromotableAllocationOpInterface> allocations,
   auto renameBlock = [&](Block *block, SmallVectorImpl<Value> &reaching) {
     if (auto merges = mergeSlots.find(block); merges != mergeSlots.end())
       for (unsigned slot : merges->second)
-        reaching[slot] = block->addArgument(slots[slot].getElemType(),
-                                            slots[slot].getLoc());
+        reaching[slot] =
+            block->addArgument(slots[slot].getElemType(), slots[slot].getLoc());
     for (Operation &op : *block) {
       auto found = access(op);
       if (!found)
@@ -1179,8 +1178,8 @@ materializeNativeEvalValueInterface(LLVM::LLVMFuncOp function,
     ret.erase();
   }
   DominanceInfo dominance(body);
-  if (failed(promoteScalarSlots(allocations, builder,
-                                DataLayout::closest(body), dominance)))
+  if (failed(promoteScalarSlots(allocations, builder, DataLayout::closest(body),
+                                dominance)))
     return body.emitError("could not promote eval value interface");
 
   // Old callers (fine Tier 2/3 execution, guards and function pointers) keep
@@ -1704,11 +1703,49 @@ inlineGroupBody(LLVM::LLVMFuncOp function, const SymbolTable &symbols,
   return {remaining, materialized};
 }
 
-void emitGroupDomainGuard(OpBuilder &builder, Location loc,
-                          ArrayRef<std::pair<unsigned, uint64_t>> masks,
-                          SymbolTable &symbols, bool refreshPending,
-                          Block *known, ValueRange arguments, Block *fallback) {
+LogicalResult
+emitGroupDomainGuard(OpBuilder &builder, Location loc,
+                     ArrayRef<std::pair<unsigned, uint64_t>> masks,
+                     SymbolTable &symbols, bool refreshPending,
+                     schedule::GroupProofDependencyAttr domain, Block *known,
+                     ValueRange arguments, Block *fallback) {
   auto i64 = builder.getI64Type();
+  if (domain && !refreshPending) {
+    auto ready = symbols.lookup<LLVM::LLVMFuncOp>(groupPromotionReadyName);
+    auto latches = symbols.lookup<LLVM::GlobalOp>(groupPromotionLatchName);
+    auto latchType =
+        latches ? dyn_cast<LLVM::LLVMArrayType>(latches.getGlobalType())
+                : LLVM::LLVMArrayType{};
+    std::map<unsigned, uint64_t> expected;
+    for (int32_t member : domain.getMembers().asArrayRef())
+      if (member >= 0)
+        expected[unsigned(member) / 64] |= uint64_t{1}
+                                           << (unsigned(member) % 64);
+    if (!domain.getDomain() || !latchType ||
+        !latchType.getElementType().isInteger(8) ||
+        domain.getDomain().getUInt() >= latchType.getNumElements() ||
+        !llvm::equal(masks, expected,
+                     [](auto a, auto b) {
+                       return a.first == b.first && a.second == b.second;
+                     }) ||
+        !ready || ready.isExternal() ||
+        ready.getFunctionType() !=
+            LLVM::LLVMFunctionType::get(builder.getI1Type(), {i64}, false))
+      return emitError(loc, "group guard has an invalid planned proof domain");
+    // IEEE 1800-2023 4.5/4.6, 6.3.1: inspect the exact member union at this
+    // existing entry boundary. The query can establish knownness even for
+    // inactive/unqueried members, without executing them or clearing their
+    // own proof/ready bits. The unchanged ordinary body remains authoritative
+    // whenever any required bit is X/Z. Refined children retain member guards.
+    Value proved = LLVM::CallOp::create(
+                       builder, loc, ready,
+                       ValueRange{llvmConstant(builder, loc, i64,
+                                               domain.getDomain().getUInt())})
+                       .getResult();
+    LLVM::CondBrOp::create(builder, loc, proved, known, arguments, fallback,
+                           ValueRange{});
+    return success();
+  }
   Value zero = llvmConstant(builder, loc, i64, 0);
   Value proof = LLVM::AddressOfOp::create(
       builder, loc, LLVM::LLVMPointerType::get(builder.getContext()),
@@ -1730,13 +1767,14 @@ void emitGroupDomainGuard(OpBuilder &builder, Location loc,
           LLVM::LLVMFunctionType::get(builder.getI1Type(), {i64}, false)) {
     LLVM::CondBrOp::create(builder, loc, cached, known, arguments, fallback,
                            ValueRange{});
-    return;
+    return success();
   }
   // A pending certificate can be unqueried, even after its inputs became
   // known during initialization. Refresh all needed group members, including
   // inactive ones, before choosing the group body. This only inspects
-  // canonical X/Z and updates proof caches; it executes no source activation (IEEE
-  // 1800-2023 4.3, 6.3.1, 6.11.2). The first failed proof keeps the fallback.
+  // canonical X/Z and updates proof caches; it executes no source activation
+  // (IEEE 1800-2023 4.3, 6.3.1, 6.11.2). The first failed proof keeps the
+  // fallback.
   Region *region = builder.getBlock()->getParent();
   auto block = [&](bool argument = false) {
     auto *result = new Block;
@@ -1775,6 +1813,7 @@ void emitGroupDomainGuard(OpBuilder &builder, Location loc,
     builder.setInsertionPointToStart(nextWord);
   }
   LLVM::BrOp::create(builder, loc, arguments, known);
+  return success();
 }
 
 } // namespace
@@ -2022,6 +2061,12 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
       auto original = symbols.lookup<LLVM::LLVMFuncOp>(candidate.getValue());
       auto members = ::obelisk::schedule::get<
           ::obelisk::schedule::Field::EvalRankedMembers>(function);
+      if (original &&
+          schedule::get<schedule::Field::EvalGroupProofDomain>(original) !=
+              schedule::get<schedule::Field::EvalGroupProofDomain>(function))
+        return function.emitError(
+                   "candidate and original group proof domains differ"),
+               failure();
       auto pendingGlobal = symbols.lookup<LLVM::GlobalOp>(
           "__obelisk_eval_promotion_pending_mask_v1");
       auto pendingType =
@@ -2171,10 +2216,12 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
         if (bits)
           masks.emplace_back(word, bits);
       }
-      emitGroupDomainGuard(
-          builder, loc, masks, symbols,
-          schedule::has<schedule::Field::EvalRefreshGroupProofs>(original),
-          oldEntry, guard->getArguments(), fallback);
+      if (failed(emitGroupDomainGuard(
+              builder, loc, masks, symbols,
+              schedule::has<schedule::Field::EvalRefreshGroupProofs>(original),
+              schedule::get<schedule::Field::EvalGroupProofDomain>(original),
+              oldEntry, guard->getArguments(), fallback)))
+        return failure();
       builder.setInsertionPointToStart(fallback);
       LLVM::CallOp::create(builder, loc, TypeRange{}, function.getSymName(),
                            guard->getArguments());
@@ -2257,10 +2304,12 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
         parent.getBody().push_back(fallback);
         SmallVector<std::pair<unsigned, uint64_t>> domains(masks.begin(),
                                                            masks.end());
-        emitGroupDomainGuard(
-            builder, parent.getLoc(), domains, symbols,
-            schedule::has<schedule::Field::EvalRefreshGroupProofs>(child),
-            collapsed, {}, fallback);
+        if (failed(emitGroupDomainGuard(
+                builder, parent.getLoc(), domains, symbols,
+                schedule::has<schedule::Field::EvalRefreshGroupProofs>(child),
+                schedule::get<schedule::Field::EvalGroupProofDomain>(child),
+                collapsed, {}, fallback)))
+          return failure();
         builder.setInsertionPointToStart(collapsed);
         LLVM::CallOp::create(builder, parent.getLoc(), TypeRange{},
                              fast.getValue(), entry->getArguments());

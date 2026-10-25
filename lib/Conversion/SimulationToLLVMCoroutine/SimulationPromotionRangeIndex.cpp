@@ -1,5 +1,6 @@
 //===- SimulationPromotionRangeIndex.cpp - Scoped proof invalidation -----===//
 
+#include "SimulationAOTPlanning.h"
 #include "SimulationPackedLowering.h"
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
@@ -33,6 +34,8 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
   auto stateBits = runtime::get<runtime::StateBits>(module);
   if (!stateBits)
     return hook.emitError("range invalidator has no canonical state layout");
+  if (failed(verifyNativeGroupProofDomains(module)))
+    return failure();
 
   struct Certificate {
     LLVM::GlobalOp global;
@@ -41,6 +44,7 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
     DenseI64ArrayAttr ranges;
     bool nba = false;
     bool route = false;
+    bool group = false;
   };
   SmallVector<Certificate> certificates;
   constexpr auto kernelAttr =
@@ -48,11 +52,23 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
   constexpr auto routeAttr =
       ::obelisk::schedule::Field::EvalRouteProofDependencies;
   constexpr auto nbaAttr = ::obelisk::schedule::Field::EvalNbaProofDependencies;
+  constexpr auto groupAttr =
+      ::obelisk::schedule::Field::EvalGroupProofDependencies;
   auto pending = module.lookupSymbol<LLVM::GlobalOp>(
       "__obelisk_eval_promotion_pending_mask_v1");
   auto routePending = module.lookupSymbol<LLVM::GlobalOp>(
       "__obelisk_eval_route_promotion_pending_v1");
   for (auto global : module.getOps<LLVM::GlobalOp>()) {
+    if (auto groups = schedule::get<groupAttr>(global)) {
+      if (global.getSymName() != groupPromotionLatchName)
+        return global.emitError("group proof index has invalid latch storage");
+      for (Attribute attr : groups) {
+        auto group = cast<schedule::GroupProofDependencyAttr>(attr);
+        certificates.push_back({global, group.getDomain().getUInt(), 0,
+                                group.getRanges(), false, false, true});
+      }
+      schedule::remove<groupAttr>(global);
+    }
     if (auto kernels = ::obelisk::schedule::get<kernelAttr>(global)) {
       auto latchType = dyn_cast<LLVM::LLVMArrayType>(global.getGlobalType());
       auto pendingType =
@@ -220,7 +236,13 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
             record = LLVM::InsertValueOp::create(b, location, record, value,
                                                  ArrayRef<int64_t>{field});
           };
-          if (certificate.route) {
+          if (certificate.group) {
+            // Independent proof domains have no runnable owner/pending word.
+            // The runtime's existing latch-only action clears this byte on
+            // lost knownness and does nothing on gained knownness. A later
+            // query rereads its negative hint before rescanning exact ranges.
+            insert(byteGEP(b, location, address, certificate.latch), 0);
+          } else if (certificate.route) {
             insert(address, 0);
             insert(byteGEP(b, location,
                            LLVM::AddressOfOp::create(b, location, pointer,

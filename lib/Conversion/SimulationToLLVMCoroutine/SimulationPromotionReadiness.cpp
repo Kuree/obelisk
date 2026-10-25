@@ -2,13 +2,21 @@
 
 #include "SimulationAOTPlanning.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Conversion/Passes.h"
+#include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Pass/Pass.h"
 #include "llvm/ADT/STLExtras.h"
 
 using namespace mlir;
+
+namespace obelisk {
+#define GEN_PASS_DEF_MATERIALIZENATIVEGROUPPROMOTIONREADINESSPASS
+#include "obelisk/Conversion/Passes.h.inc"
+} // namespace obelisk
 
 namespace obelisk::detail {
 
@@ -222,55 +230,13 @@ LogicalResult materializeNativeRoutePromotionScan(
   return success();
 }
 
-LogicalResult materializeNativeKernelPromotionReadiness(
-    ModuleOp module, uint64_t stateBits,
-    ArrayRef<SmallVector<NativePromotionRange>> ranges,
-    ArrayRef<std::string> twoStateExecutors,
-    ArrayRef<obelisk_rt_native_merged_fragment> fragments) {
-  if (llvm::all_of(twoStateExecutors,
-                   [](const std::string &name) { return name.empty(); }))
-    return success();
-
-  // IEEE 1800-2023 6.3.1, 6.11.2: every certified bit must be known before
-  // using a two-state body. Merge overlapping intervals without filling gaps
-  // or admitting neighboring bits in either partial boundary word. The state
-  // plane has an aligned guard word, so a masked final i64 load remains within
-  // its allocation even when the last certified bit is not word-aligned.
-  SmallVector<uint64_t> owners, scans;
-  for (auto [index, executor] : llvm::enumerate(twoStateExecutors)) {
-    SmallVector<std::pair<uint64_t, uint64_t>> intervals;
-    if (!executor.empty())
-      for (const NativePromotionRange &range : ranges[index]) {
-        if (!range.bitWidth || range.bitOffset > stateBits ||
-            range.bitWidth > stateBits - range.bitOffset)
-          return module.emitError(
-              "kernel promotion range exceeds native state");
-        intervals.emplace_back(range.bitOffset,
-                               range.bitOffset + range.bitWidth);
-      }
-    llvm::sort(intervals);
-    SmallVector<std::pair<uint64_t, uint64_t>> merged;
-    for (auto [begin, end] : intervals) {
-      if (!merged.empty() && begin <= merged.back().second)
-        merged.back().second = std::max(merged.back().second, end);
-      else
-        merged.emplace_back(begin, end);
-    }
-    uint64_t first = scans.size() / 4;
-    for (auto [begin, end] : merged) {
-      uint64_t firstMask = UINT64_MAX << (begin % 64);
-      uint64_t lastMask =
-          end % 64 ? (uint64_t{1} << (end % 64)) - 1 : UINT64_MAX;
-      llvm::append_range(scans, ArrayRef<uint64_t>{begin / 64,
-                                                   end / 64 + (end % 64 != 0),
-                                                   firstMask, lastMask});
-    }
-    uint64_t bit = fragments[index].bit;
-    llvm::append_range(owners,
-                       ArrayRef<uint64_t>{first, scans.size() / 4, bit / 64,
-                                          uint64_t{1} << (bit % 64)});
-  }
-
+// Kernel and group domains share the same exact masked-word scanner and
+// negative hint protocol. Only kernels own scheduler promotion-pending bits.
+static LogicalResult materializePromotionReadiness(ModuleOp module,
+                                                   ArrayRef<uint64_t> owners,
+                                                   ArrayRef<uint64_t> scans,
+                                                   uint64_t domainCount,
+                                                   bool group) {
   MLIRContext *context = module.getContext();
   OpBuilder builder(context);
   Location loc = module.getLoc();
@@ -287,16 +253,21 @@ LogicalResult materializeNativeKernelPromotionReadiness(
                                   isConstant, LLVM::Linkage::Internal, name,
                                   DenseIntElementsAttr::get(tensor, words), 8);
   };
-  auto ownerTable = table("__obelisk_eval_kernel_promotion_owners_v1", owners);
-  auto rangeTable = table("__obelisk_eval_kernel_promotion_ranges_v1", scans);
+  StringRef ownerName = group ? "__obelisk_eval_group_promotion_domains_v1"
+                              : "__obelisk_eval_kernel_promotion_owners_v1";
+  StringRef rangeName = group ? "__obelisk_eval_group_promotion_ranges_v1"
+                              : "__obelisk_eval_kernel_promotion_ranges_v1";
+  StringRef hintName = group ? "__obelisk_eval_group_promotion_hints_v1"
+                             : "__obelisk_eval_kernel_promotion_hints_v1";
+  auto ownerTable = table(ownerName, owners);
+  auto rangeTable = table(rangeName, scans);
   // A negative hint is not a cached result: every invocation rereads this
   // exact masked word. When it clears, rescan the complete certificate. The
   // immutable range table makes hints valid across invalidation and context
   // reset; no additional invalidation protocol is needed. A zero mask is an
   // empty hint and safely reads word zero in the guarded state allocation.
-  SmallVector<uint64_t> hints(twoStateExecutors.size() * 2, 0);
-  auto hintTable =
-      table("__obelisk_eval_kernel_promotion_hints_v1", hints, false);
+  SmallVector<uint64_t> hints(domainCount * 2, 0);
+  auto hintTable = table(hintName, hints, false);
   auto constant = [&](uint64_t value) {
     return llvmConstant(builder, loc, i64, value);
   };
@@ -307,17 +278,20 @@ LogicalResult materializeNativeKernelPromotionReadiness(
     return LLVM::GEPOp::create(builder, loc, pointer, type, base,
                                ArrayRef<LLVM::GEPArg>{index});
   };
-  auto field = [&](Value base, Value record, uint64_t index) -> Value {
+  auto field = [&](Value base, Value record, uint64_t index,
+                   uint64_t width = 4) -> Value {
     Value offset = arith::AddIOp::create(
-        builder, loc, arith::MulIOp::create(builder, loc, record, constant(4)),
+        builder, loc,
+        arith::MulIOp::create(builder, loc, record, constant(width)),
         constant(index));
     return LLVM::LoadOp::create(builder, loc, i64, gep(base, i64, offset), 8);
   };
-  constexpr StringLiteral latchName =
-      "__obelisk_eval_kernel_promotion_latched_v1";
+  StringRef latchName = group ? groupPromotionLatchName
+                              : "__obelisk_eval_kernel_promotion_latched_v1";
   constexpr StringLiteral pendingName =
       "__obelisk_eval_promotion_pending_mask_v1";
-  constexpr StringLiteral scanName = "__obelisk_eval_kernel_promotion_scan_v1";
+  StringRef scanName = group ? "__obelisk_eval_group_promotion_scan_v1"
+                             : "__obelisk_eval_kernel_promotion_scan_v1";
   builder.setInsertionPointToEnd(module.getBody());
   auto scan = LLVM::LLVMFuncOp::create(
       builder, loc, scanName, LLVM::LLVMFunctionType::get(i1, {i64}, false));
@@ -357,7 +331,8 @@ LogicalResult materializeNativeKernelPromotionReadiness(
   cf::CondBranchOp::create(builder, loc, stillUnknown, unknown, ValueRange{},
                            fullScan, ValueRange{});
   builder.setInsertionPointToStart(fullScan);
-  Value first = field(ownerBase, owner, 0), end = field(ownerBase, owner, 1);
+  Value first = field(ownerBase, owner, 0, group ? 2 : 4),
+        end = field(ownerBase, owner, 1, group ? 2 : 4);
   cf::BranchOp::create(builder, loc, nextRange, ValueRange{first});
 
   builder.setInsertionPointToStart(nextRange);
@@ -408,14 +383,16 @@ LogicalResult materializeNativeKernelPromotionReadiness(
   builder.setInsertionPointToStart(known);
   LLVM::StoreOp::create(builder, loc, llvmConstant(builder, loc, i8, 1),
                         gep(address(latchName), i8, owner), 1);
-  Value pendingAddress =
-      gep(address(pendingName), i64, field(ownerBase, owner, 2));
-  Value pending = LLVM::LoadOp::create(builder, loc, i64, pendingAddress, 8);
-  Value keep = arith::XOrIOp::create(builder, loc, field(ownerBase, owner, 3),
-                                     constant(UINT64_MAX));
-  LLVM::StoreOp::create(builder, loc,
-                        arith::AndIOp::create(builder, loc, pending, keep),
-                        pendingAddress, 8);
+  if (!group) {
+    Value pendingAddress =
+        gep(address(pendingName), i64, field(ownerBase, owner, 2));
+    Value pending = LLVM::LoadOp::create(builder, loc, i64, pendingAddress, 8);
+    Value keep = arith::XOrIOp::create(builder, loc, field(ownerBase, owner, 3),
+                                       constant(UINT64_MAX));
+    LLVM::StoreOp::create(builder, loc,
+                          arith::AndIOp::create(builder, loc, pending, keep),
+                          pendingAddress, 8);
+  }
   LLVM::ReturnOp::create(builder, loc, llvmConstant(builder, loc, i1, 1));
   builder.setInsertionPointToStart(unknown);
   LLVM::ReturnOp::create(builder, loc, llvmConstant(builder, loc, i1, 0));
@@ -423,9 +400,9 @@ LogicalResult materializeNativeKernelPromotionReadiness(
   // IEEE 1800-2023 4.5/4.6: keep each existing readiness boundary and its
   // invalidation ordering. A valid latch needs no scan or additional call.
   builder.setInsertionPointToEnd(module.getBody());
-  auto ready =
-      LLVM::LLVMFuncOp::create(builder, loc, kernelPromotionReadyName,
-                               LLVM::LLVMFunctionType::get(i1, {i64}, false));
+  auto ready = LLVM::LLVMFuncOp::create(
+      builder, loc, group ? groupPromotionReadyName : kernelPromotionReadyName,
+      LLVM::LLVMFunctionType::get(i1, {i64}, false));
   ready->setAttr("passthrough",
                  builder.getArrayAttr({builder.getStringAttr("alwaysinline")}));
   Block *readyEntry = ready.addEntryBlock(builder);
@@ -451,4 +428,219 @@ LogicalResult materializeNativeKernelPromotionReadiness(
   return success();
 }
 
+LogicalResult materializeNativeKernelPromotionReadiness(
+    ModuleOp module, uint64_t stateBits,
+    ArrayRef<SmallVector<NativePromotionRange>> ranges,
+    ArrayRef<std::string> twoStateExecutors,
+    ArrayRef<obelisk_rt_native_merged_fragment> fragments) {
+  if (llvm::all_of(twoStateExecutors,
+                   [](const std::string &name) { return name.empty(); }))
+    return success();
+
+  // IEEE 1800-2023 6.3.1, 6.11.2: every certified bit must be known before
+  // using a two-state body. Merge overlapping intervals without filling gaps
+  // or admitting neighboring bits in either partial boundary word. The state
+  // plane has an aligned guard word, so a masked final i64 load remains within
+  // its allocation even when the last certified bit is not word-aligned.
+  SmallVector<uint64_t> owners, scans;
+  for (auto [index, executor] : llvm::enumerate(twoStateExecutors)) {
+    SmallVector<std::pair<uint64_t, uint64_t>> intervals;
+    if (!executor.empty())
+      for (const NativePromotionRange &range : ranges[index]) {
+        if (!range.bitWidth || range.bitOffset > stateBits ||
+            range.bitWidth > stateBits - range.bitOffset)
+          return module.emitError(
+              "kernel promotion range exceeds native state");
+        intervals.emplace_back(range.bitOffset,
+                               range.bitOffset + range.bitWidth);
+      }
+    llvm::sort(intervals);
+    SmallVector<std::pair<uint64_t, uint64_t>> merged;
+    for (auto [begin, end] : intervals) {
+      if (!merged.empty() && begin <= merged.back().second)
+        merged.back().second = std::max(merged.back().second, end);
+      else
+        merged.emplace_back(begin, end);
+    }
+    uint64_t first = scans.size() / 4;
+    for (auto [begin, end] : merged) {
+      uint64_t firstMask = UINT64_MAX << (begin % 64);
+      uint64_t lastMask =
+          end % 64 ? (uint64_t{1} << (end % 64)) - 1 : UINT64_MAX;
+      llvm::append_range(scans, ArrayRef<uint64_t>{begin / 64,
+                                                   end / 64 + (end % 64 != 0),
+                                                   firstMask, lastMask});
+    }
+    uint64_t bit = fragments[index].bit;
+    llvm::append_range(owners,
+                       ArrayRef<uint64_t>{first, scans.size() / 4, bit / 64,
+                                          uint64_t{1} << (bit % 64)});
+  }
+
+  return materializePromotionReadiness(module, owners, scans,
+                                       twoStateExecutors.size(), false);
+}
+
+LogicalResult verifyNativeGroupProofDomains(ModuleOp module) {
+  auto latches = module.lookupSymbol<LLVM::GlobalOp>(groupPromotionLatchName);
+  if (!latches)
+    return success();
+  auto domains =
+      schedule::get<schedule::Field::EvalGroupProofDependencies>(latches);
+  auto type = dyn_cast<LLVM::LLVMArrayType>(latches.getGlobalType());
+  auto stateBits = runtime::get<runtime::StateBits>(module);
+  auto kernels = module.lookupSymbol<LLVM::GlobalOp>(
+      "__obelisk_eval_kernel_promotion_latched_v1");
+  auto kernelType = kernels
+                        ? dyn_cast<LLVM::LLVMArrayType>(kernels.getGlobalType())
+                        : LLVM::LLVMArrayType{};
+  auto dependencies =
+      kernels
+          ? schedule::get<schedule::Field::EvalKernelProofDependencies>(kernels)
+          : ArrayAttr{};
+  if (!domains || !type || !type.getElementType().isInteger(8) ||
+      domains.empty() || type.getNumElements() != domains.size() ||
+      latches.getConstant() || latches.getAddrSpace() != 0 ||
+      latches.getExternallyInitialized() ||
+      latches.getLinkage() != LLVM::Linkage::Internal || !stateBits ||
+      !kernelType || !kernelType.getElementType().isInteger(8) || !dependencies)
+    return latches.emitError("group proof inventory has invalid latch storage");
+  bool startsUnknown = false;
+  if (auto initial =
+          dyn_cast_or_null<DenseIntElementsAttr>(latches.getValueOrNull()))
+    startsUnknown =
+        initial.isSplat() && initial.getSplatValue<APInt>().isZero();
+  Region &initializer = latches.getInitializerRegion();
+  if (initializer.hasOneBlock() &&
+      initializer.front().getOperations().size() == 2) {
+    auto zero = dyn_cast<LLVM::ZeroOp>(initializer.front().front());
+    auto result = dyn_cast<LLVM::ReturnOp>(initializer.front().back());
+    startsUnknown = zero && result && result.getNumOperands() == 1 &&
+                    result.getOperand(0) == zero.getResult();
+  }
+  if (!startsUnknown)
+    return latches.emitError("group proof latches must initialize to zero");
+
+  using Intervals = SmallVector<std::pair<uint64_t, uint64_t>>;
+  auto append = [&](DenseI64ArrayAttr ranges, Intervals &result) {
+    if (!ranges || ranges.size() % 2)
+      return false;
+    auto values = ranges.asArrayRef();
+    for (size_t i = 0; i != values.size(); i += 2) {
+      if (values[i] < 0 || values[i + 1] <= 0)
+        return false;
+      uint64_t begin = values[i], width = values[i + 1];
+      if (begin > stateBits.getUInt() || width > stateBits.getUInt() - begin)
+        return false;
+      result.emplace_back(begin, begin + width);
+    }
+    return true;
+  };
+  DenseMap<uint64_t, Intervals> sourceRanges;
+  for (Attribute attribute : dependencies) {
+    auto kernel = dyn_cast<schedule::KernelProofDependencyAttr>(attribute);
+    if (!kernel || !kernel.getPendingBit() ||
+        !append(kernel.getRanges(),
+                sourceRanges[kernel.getPendingBit().getUInt()]))
+      return kernels.emitError("group proof has invalid member dependencies");
+  }
+  for (auto [index, attribute] : llvm::enumerate(domains)) {
+    auto domain = dyn_cast<schedule::GroupProofDependencyAttr>(attribute);
+    if (!domain || !domain.getDomain() ||
+        domain.getDomain().getUInt() != index || !domain.getMembers() ||
+        domain.getMembers().empty())
+      return latches.emitError("group proof has invalid dense domain identity");
+    Intervals expected, actual, merged;
+    llvm::SmallDenseSet<int32_t> seen;
+    for (int32_t member : domain.getMembers().asArrayRef()) {
+      if (member < 0 || uint64_t(member) >= kernelType.getNumElements() ||
+          !seen.insert(member).second)
+        return latches.emitError("group proof has invalid member identity");
+      auto source = sourceRanges.find(member);
+      // Missing reverse dependencies do not distinguish an empty, always-known
+      // certificate from an ineligible owner. This initial policy requires
+      // explicit nonempty proof evidence for every member.
+      if (source == sourceRanges.end() || source->second.empty())
+        return latches.emitError(
+            "group proof member has no explicit certificate");
+      llvm::append_range(expected, source->second);
+    }
+    llvm::sort(expected);
+    for (auto [begin, end] : expected) {
+      if (!merged.empty() && begin <= merged.back().second)
+        merged.back().second = std::max(merged.back().second, end);
+      else
+        merged.emplace_back(begin, end);
+    }
+    if (!append(domain.getRanges(), actual) || actual != merged ||
+        actual.empty())
+      return latches.emitError(
+          "group proof ranges must equal the exact member certificate union");
+  }
+  // Readiness is built before group emission. The reverse-index phase calls
+  // this verifier again once group/candidate functions exist, before consuming
+  // the inventory. References must name exactly that immutable planned domain.
+  for (auto function : module.getOps<LLVM::LLVMFuncOp>())
+    if (auto domain =
+            schedule::get<schedule::Field::EvalGroupProofDomain>(function)) {
+      auto id = domain.getDomain();
+      if (!id || id.getUInt() >= domains.size() ||
+          domains[id.getUInt()] != domain ||
+          schedule::get<schedule::Field::EvalRankedMembers>(function) !=
+              domain.getMembers())
+        return function.emitError(
+            "group function has an invalid planned domain reference");
+    }
+  return success();
+}
+
+LogicalResult materializeNativeGroupPromotionReadiness(ModuleOp module) {
+  auto latches = module.lookupSymbol<LLVM::GlobalOp>(groupPromotionLatchName);
+  if (!latches)
+    return success();
+  if (failed(verifyNativeGroupProofDomains(module)))
+    return failure();
+  if (module.lookupSymbol(groupPromotionReadyName) ||
+      module.lookupSymbol("__obelisk_eval_group_promotion_scan_v1"))
+    return latches.emitError("group readiness was materialized twice");
+  auto domains =
+      schedule::get<schedule::Field::EvalGroupProofDependencies>(latches);
+  SmallVector<uint64_t> records, scans;
+  for (Attribute attribute : domains) {
+    auto domain = cast<schedule::GroupProofDependencyAttr>(attribute);
+    uint64_t first = scans.size() / 4;
+    auto ranges = domain.getRanges().asArrayRef();
+    for (size_t i = 0; i != ranges.size(); i += 2) {
+      uint64_t begin = ranges[i], end = begin + ranges[i + 1];
+      llvm::append_range(
+          scans, ArrayRef<uint64_t>{begin / 64, end / 64 + (end % 64 != 0),
+                                    UINT64_MAX << (begin % 64),
+                                    end % 64 ? (uint64_t{1} << (end % 64)) - 1
+                                             : UINT64_MAX});
+    }
+    llvm::append_range(records, ArrayRef<uint64_t>{first, scans.size() / 4});
+  }
+  // IEEE 1800-2023 4.5/4.6 and 6.3.1: this query only inspects the existing
+  // canonical X/Z at the group entry boundary. It neither runs inactive
+  // members nor changes their pending bits/latches. Exact unknown-write
+  // publication and the full context/runtime reset revoke positive results;
+  // a negative hint rereads its immutable exact mask on every query.
+  return materializePromotionReadiness(module, records, scans, domains.size(),
+                                       true);
+}
+
 } // namespace obelisk::detail
+
+namespace obelisk {
+namespace {
+class MaterializeNativeGroupPromotionReadinessPass final
+    : public impl::MaterializeNativeGroupPromotionReadinessPassBase<
+          MaterializeNativeGroupPromotionReadinessPass> {
+  void runOnOperation() override {
+    if (failed(
+            detail::materializeNativeGroupPromotionReadiness(getOperation())))
+      signalPassFailure();
+  }
+};
+} // namespace
+} // namespace obelisk

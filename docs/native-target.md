@@ -356,16 +356,19 @@ Only isolated full-width strong single-driver wires can treat a driver
 publication as the resolved net value; connected, delayed, resolved, or competing
 drivers retain their original scheduling.
 Late ranked groups also admit plain wires whose strong, undelayed drivers
-partition all bits without overlap. Each source keeps its own ready predicate,
-and the group certificate covers its inputs and the old net value. Certified
+own disjoint slices, including sparse slices of an otherwise undriven net.
+Admission uses the exact contribution, read and watch ranges. Each source keeps
+its own ready predicate, and the group certificate covers its inputs and the old
+net value. Certified
 drives omit redundant X/Z publication for their exclusive slices; the fallback
 retains X/Z changes. The same certificate proves the corresponding driver X/Z
 bits zero when the original layout rules out overrides. Driver padding and
 writable-VPI clean bodies retain their unknown stores: a net deposit need not
 change the underlying contribution (38.34).
-Overlapping drivers, undriven holes, connections, delays,
-weak strengths, and writable VPI retain their boundaries (IEEE 1800-2023 4.9.1,
-6.3.1, 6.6.1, 38.34).
+Undriven holes remain Z and do not establish whole-net knownness. Sparse
+admission does not relax the full-coverage proof required for X/Z-store elision.
+Overlapping drivers, connections, delays, weak strengths, and writable VPI
+retain their boundaries (IEEE 1800-2023 4.9.1, 6.3.1, 6.6, 6.6.1, 38.34).
 
 Within a closed two-state dataflow group, a source activation may omit its
 ready predicate only when the shared combinational analysis proves complete
@@ -387,13 +390,29 @@ for narrow stores. It still requires the complete finite-effect, memory-range
 and operation-budget proof. Every original path and ordered update remains
 intact, including neighboring X/Z bytes (IEEE 1800-2023 4.3, 4.6, 6.3.1).
 These groups refresh pending owner certificates before taking a fallback;
-other groups keep their existing policy.
+an independently certified group instead uses its shared query below.
 
 An inactive member can have known inputs whose certificate has never been
 queried. The cold check visits only the group's pending bits and stops at the
 first failed proof; a cached success keeps the existing bitmap check. Queries
 inspect canonical X/Z and update proof caches without activating source
 processes (IEEE 1800-2023 4.3, 6.3.1, 6.11.2).
+
+Selected ranked groups have an independent knownness certificate over the exact
+union of their members' input and old-destination ranges. The immutable typed
+inventory is planned after native body rewriting and verified before readiness
+and reverse-index materialization. It excludes holes, padding and members
+without explicit proof evidence. Writable VPI retains the member checks.
+A successful query sets only the group's own latch; it neither activates a
+member nor changes any member's proof or ready bits. Exact unknown writes and
+context resets revoke that latch. A failed query remembers one masked unknown
+word and rereads it on every subsequent query; when it clears, the complete
+union is scanned again. This preserves four-state values and the existing
+evaluation boundary (IEEE 1800-2023 4.5, 4.6, 6.3.1, 38.34).
+These groups retain their original ready branches and ordered canonical accesses
+after the same finite-effect, alias and materialization-budget checks as dense
+dataflow. Inactive members do no computation. Rejected or refined groups retain
+their original member-based guards.
 
 Function routes reuse an eval owner's knownness cache when both certificates
 cover exactly the same physical bits. Coverage is normalized without filling

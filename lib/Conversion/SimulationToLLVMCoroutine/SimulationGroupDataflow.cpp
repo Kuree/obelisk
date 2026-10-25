@@ -73,6 +73,8 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
           function);
   if (!ingress || function.empty())
     return false;
+  const bool preserveReadyCFG =
+      schedule::has<schedule::Field::EvalGroupProofDomain>(function);
   struct Slot {
     std::string global;
     uint64_t offset;
@@ -212,12 +214,14 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
     Builder builder(function.getContext());
     schedule::set<schedule::Field::EvalControlFlowDataflow>(
         function, builder.getUnitAttr());
-    schedule::set<schedule::Field::EvalRefreshGroupProofs>(
-        function, builder.getUnitAttr());
+    if (!preserveReadyCFG)
+      schedule::set<schedule::Field::EvalRefreshGroupProofs>(
+          function, builder.getUnitAttr());
     schedule::set<schedule::Field::EvalDataflowSlots>(
         function, builder.getI64IntegerAttr(slots.size()));
     return true;
   }
+  const uint64_t cfgSlots = slots.size();
   // Canonicalize proven physical aliases with a sorted interval sweep. This
   // never unions copy-connected descriptors: both accesses must resolve to
   // literal overlapping bytes of the same authoritative global. Preserve the
@@ -448,9 +452,10 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
       if (hints) {
         final[cacheID] = lower;
         slots[cacheID].written = true;
-        ::obelisk::schedule::set<
-            ::obelisk::schedule::Field::EvalCacheHintWords>(
-            function, builder.getI64IntegerAttr(hints));
+        if (!preserveReadyCFG)
+          ::obelisk::schedule::set<
+              ::obelisk::schedule::Field::EvalCacheHintWords>(
+              function, builder.getI64IntegerAttr(hints));
       }
     }
   }
@@ -462,6 +467,22 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
   // are discarded before connecting any call site to this representation.
   if (entry->getOperations().size() > budget)
     return reject("materialization budget");
+  if (preserveReadyCFG) {
+    // The independent exact-input certificate selects this already-proved
+    // two-state computation without per-member cache refresh. Keep the
+    // original ready branches and ordered accesses instead of eagerly
+    // evaluating inactive paths. This preserves source/event ordering and
+    // canonical X/Z storage (IEEE 1800-2023 4.6, 9.4.2, 6.3.1).
+    // All old effect, finite-CFG, alias, analysis and materialization budgets
+    // above still apply: choosing CFG representation relaxes no admission
+    // proof. The original body has not been changed while building the
+    // disposable dense representation.
+    schedule::set<schedule::Field::EvalControlFlowDataflow>(
+        function, builder.getUnitAttr());
+    schedule::set<schedule::Field::EvalDataflowSlots>(
+        function, builder.getI64IntegerAttr(cfgSlots));
+    return true;
+  }
   function.getBody().takeBody(replacement);
   ::obelisk::schedule::set<::obelisk::schedule::Field::EvalPredicatedDataflow>(
       function, builder.getUnitAttr());

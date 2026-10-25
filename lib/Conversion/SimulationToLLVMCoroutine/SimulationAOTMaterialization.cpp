@@ -1385,35 +1385,48 @@ FailureOr<bool> makeNativeEvalPlan(
   promotionInvalidate->setAttr(
       "passthrough", builder.getArrayAttr({builder.getStringAttr("noinline"),
                                            builder.getStringAttr("cold")}));
-  Block *invalidateEntry = promotionInvalidate.addEntryBlock(builder);
-  builder.setInsertionPointToStart(invalidateEntry);
-  LLVM::StoreOp::create(
-      builder, location,
-      llvmConstant(builder, location, builder.getI8Type(), 0),
-      LLVM::AddressOfOp::create(builder, location, pointer,
-                                promotionLatched.getSymName()),
-      1);
-  LLVM::MemsetOp::create(
-      builder, location,
-      LLVM::AddressOfOp::create(builder, location, pointer,
-                                promotionKernelLatched.getSymName()),
-      llvmConstant(builder, location, builder.getI8Type(), 0),
-      llvmConstant(builder, location, i64, mergedFragments.size()),
-      /*isVolatile=*/false);
-  storeOwnerMask(builder, location,
-                 LLVM::AddressOfOp::create(builder, location, pointer,
-                                           promotionPendingMask.getSymName()),
-                 initialPromotionPendingMask);
-  if (nbaTaintWordCount != 0)
+  // Declare in the original symbol order, but build the reset body only
+  // once the immutable ranked chunk plan has sized its independent domains.
+  // Context installation and external intervention must clear every positive
+  // group proof even if no member certificate matched (LRM 4.6, 38.34).
+  auto emitPromotionReset = [&](uint64_t groupCount) {
+    Block *invalidateEntry = promotionInvalidate.addEntryBlock(builder);
+    builder.setInsertionPointToStart(invalidateEntry);
+    LLVM::StoreOp::create(
+        builder, location,
+        llvmConstant(builder, location, builder.getI8Type(), 0),
+        LLVM::AddressOfOp::create(builder, location, pointer,
+                                  promotionLatched.getSymName()),
+        1);
     LLVM::MemsetOp::create(
         builder, location,
         LLVM::AddressOfOp::create(builder, location, pointer,
-                                  evalFastNBARootsName),
+                                  promotionKernelLatched.getSymName()),
         llvmConstant(builder, location, builder.getI8Type(), 0),
-        llvmConstant(builder, location, i64,
-                     uint64_t{nbaTaintWordCount} * sizeof(uint64_t)),
+        llvmConstant(builder, location, i64, mergedFragments.size()),
         /*isVolatile=*/false);
-  LLVM::ReturnOp::create(builder, location, ValueRange{});
+    if (groupCount)
+      LLVM::MemsetOp::create(
+          builder, location,
+          LLVM::AddressOfOp::create(builder, location, pointer,
+                                    groupPromotionLatchName),
+          llvmConstant(builder, location, builder.getI8Type(), 0),
+          llvmConstant(builder, location, i64, groupCount), false);
+    storeOwnerMask(builder, location,
+                   LLVM::AddressOfOp::create(builder, location, pointer,
+                                             promotionPendingMask.getSymName()),
+                   initialPromotionPendingMask);
+    if (nbaTaintWordCount != 0)
+      LLVM::MemsetOp::create(
+          builder, location,
+          LLVM::AddressOfOp::create(builder, location, pointer,
+                                    evalFastNBARootsName),
+          llvmConstant(builder, location, builder.getI8Type(), 0),
+          llvmConstant(builder, location, i64,
+                       uint64_t{nbaTaintWordCount} * sizeof(uint64_t)),
+          /*isVolatile=*/false);
+    LLVM::ReturnOp::create(builder, location, ValueRange{});
+  };
 
   // The runtime calls this only while its transient fine scheduler is
   // quiescent. Keep the internal i1 promotion predicate convenient for the
@@ -1683,8 +1696,7 @@ FailureOr<bool> makeNativeEvalPlan(
       std::optional<uint64_t> bitWidth = call.getWidth();
       bool hasRuntimeOwnedObserver =
           staticFanoutPlan.runtimeTransitionStates.contains(*staticState);
-      if (staticFanoutPlan.runtimeRoutedTransitionStates.contains(
-              *staticState))
+      if (staticFanoutPlan.runtimeRoutedTransitionStates.contains(*staticState))
         ::obelisk::schedule::set<
             ::obelisk::schedule::Field::EvalRuntimeRoutedPublication>(
             call, UnitAttr::get(context));
@@ -5204,7 +5216,34 @@ FailureOr<bool> makeNativeEvalPlan(
     coordinatorPlan.ownerStaticStates = ownerStaticStates;
     coordinatorPlan.ownerFineIngress = ownerFineIngress;
   }
-  auto rankedGroups = materializeNativeRankedGroups(module, coordinatorPlan);
+  // Body rewriting is complete: retain the existing ranked cost decisions,
+  // then freeze exact group proof domains before emitting their helpers and
+  // before finalization builds the reverse index/unknown-write publications.
+  auto rankedPlan = planNativeRankedGroups(
+      module, coordinatorPlan, mergedPromotionRanges, stateLayout.bitCount);
+  if (failed(rankedPlan))
+    return failure();
+  if (!rankedPlan->domains.empty()) {
+    builder.setInsertionPointToStart(module.getBody());
+    auto type = LLVM::LLVMArrayType::get(builder.getI8Type(),
+                                         rankedPlan->domains.size());
+    auto latches = LLVM::GlobalOp::create(
+        builder, location, type, false, LLVM::Linkage::Internal,
+        groupPromotionLatchName, Attribute{}, 1);
+    SmallVector<Attribute> domains(rankedPlan->domains.begin(),
+                                   rankedPlan->domains.end());
+    schedule::set<schedule::Field::EvalGroupProofDependencies>(
+        latches, builder.getArrayAttr(domains));
+    latches.getInitializerRegion().push_back(new Block);
+    builder.setInsertionPointToStart(&latches.getInitializerRegion().front());
+    LLVM::ReturnOp::create(builder, location,
+                           LLVM::ZeroOp::create(builder, location, type));
+    if (failed(materializeNativeGroupPromotionReadiness(module)))
+      return failure();
+  }
+  emitPromotionReset(rankedPlan->domains.size());
+  auto rankedGroups =
+      materializeNativeRankedGroups(module, coordinatorPlan, *rankedPlan);
   if (failed(rankedGroups))
     return failure();
   coordinatorPlan.rankedGroupExecutors = *rankedGroups;
@@ -6142,8 +6181,7 @@ FailureOr<bool> makeNativeEvalPlan(
                                                 nbaDirtyRootsName);
     Value dirtyAddress = byteGEP(builder, location, dirtyBase,
                                  uint64_t{word} * sizeof(uint64_t));
-    Value dirty =
-        LLVM::LoadOp::create(builder, location, i64, dirtyAddress, 8);
+    Value dirty = LLVM::LoadOp::create(builder, location, i64, dirtyAddress, 8);
     Value wordEmpty =
         arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
                               dirty, llvmConstant(builder, location, i64, 0));

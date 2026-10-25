@@ -349,11 +349,26 @@ def ConvertNativeFunctionBodyPass
   let dependentDialects = ["mlir::LLVM::LLVMDialect", "mlir::math::MathDialect"];
 }
 
+def MaterializeNativeGroupPromotionReadinessPass
+    : Pass<"materialize-native-group-promotion-readiness", "mlir::ModuleOp"> {
+  let summary = "Materialize exact knownness queries for planned native groups";
+  let description = [{
+    Consumes the typed domain inventory on the private group latch array.
+    Each domain is the exact union of existing member certificates; querying
+    it changes no runnable owner or member proof. Native ranked materialization
+    invokes the same phase after planning its code-size chunks, before the
+    reverse dependency index and unknown-write publication are built.
+  }];
+  let dependentDialects = ["mlir::LLVM::LLVMDialect",
+                          "mlir::arith::ArithDialect",
+                          "mlir::cf::ControlFlowDialect"];
+}
+
 def MaterializeNativePromotionRangeIndexPass
     : Pass<"materialize-native-promotion-range-index", "mlir::ModuleOp"> {
   let summary = "Materialize verified reverse dependencies for native proofs";
   let description = [{
-    Consumes typed kernel, route and NBA proof dependencies after native
+    Consumes typed kernel, group, route and NBA proof dependencies after native
     specialization. Defines the declared invalidation/recheck hooks and their
     immutable interval tables. Large bounded indexes additionally use compact
     buckets for narrow queries; wide queries retain the interval lookup. The

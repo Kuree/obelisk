@@ -71,6 +71,10 @@ def EvalGroupOwner : ScheduleField<"EvalGroupOwner", "schedule.eval.group_owner"
     "::mlir::IntegerAttr">;
 def EvalGroupParent : ScheduleField<"EvalGroupParent", "schedule.eval.group_parent",
     "::mlir::FlatSymbolRefAttr">;
+def EvalGroupProofDependencies : ScheduleField<"EvalGroupProofDependencies", "schedule.eval.group_proof_dependencies",
+    "::mlir::ArrayAttr">;
+def EvalGroupProofDomain : ScheduleField<"EvalGroupProofDomain", "schedule.eval.group_proof_domain",
+    "::obelisk::schedule::GroupProofDependencyAttr">;
 def EvalInductiveTwoState : ScheduleField<"EvalInductiveTwoState", "schedule.eval.inductive_two_state",
     "::mlir::UnitAttr">;
 def EvalInductiveTwoStateAccess : ScheduleField<"EvalInductiveTwoStateAccess", "schedule.eval.inductive_two_state_access",

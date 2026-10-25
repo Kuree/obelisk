@@ -1,5 +1,6 @@
 // RUN: obelisk-opt %s --obelisk-materialize-native-eval-groups -o %t.mlir
 // RUN: FileCheck %s --implicit-check-not=dataflow_executor --implicit-check-not=dataflow_candidate --implicit-check-not=predicated_dataflow --implicit-check-not=control_flow_dataflow < %t.mlir
+// RUN: obelisk-opt %s '--test-obelisk-edit-attributes=has=schedule.eval.ranked_members set="{schedule.eval.group_proof_domain = #schedule.group_proof_dependency<domain = 0 : i64, members = [0, 1], ranges = [0, 512]>}"' --obelisk-materialize-native-eval-groups | FileCheck %s --implicit-check-not=dataflow_executor --implicit-check-not=dataflow_candidate --implicit-check-not=predicated_dataflow --implicit-check-not=control_flow_dataflow
 // CHECK: llvm.func @group()
 // CHECK: llvm.return
 // CHECK: llvm.func @called_candidate()

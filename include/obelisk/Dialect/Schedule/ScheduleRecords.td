@@ -19,6 +19,12 @@ def ScheduleKernelProofDependencyAttr : ScheduleAttr<"KernelProofDependency", "k
   let parameters = (ins "::mlir::IntegerAttr":$latch, "::mlir::IntegerAttr":$pendingBit, "::mlir::DenseI64ArrayAttr":$ranges);
   let assemblyFormat = "`<` struct(params) `>`";
 }
+// A knownness domain, not a runnable owner. Members retain their original
+// identities; ranges are exactly the union of their existing certificates.
+def ScheduleGroupProofDependencyAttr : ScheduleAttr<"GroupProofDependency", "group_proof_dependency"> {
+  let parameters = (ins "::mlir::IntegerAttr":$domain, "::mlir::DenseI32ArrayAttr":$members, "::mlir::DenseI64ArrayAttr":$ranges);
+  let assemblyFormat = "`<` struct(params) `>`";
+}
 def ScheduleNBAProofDependencyAttr : ScheduleAttr<"NBAProofDependency", "nba_proof_dependency"> {
   let parameters = (ins "::mlir::IntegerAttr":$bit, "::mlir::DenseI64ArrayAttr":$ranges);
   let assemblyFormat = "`<` struct(params) `>`";

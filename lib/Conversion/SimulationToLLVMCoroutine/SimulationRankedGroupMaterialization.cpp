@@ -19,12 +19,13 @@ using namespace mlir;
 
 namespace obelisk::detail {
 
-FailureOr<SmallVector<std::string>>
-materializeNativeRankedGroups(ModuleOp module,
-                              const NativeEvalCoordinatorPlan &plan) {
-  SmallVector<std::string> executors(plan.fragments.size());
+FailureOr<NativeRankedGroupPlan>
+planNativeRankedGroups(ModuleOp module, const NativeEvalCoordinatorPlan &plan,
+                       ArrayRef<SmallVector<NativePromotionRange>> ranges,
+                       uint64_t stateBits) {
+  NativeRankedGroupPlan result;
   if (plan.clockKernels.empty() || plan.rankedNodes.empty() || plan.writableVPI)
-    return executors;
+    return result;
   llvm::StringMap<sim::SimFuncOp> functions;
   ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
@@ -57,6 +58,157 @@ materializeNativeRankedGroups(ModuleOp module,
   uint64_t budget = limit ? limit.getUInt() : 5000;
   if (!budget)
     budget = UINT64_MAX;
+  SmallVector<NativeRankedEvalNode> members;
+  uint64_t cost = 0;
+  bool invalidRange = false;
+  auto emit = [&]() {
+    if (members.empty())
+      return;
+    NativeRankedGroupChunk chunk;
+    chunk.members.swap(members);
+    cost = 0;
+    // Profitability only: share a certificate for a substantial candidate
+    // with a bounded scan table. These limits do not establish knownness.
+    bool eligible = chunk.members.size() >= 8 &&
+                    llvm::all_of(chunk.members, [&](const auto &node) {
+                      return !node.clocked && !node.twoStateBody.empty() &&
+                             !plan.twoStateExecutors[node.owner].empty() &&
+                             node.owner < ranges.size() &&
+                             !ranges[node.owner].empty();
+                    });
+    if (eligible) {
+      SmallVector<std::pair<uint64_t, uint64_t>> intervals, merged;
+      SmallVector<int32_t> identities;
+      for (const auto &node : chunk.members) {
+        identities.push_back(node.owner);
+        if (node.owner >= ranges.size()) {
+          invalidRange = true;
+          continue;
+        }
+        for (const auto &range : ranges[node.owner]) {
+          if (!range.bitWidth || range.bitOffset > stateBits ||
+              range.bitWidth > stateBits - range.bitOffset) {
+            invalidRange = true;
+            continue;
+          }
+          intervals.emplace_back(range.bitOffset,
+                                 range.bitOffset + range.bitWidth);
+        }
+      }
+      llvm::sort(intervals);
+      for (auto [begin, end] : intervals) {
+        if (!merged.empty() && begin <= merged.back().second)
+          merged.back().second = std::max(merged.back().second, end);
+        else
+          merged.emplace_back(begin, end);
+      }
+      if (!merged.empty() && merged.size() <= 64) {
+        // IEEE 1800-2023 6.3.1: only these exact bits must exclude X/Z.
+        // Reuse every member's complete input/old-destination certificate,
+        // merge overlaps without filling holes, and keep runnable identities
+        // unchanged. A later dataflow rejection still uses the member proofs.
+        SmallVector<int64_t> encoded;
+        for (auto [begin, end] : merged) {
+          encoded.push_back(begin);
+          encoded.push_back(end - begin);
+        }
+        Builder builder(module.getContext());
+        chunk.proof = schedule::GroupProofDependencyAttr::get(
+            module.getContext(),
+            builder.getI64IntegerAttr(result.domains.size()),
+            builder.getDenseI32ArrayAttr(identities),
+            builder.getDenseI64ArrayAttr(encoded));
+        result.domains.push_back(chunk.proof);
+      }
+    }
+    result.chunks.push_back(std::move(chunk));
+  };
+  auto finishSegment = [&]() {
+    if (!result.chunks.empty())
+      result.chunks.back().endsSegment = true;
+  };
+  // Singleton dependency islands have no edges between certified bodies, but
+  // often share an NBA activation. Give independent singletons in one ready
+  // word a bounded predicated sweep instead of a dispatcher trip per owner.
+  // Keep connected islands in their proven topological order. Readiness is
+  // still checked at each member, so this never invents an activation.
+  DenseMap<uint32_t, unsigned> islandSizes;
+  uint32_t nextIsland = 0;
+  for (const auto &node : plan.rankedNodes) {
+    ++islandSizes[node.island];
+    nextIsland = std::max(nextIsland, node.island + 1);
+  }
+  SmallVector<NativeRankedEvalNode> ordered(plan.rankedNodes);
+  for (auto &node : ordered)
+    if (!node.clocked && islandSizes.lookup(node.island) == 1)
+      node.island = nextIsland + node.owner / 64;
+  llvm::stable_sort(ordered, [](const auto &a, const auto &b) {
+    return a.island < b.island;
+  });
+  std::optional<uint32_t> currentIsland;
+  for (const auto &node : ordered) {
+    if (currentIsland && node.island != *currentIsland) {
+      emit();
+      finishSegment();
+    }
+    currentIsland = node.island;
+    if (node.boundary) {
+      emit();
+      finishSegment();
+      continue;
+    }
+    uint64_t four = bodyCost(node.body);
+    uint64_t two = node.twoStateBody.empty() ? 0 : bodyCost(node.twoStateBody);
+    if (!four || (!node.twoStateBody.empty() && !two)) {
+      emit();
+      finishSegment();
+      continue;
+    }
+    // Charge both domain bodies and pending/proof control to this helper,
+    // rather than spending one model-wide budget on fragment wrappers.
+    uint64_t weight = four + two + 64;
+    if (weight > budget - cost)
+      emit();
+    members.push_back(node);
+    cost += weight;
+    // A large certified body is a direct call in its own bounded helper.
+    // The inliner still enforces its budget; code size does not introduce a
+    // scheduling boundary or break the surrounding predicated segment.
+    if (cost >= budget)
+      emit();
+  }
+  emit();
+  finishSegment();
+  if (invalidRange)
+    return module.emitError("ranked group proof exceeds native state"),
+           failure();
+  if (!result.domains.empty() && native::has<native::DebugTiming>(module)) {
+    uint64_t rangeCount = 0, bits = 0;
+    for (auto domain : result.domains) {
+      auto entries = domain.getRanges().asArrayRef();
+      rangeCount += entries.size() / 2;
+      for (size_t i = 1; i < entries.size(); i += 2)
+        bits += entries[i];
+    }
+    llvm::errs() << "obelisk group proof domains: domains="
+                 << result.domains.size() << " ranges=" << rangeCount
+                 << " bits=" << bits << '\n';
+  }
+  return result;
+}
+
+FailureOr<SmallVector<std::string>>
+materializeNativeRankedGroups(ModuleOp module,
+                              const NativeEvalCoordinatorPlan &plan,
+                              const NativeRankedGroupPlan &groups) {
+  SmallVector<std::string> executors(plan.fragments.size());
+  if (plan.clockKernels.empty() || plan.rankedNodes.empty() || plan.writableVPI)
+    return executors;
+  llvm::StringMap<sim::SimFuncOp> functions;
+  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+      module, [&](sim::SimFuncOp function) {
+        functions.try_emplace(function.getSymName(), function);
+      });
   OpBuilder builder(module.getContext());
   Location loc = module.getLoc();
   Type pointer = LLVM::LLVMPointerType::get(module.getContext());
@@ -64,7 +216,6 @@ materializeNativeRankedGroups(ModuleOp module,
   const runtime::ReadySetLayout readyLayout(
       std::max<size_t>(64, plan.fragments.size()));
   SmallVector<const NativeRankedEvalNode *> members;
-  uint64_t cost = 0;
   unsigned groupID = 0;
   unsigned clockedMembers = 0;
   struct Chunk {
@@ -130,10 +281,9 @@ materializeNativeRankedGroups(ModuleOp module,
     ++segmentCount;
     chunks.clear();
   };
-  auto emit = [&]() {
+  auto emit = [&](schedule::GroupProofDependencyAttr proof) {
     if (members.empty()) {
       members.clear();
-      cost = 0;
       return;
     }
     builder.setInsertionPointToEnd(module.getBody());
@@ -162,6 +312,8 @@ materializeNativeRankedGroups(ModuleOp module,
     chunks.push_back(std::move(chunk));
     ::obelisk::schedule::set<::obelisk::schedule::Field::EvalRankedMembers>(
         group, builder.getDenseI32ArrayAttr(identities));
+    if (proof)
+      schedule::set<schedule::Field::EvalGroupProofDomain>(group, proof);
     ::obelisk::schedule::set<::obelisk::schedule::Field::EvalReadyWordCount>(
         group, builder.getI64IntegerAttr(readyLayout.counts[0]));
     ::obelisk::schedule::set<::obelisk::schedule::Field::EvalGroupIngress>(
@@ -285,6 +437,8 @@ materializeNativeRankedGroups(ModuleOp module,
               LLVM::LLVMVoidType::get(module.getContext()), {pointer}, false));
       ::obelisk::schedule::set<::obelisk::schedule::Field::EvalRankedMembers>(
           candidate, builder.getDenseI32ArrayAttr(identities));
+      if (proof)
+        schedule::set<schedule::Field::EvalGroupProofDomain>(candidate, proof);
       ::obelisk::schedule::set<::obelisk::schedule::Field::EvalGroupIngress>(
           candidate, ::obelisk::schedule::get<
                          ::obelisk::schedule::Field::EvalGroupIngress>(group));
@@ -318,7 +472,11 @@ materializeNativeRankedGroups(ModuleOp module,
         // outputs, and absence of repeated publications. Repeating this pure
         // computation when inactive is observationally inert (LRM 4.3, 9.4.2).
         // This candidate still needs the lowered nontrapping/effect proof.
-        if (node->repeatable)
+        // An independent group certificate proves knownness, not activation.
+        // Retain the source ready predicate for its CFG candidate so inactive
+        // members need not compute. The same ordered ready consumption and
+        // publications remain at the original points (LRM 4.6 and 9.4.2).
+        if (node->repeatable && !proof)
           active = llvmConstant(builder, loc, builder.getI1Type(), 1);
         Block *execute = new Block, *next = new Block;
         candidate.getBody().push_back(execute);
@@ -335,60 +493,14 @@ materializeNativeRankedGroups(ModuleOp module,
       LLVM::ReturnOp::create(builder, loc, ValueRange{});
     }
     members.clear();
-    cost = 0;
   };
-  // Singleton dependency islands have no edges between certified bodies, but
-  // often share an NBA activation. Give independent singletons in one ready
-  // word a bounded predicated sweep instead of a dispatcher trip per owner.
-  // Keep connected islands in their proven topological order. Readiness is
-  // still checked at each member, so this never invents an activation.
-  DenseMap<uint32_t, unsigned> islandSizes;
-  uint32_t nextIsland = 0;
-  for (const auto &node : plan.rankedNodes) {
-    ++islandSizes[node.island];
-    nextIsland = std::max(nextIsland, node.island + 1);
+  for (const auto &chunk : groups.chunks) {
+    for (const auto &node : chunk.members)
+      members.push_back(&node);
+    emit(chunk.proof);
+    if (chunk.endsSegment)
+      finishSegment();
   }
-  SmallVector<NativeRankedEvalNode> ordered(plan.rankedNodes);
-  for (auto &node : ordered)
-    if (!node.clocked && islandSizes.lookup(node.island) == 1)
-      node.island = nextIsland + node.owner / 64;
-  llvm::stable_sort(ordered, [](const auto &a, const auto &b) {
-    return a.island < b.island;
-  });
-  std::optional<uint32_t> currentIsland;
-  for (const auto &node : ordered) {
-    if (currentIsland && node.island != *currentIsland) {
-      emit();
-      finishSegment();
-    }
-    currentIsland = node.island;
-    if (node.boundary) {
-      emit();
-      finishSegment();
-      continue;
-    }
-    uint64_t four = bodyCost(node.body);
-    uint64_t two = node.twoStateBody.empty() ? 0 : bodyCost(node.twoStateBody);
-    if (!four || (!node.twoStateBody.empty() && !two)) {
-      emit();
-      finishSegment();
-      continue;
-    }
-    // Charge both domain bodies and pending/proof control to this helper,
-    // rather than spending one model-wide budget on fragment wrappers.
-    uint64_t weight = four + two + 64;
-    if (weight > budget - cost)
-      emit();
-    members.push_back(&node);
-    cost += weight;
-    // A large certified body is a direct call in its own bounded helper.
-    // The inliner still enforces its budget; code size does not introduce a
-    // scheduling boundary or break the surrounding predicated segment.
-    if (cost >= budget)
-      emit();
-  }
-  emit();
-  finishSegment();
   if (native::has<native::DebugTiming>(module)) {
     llvm::errs()
         << "obelisk ranked groups: candidates="
@@ -399,7 +511,7 @@ materializeNativeRankedGroups(ModuleOp module,
                           [](const auto &name) { return !name.empty(); })
         << " clocked_members=" << clockedMembers << '\n';
     llvm::errs() << "obelisk repeatable ranked members: "
-                 << llvm::count_if(ordered,
+                 << llvm::count_if(plan.rankedNodes,
                                    [&](const auto &node) {
                                      return node.repeatable &&
                                             !executors[node.owner].empty();

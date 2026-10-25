@@ -1,0 +1,9 @@
+// REQUIRES: native-elf
+// The wrappers observe actual installation/release of the emitted plan.
+// RUN: obelisk-opt %S/../Conversion/simulation-ranked-group-proof-domain.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines,materialize-runtime-byte-globals,test-obelisk-export-llvm-symbols{globals=__obelisk_state_value,__obelisk_state_unknown,__obelisk_eval_kernel_promotion_latched_v1,__obelisk_eval_group_promotion_latched_v1,__obelisk_eval_promotion_pending_mask_v1,__obelisk_eval_step_four_state_fallback_v1,__obelisk_aot_model_ingress_v1 main=model_main})' | obelisk-translate --mlir-to-llvmir -o %t.ll
+// RUN: opt %t.ll -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' -S -o %t.o0.ll && %target_cxx -O0 -I%S/../../runtime/include %t.o0.ll %S/Inputs/check-generated-group-proof-domain.cpp -Wl,--wrap=obelisk_rt_v1_scheduler_install_aot -Wl,--wrap=obelisk_rt_v1_context_destroy %runtime_link_flags -o %t.o0
+// RUN: %t.o0 | FileCheck %s
+// RUN: opt %t.ll -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' -S -o %t.o3.ll && %target_cxx -O3 -I%S/../../runtime/include %t.o3.ll %S/Inputs/check-generated-group-proof-domain.cpp -Wl,--wrap=obelisk_rt_v1_scheduler_install_aot -Wl,--wrap=obelisk_rt_v1_context_destroy %runtime_link_flags -o %t.o3
+// RUN: %t.o3 | FileCheck %s
+
+// CHECK: generated group domain integration passed
