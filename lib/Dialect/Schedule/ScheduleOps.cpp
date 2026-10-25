@@ -389,6 +389,27 @@ LogicalResult NativeReadyReadOp::verify() {
     return emitOpError("ready word must name a leaf within capacity");
   return success();
 }
+LogicalResult NativeReadyMergeOp::verify() {
+  if (getCapacity() < 1 || getCapacity() > UINT32_MAX)
+    return emitOpError("ready capacity must be between 1 and UINT32_MAX");
+  return success();
+}
+void NativeReadyMergeOp::getEffects(
+    SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       &getOperation()->getOpOperand(1),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       &getOperation()->getOpOperand(0),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       &getOperation()->getOpOperand(0),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       sim::SchedulerResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       sim::SchedulerResource::get());
+}
 void NativeReadyReadOp::getEffects(
     SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
   effects.emplace_back(MemoryEffects::Read::get(),

@@ -6518,23 +6518,31 @@ FailureOr<bool> makeNativeEvalPlan(
   if (directActivationWordCount != 0 && !clockKernels.empty()) {
     Value ingress = LLVM::AddressOfOp::create(builder, location, pointer,
                                               evalModelIngressName);
-    Value any = llvmConstant(builder, location, builder.getI1Type(), 0);
-    for (uint32_t word = 0; word != directActivationWordCount; ++word) {
-      Value activated =
-          LLVM::LoadOp::create(builder, location, i64,
-                               byteGEP(builder, location, activatedDirect,
-                                       uint64_t{word} * sizeof(uint64_t)),
-                               8);
-      Value selected = activated;
-      updateEvalReadyWord(builder, location, ingress, readyLayout, word,
-                          selected);
-      any = arith::OrIOp::create(
-          builder, location, any,
-          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
-                                selected,
-                                llvmConstant(builder, location, i64, 0)));
+    if (directActivationWordCount > runtime::ReadySetLayout::flatWordLimit) {
+      // Publish at the same NBA barrier (IEEE 1800-2023 4.5, 4.6, 10.4.2),
+      // without expanding a large pending set into a dense SSA index graph.
+      schedule::NativeReadyMergeOp::create(
+          builder, location, ingress, activatedDirect,
+          builder.getI64IntegerAttr(readyLayout.capacity));
+    } else {
+      Value any = llvmConstant(builder, location, builder.getI1Type(), 0);
+      for (uint32_t word = 0; word != directActivationWordCount; ++word) {
+        Value activated =
+            LLVM::LoadOp::create(builder, location, i64,
+                                 byteGEP(builder, location, activatedDirect,
+                                         uint64_t{word} * sizeof(uint64_t)),
+                                 8);
+        Value selected = activated;
+        updateEvalReadyWord(builder, location, ingress, readyLayout, word,
+                            selected);
+        any = arith::OrIOp::create(
+            builder, location, any,
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                  selected,
+                                  llvmConstant(builder, location, i64, 0)));
+      }
+      (void)any;
     }
-    (void)any;
   }
   Block *directDone = new Block;
   nbaCommit.getBody().push_back(directDone);

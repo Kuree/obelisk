@@ -248,6 +248,27 @@ def NativeReadyCommitOp
       I64Attr:$capacity, I64Attr:$word);
   let hasVerifier = 1;
 }
+def NativeReadyMergeOp
+    : ScheduleNativeOp<"ready.merge", [DeclareOpInterfaceMethods<
+                                          MemoryEffectsOpInterface>]> {
+  let summary = "add an ascending bitmap to a pending set and its indexes";
+  let description = [{
+    Reads ceil(capacity / 64) i64 words from source in ascending order. Each
+    word is read immediately before adding its bits to the corresponding
+    ReadySetLayout leaf at base and updating that leaf's indexes. Bits above
+    capacity in the last source word are ignored. Source may overlap base;
+    earlier leaf/index writes are visible to later source reads. Both operands
+    address storage aligned to at least eight bytes.
+
+    This is an ordered scheduler effect, with no actor, callback, selection or
+    checkpoint inside it. Pending ready updates must be materialized before
+    the merge, and its leaves, exact summaries and stale-low minimum cache are
+    visible to every subsequent observer. It does not consume the source.
+  }];
+  let arguments = (ins LLVM_AnyPointer:$base, LLVM_AnyPointer:$source,
+      I64Attr:$capacity);
+  let hasVerifier = 1;
+}
 def NativeReadyReadOp : ScheduleNativeOp<"ready.read", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "inspect the current pending leaf, including region-local updates";

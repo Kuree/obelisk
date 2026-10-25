@@ -1,0 +1,6 @@
+// RUN: obelisk-opt %S/../Dialect/Schedule/native-ready-merge.mlir --schedule-coalesce-native-ready --convert-native-schedule-actions-to-llvm -o %t.mlir
+// RUN: %llvm_dist/bin/mlir-opt %t.mlir --convert-arith-to-llvm --convert-cf-to-llvm | obelisk-translate --mlir-to-llvmir > %t.ll
+// RUN: %llvm_dist/bin/clang++ -std=c++20 -O0 %t.ll %S/../Dialect/Schedule/Inputs/native-ready-merge.cpp -I %S/../../runtime/include -o %t.o0
+// RUN: %t.o0
+// RUN: %llvm_dist/bin/clang++ -std=c++20 -O3 %t.ll %S/../Dialect/Schedule/Inputs/native-ready-merge.cpp -I %S/../../runtime/include -o %t.o3
+// RUN: %t.o3

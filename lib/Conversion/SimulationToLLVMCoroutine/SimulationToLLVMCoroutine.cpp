@@ -4008,7 +4008,7 @@ public:
       target->addLegalOp<
           schedule::NativeByteAddressOp, schedule::NativeReadyReadOp,
           schedule::NativeReadyUpdateOp, schedule::NativeReadyCommitOp,
-          UnrealizedConversionCastOp>();
+          schedule::NativeReadyMergeOp, UnrealizedConversionCastOp>();
       target->markUnknownOpDynamicallyLegal([](Operation *operation) {
         return isa<LLVM::LLVMFuncOp>(operation);
       });
@@ -4209,7 +4209,7 @@ public:
     target.addLegalOp<
         ModuleOp, UnrealizedConversionCastOp, schedule::NativeByteAddressOp,
         schedule::NativeReadyReadOp, schedule::NativeReadyUpdateOp,
-        schedule::NativeReadyCommitOp>();
+        schedule::NativeReadyCommitOp, schedule::NativeReadyMergeOp>();
     target.markUnknownOpDynamicallyLegal(
         [](Operation *operation) { return isa<LLVM::LLVMFuncOp>(operation); });
     FrozenRewritePatternSet frozenPatterns(std::move(patterns));

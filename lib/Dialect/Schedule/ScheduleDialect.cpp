@@ -35,7 +35,8 @@ struct ReadyInlinerInterface final : DialectInlinerInterface {
     // Cloning preserves ordered accesses to the same pending set. Regions
     // are formed after body inlining; other schedule actions retain their
     // existing callable/activation restrictions.
-    return isa<NativeReadyReadOp, NativeReadyUpdateOp, NativeReadyCommitOp>(op);
+    return isa<NativeReadyReadOp, NativeReadyUpdateOp, NativeReadyCommitOp,
+               NativeReadyMergeOp>(op);
   }
 };
 } // namespace

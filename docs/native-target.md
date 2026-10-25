@@ -196,6 +196,14 @@ are promoted to SSA before group formation. This is a representation change
 permitted by LRM 4.3: event publications and source/NBA ordering under 4.6
 remain unchanged.
 
+Large NBA barriers publish their activation bitmap with `schedule.ready.merge`.
+Its bounded loop skips zero source words and updates the minimum cache and
+summary ancestors when a leaf becomes nonempty. Source words are read in
+ascending order before each leaf and index update, including when the buffers
+overlap. The operation preserves the existing pending set and publication
+boundary (LRM 4.3, 4.5--4.7, 10.4.2), with no actor, callback or checkpoint
+inside the merge.
+
 Kernel materialization runs after the first verified compute graph and before
 the final graph rebuild. It is followed by the simulation inliner, SROA,
 mem2reg, canonicalization, CSE, simulation SCCP, and symbol DCE. The compute

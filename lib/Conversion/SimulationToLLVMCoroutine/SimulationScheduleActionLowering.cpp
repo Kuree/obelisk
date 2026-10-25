@@ -23,6 +23,101 @@ void lowerNativeReadyRegion(schedule::NativeReadyRegionOp op,
                             const schedule::NativeGlobalLookup &globals);
 } // namespace detail
 namespace {
+// Preserve the existing generated pending-set representation and publication
+// boundary (IEEE 1800-2023 4.3, 4.5--4.7): no actor or observer executes inside
+// this operation, and it does not coalesce source events. Preserve ascending
+// read/add order even when source aliases the ready set. In particular, do not
+// defer cache or summary writes past a later source read.
+void materializeReadyMerge(schedule::NativeReadyMergeOp merge) {
+  OpBuilder builder(merge);
+  Location loc = merge.getLoc();
+  runtime::ReadySetLayout layout(merge.getCapacity());
+  auto i64 = builder.getI64Type();
+  auto constant = [&](uint64_t value) {
+    return detail::llvmConstant(builder, loc, i64, value);
+  };
+  auto address = [&](Value base, Value word) -> Value {
+    return LLVM::GEPOp::create(builder, loc, base.getType(), i64, base,
+                               ValueRange{word});
+  };
+  auto load = [&](Value pointer) -> Value {
+    return LLVM::LoadOp::create(builder, loc, i64, pointer, 8);
+  };
+  auto empty = [&](Value value) -> Value {
+    return arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq, value,
+                                 constant(0));
+  };
+  Block *entry = merge->getBlock();
+  Block *done = entry->splitBlock(Block::iterator(merge));
+  auto block = [&]() {
+    auto *result = new Block;
+    done->getParent()->getBlocks().insert(done->getIterator(), result);
+    return result;
+  };
+  Block *head = block(), *update = block(), *advance = block();
+  head->addArgument(i64, loc);
+  builder.setInsertionPointToEnd(entry);
+  cf::BranchOp::create(builder, loc, head, ValueRange{constant(0)});
+
+  builder.setInsertionPointToStart(head);
+  Value word = head->getArgument(0);
+  Value selected = load(address(merge.getSource(), word));
+  if (layout.lastWordMask() != UINT64_MAX) {
+    Value last = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq,
+                                       word, constant(layout.counts[0] - 1));
+    Value bounded = arith::AndIOp::create(builder, loc, selected,
+                                          constant(layout.lastWordMask()));
+    selected = arith::SelectOp::create(builder, loc, last, bounded, selected);
+  }
+  cf::CondBranchOp::create(builder, loc, empty(selected), advance, update);
+
+  builder.setInsertionPointToStart(update);
+  Value leaf = address(merge.getBase(), word);
+  Value previous = load(leaf);
+  Value next = arith::OrIOp::create(builder, loc, previous, selected);
+  LLVM::StoreOp::create(builder, loc, next, leaf, 8);
+  if (layout.hasCache() || layout.hasSummaries()) {
+    Block *indexes = block();
+    // A previously nonempty leaf already has exact ancestor bits and a cache
+    // no greater than its index. Adding bits cannot change either property.
+    cf::CondBranchOp::create(builder, loc, empty(previous), indexes, advance);
+    builder.setInsertionPointToStart(indexes);
+    if (layout.hasCache()) {
+      Value slot = address(merge.getBase(), constant(layout.cacheOffset()));
+      Value minimum = arith::MinUIOp::create(builder, loc, load(slot), word);
+      LLVM::StoreOp::create(builder, loc, minimum, slot, 8);
+    }
+    Value child = word;
+    for (unsigned level = 1; level != layout.levels; ++level) {
+      Value parent = arith::ShRUIOp::create(builder, loc, child, constant(6));
+      Value index = arith::AddIOp::create(builder, loc, parent,
+                                          constant(layout.offsets[level]));
+      Value slot = address(merge.getBase(), index);
+      Value old = load(slot);
+      Value bit = arith::ShLIOp::create(
+          builder, loc, constant(1),
+          arith::AndIOp::create(builder, loc, child, constant(63)));
+      LLVM::StoreOp::create(
+          builder, loc, arith::OrIOp::create(builder, loc, old, bit), slot, 8);
+      child = parent;
+      if (level + 1 != layout.levels) {
+        Block *propagate = block();
+        // A nonempty parent already has its bit in the next level.
+        cf::CondBranchOp::create(builder, loc, empty(old), propagate, advance);
+        builder.setInsertionPointToStart(propagate);
+      }
+    }
+  }
+  cf::BranchOp::create(builder, loc, advance);
+  builder.setInsertionPointToStart(advance);
+  Value following = arith::AddIOp::create(builder, loc, word, constant(1));
+  Value more = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ult,
+                                     following, constant(layout.counts[0]));
+  cf::CondBranchOp::create(builder, loc, more, head, ValueRange{following},
+                           done, ValueRange{});
+  merge.erase();
+}
+
 // Keep readiness semantic until conversion. Only speculatable, effect-free
 // operations may separate actions sharing one proven base and ready universe.
 // In particular a ready read, ordinary load, transition, call or alias action
@@ -179,13 +274,15 @@ void materializeLocalScheduleActions(
   SmallVector<schedule::NativeTransitionOp> transitions;
   SmallVector<schedule::NativeReadyCommitOp> commits;
   SmallVector<schedule::NativeReadyReadOp> reads;
+  SmallVector<schedule::NativeReadyMergeOp> merges;
   // One walk of the whole module collects every kind in its own walk order.
   for (Operation *op :
        analysis::collectInWalkOrder<Operation *>(operation, [&](Operation *op) {
          return isa<schedule::NativeTransitionOp>(op) ||
-                (!preserveReadiness && isa<schedule::NativeReadyUpdateOp,
-                                           schedule::NativeReadyCommitOp,
-                                           schedule::NativeReadyReadOp>(op));
+                (!preserveReadiness &&
+                 isa<schedule::NativeReadyUpdateOp,
+                     schedule::NativeReadyCommitOp, schedule::NativeReadyReadOp,
+                     schedule::NativeReadyMergeOp>(op));
        })) {
     if (auto transition = dyn_cast<schedule::NativeTransitionOp>(op))
       transitions.push_back(transition);
@@ -193,6 +290,8 @@ void materializeLocalScheduleActions(
       updates.push_back(update);
     else if (auto commit = dyn_cast<schedule::NativeReadyCommitOp>(op))
       commits.push_back(commit);
+    else if (auto merge = dyn_cast<schedule::NativeReadyMergeOp>(op))
+      merges.push_back(merge);
     else
       reads.push_back(cast<schedule::NativeReadyReadOp>(op));
   }
@@ -242,6 +341,8 @@ void materializeLocalScheduleActions(
                                         commit.getAddMask());
     commit.erase();
   }
+  for (auto merge : merges)
+    materializeReadyMerge(merge);
   for (auto transition : transitions) {
     OpBuilder builder(transition);
     auto call = LLVM::CallOp::create(

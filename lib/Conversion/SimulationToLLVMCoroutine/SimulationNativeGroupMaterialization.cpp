@@ -235,6 +235,11 @@ promoteScalarSlots(ArrayRef<PromotableAllocationOpInterface> allocations,
 }
 
 uint64_t nativeOperationCost(Operation *operation) {
+  if (auto merge = dyn_cast<schedule::NativeReadyMergeOp>(operation)) {
+    runtime::ReadySetLayout layout(merge.getCapacity());
+    // The bounded scan has one CFG body, independent of the number of leaves.
+    return 24 + 24 * layout.levels + (layout.hasCache() ? 8 : 0);
+  }
   uint64_t capacity = 0;
   if (auto update = dyn_cast<schedule::NativeReadyUpdateOp>(operation))
     capacity = update.getCapacity();
