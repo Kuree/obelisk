@@ -134,6 +134,10 @@ VPIExpressionMaterializer::VPIExpressionMaterializer(
     : design(design), declarations(design, descriptors), builder(builder) {
   for (auto expression : design.getOps<sim::SimVPIExpressionDeclOp>())
     nextID = std::max(nextID, uint64_t(expression.getId()) + 1);
+  for (Operation &operation : design.getBody().front())
+    if (auto name = operation.getAttrOfType<StringAttr>(
+            SymbolTable::getSymbolAttrName()))
+      designSymbols.insert(name.getValue());
 }
 
 FailureOr<std::optional<VPIExpressionEndpoint>>
@@ -250,11 +254,11 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
       if (isa<semantic::SVNamedValueExpressionOp>(source)) {
         auto reference =
             source->getAttrOfType<SymbolRefAttr>("referenced_symbol");
-        SymbolTableCollection symbols;
         auto module = source->getParentOfType<ModuleOp>();
-        auto *declaration = reference && module
-                                ? symbols.lookupSymbolIn(module, reference)
-                                : nullptr;
+        auto *declaration =
+            reference && module
+                ? sourceSymbols.lookupSymbolIn(module, reference)
+                : nullptr;
         auto name = declaration ? declaration->getAttrOfType<StringAttr>("name")
                                 : StringAttr{};
         // Only an exact unqualified reference to a lexical ancestor's direct
@@ -501,10 +505,9 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
                           node.kind == uint32_t(Kind::EnumConst))) {
       auto reference =
           node.source->getAttrOfType<SymbolRefAttr>("referenced_symbol");
-      SymbolTableCollection symbols;
       auto module = node.source->getParentOfType<ModuleOp>();
       auto *declaration = reference && module
-                              ? symbols.lookupSymbolIn(module, reference)
+                              ? sourceSymbols.lookupSymbolIn(module, reference)
                               : nullptr;
       if (declaration && declaration->hasAttr("constant_value")) {
         auto value = freezeSemanticConstant(declaration);
@@ -599,7 +602,7 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
     ids[index] = nextID++;
     std::string name =
         "__obelisk_vpi_rtl_expression_" + std::to_string(ids[index]);
-    while (SymbolTable::lookupSymbolIn(design, name)) {
+    while (designSymbols.contains(name)) {
       if (nextID > uint64_t(INT64_MAX))
         return expression->emitError(
                    "VPI source expression ID space exhausted"),
@@ -607,6 +610,7 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
       ids[index] = nextID++;
       name = "__obelisk_vpi_rtl_expression_" + std::to_string(ids[index]);
     }
+    designSymbols.insert(name);
     node.endpoint = VPIExpressionEndpoint{
         sim::VPIObjectRefAttr::get(
             builder.getContext(),

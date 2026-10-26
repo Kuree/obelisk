@@ -7,6 +7,7 @@
 #include "PrepareUnits.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
+#include "llvm/ADT/StringSet.h"
 #include <optional>
 
 namespace obelisk::simlowering {
@@ -65,6 +66,11 @@ private:
   VPIExpressionResolver declarations;
   mlir::OpBuilder &builder;
   uint64_t nextID = 0;
+  /// Source declarations referenced by expression leaves; the source tree is
+  /// not modified while relations are materialized.
+  mlir::SymbolTableCollection sourceSymbols;
+  /// Symbol names in the design, including the expressions created so far.
+  llvm::StringSet<> designSymbols;
 };
 
 /// Materialize exact direct declaration operands after statement and local

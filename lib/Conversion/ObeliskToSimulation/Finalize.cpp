@@ -571,13 +571,28 @@ static bool containsForbiddenType(Type type) {
   return forbidden;
 }
 
+// Definition member declarations by the symbol table that holds them. A flat
+// reference names one of them exactly when lookupNearestSymbolFrom would find
+// it, without scanning the table once per reference.
+using DefinitionMemberTables = DenseMap<Operation *, llvm::StringSet<>>;
+
 // Attribute and type storage is immutable. Verify each distinct value once
 // per subtree, retaining the original per-operation diagnostics for failures.
-// Function workers share only the frozen inventory of executable symbols.
+// Function workers share only the frozen inventories of symbols.
 static LogicalResult
 verifyExecutableSubtree(Operation *root, ModuleOp module,
                         const llvm::StringSet<> &executableSymbols,
+                        const DefinitionMemberTables &definitionMembers,
                         bool skipFunctions) {
+  auto isDefinitionMember = [&](Operation *from, SymbolRefAttr reference) {
+    if (!reference.getNestedReferences().empty())
+      return isa_and_nonnull<sim::SimVPIDefinitionMemberDeclOp>(
+          SymbolTable::lookupNearestSymbolFrom(from, reference));
+    auto found =
+        definitionMembers.find(SymbolTable::getNearestSymbolTable(from));
+    return found != definitionMembers.end() &&
+           found->second.contains(reference.getRootReference().getValue());
+  };
   bool invalid = false;
   DenseMap<Type, bool> types;
   auto forbiddenType = [&](Type type) {
@@ -728,9 +743,7 @@ verifyExecutableSubtree(Operation *root, ModuleOp module,
         bool originalDefaultReference = false;
         if (auto endpoint = dyn_cast<sim::VPIObjectRefAttr>(named.getValue());
             endpoint && endpoint.getKind() == sim::VPIObjectRefKind::Symbol &&
-            endpoint.getSymbol() == reference &&
-            isa_and_nonnull<sim::SimVPIDefinitionMemberDeclOp>(
-                SymbolTable::lookupNearestSymbolFrom(op, reference))) {
+            endpoint.getSymbol() == reference) {
           if (auto relation = dyn_cast<sim::SimVPIRelationDeclOp>(op))
             originalDefaultReference =
                 named.getName() == relation.getSourceAttrName() ||
@@ -739,6 +752,7 @@ verifyExecutableSubtree(Operation *root, ModuleOp module,
             originalDefaultReference =
                 expression.getDefinitionAttr() &&
                 named.getName() == expression.getOwnerAttrName();
+          originalDefaultReference &= isDefinitionMember(op, reference);
         }
         bool allowed = callTarget || observerTarget || graphReference ||
                        executableReference || definitionReference ||
@@ -796,7 +810,14 @@ void ObeliskSimFinalizePass::runOnOperation() {
     op->erase();
 
   llvm::StringSet<> executableSymbols;
+  DefinitionMemberTables definitionMembers;
   module.walk([&](Operation *op) {
+    if (auto member = dyn_cast<sim::SimVPIDefinitionMemberDeclOp>(op)) {
+      Operation *table = op->getParentOp();
+      if (table && table->hasTrait<OpTrait::SymbolTable>() &&
+          op->getBlock() == &table->getRegion(0).front())
+        definitionMembers[table].insert(member.getSymName());
+    }
     if (!isa<sim::SimCovergroupDeclOp, sim::SimVPIObjectAnchorOp,
              sim::SimVPINettypeDeclOp, sim::SimVPITypespecDeclOp,
              sim::SimVPIUnresolvedTypeAliasDeclOp,
@@ -824,14 +845,16 @@ void ObeliskSimFinalizePass::runOnOperation() {
   // Module cleanup and symbol discovery are complete. Verify module metadata
   // once, then verify and clean each isolated function independently.
   invalid |= failed(verifyExecutableSubtree(module, module, executableSymbols,
+                                            definitionMembers,
                                             /*skipFunctions=*/true));
   SmallVector<sim::SimFuncOp> functions;
   module.walk([&](sim::SimFuncOp function) { functions.push_back(function); });
 
   invalid |= failed(failableParallelForEach(
       module.getContext(), functions, [&](sim::SimFuncOp function) {
-        LogicalResult verified = verifyExecutableSubtree(
-            function, module, executableSymbols, /*skipFunctions=*/false);
+        LogicalResult verified =
+            verifyExecutableSubtree(function, module, executableSymbols,
+                                    definitionMembers, /*skipFunctions=*/false);
         sim::remove<sim::metadata::Bindings>(function);
         sim::remove<sim::metadata::DelayScale>(function);
         sim::remove<sim::metadata::DelayQuantum>(function);
