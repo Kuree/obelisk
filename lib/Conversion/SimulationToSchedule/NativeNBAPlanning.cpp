@@ -80,10 +80,8 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
       return module.emitError(
                  "static NBA commit has an invalid native state root"),
              failure();
-    auto bound = llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
-      return candidate.handleID == decoded.id;
-    });
-    if (bound == stateLayout.bounds.end())
+    const auto *bound = stateLayout.findBound(decoded.id);
+    if (!bound)
       return module.emitError(
                  "static NBA commit root is absent from native state layout"),
              failure();

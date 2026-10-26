@@ -91,10 +91,8 @@ LogicalResult NativePipelineAnalysis::planState() {
           decoded.offset != 0)
         return module.emitError(
             "static-specialization root has an invalid native handle");
-      auto bound = llvm::find_if(stateLayout->bounds, [&](const auto &entry) {
-        return entry.handleID == decoded.id;
-      });
-      if (bound == stateLayout->bounds.end() || bound->width != root.getWidth())
+      const auto *bound = stateLayout->findBound(decoded.id);
+      if (!bound || bound->width != root.getWidth())
         return module.emitError(
             "static-specialization root disagrees with native state layout");
       if (root.getDirect())

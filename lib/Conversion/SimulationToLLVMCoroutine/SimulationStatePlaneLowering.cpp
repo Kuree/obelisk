@@ -114,13 +114,11 @@ resolveDirectStaticStateRange(Value handle, unsigned width,
   bool guarded = layout->guardedHandles.contains(decoded.id);
   if (!direct && !guarded)
     return std::nullopt;
-  auto bound = llvm::find_if(layout->bounds, [&](const auto &candidate) {
-    return candidate.handleID == decoded.id;
-  });
+  const auto *bound = layout->findBound(decoded.id);
   // Direct accesses are authorized either by the specialization policy or by
   // a fully static VPI-off wide-NBA plan, which records its roots in the same
   // direct-handle inventory before conversion.
-  if (bound == layout->bounds.end() ||
+  if (!bound ||
       static_cast<uint64_t>(decoded.offset) > bound->width ||
       width > bound->width - static_cast<uint64_t>(decoded.offset))
     return std::nullopt;
@@ -207,11 +205,9 @@ resolveDirectDynamicStateRange(Value handle, unsigned width,
   bool guarded = layout->guardedHandles.contains(decoded.id);
   if (!direct && !guarded)
     return std::nullopt;
-  auto bound = llvm::find_if(layout->bounds, [&](const auto &candidate) {
-    return candidate.handleID == decoded.id;
-  });
+  const auto *bound = layout->findBound(decoded.id);
   uint64_t localOffset = static_cast<uint64_t>(decoded.offset);
-  if (bound == layout->bounds.end() || localOffset > bound->width ||
+  if (!bound || localOffset > bound->width ||
       width > bound->width - localOffset)
     return std::nullopt;
   OpBuilder builder(producer);

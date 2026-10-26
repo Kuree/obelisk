@@ -132,10 +132,8 @@ collectGeneratedTransitionRanges(ModuleOp module,
         ranges.emplace_back(static_cast<uint32_t>(staticState), *lowBit,
                             bitWidth, directFragment);
       else {
-        auto bound = llvm::find_if(stateLayout.bounds, [&](const auto &bound) {
-          return bound.handleID == staticState;
-        });
-        if (bound == stateLayout.bounds.end()) {
+        const auto *bound = stateLayout.findBound(staticState);
+        if (!bound) {
           valid = call.emitError("eval dynamic transition has no root bounds");
           return;
         }
@@ -241,11 +239,8 @@ struct DynamicEvalNBAProofAnalysis {
     auto periodicLocalBit =
         [&](uint32_t staticState,
             uint64_t physicalBit) -> std::optional<uint64_t> {
-      auto bound =
-          llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
-            return candidate.handleID == staticState;
-          });
-      if (bound == stateLayout.bounds.end() || physicalBit < bound->offset ||
+      const auto *bound = stateLayout.findBound(staticState);
+      if (!bound || physicalBit < bound->offset ||
           physicalBit - bound->offset >= bound->width)
         return std::nullopt;
       return physicalBit - bound->offset;
@@ -255,10 +250,8 @@ struct DynamicEvalNBAProofAnalysis {
           fanoutRoute(fanout) == OBELISK_RT_FANOUT_RUNTIME ||
           fanoutRoute(fanout) == OBELISK_RT_FANOUT_PERIODIC_ALIAS)
         return false;
-      auto bound = llvm::find_if(stateLayout.bounds, [&](const auto &b) {
-        return b.handleID == fanout.static_state;
-      });
-      if (bound != stateLayout.bounds.end() && fanout.bit_width == 1 &&
+      const auto *bound = stateLayout.findBound(fanout.static_state);
+      if (bound && fanout.bit_width == 1 &&
           stateLayout.hasClockTickBound(fanout.static_state,
                                         bound->offset + fanout.low_bit))
         return true;
@@ -313,12 +306,9 @@ struct DynamicEvalNBAProofAnalysis {
             }
             ++proof.periodicIngressCount;
             uint64_t end = fanout.low_bit + fanout.bit_width;
-            auto inferredBound =
-                llvm::find_if(stateLayout.bounds, [&](const auto &b) {
-                  return b.handleID == fanout.static_state;
-                });
+            const auto *inferredBound = stateLayout.findBound(fanout.static_state);
             bool inferredTickBound =
-                inferredBound != stateLayout.bounds.end() &&
+                inferredBound &&
                 fanout.bit_width == 1 &&
                 stateLayout.hasClockTickBound(fanout.static_state,
                                               inferredBound->offset +
@@ -2932,11 +2922,8 @@ FailureOr<bool> makeNativeEvalPlan(
         }
         return failure();
       }
-      auto bound = llvm::find_if(
-          stateLayout.bounds, [&](const NativeStateLayout::Bound &candidate) {
-            return candidate.handleID == decoded.id;
-          });
-      if (bound == stateLayout.bounds.end() || *width > bound->width ||
+      const auto *bound = stateLayout.findBound(decoded.id);
+      if (!bound || *width > bound->width ||
           decoded.offset < 0 ||
           static_cast<uint64_t>(decoded.offset) > bound->width - *width)
         return call.emitError("dynamic state load root is out of bounds"),
@@ -3707,11 +3694,8 @@ FailureOr<bool> makeNativeEvalPlan(
         };
     for (auto [clockIndex, clock] : llvm::enumerate(periodicClocks)) {
       auto clockState = clock.getStaticState();
-      auto bound =
-          llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
-            return candidate.handleID == clockState;
-          });
-      if (bound == stateLayout.bounds.end() ||
+      const auto *bound = stateLayout.findBound(clockState);
+      if (!bound ||
           clock.getBitOffset() < bound->offset ||
           clock.getBitOffset() - bound->offset >= bound->width)
         continue;
@@ -3758,11 +3742,8 @@ FailureOr<bool> makeNativeEvalPlan(
       if (clock == periodicClocks.end())
         continue;
       size_t clockIndex = static_cast<size_t>(clock - periodicClocks.begin());
-      auto targetBound =
-          llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
-            return candidate.handleID == alias.getTargetStaticState();
-          });
-      if (targetBound == stateLayout.bounds.end() ||
+      const auto *targetBound = stateLayout.findBound(alias.getTargetStaticState());
+      if (!targetBound ||
           alias.getTargetBitOffset() < targetBound->offset ||
           alias.getTargetBitOffset() - targetBound->offset >=
               targetBound->width)
@@ -4132,11 +4113,8 @@ FailureOr<bool> makeNativeEvalPlan(
                                       Value newSet) -> LogicalResult {
       if (!staticFanoutPlan.runtimeTransitionStates.contains(staticState))
         return success();
-      auto bound =
-          llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
-            return candidate.handleID == staticState;
-          });
-      if (bound == stateLayout.bounds.end() || absoluteBit < bound->offset ||
+      const auto *bound = stateLayout.findBound(staticState);
+      if (!bound || absoluteBit < bound->offset ||
           absoluteBit - bound->offset >= bound->width)
         return module.emitError(
             "runtime-owned periodic observer has an invalid static root");

@@ -873,11 +873,8 @@ resolveNativeEvalPlan(ModuleOp module,
     // The state-local bit of a periodic source, if it lies in its state.
     auto localBit = [&](uint64_t state,
                         uint64_t offset) -> std::optional<uint64_t> {
-      auto bound =
-          llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
-            return candidate.handleID == state;
-          });
-      if (bound == stateLayout.bounds.end() || offset < bound->offset ||
+      const auto *bound = stateLayout.findBound(state);
+      if (!bound || offset < bound->offset ||
           offset - bound->offset >= bound->width)
         return std::nullopt;
       return offset - bound->offset;

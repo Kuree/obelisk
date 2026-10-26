@@ -389,10 +389,8 @@ LogicalResult materializeEvalTwoStateVariants(
         invalidRange = true;
         return false;
       }
-      auto bound = llvm::find_if(stateLayout.bounds, [&](const auto &entry) {
-        return entry.handleID == decoded.id;
-      });
-      if (bound == stateLayout.bounds.end() ||
+      const auto *bound = stateLayout.findBound(decoded.id);
+      if (!bound ||
           found->second.low > bound->width ||
           width > bound->width - found->second.low) {
         invalidRange = true;
@@ -1130,16 +1128,14 @@ LogicalResult materializeEvalTwoStateVariants(
           decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
           decoded.offset != 0)
         return std::nullopt;
-      auto bound = llvm::find_if(stateLayout.bounds, [&](const auto &entry) {
-        return entry.handleID == decoded.id;
-      });
+      const auto *bound = stateLayout.findBound(decoded.id);
       // An unknown selection within a fixed root cannot alias another root.
       // Use the entire physical allocation only for a may-access bound; it
       // must never be mistaken for an exact cell when forwarding writes.
-      if (origin.dynamic && bound != stateLayout.bounds.end())
+      if (origin.dynamic && bound)
         return cached->second = ProbeRange{bound->offset, bound->width};
       uint64_t width = origin.width ? origin.width : origin.rootWidth;
-      if (!width || bound == stateLayout.bounds.end() ||
+      if (!width || !bound ||
           origin.low > bound->width || width > bound->width - origin.low)
         return std::nullopt;
       return cached->second = ProbeRange{bound->offset + origin.low, width};

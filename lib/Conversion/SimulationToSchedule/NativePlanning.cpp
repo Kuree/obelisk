@@ -449,15 +449,13 @@ buildNativePeriodicAliasPlan(ModuleOp module,
           offset == stateLayout.storageOffsets.end())
         return WalkResult::advance();
       auto target = decodeStaticRoot(handle->second);
-      auto bound = llvm::find_if(stateLayout.bounds, [&](const auto &bound) {
-        return target && bound.handleID == *target;
-      });
+      const auto *bound = target ? stateLayout.findBound(*target) : nullptr;
       // IEEE 1800-2023 4.3, 4.9.1, 9.4.2: a private, single-writer variable
       // copy has the same edge ordering as the wire tree. Its target is its
       // only canonical plane. Equal driver/target offsets encode that no extra
       // contribution needs reconstruction. Do not turn a slice or externally
       // writable variable into a whole-root clock projection.
-      if (!target || bound == stateLayout.bounds.end() || bound->width != 1 ||
+      if (!target || !bound || bound->width != 1 ||
           !stateLayout.directHandles.contains(*sourceStatic) ||
           !stateLayout.directHandles.contains(*target) ||
           stateLayout.guardedHandles.contains(*sourceStatic) ||
@@ -938,11 +936,8 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
               valid = false;
               break;
             }
-            auto bound =
-                llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
-                  return candidate.handleID == decoded.id;
-                });
-            if (bound == stateLayout.bounds.end() ||
+            const auto *bound = stateLayout.findBound(decoded.id);
+            if (!bound ||
                 found->second.low > bound->width ||
                 width > bound->width - found->second.low) {
               valid = false;
@@ -986,11 +981,8 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
           return block->getTerminator()->emitError(
                      "runtime fanout has an invalid native root"),
                  failure();
-        auto bound =
-            llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
-              return candidate.handleID == decoded.id;
-            });
-        if (bound == stateLayout.bounds.end() ||
+        const auto *bound = stateLayout.findBound(decoded.id);
+        if (!bound ||
             effect.getLow() > bound->width ||
             effect.getWidth() > bound->width - effect.getLow())
           return block->getTerminator()->emitError(
@@ -1065,11 +1057,8 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
         return terminator->emitError(
                    "static fanout descriptor has an invalid native root"),
                failure();
-      auto bound =
-          llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
-            return candidate.handleID == decoded.id;
-          });
-      if (bound == stateLayout.bounds.end() || effect.getWidth() == 0 ||
+      const auto *bound = stateLayout.findBound(decoded.id);
+      if (!bound || effect.getWidth() == 0 ||
           effect.getLow() > bound->width ||
           effect.getWidth() > bound->width - effect.getLow())
         return terminator->emitError("static fanout range is out of bounds"),
@@ -1171,10 +1160,8 @@ buildNativeThreeTierPlan(ModuleOp module,
       return design.emitOpError(
                  "promotion closure has a non-static native root"),
              failure();
-    auto bound = llvm::find_if(stateLayout.bounds, [&](const auto &candidate) {
-      return candidate.handleID == decoded.id;
-    });
-    if (bound == stateLayout.bounds.end())
+    const auto *bound = stateLayout.findBound(decoded.id);
+    if (!bound)
       return design.emitOpError(
                  "promotion closure is absent from native state layout"),
              failure();

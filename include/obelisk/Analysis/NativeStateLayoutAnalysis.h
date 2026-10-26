@@ -75,6 +75,18 @@ struct NativeStateLayoutAnalysis {
   llvm::DenseMap<uint64_t, uint64_t> netOffsets;
   llvm::DenseMap<uint64_t, uint64_t> driverOffsets;
   mlir::SmallVector<Bound> bounds;
+  /// The bound of a static handle. compute() allocates handle IDs in bound
+  /// order from 1, so this is an index; the scan only covers a reordered
+  /// table.
+  const Bound *findBound(uint64_t handleID) const {
+    if (handleID >= 1 && handleID <= bounds.size() &&
+        bounds[handleID - 1].handleID == handleID)
+      return &bounds[handleID - 1];
+    for (const Bound &bound : bounds)
+      if (bound.handleID == handleID)
+        return &bound;
+    return nullptr;
+  }
   mlir::SmallVector<Net> netLayouts;
   mlir::SmallVector<Driver> driverLayouts;
   llvm::DenseMap<std::pair<uint64_t, uint64_t>, std::pair<uint64_t, uint64_t>>
