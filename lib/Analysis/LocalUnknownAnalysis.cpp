@@ -1153,35 +1153,40 @@ public:
       }
       // A write of steady-unknown bits may make them known, so a gated read
       // after it cannot load them as the pattern's constant X. A value not
-      // yet solved counts as known until it is.
-      unsigned width = static_cast<unsigned>(interval.high - interval.low);
-      APInt unknown = APInt::getAllOnes(width);
+      // yet solved counts as known until it is. The interval may span a
+      // whole memory root; only an exact store of a tracked value of the
+      // interval's width has per-bit facts. `unknown` holds the bits the
+      // store may make X/Z from the interval's low bit, and none stands for
+      // all of them.
+      uint64_t width = interval.high - interval.low;
+      std::optional<APInt> unknown;
       if (value) {
         if (!hasUnknownPlane(value.getType()))
-          unknown = APInt(width, 0);
+          unknown = APInt::getZero(0);
         else if (!inputs.mayWriteSteady(reference)) {
           const MayUnknownBits &bits =
               getOrCreateFor<GatedLattice>(getProgramPointAfter(op), value)
                   ->getValue();
           std::optional<unsigned> tracked = trackedWidth(value.getType());
-          if (bits.isBottom())
-            unknown = APInt(width, 0);
-          else if (bits.isKnown())
-            unknown = APInt(width, 0);
+          if (bits.isBottom() || bits.isKnown())
+            unknown = APInt::getZero(0);
           else if (exact && tracked && *tracked == width &&
                    !bits::isElementwise(value.getType()))
-            unknown = bits.get(width);
+            unknown = bits.get(*tracked);
         }
       }
       if (!exact) {
-        if (!unknown.isZero())
+        if (!unknown)
           next.add(interval.root, interval.low, interval.high);
         return;
       }
       next.remove(interval.root, interval.low, interval.high);
-      forEachRun(unknown, interval.low, [&](uint64_t low, uint64_t high) {
-        next.add(interval.root, low, high);
-      });
+      if (!unknown)
+        next.add(interval.root, interval.low, interval.high);
+      else
+        forEachRun(*unknown, interval.low, [&](uint64_t low, uint64_t high) {
+          next.add(interval.root, low, high);
+        });
       next.overwrite(interval.root, interval.low, interval.high);
     };
     // Each execution of an allocation starts a lifetime holding its
