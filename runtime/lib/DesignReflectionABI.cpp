@@ -78,7 +78,31 @@ static_assert(field::StaticObjectSourceLine == 20);
 static_assert(field::StaticObjectSourceColumn == 24);
 static_assert(field::StaticObjectVPIKind == 28);
 static_assert(field::StaticObjectFlags == 30);
-static_assert(SemanticDirectoryLayout.size == 400);
+static_assert(SemanticDirectoryLayout.size == 896);
+static_assert(FrameLocalBindingLayout.size == 24);
+static_assert(InterfaceCallableLayout.size == 24);
+static_assert(InterfaceInstanceLayout.size == 8);
+static_assert(InterfaceCallableBindingLayout.size == 16);
+static_assert(InterfaceCallBindingLayout.size == 16);
+static_assert(CallableSignatureBindingLayout.size == 12);
+static_assert(CodeUnitScopeBindingLayout.size == 16);
+
+static_assert(BoxTypeBindingLayout.size == 16);
+static_assert(ValueElementBindingLayout.size == 16);
+static_assert(ThreadOriginBindingLayout.size == 16);
+static_assert(CallSiteBindingLayout.size == 24);
+static_assert(CallDispatchBindingLayout.size == 40);
+static_assert(ClassDispatchMethodBindingLayout.size == 32);
+static_assert(ClassDispatchParentBindingLayout.size == 24);
+static_assert(field::SemanticDirectoryCallSiteBindingOffset == 560);
+static_assert(field::SemanticDirectoryCallSiteBindingCount == 568);
+static_assert(EventArrayStorageBindingLayout.size == 8);
+static_assert(EventBindingLayout.size == 16);
+static_assert(ModportBindingLayout.size == 16);
+static_assert(MailboxElementBindingLayout.size == 12);
+static_assert(ClassMemberBindingLayout.size == 44);
+static_assert(ClassTypeBindingLayout.size == 12);
+static_assert(SemanticClassBindingLayout.size == 8);
 static_assert(FrozenValueLayout.size == 32);
 static_assert(field::FrozenValueKindAndFlags == 0);
 static_assert(field::FrozenValueReserved == 4);
@@ -147,6 +171,9 @@ static_assert(DefinitionMemberRelationLayout.size == 12);
 static_assert(DefinitionMemberRelationTargetLayout.size == 4);
 static_assert(DefinitionSpecializationLayout.size == 12);
 static_assert(DefinitionSpecializationBindingLayout.size == 8);
+static_assert(DefinitionParameterValueLayout.size == 8);
+static_assert(field::SemanticDirectoryDefinitionParameterValueOffset == 768);
+static_assert(field::SemanticDirectoryDefinitionParameterValueCount == 776);
 static_assert(DefinitionMemberEndpointLayout.size == 4);
 static_assert(DefinitionMemberInstanceRelationLayout.size == 20);
 static_assert(DefinitionMemberInstanceRelationTargetLayout.size == 4);
@@ -217,3 +244,15 @@ constexpr bool recordKindPackingIsStable() {
                                    packed);
 }
 static_assert(recordKindPackingIsStable());
+
+static_assert(obelisk::reflection::InitializerBindingLayout.size == 16);
+
+static_assert(obelisk::reflection::ExpressionRootBindingLayout.size == 20);
+static_assert(obelisk::reflection::ExpressionTemplateLayout.size == 28);
+static_assert(obelisk::reflection::ExpressionNodeLayout.size == 32);
+static_assert(obelisk::reflection::ExpressionOperandLayout.size == 4);
+static_assert(obelisk::reflection::ExpressionLeafLayout.size == 4);
+static_assert(obelisk::reflection::ExpressionBoundMemberLayout.size == 8);
+static_assert(obelisk::reflection::ExpressionLeafShapeLayout.size == 12);
+
+static_assert(obelisk::reflection::TerminalDriverBindingLayout.size == 16);

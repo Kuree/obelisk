@@ -311,6 +311,8 @@ InlineLegality getInlineCalleeLegality(SimFuncOp callee, bool calleeIsRecursive,
     return InlineLegality::LateMetadata;
   if (calleeIsRecursive)
     return InlineLegality::Recursive;
+  if (sim::has<sim::metadata::VpiFrameInstrumentation>(callee))
+    return InlineLegality::VPIFrameActivation;
   if (hasUnknownInlineMetadata(callee))
     return InlineLegality::UnknownMetadata;
 
@@ -320,8 +322,10 @@ InlineLegality getInlineCalleeLegality(SimFuncOp callee, bool calleeIsRecursive,
       return WalkResult::skip();
     if (legality != InlineLegality::Legal)
       return WalkResult::interrupt();
-    if (auto display = dyn_cast<SimDisplayOp>(operation);
-        display && !display.getScopeAttr())
+    if (isa<SimVPIFrameEnterPreparedOp, SimVPIFrameEnterOp>(operation))
+      legality = InlineLegality::VPIFrameActivation;
+    else if (auto display = dyn_cast<SimDisplayOp>(operation);
+             display && !display.getScopeAttr())
       legality = InlineLegality::UnfrozenDisplayScope;
     else if (auto format = dyn_cast<SimStringOutputFormatOp>(operation);
              format && !format.getScopeAttr())
@@ -389,6 +393,8 @@ StringRef getInlineLegalityReason(InlineLegality legality) {
     return "display has no frozen lexical scope";
   case InlineLegality::UnknownBoundaryMetadata:
     return "call boundary contains unknown simulation metadata";
+  case InlineLegality::VPIFrameActivation:
+    return "callee owns an observable procedural activation";
   }
   llvm_unreachable("unknown simulation inline legality");
 }
@@ -778,8 +784,12 @@ static const llvm::StringMap<discardable::PayloadCheck> &declarations() {
       metadata::DescriptorPackedLow, metadata::DescriptorRootType,
       metadata::FlushedPrivateSlot, metadata::GcPollFree,
       metadata::HierarchicalName, metadata::Rematerialized, metadata::VpiAnchor,
-      metadata::VpiAutomatic, metadata::VpiCellInstance,
-      metadata::VpiDefinitionName, metadata::VpiIdentityDelegated,
+      metadata::VpiDefinitionMember, metadata::VpiExpressionIdentifier,
+      metadata::VpiStatementId, metadata::VpiCallSite,
+      metadata::VpiResolutionNet, metadata::VpiLocal, metadata::VpiDeclaredType,
+      metadata::VpiFrameInstrumentation, metadata::VpiAutomatic,
+      metadata::VpiCellInstance, metadata::VpiDefinitionName,
+      metadata::VpiIdentityDelegated, metadata::VpiBoxType,
       metadata::VpiSourceTypeIdentity, metadata::VpiTop,
       metadata::DumpportsScope, metadata::DynamicCastEnumValues,
       metadata::DynamicCastTask, metadata::EnumFormatNames,
@@ -795,12 +805,25 @@ static LogicalResult verifyDeclaredAttribute(Operation *operation,
   if (failed(discardable::verify(declarations(), operation, attribute)))
     return failure();
   Attribute value = attribute.getValue();
+  if (name == VpiDefinitionMember::getNameStr() &&
+      cast<VPIObjectRefAttr>(value).getKind() !=
+          VPIObjectRefKind::DefinitionMember)
+    return operation->emitOpError(
+        "vpi_definition_member requires an exact contextual member reference");
   auto error = [&]() {
     return operation->emitOpError("attribute '") << name << "' ";
   };
+  if (name == VpiExpressionIdentifier::getNameStr() &&
+      !isa<SimVPIRelationDeclOp>(operation))
+    return error() << "requires an exact expression leaf relation";
   auto allOf = [&](auto pred) {
     return llvm::all_of(cast<ArrayAttr>(value), pred);
   };
+  if (name == VpiResolutionNet::getNameStr() &&
+      (!isa<SimCallOp>(operation) ||
+       !cast<IntegerAttr>(value).getType().isInteger(64) ||
+       cast<IntegerAttr>(value).getValue().isNegative()))
+    return error() << "requires a nonnegative i64 net ID on simulation.call";
   if (name == ResultRanges::getNameStr() &&
       !allOf(llvm::IsaPred<IntegerRangeAttr, UnitAttr>))
     return error() << "must contain #simulation.integer_range or unit entries";

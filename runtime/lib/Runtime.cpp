@@ -566,11 +566,19 @@ obelisk_rt_v1_control_enter(obelisk_rt_context *context, uint64_t targetID,
     if (context->activeLogicalProcessToken == 0 ||
         context->nextControlActivation == 0)
       return OBELISK_RT_INVALID_LIFECYCLE;
+    uint64_t frameDepth = 0;
+    if (context->vpiState) {
+      auto status = obelisk_rt_vpi_frame_depth_process(
+          context, context->activeLogicalProcessToken, &frameDepth);
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
     uint64_t token = context->nextControlActivation;
     context->activeControls.reserve(context->activeControls.size() + 1);
     auto [_, inserted] = context->controlActivations.emplace(
         token,
-        ControlActivation{targetID, 1, context->activeLogicalProcessToken, 0});
+        ControlActivation{targetID, 1, context->activeLogicalProcessToken, 0,
+                          frameDepth});
     if (!inserted)
       return OBELISK_RT_INVALID_LIFECYCLE;
     context->activeControls.push_back(token);

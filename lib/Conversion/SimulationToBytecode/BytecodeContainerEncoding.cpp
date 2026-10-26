@@ -18,6 +18,17 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
     emit({Move, 0, reg(plan, op.getResult()), reg(plan, op.getInput())});
     return success();
   }
+  if (auto op = dyn_cast<sim::SimBoxBindTypeOp>(operation)) {
+    auto descriptor =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimVPIBoxTypeDeclOp>(
+            op, op.getDescriptorAttr());
+    if (!descriptor)
+      return op.emitOpError("box descriptor was not preserved");
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicBoxBindType,
+        {reg(plan, op.getInput()), emitU64Constant(plan, descriptor.getId())},
+        {});
+  }
   if (auto op = dyn_cast<sim::SimBoxIsTypeOp>(operation))
     return emitIntrinsicRegisters(
         plan, kIntrinsicBoxIsType,

@@ -74,6 +74,8 @@ struct ManagedClassLayout {
   SmallVector<std::pair<uint64_t, uint64_t>> copyResets;
   SmallVector<sim::SimClassMethodDeclOp> methods;
   SmallVector<Interface> interfaces;
+  uint32_t builtinBaseKind = OBELISK_RT_BUILTIN_CLASS_NONE;
+  uint64_t builtinBaseOffset = 0;
 };
 
 LogicalResult collectManagedTraceSlots(
@@ -82,17 +84,6 @@ LogicalResult collectManagedTraceSlots(
   SmallVector<sim::ManagedHandleSlot, 2> managed;
   if (!sim::getManagedHandleSlots(type, managed))
     return failure();
-  auto exactKind = [](uint32_t mask) -> std::optional<uint32_t> {
-    if (mask == static_cast<uint32_t>(sim::ManagedHandleKind::Class))
-      return OBELISK_RT_MANAGED_SLOT_CLASS;
-    if (mask == static_cast<uint32_t>(sim::ManagedHandleKind::String))
-      return OBELISK_RT_MANAGED_SLOT_STRING;
-    if (mask == static_cast<uint32_t>(sim::ManagedHandleKind::Container))
-      return OBELISK_RT_MANAGED_SLOT_CONTAINER;
-    if (mask == static_cast<uint32_t>(sim::ManagedHandleKind::ReferencePath))
-      return OBELISK_RT_MANAGED_SLOT_REFERENCE_PATH;
-    return std::nullopt;
-  };
   for (const sim::ManagedHandleSlot &slot : managed) {
     if ((slot.bitOffset & 7) != 0 ||
         slot.bitOffset > UINT64_MAX - baseBitOffset)
@@ -100,13 +91,10 @@ LogicalResult collectManagedTraceSlots(
     uint64_t absolute = baseBitOffset + slot.bitOffset;
     if ((absolute & 7) != 0)
       return failure();
-    std::optional<uint32_t> kind = exactKind(slot.kindMask);
-    if (!slot.conditional && !kind)
+    std::optional<uint32_t> kind = sim::getManagedHandleTraceKind(slot);
+    if (!kind)
       return failure();
-    slots.push_back(
-        {absolute / 8, slot.conditional
-                           ? OBELISK_RT_MANAGED_SLOT_CANDIDATE | slot.kindMask
-                           : *kind});
+    slots.push_back({absolute / 8, *kind});
   }
   return success();
 }
@@ -115,8 +103,29 @@ LogicalResult
 prepareManagedClassInventory(ModuleOp module,
                              const llvm::DataLayout &dataLayout,
                              llvm::StringMap<ManagedClassLayout> &layouts) {
+  module.walk([&](sim::SimVPIFrameBindOp op) {
+    auto declaration =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimVPILocalDeclOp>(
+            op, op.getDeclarationAttr());
+    if (declaration)
+      native::set<native::VpiLocalId>(op, declaration.getIdAttr());
+  });
   SmallVector<sim::SimClassDeclOp> classes;
   SmallVector<sim::SimClassMethodDeclOp> methods;
+  module.walk([&](sim::SimVPICallPrepareOp op) {
+    auto declaration =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimVPICallDeclOp>(
+            op, op.getCallAttr());
+    if (declaration)
+      native::set<native::VpiCallId>(op, declaration.getIdAttr());
+  });
+  module.walk([&](sim::SimBoxBindTypeOp op) {
+    auto descriptor =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimVPIBoxTypeDeclOp>(
+            op, op.getDescriptorAttr());
+    if (descriptor)
+      native::set<native::BoxTypeId>(op, descriptor.getIdAttr());
+  });
   module.walk([&](sim::SimClassDeclOp op) { classes.push_back(op); });
   module.walk([&](sim::SimClassMethodDeclOp op) { methods.push_back(op); });
   if (classes.empty())
@@ -198,6 +207,13 @@ prepareManagedClassInventory(ModuleOp module,
     for (const analysis::ManagedClassLayoutAnalysis::Field &sharedField :
          shared.fields) {
       sim::SimClassFieldDeclOp field = sharedField.declaration;
+      if (shared.builtinBaseOffset &&
+          *shared.builtinBaseOffset == sharedField.offset) {
+        layout.builtinBaseKind = isa<sim::MailboxType>(field.getType())
+                                     ? OBELISK_RT_BUILTIN_CLASS_MAILBOX
+                                     : OBELISK_RT_BUILTIN_CLASS_SEMAPHORE;
+        layout.builtinBaseOffset = sharedField.offset;
+      }
       SmallVector<std::pair<uint64_t, uint32_t>, 2> traceSlots;
       if (failed(collectManagedTraceSlots(field.getType(), 0, traceSlots)) ||
           traceSlots.size() != sharedField.storage.managedRootOffsets.size())
@@ -433,8 +449,9 @@ prepareManagedClassInventory(ModuleOp module,
       context, {i64, pointer, i64, pointer, i64});
   Type byteRangeType = LLVM::LLVMStructType::getLiteral(context, {i64, i64});
   Type classType = LLVM::LLVMStructType::getLiteral(
-      context, {i32, i32, i64, i64, i64, pointer, pointer, i64, pointer,
-                pointer, i64, pointer, i64, pointer, pointer, i64});
+      context,
+      {i32, i32, i64, i64, i64, pointer, pointer, i64, pointer, pointer, i64,
+       pointer, i64, pointer, pointer, i64, i32, i32, i64});
   bool bytecodeOnly =
       runtime::bitEnumContainsAll(runtime::getExecutionFlags(module),
                                   runtime::ExecutionFlags::RequireBytecode);
@@ -951,6 +968,14 @@ prepareManagedClassInventory(ModuleOp module,
                     llvmConstant(builder, location, i64,
                                  layout.copyResets.size()),
                     15);
+                descriptor = insertValue(builder, location, descriptor,
+                                         llvmConstant(builder, location, i32,
+                                                      layout.builtinBaseKind),
+                                         16);
+                descriptor = insertValue(builder, location, descriptor,
+                                         llvmConstant(builder, location, i64,
+                                                      layout.builtinBaseOffset),
+                                         18);
                 return descriptor;
               });
           return success();

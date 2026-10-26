@@ -31,12 +31,16 @@ add_mlir_library(ObeliskToSimulation
   MaterializeClockedSamples.cpp
   PrepareCoverage.cpp
   PrepareCaptures.cpp
+  PrepareLocals.cpp
+  PrepareExpressions.cpp
   Prepare.cpp
   PrepareDeclarations.cpp
   PrepareNetTopology.cpp
   PrepareRandomFunctions.cpp
   PrepareRandomIteration.cpp
   PrepareRandomTemplates.cpp
+  PrepareStatements.cpp
+  PrepareInterfaceDispatch.cpp
   PrepareTopology.cpp
   PrepareUnits.cpp
   PrepareValidation.cpp

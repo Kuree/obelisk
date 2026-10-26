@@ -1,3 +1,6 @@
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0 vpi=full' | FileCheck %s --check-prefix=VPI
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3 vpi=full' | FileCheck %s --check-prefix=VPI
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=vpi=off' | FileCheck %s --check-prefix=VPI-OFF
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
 // IEEE 1800-2023 25.9: a virtual interface whose type has no elaborated
@@ -134,3 +137,17 @@ module attributes {coverage.language_version = 2023 : i32} {
   }
 }
 
+
+// VPI-NOT: simulation.vpi_callable
+// VPI-NOT: simulation.vpi_interface_instance
+// VPI: simulation.vpi_interface_member.decl @[[MEMBER:[^ ]+]] of @{{[^ ]+}} name "t" task signature () -> () directions []
+// VPI-NOT: simulation.vpi_callable
+// VPI-NOT: simulation.vpi_interface_instance
+// VPI: simulation.vpi_interface_call.dispatch @{{[^ ]+}} member @[[MEMBER]] access 0
+// VPI-NOT: simulation.vpi_callable
+// VPI-NOT: simulation.vpi_interface_instance
+// VPI-OFF-NOT: simulation.vpi_interface
+// VPI-OFF-NOT: simulation.vpi_callable
+// VPI-OFF: simulation.design
+// VPI-OFF-NOT: simulation.vpi_interface
+// VPI-OFF-NOT: simulation.vpi_callable

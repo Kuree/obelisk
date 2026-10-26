@@ -1,3 +1,4 @@
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=VPI
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
 module {
@@ -161,3 +162,11 @@ module {
 // design domain, including when their enclosing procedural domain differs.
 // CHECK-DAG: domain = 0 : i32
 // CHECK-NOT: obelisk.sv.
+
+// VPI: simulation.statement.decl [[ASSERT:[0-9]+]] in [[UNIT:[0-9]+]] scope [[SCOPE:[0-9]+]] type 665 parent
+// VPI: simulation.statement.decl [[PASS:[0-9]+]] in [[UNIT]] scope [[SCOPE]] type 3 parent [[ASSERT]]
+// VPI: simulation.vpi_statement_relation.decl statement [[ASSERT]] type 665 selector 104 ordinal 0 modes 1 to [[PASS]]
+// VPI: simulation.statement.decl [[FAIL:[0-9]+]] in [[UNIT]] scope [[SCOPE]] type 3 parent [[ASSERT]]
+// VPI: simulation.vpi_statement_relation.decl statement [[ASSERT]] type 665 selector 73 ordinal 0 modes 1 to [[FAIL]]
+// VPI: simulation.statement.decl {{[0-9]+}} in [[UNIT]] scope [[SCOPE]] type 694 parent
+// VPI: simulation.statement.decl {{[0-9]+}} in [[UNIT]] scope [[SCOPE]] type 695 parent

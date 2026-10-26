@@ -43,6 +43,7 @@ set(_obelisk_runtime_common_sources
   lib/StochasticQueue.cpp
   lib/VCD.cpp
   lib/VPI.cpp
+  lib/VPIValueLayout.cpp
   lib/VPIObjectModelABI.cpp
 )
 set(_obelisk_runtime_cold_tail_sources

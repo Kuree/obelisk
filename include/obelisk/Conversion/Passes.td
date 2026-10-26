@@ -23,7 +23,13 @@ def ObeliskSimPreparePass
   let summary = "Resolve and freeze semantic IR into isolated simulation units";
   let options = [
     Option<"pruneUnusedCoverage", "prune-unused-coverage", "bool", "true",
-           "Prune unreferenced embedded covergroups before declaration materialization">
+           "Prune unreferenced embedded covergroups before declaration materialization">,
+    Option<"preserveVPIMethodBindings", "preserve-vpi-method-bindings", "bool", "true",
+           "Retain executable class method bindings for VPI reflection">,
+    Option<"preserveVPIBoxBindings", "preserve-vpi-box-bindings", "bool", "true",
+           "Retain exact untyped mailbox value type bindings for VPI reflection">,
+    Option<"preserveVPIFrames", "preserve-vpi-frames", "bool", "false",
+           "Preserve exact procedural frame activations and statement checkpoints">
   ];
   let dependentDialects = [
     "obelisk::sim::ObeliskSimulationDialect",
@@ -175,6 +181,13 @@ def ObeliskSimInstrumentReferenceLifetimesPass
     "obelisk::sim::ObeliskSimulationDialect",
     "mlir::cf::ControlFlowDialect"
   ];
+}
+
+def ObeliskSimInstrumentVPIFramesPass
+    : Pass<"obelisk-sim-instrument-vpi-frames", "obelisk::sim::SimDesignOp"> {
+  let summary = "Bind exact source call sites to procedural frame handoffs";
+  let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect",
+                           "mlir::cf::ControlFlowDialect"];
 }
 
 def ObeliskSimFinalizePass

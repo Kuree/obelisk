@@ -1,8 +1,12 @@
 //===- ObeliskDialect.cpp - Obelisk semantic dialect ---------------------===//
 
 #include "obelisk/Dialect/ForeachLoopMetadata.h"
+#include "obelisk/Dialect/ImplicitLoopScope.h"
 #include "obelisk/Dialect/Obelisk/ObeliskOps.h"
+#include "obelisk/Dialect/SourceClassMetadata.h"
+#include "obelisk/Dialect/SourceParameterMetadata.h"
 
+#include "mlir/IR/AttrTypeSubElements.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/TypeUtilities.h"
 
@@ -508,6 +512,9 @@ LogicalResult SVStreamingConcatenationExpressionOp::verify() {
 }
 
 LogicalResult SVForLoopStatementOp::verify() {
+  if (getHasLocalVariables() && getInitializerCount() != 0)
+    return emitOpError("local loop declarations and expression initializers "
+                       "are mutually exclusive");
   if (getInitializerCountAttr().getValue().isNegative())
     return emitOpError("initializer_count must be nonnegative");
   if (getStepCountAttr().getValue().isNegative())
@@ -523,6 +530,12 @@ LogicalResult SVForLoopStatementOp::verify() {
   if (astBodySize(*this) != expected)
     return emitOpError("malformed for-loop child inventory");
   return success();
+}
+
+LogicalResult SVBlockStatementOp::verify() {
+  return loop_scope::verify<SVForLoopStatementOp, SVForeachLoopStatementOp,
+                            SVStatementListOp, SVVariableDeclStatementOp>(
+      *this);
 }
 
 LogicalResult SVForeachLoopStatementOp::verify() {
@@ -589,6 +602,305 @@ LogicalResult SVRandCaseStatementOp::verify() {
     return failure();
   if (astBodySize(*this) != expected)
     return emitOpError("malformed randcase item inventory");
+  return success();
+}
+
+LogicalResult SVSourceClassDefinitionSymbolOp::verify() {
+  return sourceclass::verifyDefinition<
+      SVGenericClassDefSymbolOp, SVSourceClassDefinitionSymbolOp,
+      SVSourceClassPropertySymbolOp, SVSourceClassTypeAliasSymbolOp,
+      SVSourceClassMethodSymbolOp, SVSourceClassExtendsOp,
+      SVSourceClassConstraintSymbolOp, SVSourceTypeParameterSymbolOp,
+      SVSourceValueParameterSymbolOp>(*this);
+}
+
+LogicalResult SVClassTypeOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  return sourceclass::verifyLexicalDefinition<SVSourceClassDefinitionSymbolOp,
+                                              SVGenericClassDefSymbolOp,
+                                              SVClassTypeOp>(*this, symbols);
+}
+
+LogicalResult
+SVGenericClassDefSymbolOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  return sourceclass::verifyLexicalDefinition<SVSourceClassDefinitionSymbolOp,
+                                              SVGenericClassDefSymbolOp,
+                                              SVClassTypeOp>(*this, symbols);
+}
+
+LogicalResult SVSourceClassPropertySymbolOp::verify() {
+  return sourceclass::verifyDataDeclaration<
+      SVGenericClassDefSymbolOp, SVSourceClassDefinitionSymbolOp,
+      SVSourceDeclaredTypeOp, SVSourceDeclaredTypeReferenceOp,
+      SVSourceUnavailableTypeOp, SVSourceClassPropertySymbolOp,
+      SVSourceClassTypeAliasSymbolOp, SVSourceClassMethodSymbolOp,
+      SVSourceTypeParameterSymbolOp, SVSourceValueParameterSymbolOp>(*this);
+}
+
+LogicalResult SVSourceClassTypeAliasSymbolOp::verify() {
+  return sourceclass::verifyDataDeclaration<
+      SVGenericClassDefSymbolOp, SVSourceClassDefinitionSymbolOp,
+      SVSourceDeclaredTypeOp, SVSourceDeclaredTypeReferenceOp,
+      SVSourceUnavailableTypeOp, SVSourceClassPropertySymbolOp,
+      SVSourceClassTypeAliasSymbolOp, SVSourceClassMethodSymbolOp,
+      SVSourceTypeParameterSymbolOp, SVSourceValueParameterSymbolOp>(*this);
+}
+
+LogicalResult SVSourceDeclaredTypeOp::verify() {
+  if (failed(
+          sourceclass::verifyDeclaredTypeOwner<SVSourceClassPropertySymbolOp,
+                                               SVSourceClassTypeAliasSymbolOp>(
+              *this, true)))
+    return failure();
+  bool unresolved = false;
+  getSemanticType().walk([&](Type type) {
+    unresolved |=
+        isa<ErrorType, UntypedType, UnboundedType, TypeReferenceType>(type);
+  });
+  if (unresolved)
+    return emitOpError(
+        "concrete declared type cannot contain an unresolved type");
+  return success();
+}
+
+LogicalResult SVSourceDeclaredTypeReferenceOp::verify() {
+  return sourceclass::verifyDeclaredTypeOwner<SVSourceClassPropertySymbolOp,
+                                              SVSourceClassTypeAliasSymbolOp>(
+      *this, false);
+}
+
+LogicalResult SVSourceDeclaredTypeReferenceOp::verifySymbolUses(
+    SymbolTableCollection &symbols) {
+  return sourceclass::verifyDeclaredTypeReference<
+      SVSourceTypeParameterSymbolOp, SVSourceClassTypeAliasSymbolOp>(*this,
+                                                                     symbols);
+}
+
+LogicalResult SVSourceUnavailableTypeOp::verify() {
+  if (getSyntax().empty())
+    return emitOpError(
+        "unavailable declared type requires original source text");
+  return sourceclass::verifyDeclaredTypeOwner<SVSourceClassPropertySymbolOp,
+                                              SVSourceClassTypeAliasSymbolOp>(
+      *this, false);
+}
+
+LogicalResult SVSourceClassExtendsOp::verify() {
+  return sourceclass::verifyExtends<
+      SVGenericClassDefSymbolOp, SVSourceClassDefinitionSymbolOp, SVClassTypeOp,
+      SVSourceClassParameterActualOp>(*this);
+}
+
+LogicalResult
+SVSourceClassExtendsOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  return sourceclass::verifyExtendsReference<SVGenericClassDefSymbolOp,
+                                             SVSourceClassDefinitionSymbolOp,
+                                             SVClassTypeOp>(*this, symbols);
+}
+
+LogicalResult SVSourceParameterActualOp::verify() {
+  return sourceparameter::verifyInstanceActual<
+      SVInstanceBodySymbolOp, SVSourceTypeDefaultOp,
+      SVSourceTypeReferenceDefaultOp, SVSourceUnaryExpressionOp,
+      SVSourceBinaryExpressionOp, SVSourceConditionalExpressionOp,
+      SVSourceParameterReferenceOp, SVIntegerLiteralOp>(*this);
+}
+
+LogicalResult
+SVSourceParameterActualOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  return sourceparameter::verifyInstanceActualTarget<
+      SVInstanceSymbolOp, SVInstanceBodySymbolOp, SVParameterSymbolOp,
+      SVTypeParameterSymbolOp, SVSourceTypeDefaultOp,
+      SVSourceTypeReferenceDefaultOp>(*this, symbols);
+}
+
+LogicalResult SVSourceClassParameterActualOp::verify() {
+  return sourceclass::verifyParameterActual<
+      SVSourceClassExtendsOp, SVSourceTypeDefaultOp,
+      SVSourceTypeReferenceDefaultOp, SVSourceUnaryExpressionOp,
+      SVSourceBinaryExpressionOp, SVSourceConditionalExpressionOp,
+      SVSourceParameterReferenceOp, SVIntegerLiteralOp>(*this);
+}
+
+LogicalResult SVSourceClassParameterActualOp::verifySymbolUses(
+    SymbolTableCollection &symbols) {
+  return sourceclass::verifyParameterActualReference<
+      SVSourceClassExtendsOp, SVSourceValueParameterSymbolOp,
+      SVParameterSymbolOp, SVSourceTypeParameterSymbolOp,
+      SVTypeParameterSymbolOp, SVSourceTypeDefaultOp,
+      SVSourceTypeReferenceDefaultOp>(*this, symbols);
+}
+
+LogicalResult SVSourceClassConstraintSymbolOp::verify() {
+  return sourceclass::verifyConstraint<
+      SVGenericClassDefSymbolOp, SVSourceClassDefinitionSymbolOp,
+      SVSourceClassPropertySymbolOp, SVSourceClassTypeAliasSymbolOp,
+      SVSourceClassMethodSymbolOp, SVSourceTypeParameterSymbolOp,
+      SVSourceValueParameterSymbolOp>(*this);
+}
+
+LogicalResult SVSourceClassMethodSymbolOp::verify() {
+  return sourceclass::verifyMethod<
+      SVGenericClassDefSymbolOp, SVSourceClassDefinitionSymbolOp,
+      SVSourceValueParameterSymbolOp, SVSourceTypeParameterSymbolOp>(
+      *this, getSubroutineKind() == SVSubroutineKind::Task);
+}
+
+LogicalResult SVSourceTypeParameterSymbolOp::verify() {
+  return sourceparameter::verifyTypeParameter<
+      SVGenericClassDefSymbolOp, SVSourceClassDefinitionSymbolOp,
+      SVSourceTypeDefaultOp, SVSourceTypeReferenceDefaultOp,
+      SVSourceUnsupportedDefaultOp, SVSourceValueParameterSymbolOp>(*this);
+}
+
+LogicalResult SVSourceValueParameterSymbolOp::verify() {
+  return sourceparameter::verifyValueParameter<
+      SVGenericClassDefSymbolOp, SVSourceClassDefinitionSymbolOp,
+      SVSourceTypeParameterSymbolOp, SVSourceValueDefaultOp,
+      SVSourceUnsupportedDefaultOp>(*this);
+}
+
+LogicalResult SVSourceValueDefaultOp::verify() {
+  if (failed(sourceparameter::verifyUniqueOriginalDefault<
+             SVSourceValueDefaultOp, SVSourceTypeDefaultOp,
+             SVSourceTypeReferenceDefaultOp, SVSourceUnsupportedDefaultOp>(
+          *this)))
+    return failure();
+  if ((*this)->hasAttr("semantic_type"))
+    return emitOpError("unbound source default cannot carry an effective type");
+  if (!isa_and_nonnull<SVSourceValueParameterSymbolOp, SVParameterSymbolOp>(
+          (*this)->getParentOp()))
+    return emitOpError(
+        "original value default requires a value parameter owner");
+  if (sourceparameter::childCount(*this) != 1)
+    return emitOpError(
+        "original value default requires exactly one expression");
+  if (!isa<SVSourceUnaryExpressionOp, SVSourceBinaryExpressionOp,
+           SVSourceConditionalExpressionOp, SVSourceParameterReferenceOp,
+           SVIntegerLiteralOp>(getBody().front().front()))
+    return emitOpError(
+        "original value default requires a supported typed expression");
+  return success();
+}
+
+LogicalResult SVSourceParameterReferenceOp::verify() {
+  return sourceparameter::verifyValueExpression<
+      SVSourceValueDefaultOp, SVSourceClassParameterActualOp,
+      SVSourceUnaryExpressionOp, SVSourceBinaryExpressionOp,
+      SVSourceConditionalExpressionOp, SVSourceParameterReferenceOp,
+      SVIntegerLiteralOp, SVSourceParameterActualOp>(*this, 0);
+}
+
+LogicalResult
+SVSourceParameterReferenceOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  if ((*this)->getParentOfType<SVSourceParameterActualOp>())
+    return sourceparameter::verifyInstanceActualLeaf<SVSourceParameterActualOp,
+                                                     SVParameterSymbolOp>(
+        *this, symbols);
+
+  return sourceparameter::verifyValueReference<SVSourceValueParameterSymbolOp,
+                                               SVParameterSymbolOp,
+                                               SVSourceClassParameterActualOp>(
+      *this, symbols);
+}
+
+LogicalResult SVSourceUnaryExpressionOp::verify() {
+  switch (getOperatorKind()) {
+  case SVUnaryOperator::Preincrement:
+  case SVUnaryOperator::Predecrement:
+  case SVUnaryOperator::Postincrement:
+  case SVUnaryOperator::Postdecrement:
+    return emitOpError("original default requires a pure unary operation");
+  default:
+    break;
+  }
+  return sourceparameter::verifyValueExpression<
+      SVSourceValueDefaultOp, SVSourceClassParameterActualOp,
+      SVSourceUnaryExpressionOp, SVSourceBinaryExpressionOp,
+      SVSourceConditionalExpressionOp, SVSourceParameterReferenceOp,
+      SVIntegerLiteralOp, SVSourceParameterActualOp>(*this, 1);
+}
+
+LogicalResult SVSourceBinaryExpressionOp::verify() {
+  if (getOperatorKind() == SVBinaryOperator::LogicalEquivalence)
+    return emitOpError(
+        "original default operator has no VPI expression encoding");
+  return sourceparameter::verifyValueExpression<
+      SVSourceValueDefaultOp, SVSourceClassParameterActualOp,
+      SVSourceUnaryExpressionOp, SVSourceBinaryExpressionOp,
+      SVSourceConditionalExpressionOp, SVSourceParameterReferenceOp,
+      SVIntegerLiteralOp, SVSourceParameterActualOp>(*this, 2);
+}
+
+LogicalResult SVSourceConditionalExpressionOp::verify() {
+  return sourceparameter::verifyValueExpression<
+      SVSourceValueDefaultOp, SVSourceClassParameterActualOp,
+      SVSourceUnaryExpressionOp, SVSourceBinaryExpressionOp,
+      SVSourceConditionalExpressionOp, SVSourceParameterReferenceOp,
+      SVIntegerLiteralOp, SVSourceParameterActualOp>(*this, 3);
+}
+
+LogicalResult SVSourceTypeDefaultOp::verify() {
+  if (failed(sourceparameter::verifyUniqueOriginalDefault<
+             SVSourceValueDefaultOp, SVSourceTypeDefaultOp,
+             SVSourceTypeReferenceDefaultOp, SVSourceUnsupportedDefaultOp>(
+          *this)))
+    return failure();
+  if (failed(sourceparameter::verifyDefaultOwner<
+             SVSourceTypeParameterSymbolOp, SVTypeParameterSymbolOp,
+             SVSourceClassParameterActualOp, SVSourceParameterActualOp>(*this)))
+    return failure();
+  bool unresolved = false;
+  getSemanticType().walk([&](Type type) {
+    unresolved |=
+        isa<ErrorType, UntypedType, UnboundedType, TypeReferenceType>(type);
+  });
+  if (unresolved)
+    return emitOpError(
+        "concrete source default cannot contain an unresolved type");
+  return success();
+}
+
+LogicalResult SVSourceTypeReferenceDefaultOp::verify() {
+  if (failed(sourceparameter::verifyUniqueOriginalDefault<
+             SVSourceValueDefaultOp, SVSourceTypeDefaultOp,
+             SVSourceTypeReferenceDefaultOp, SVSourceUnsupportedDefaultOp>(
+          *this)))
+    return failure();
+  if ((*this)->hasAttr("semantic_type"))
+    return emitOpError("unbound source default cannot carry an effective type");
+  return sourceparameter::verifyDefaultOwner<
+      SVSourceTypeParameterSymbolOp, SVTypeParameterSymbolOp,
+      SVSourceClassParameterActualOp, SVSourceParameterActualOp>(*this);
+}
+
+LogicalResult SVSourceTypeReferenceDefaultOp::verifySymbolUses(
+    SymbolTableCollection &symbols) {
+  if ((*this)->getParentOfType<SVSourceParameterActualOp>())
+    return sourceparameter::verifyInstanceActualLeaf<SVSourceParameterActualOp,
+                                                     SVTypeParameterSymbolOp>(
+        *this, symbols);
+
+  return sourceparameter::verifyTypeReference<SVSourceClassParameterActualOp,
+                                              SVSourceTypeParameterSymbolOp,
+                                              SVTypeParameterSymbolOp>(*this,
+                                                                       symbols);
+}
+
+LogicalResult SVSourceUnsupportedDefaultOp::verify() {
+  if (failed(sourceparameter::verifyUniqueOriginalDefault<
+             SVSourceValueDefaultOp, SVSourceTypeDefaultOp,
+             SVSourceTypeReferenceDefaultOp, SVSourceUnsupportedDefaultOp>(
+          *this)))
+    return failure();
+  if ((*this)->hasAttr("semantic_type"))
+    return emitOpError("unbound source default cannot carry an effective type");
+  if (failed(sourceparameter::verifyDefaultOwner<
+             SVSourceTypeParameterSymbolOp, SVTypeParameterSymbolOp,
+             SVSourceValueParameterSymbolOp, SVParameterSymbolOp>(*this)))
+    return failure();
+  if (getSyntax().empty() || getReason().empty())
+    return emitOpError(
+        "unsupported default requires source syntax and a reason");
   return success();
 }
 

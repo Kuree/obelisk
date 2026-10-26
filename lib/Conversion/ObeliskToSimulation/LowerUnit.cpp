@@ -233,6 +233,7 @@ UnitLowering::UnitLowering(sim::SimFuncOp function,
     if (auto targetID = sim::get<sim::metadata::ControlTargetId>(function))
       taskControlActivation =
           sim::SimControlEnterOp::create(builder, function.getLoc(), targetID);
+  enterVPIRootFrame();
   // The return variable is an activation-local binding for an automatic
   // function and a captured descriptor for a static one, so the unit names it
   // rather than leaving the binding walk below to discover it.
@@ -249,6 +250,10 @@ UnitLowering::UnitLowering(sim::SimFuncOp function,
     }
   if (!bindings)
     return;
+  for (Attribute attr : bindings)
+    if (auto local = dyn_cast<sim::LocalBindingAttr>(attr))
+      if (local.getVpiLocal())
+        vpiLocalDeclarations[local.getPath().getValue()] = local.getVpiLocal();
   llvm::StringSet<> explicitlyInitializedLocals;
   function.walk([&](semantic::SVVariableDeclStatementOp declaration) {
     if (!getChildren(declaration).empty())
@@ -296,6 +301,7 @@ UnitLowering::UnitLowering(sim::SimFuncOp function,
             sim::RefType::get(function.getContext(), value.getType()), value);
         values[path] = local;
         lvalues[path] = local;
+        bindVPILocal(argument.getVpiLocal(), local, function.getLoc());
         if (argument.getCopyOut())
           copyOutPaths.push_back(path.str());
         if (!argument.getCopyIn())
@@ -375,13 +381,21 @@ UnitLowering::UnitLowering(sim::SimFuncOp function,
     }
     StringRef path = localBinding.getPath().getValue();
     Type type = localBinding.getType();
+    bool declarationAllocated =
+        localBinding.getAutomatic() ||
+        (hasVPIFrameInstrumentation() && localBinding.getVpiLocal() &&
+         !localBinding.getIsReturn());
     // The declaration expression replaces the default value before an
     // explicitly initialized local becomes visible. In particular, 6.17
     // says `event alias = source` aliases `source`; creating another event as
     // an unused placeholder would consume a synchronization object that the
     // declaration never denotes.
+    // Automatic declarations allocate their event at the declaration on each
+    // block entry. This entry-block value carries only the initial type.
     Value initial =
-        isa<sim::EventType>(type) && explicitlyInitializedLocals.contains(path)
+        isa<sim::EventType>(type) &&
+                (explicitlyInitializedLocals.contains(path) ||
+                 (declarationAllocated && !localBinding.getIsReturn()))
             ? sim::SimEventNullOp::create(builder, function.getLoc(), type)
                   .getResult()
             : createDefaultValue(builder, function.getLoc(), type);
@@ -395,7 +409,10 @@ UnitLowering::UnitLowering(sim::SimFuncOp function,
     bool isReturn = localBinding.getIsReturn();
     if (isReturn)
       returnPath = path.str();
-    if (localBinding.getAutomatic()) {
+    // With reflection enabled, a source automatic must be allocated after
+    // its exact lexical scope has entered, even when ordinary function
+    // lowering would otherwise keep it as an entry-block promotable cell.
+    if (declarationAllocated) {
       automaticLocals.insert(path);
       // Pattern variables have statement-execution lifetime rather than
       // function-activation lifetime. Their references are allocated by
@@ -411,6 +428,7 @@ UnitLowering::UnitLowering(sim::SimFuncOp function,
             sim::RefType::get(function.getContext(), type), initial);
         values[path] = local;
         lvalues[path] = local;
+        bindVPILocal(localBinding.getVpiLocal(), local, function.getLoc());
       }
       continue;
     }
@@ -419,7 +437,113 @@ UnitLowering::UnitLowering(sim::SimFuncOp function,
         sim::RefType::get(function.getContext(), type), initial);
     values[path] = local;
     lvalues[path] = local;
+    bindVPILocal(localBinding.getVpiLocal(), local, function.getLoc());
   }
+}
+
+void UnitLowering::bindVPILocal(FlatSymbolRefAttr declaration, Value reference,
+                                Location location) {
+  if (!declaration || !hasVPIFrameInstrumentation())
+    return;
+  sim::SimVPIFrameBindOp::create(builder, location,
+                                 function.getBody().front().getArgument(0),
+                                 reference, declaration);
+  registerVPIObservedRef(reference);
+}
+
+bool UnitLowering::hasVPIFrameInstrumentation() const {
+  return sim::has<sim::metadata::VpiFrameInstrumentation>(function);
+}
+
+void UnitLowering::registerVPIObservedRef(Value reference) {
+  assert(hasVPIFrameInstrumentation() && !vpiFrameScopes.empty() &&
+         "an observed local requires its exact live lexical frame");
+  auto &references = vpiFrameScopes.back().observedRefs;
+  if (!llvm::is_contained(references, reference))
+    references.push_back(reference);
+}
+
+void UnitLowering::enterVPIRootFrame() {
+  if (!hasVPIFrameInstrumentation())
+    return;
+  auto id = function.getCodeUnitId();
+  if (!id || function.getNumArguments() == 0 ||
+      !isa<sim::ContextType>(function.getArgument(0).getType())) {
+    function.emitError(
+        "VPI frame instrumentation requires an exact code unit and context");
+    invalidBindings = true;
+    return;
+  }
+  Value context = function.getBody().front().getArgument(0);
+  Value activation;
+  if (function.getEntryKind() == sim::EntryKind::Function ||
+      function.getEntryKind() == sim::EntryKind::Task)
+    activation = sim::SimVPIFrameEnterPreparedOp::create(
+        builder, function.getLoc(), context, builder.getI64IntegerAttr(*id),
+        builder.getBoolAttr(function.getEntryKind() == sim::EntryKind::Task));
+  else
+    activation = sim::SimVPIFrameEnterOp::create(
+        builder, function.getLoc(), context, builder.getI64IntegerAttr(*id),
+        IntegerAttr{});
+  vpiFrameScopes.push_back({activation, {}});
+}
+
+bool UnitLowering::enterVPIStatementFrame(Operation *statement) {
+  if (!hasVPIFrameInstrumentation())
+    return false;
+  auto id = sim::get<sim::metadata::VpiStatementId>(statement);
+  if (!id)
+    return false;
+  // A declaration loop's implicit source wrapper owns the activation so its
+  // variables are bound before initialization. The loop shares its identity.
+  if (isa<semantic::SVForLoopStatementOp, semantic::SVForeachLoopStatementOp>(
+          statement)) {
+    Operation *parent = statement->getParentOp();
+    if (isa_and_nonnull<semantic::SVStatementListOp>(parent))
+      parent = parent->getParentOp();
+    if (auto block = dyn_cast_or_null<semantic::SVBlockStatementOp>(parent);
+        block && block.getIsImplicitLoopScope() &&
+        sim::get<sim::metadata::VpiStatementId>(block) == id)
+      return false;
+  }
+  auto metadata = loweringInputs.getVPIStatement(
+      function->getParentOfType<sim::SimDesignOp>(),
+      id.getValue().getZExtValue());
+  if (!metadata || !metadata->isScope)
+    return false;
+  Value activation = sim::SimVPIFrameEnterOp::create(
+      builder, getSemanticLocation(statement),
+      function.getBody().front().getArgument(0),
+      builder.getI64IntegerAttr(*function.getCodeUnitId()), id);
+  vpiFrameScopes.push_back({activation, {}});
+  return true;
+}
+
+void UnitLowering::emitVPIFrameLeaves(size_t first, Location location) {
+  for (const VPIFrameScope &scope :
+       llvm::reverse(ArrayRef(vpiFrameScopes).drop_front(first)))
+    sim::SimVPIFrameLeaveOp::create(builder, location,
+                                    function.getBody().front().getArgument(0),
+                                    scope.activation, scope.observedRefs);
+}
+
+SmallVector<Value> UnitLowering::getVPIObservedRefs(size_t first) const {
+  SmallVector<Value> result;
+  for (const auto &scope : ArrayRef(vpiFrameScopes).drop_front(first))
+    for (Value reference : scope.observedRefs)
+      if (!llvm::is_contained(result, reference))
+        result.push_back(reference);
+  return result;
+}
+
+void UnitLowering::emitVPICheckpoint(Operation *statement) {
+  if (!hasVPIFrameInstrumentation())
+    return;
+  auto id = sim::get<sim::metadata::VpiStatementId>(statement);
+  sim::SimVPIFrameCheckpointOp::create(
+      builder, getSemanticLocation(statement),
+      function.getBody().front().getArgument(0),
+      id ? id : builder.getI64IntegerAttr(0));
 }
 
 void UnitLowering::ensureVirtualInterfaceInventory() {
@@ -1070,6 +1194,14 @@ FailureOr<Value> UnitLowering::rematerializeManagedInput(Value value) {
       return failure();
     return sim::SimRefLoadOp::create(builder, load.getLoc(),
                                      load.getResult().getType(), *input)
+        .getResult();
+  }
+  if (auto upcast = value.getDefiningOp<sim::SimClassBuiltinUpcastOp>()) {
+    FailureOr<Value> object = rematerializeManagedInput(upcast.getObject());
+    if (failed(object))
+      return failure();
+    return sim::SimClassBuiltinUpcastOp::create(
+               builder, upcast.getLoc(), upcast.getResult().getType(), *object)
         .getResult();
   }
   if (auto cast = value.getDefiningOp<sim::SimClassCastOp>()) {
@@ -1907,6 +2039,11 @@ FailureOr<Value> UnitLowering::convert(Value value, Type targetType,
         .getResult();
   }
   if (isa<sim::ClassHandleType>(value.getType()) &&
+      isa<sim::SemaphoreType, sim::MailboxType>(targetType))
+    return sim::SimClassBuiltinUpcastOp::create(builder, location, targetType,
+                                                value)
+        .getResult();
+  if (isa<sim::ClassHandleType>(value.getType()) &&
       isa<sim::ClassHandleType>(targetType))
     return sim::SimClassCastOp::create(builder, location, targetType, value)
         .getResult();
@@ -2535,6 +2672,13 @@ UnitLowering::emitFunctionReturn(Location location,
       if (failed(storeReference(destination, value, location)))
         return failure();
     }
+    if (hasVPIFrameInstrumentation()) {
+      if (emitBlockEventEnd)
+        emitVPIFrameLeaves(0, location);
+      else
+        sim::SimVPIFrameObservationEndOp::create(builder, location,
+                                                 getVPIObservedRefs());
+    }
     if (taskControlActivation)
       sim::SimControlLeaveOp::create(builder, location, taskControlActivation);
     sim::SimReturnOp::create(builder, location, ValueRange{});
@@ -2548,6 +2692,13 @@ UnitLowering::emitFunctionReturn(Location location,
     if (emitBlockEventEnd && coverageBlockEventStarted && blockEventTarget)
       emitCovergroupBlockEvent(blockEventTarget.getValue().getZExtValue(),
                                /*eventKind=*/1, location);
+    if (hasVPIFrameInstrumentation()) {
+      if (emitBlockEventEnd)
+        emitVPIFrameLeaves(0, location);
+      else
+        sim::SimVPIFrameObservationEndOp::create(builder, location,
+                                                 getVPIObservedRefs());
+    }
     sim::SimReturnOp::create(builder, location, ValueRange{});
     return success();
   }
@@ -2620,6 +2771,13 @@ UnitLowering::emitFunctionReturn(Location location,
   if (emitBlockEventEnd && coverageBlockEventStarted && blockEventTarget)
     emitCovergroupBlockEvent(blockEventTarget.getValue().getZExtValue(),
                              /*eventKind=*/1, location);
+  if (hasVPIFrameInstrumentation()) {
+    if (emitBlockEventEnd)
+      emitVPIFrameLeaves(0, location);
+    else
+      sim::SimVPIFrameObservationEndOp::create(builder, location,
+                                               getVPIObservedRefs());
+  }
   sim::SimReturnOp::create(builder, location, results);
   return success();
 }
@@ -4512,6 +4670,16 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
   SmallVector<Operation *> children = getChildren(op);
   Location location = getSemanticLocation(op);
   builder.setInsertionPointToEnd(current);
+  emitVPICheckpoint(op);
+  bool enteredStatementScope =
+      !isa<semantic::SVBlockStatementOp>(op) && enterVPIStatementFrame(op);
+  llvm::scope_exit leaveStatementScope([&] {
+    if (!enteredStatementScope)
+      return;
+    if (current->empty() || !current->back().hasTrait<OpTrait::IsTerminator>())
+      emitVPIFrameLeaves(vpiFrameScopes.size() - 1, getSemanticLocation(op));
+    vpiFrameScopes.pop_back();
+  });
 
   if (auto point = cov::get<cov::LinePointIndex>(op);
       point && !isa<semantic::SVConcurrentAssertionStatementOp>(op)) {
@@ -5285,6 +5453,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
       setCurrent(addBlock());
       return success();
     }
+    emitVPIFrameLeaves(loopTargets.back().vpiFrameDepth, location);
     emitControlLeaves(loopTargets.back().controlDepth, location);
     cf::BranchOp::create(builder, location, loopTargets.back().breakTarget);
     setCurrent(addBlock());
@@ -5295,6 +5464,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
       emitError(location) << "continue is not nested in a loop";
       return failure();
     }
+    emitVPIFrameLeaves(loopTargets.back().vpiFrameDepth, location);
     emitControlLeaves(loopTargets.back().controlDepth, location);
     cf::BranchOp::create(builder, location, loopTargets.back().continueTarget,
                          loopTargets.back().continueOperands);
@@ -6881,6 +7051,8 @@ LogicalResult UnitLowering::lowerRoots(ArrayRef<Operation *> roots) {
     if (entryKind == sim::EntryKind::Function ||
         entryKind == sim::EntryKind::Task)
       return emitFunctionReturn(function.getLoc(), std::nullopt);
+    if (hasVPIFrameInstrumentation())
+      emitVPIFrameLeaves(0, function.getLoc());
     sim::SimReturnOp::create(builder, function.getLoc(), ValueRange{});
     return success();
   }

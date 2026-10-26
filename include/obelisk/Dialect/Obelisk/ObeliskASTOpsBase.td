@@ -151,6 +151,10 @@ class ObeliskParameterSymbolASTNodeOp<string mnemonic>
         OptionalAttr<UnitAttr>:$is_local_param,
         OptionalAttr<UnitAttr>:$has_explicit_range)>;
 
+class ObeliskTypeParameterSymbolASTNodeOp<string mnemonic>
+    : ObeliskSymbolASTNodeOp<mnemonic, [],
+        (ins OptionalAttr<UnitAttr>:$is_local_param)>;
+
 class ObeliskDirectedSymbolASTNodeOp<string mnemonic>
     : ObeliskSymbolASTNodeOp<mnemonic, [],
         (ins ObeliskSVArgumentDirection:$direction)>;
@@ -366,12 +370,15 @@ class ObeliskConstraintBlockASTNodeOp<string mnemonic>
       ), [ObeliskSemanticDeclarativeNode]>;
 
 class ObeliskGenericClassDefASTNodeOp<string mnemonic>
-    : ObeliskSymbolTableASTNodeOp<mnemonic, (ins
-        BoolAttr:$is_interface,
-        I64Attr:$specialization_count,
-        OptionalAttr<SymbolRefAttr>:$first_forward_declaration_symbol,
-        OptionalAttr<StrAttr>:$first_forward_declaration_path
-      ), [ObeliskSemanticDeclarativeNode]>;
+    : ObeliskSymbolTableASTNodeOp<
+          mnemonic,
+          (ins BoolAttr:$is_interface,
+              OptionalAttr<SymbolRefAttr>:$lexical_definition,
+              I64Attr:$specialization_count,
+              OptionalAttr<SymbolRefAttr>:$first_forward_declaration_symbol,
+              OptionalAttr<StrAttr>:$first_forward_declaration_path),
+          [ObeliskSemanticDeclarativeNode,
+           DeclareOpInterfaceMethods<SymbolUserOpInterface>]>;
 
 class ObeliskInstanceASTNodeOp<string mnemonic>
     : ObeliskSymbolTableASTNodeOp<mnemonic, (ins
@@ -474,26 +481,26 @@ class ObeliskNetTypeASTNodeOp<string mnemonic>
       )>;
 
 class ObeliskClassTypeASTNodeOp<string mnemonic>
-    : ObeliskScopeTypeASTNodeOp<mnemonic, (ins
-        BoolAttr:$is_abstract,
-        BoolAttr:$is_interface,
-        BoolAttr:$is_final,
-        BoolAttr:$is_uninstantiated,
-        OptionalAttr<TypeAttr>:$base_class,
-        TypeArrayAttr:$implemented_interfaces,
-        TypeArrayAttr:$declared_interfaces,
-        OptionalAttr<SymbolRefAttr>:$generic_class_symbol,
-        OptionalAttr<StrAttr>:$generic_class_path,
-        SymbolRefArrayAttr:$generic_parameter_symbols,
-        StrArrayAttr:$generic_parameter_paths,
-        OptionalAttr<SymbolRefAttr>:$this_variable_symbol,
-        OptionalAttr<StrAttr>:$this_variable_path,
-        OptionalAttr<SymbolRefAttr>:$constructor_symbol,
-        OptionalAttr<StrAttr>:$constructor_path,
-        BoolAttr:$has_base_constructor_call,
-        I64Attr:$bitstream_width,
-        BoolAttr:$has_cycles
-      ), [ObeliskSemanticDeclarativeNode]>;
+    : ObeliskScopeTypeASTNodeOp<
+          mnemonic,
+          (ins BoolAttr:$is_abstract,
+              OptionalAttr<SymbolRefAttr>:$lexical_definition,
+              BoolAttr:$is_interface, BoolAttr:$is_final,
+              BoolAttr:$is_uninstantiated, OptionalAttr<TypeAttr>:$base_class,
+              TypeArrayAttr:$implemented_interfaces,
+              TypeArrayAttr:$declared_interfaces,
+              OptionalAttr<SymbolRefAttr>:$generic_class_symbol,
+              OptionalAttr<StrAttr>:$generic_class_path,
+              SymbolRefArrayAttr:$generic_parameter_symbols,
+              StrArrayAttr:$generic_parameter_paths,
+              OptionalAttr<SymbolRefAttr>:$this_variable_symbol,
+              OptionalAttr<StrAttr>:$this_variable_path,
+              OptionalAttr<SymbolRefAttr>:$constructor_symbol,
+              OptionalAttr<StrAttr>:$constructor_path,
+              BoolAttr:$has_base_constructor_call, I64Attr:$bitstream_width,
+              BoolAttr:$has_cycles),
+          [ObeliskSemanticDeclarativeNode,
+           DeclareOpInterfaceMethods<SymbolUserOpInterface>]>;
 
 class ObeliskCovergroupTypeASTNodeOp<string mnemonic>
     : ObeliskScopeTypeASTNodeOp<mnemonic,
@@ -625,6 +632,8 @@ class ObeliskCallExpressionASTNodeOp<string mnemonic>
     : ObeliskExpressionASTNodeOp<mnemonic, (ins
         StrAttr:$callee_name,
         BoolAttr:$is_system_call,
+        // Exact bound builtin-method identity, independent of receiver layout.
+        UnitAttr:$is_builtin_method,
         ObeliskSVSubroutineKind:$subroutine_kind,
         I64Attr:$argument_count,
         BoolAttr:$has_this_class,
@@ -654,7 +663,8 @@ class ObeliskCallExpressionASTNodeOp<string mnemonic>
         // for $cast: the function form reports a failed cast through its 0
         // result instead of raising the task form's run-time error.
         UnitAttr:$is_void_casted
-      )>;
+      ), [PredOpTrait<"builtin methods are system calls",
+            CPred<"!getIsBuiltinMethod() || getIsSystemCall()">>]>;
 
 class ObeliskNewClassExpressionASTNodeOp<string mnemonic>
     : ObeliskExpressionASTNodeOp<mnemonic, (ins
@@ -700,7 +710,8 @@ class ObeliskForLoopStatementASTNodeOp<string mnemonic>
     : ObeliskASTNodeOp<mnemonic, [], (ins
         I64Attr:$initializer_count,
         BoolAttr:$has_condition,
-        I64Attr:$step_count
+        I64Attr:$step_count,
+        DefaultValuedAttr<BoolAttr, "false">:$has_local_variables
       )> {
   let hasVerifier = 1;
 }
@@ -717,8 +728,11 @@ class ObeliskBlockStatementASTNodeOp<string mnemonic>
         DefaultValuedAttr<ObeliskSVStatementBlockKind,
           "::obelisk::ir::SVStatementBlockKind::Sequential">:$block_kind,
         OptionalAttr<SymbolRefAttr>:$block_symbol,
-        OptionalAttr<StrAttr>:$block_path
-      )>;
+        OptionalAttr<StrAttr>:$block_path,
+        OptionalAttr<UnitAttr>:$is_implicit_loop_scope
+      )> {
+  let hasVerifier = 1;
+}
 
 class ObeliskDisableStatementASTNodeOp<string mnemonic>
     : ObeliskASTNodeOp<mnemonic, [], (ins
@@ -1040,5 +1054,260 @@ def SVFrozenRandSeqProductionOp
         ArrayAttr:$formal_arguments,
         ArrayAttr:$rule_variables
       )>;
+
+// Source declarations exist independently of any selected generic class
+// specialization. Their default subtrees preserve original syntax semantics;
+// they never carry an elaborated replacement for an unresolved parameter.
+// A generic class's own lexical method identity does not depend on any
+// specialization or require binding its signature or body.
+// A nested declaration in an unspecialized class is a scope identity, not
+// a class type. Its own source inventory never binds dependent signatures.
+def SVSourceClassDefinitionSymbolOp
+    : ObeliskSymbolTableASTNodeOp<
+          "sv.source.class_definition",
+          (ins BoolAttr:$is_abstract, BoolAttr:$is_interface,
+              BoolAttr:$is_final, BoolAttr:$is_parameterized)> {
+  let summary = "lexical nested class declaration without a specialization";
+  let hasVerifier = 1;
+}
+
+def SVSourceClassPropertySymbolOp
+    : ObeliskSymbolASTNodeOp<"sv.source.class_property", [], (ins
+        ObeliskSVVariableLifetime:$lifetime,
+        ObeliskSVVisibility:$member_visibility,
+        ObeliskSVRandMode:$rand_mode,
+        OptionalAttr<UnitAttr>:$is_const)> {
+  let summary = "lexical generic class property without executable storage";
+  let description = [{
+    Owns exactly one source declared-type node. The declaration preserves its
+    lexical identity and modifiers without binding a specialization or initializer.
+  }];
+  let hasVerifier = 1;
+}
+
+def SVSourceClassTypeAliasSymbolOp
+    : ObeliskSymbolASTNodeOp<"sv.source.class_type_alias", [], (ins
+        ObeliskSVVisibility:$member_visibility)> {
+  let summary = "lexical generic class typedef without an effective target";
+  let hasVerifier = 1;
+}
+
+def SVSourceDeclaredTypeOp
+    : ObeliskASTNodeOp<"sv.source.declared_type", [],
+        (ins TypeAttr:$semantic_type)> {
+  let summary = "exact parameter-independent source declared type";
+  let hasVerifier = 1;
+}
+
+def SVSourceDeclaredTypeReferenceOp
+    : ObeliskASTNodeOp<"sv.source.declared_type_reference",
+        [DeclareOpInterfaceMethods<SymbolUserOpInterface>],
+        (ins FlatSymbolRefAttr:$declaration)> {
+  let summary = "source declared type naming an exact preceding lexical type";
+  let hasVerifier = 1;
+}
+
+def SVSourceUnavailableTypeOp
+    : ObeliskASTNodeOp<"sv.source.unavailable_type", [],
+        (ins StrAttr:$syntax)> {
+  let summary = "source declared type awaiting structural import";
+  let hasVerifier = 1;
+}
+
+def SVSourceClassExtendsOp
+    : ObeliskASTNodeOp<"sv.source.class_extends",
+                       [DeclareOpInterfaceMethods<SymbolUserOpInterface>],
+                       (ins OptionalAttr<SymbolRefAttr>:$base_definition,
+                           OptionalAttr<StrAttr>:$unavailable_base,
+                           OptionalAttr<StrAttr>:$parameter_arguments,
+                           OptionalAttr<StrAttr>:$constructor_arguments)> {
+  let summary = "lexical class inheritance without choosing a specialization";
+  let description = [{
+    The base declaration is an exact source class symbol. An unresolved
+    dependent base instead retains its source spelling in unavailable_base;
+    exactly one representation is required. Explicit parameter and constructor
+    argument syntax is retained separately until its source expression graph
+    can be represented. An absent list is distinct from an unavailable one.
+    The node has no effective type or elaborated body.
+  }];
+  let hasVerifier = 1;
+}
+
+def SVSourceParameterActualOp
+    : ObeliskASTNodeOp<"sv.source.parameter_actual",
+                     [DeclareOpInterfaceMethods<SymbolUserOpInterface>],
+                     (ins SymbolRefAttr:$parameter, I64Attr:$ordinal,
+                         OptionalAttr<UnitAttr>:$is_named,
+                         OptionalAttr<UnitAttr>:$use_default,
+                         OptionalAttr<StrAttr>:$unavailable_rhs)> {
+  let summary = "an exact explicit scalar-instance parameter connection";
+  let description = [{
+    The source node belongs to the instantiating instance body. Its parameter
+    names an exact nonlocal declaration in a directly instantiated child body.
+    A supported original value/type is its single child. Unsupported syntax
+    and named empty connections are explicit, without substituting an effective
+    parameter value/type. Ordinals distinguish source assignment occurrences.
+  }];
+  let hasVerifier = 1;
+}
+
+def SVSourceClassParameterActualOp
+    : ObeliskASTNodeOp<"sv.source.class_parameter_actual",
+                       [DeclareOpInterfaceMethods<SymbolUserOpInterface>],
+                       (ins SymbolRefAttr:$parameter,
+                           OptionalAttr<UnitAttr>:$is_named,
+                           OptionalAttr<UnitAttr>:$use_default,
+                           OptionalAttr<StrAttr>:$unavailable_rhs)> {
+  let summary = "an exact lexical class parameter connection";
+  let description = [{
+    The parameter is the exact nonlocal declaration of the referenced base.
+    A supported explicit value or type is its single child. A named empty
+    connection carries use_default and no child, preserving the original
+    declaration default. An unsupported expression retains unavailable_rhs
+    instead, without an effective value or type.
+  }];
+  let hasVerifier = 1;
+}
+
+def SVSourceClassConstraintSymbolOp
+    : ObeliskSymbolASTNodeOp<"sv.source.class_constraint", [], (ins
+        OptionalAttr<UnitAttr>:$is_static,
+        OptionalAttr<UnitAttr>:$is_pure,
+        OptionalAttr<UnitAttr>:$is_prototype,
+        BoolAttr:$has_external_definition)> {
+  let summary = "lexical normal constraint without a bound constraint body";
+  let description = [{
+    Owned by a lexical class definition, with an empty body and no
+    semantic_type. The source position is the declaration or prototype
+    position. has_external_definition records an exact out-of-block definition
+    lookup without binding its constraint expressions.
+  }];
+  let hasVerifier = 1;
+}
+
+def SVSourceClassMethodSymbolOp
+    : ObeliskSymbolASTNodeOp<"sv.source.class_method", [], (ins
+        ObeliskSVSubroutineKind:$subroutine_kind,
+        ObeliskSVVariableLifetime:$default_lifetime,
+        ObeliskSVVisibility:$member_visibility,
+        OptionalAttr<UnitAttr>:$is_static,
+        OptionalAttr<UnitAttr>:$is_declared_virtual,
+        OptionalAttr<UnitAttr>:$is_pure,
+        OptionalAttr<UnitAttr>:$is_constructor,
+        OptionalAttr<UnitAttr>:$is_extern,
+        OptionalAttr<BoolAttr>:$source_virtuality)> {
+  let summary = "lexical generic-class method without an effective signature";
+  let description = [{
+    Owned by a lexical class definition, with an empty body and no
+    semantic_type. The symbol preserves declaration identity and source-only
+    modifiers; it does not designate a specialized executable method.
+  }];
+  let hasVerifier = 1;
+}
+
+def SVSourceTypeParameterSymbolOp
+    : ObeliskSymbolASTNodeOp<"sv.source.type_parameter", [],
+        (ins OptionalAttr<UnitAttr>:$is_local_param)> {
+  let summary = "unresolved lexical type parameter of a generic class";
+  let description = [{
+    The direct parent is a lexical class definition. semantic_type is absent;
+    the symbol itself is the unresolved typespec (IEEE 1800-2023 37.25 detail
+    11). Its body contains zero or one original type default. An empty body
+    means there was no default, while an unsupported-default child preserves
+    the distinct case where a source default has no structural import yet.
+  }];
+  let hasVerifier = 1;
+}
+
+def SVSourceValueParameterSymbolOp
+    : ObeliskSymbolASTNodeOp<"sv.source.value_parameter", [],
+        (ins OptionalAttr<UnitAttr>:$is_local_param)> {
+  let summary = "lexical value parameter without an effective specialization";
+  let description = [{
+    Directly owned by a generic class definition. Its body contains at most
+    one original default node; no semantic_type or elaborated value is bound.
+  }];
+  let hasVerifier = 1;
+}
+
+def SVSourceValueDefaultOp
+    : ObeliskASTNodeOp<"sv.source.value_default"> {
+  let summary = "original value-parameter default expression";
+  let description = [{
+    Owns exactly one typed source expression, independently of the effective
+    parameter initializer and its overrides. Integer literal nodes retain their
+    self-determined semantic types; references and operators remain unbound.
+  }];
+  let hasVerifier = 1;
+}
+
+def SVSourceParameterReferenceOp
+    : ObeliskASTNodeOp<"sv.source.parameter_reference",
+        [DeclareOpInterfaceMethods<SymbolUserOpInterface>],
+        (ins FlatSymbolRefAttr:$parameter)> {
+  let summary = "exact preceding value parameter in an original default";
+  let hasVerifier = 1;
+}
+
+def SVSourceUnaryExpressionOp
+    : ObeliskASTNodeOp<"sv.source.unary_expression", [],
+        (ins ObeliskSVUnaryOperator:$operator_kind)> {
+  let summary = "unbound pure unary operation in an original default";
+  let hasVerifier = 1;
+}
+
+def SVSourceBinaryExpressionOp
+    : ObeliskASTNodeOp<"sv.source.binary_expression", [],
+        (ins ObeliskSVBinaryOperator:$operator_kind)> {
+  let summary = "unbound binary operation in an original default";
+  let hasVerifier = 1;
+}
+
+def SVSourceConditionalExpressionOp
+    : ObeliskASTNodeOp<"sv.source.conditional_expression"> {
+  let summary = "unbound conditional operation in an original default";
+  let description = [{
+    Owns the condition, true expression, and false expression in source order.
+    None of the branches is selected or evaluated during source import.
+  }];
+  let hasVerifier = 1;
+}
+
+def SVSourceTypeDefaultOp
+    : ObeliskASTNodeOp<"sv.source.type_default", [],
+        (ins TypeAttr:$semantic_type)> {
+  let summary = "parameter-independent original type default";
+  let description = [{
+    An exact concrete source type, without evaluating a class specialization.
+    The existing vpi_typedef_layers metadata may retain alias spelling. This
+    node has an empty body and is owned by a source type parameter.
+  }];
+  let hasVerifier = 1;
+}
+
+def SVSourceTypeReferenceDefaultOp
+    : ObeliskASTNodeOp<"sv.source.type_reference_default",
+        [DeclareOpInterfaceMethods<SymbolUserOpInterface>],
+        (ins FlatSymbolRefAttr:$parameter)> {
+  let summary = "original default naming a preceding lexical type parameter";
+  let description = [{
+    The symbol reference names the exact preceding source type parameter in
+    the same generic class. This node does not bind or resolve that parameter.
+    It has an empty body and is owned by another source type parameter.
+  }];
+  let hasVerifier = 1;
+}
+
+def SVSourceUnsupportedDefaultOp
+    : ObeliskASTNodeOp<"sv.source.unsupported_default", [],
+        (ins StrAttr:$syntax, StrAttr:$reason)> {
+  let summary = "present original default awaiting structural import";
+  let description = [{
+    Preserves a present default separately from an absent default without
+    fabricating its value or type. Only unsupported nodes retain source text;
+    supported defaults use typed operations. The body is empty.
+  }];
+  let hasVerifier = 1;
+}
 
 #endif // OBELISK_DIALECT_OBELISK_OBELISKASTOPSBASE_TD

@@ -7,6 +7,7 @@
 
 #include "BytecodeSerialization.h"
 
+#include "obelisk/Analysis/ClassDispatchAnalysis.h"
 #include "obelisk/Analysis/NetConnectivityAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationVPI.h"
@@ -142,6 +143,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     const llvm::DenseMap<uint64_t, uint64_t> &storageOffsets,
     const llvm::DenseMap<uint64_t, uint64_t> &netOffsets,
     const llvm::DenseMap<uint64_t, uint64_t> &driverOffsets) {
+  SymbolTableCollection classMemberSymbols;
   struct Source {
     std::string file;
     uint64_t lineColumn = 0;
@@ -215,8 +217,116 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint16_t selector = 0;
     uint16_t kindAndFlags = 0;
     uint64_t payload = 0;
+    bool optionalImage = false;
     std::string stringPayload;
   };
+  struct ClassMemberBindingRecord {
+    uint32_t member, owner;
+    uint64_t classID, byteOffset;
+    uint32_t storage, flags;
+    uint64_t eventID;
+    std::string name;
+  };
+  SmallVector<ClassMemberBindingRecord> classMemberBindings;
+  struct ModportBindingRecord {
+    uint32_t modport, scope;
+    std::string name;
+  };
+  SmallVector<ModportBindingRecord> modportBindings;
+  struct BoxTypeBindingRecord {
+    uint64_t id;
+    uint32_t semanticType, physicalType;
+  };
+  SmallVector<BoxTypeBindingRecord> boxTypeBindings;
+  struct ValueElementBindingRecord {
+    ValueLayoutOwnerKind ownerKind;
+    uint32_t ownerIndex, semanticType, physicalType;
+  };
+  SmallVector<ValueElementBindingRecord> valueElementBindings;
+  struct EventBindingRecord {
+    uint32_t event;
+    uint64_t id;
+  };
+  SmallVector<EventBindingRecord> eventBindings;
+  struct TerminalDriverBindingRecord {
+    uint32_t terminal, low, high, bit;
+  };
+  SmallVector<TerminalDriverBindingRecord> terminalDriverBindings;
+  struct EventArrayStorageBindingRecord {
+    uint32_t array = 0;
+    uint32_t storage = 0;
+  };
+  SmallVector<EventArrayStorageBindingRecord> eventArrayStorageBindings;
+  struct ThreadOriginBindingRecord {
+    uint64_t codeUnit;
+    uint32_t statement;
+  };
+  SmallVector<ThreadOriginBindingRecord> threadOriginBindings;
+  SmallVector<sim::SimVPILocalDeclOp> localDeclarations;
+  SmallVector<sim::SimVPIForeachDeclOp> foreachDeclarations;
+  DenseMap<std::pair<Operation *, uint32_t>, uint64_t> foreachNullIDs;
+  DenseMap<uint64_t, uint32_t> foreachNullIndices;
+  DenseMap<uint64_t, sim::SimVPIStaticLocalBindingOp> staticLocalBindings;
+  llvm::StringMap<sim::SimVPILocalDeclOp> localsBySymbol;
+  struct FrameLocalBindingRecord {
+    uint64_t id;
+    uint32_t object, owner, scope, ordinal;
+  };
+  SmallVector<FrameLocalBindingRecord> frameLocalBindings;
+  SmallVector<sim::SimVPICallDeclOp> callDeclarations;
+  llvm::StringMap<sim::SimVPICallDeclOp> callRefsBySymbol;
+  struct CallSiteBindingRecord {
+    uint64_t id;
+    uint32_t object, owner, flags;
+  };
+  SmallVector<CallSiteBindingRecord> callSiteBindings;
+  struct CodeUnitScopeBindingRecord {
+    uint64_t codeUnitID;
+    uint32_t source, flags;
+  };
+  SmallVector<CodeUnitScopeBindingRecord> codeUnitScopeBindings;
+  SmallVector<CodeUnitScopeBindingRecord> initializerBindings;
+  SmallVector<sim::SimVPIClassCallDispatchOp> classCallDispatchDeclarations;
+  struct CallDispatchBindingRecord {
+    uint64_t callID, codeUnitID, receiverClassID, slot, signatureID;
+  };
+  struct ClassDispatchMethodBindingRecord {
+    uint64_t classID, slot, signatureID;
+    uint32_t codeUnitIndex, flags;
+  };
+  struct ClassDispatchParentBindingRecord {
+    uint64_t classID, parentClassID;
+    uint32_t kind, flags;
+  };
+  SmallVector<CallDispatchBindingRecord> callDispatchBindings;
+  SmallVector<ClassDispatchMethodBindingRecord> classDispatchMethodBindings;
+  SmallVector<ClassDispatchParentBindingRecord> classDispatchParentBindings;
+  SmallVector<sim::SimVPIInterfaceCallDispatchOp> interfaceCallDeclarations;
+  struct InterfaceCallableRecord {
+    uint32_t nominal;
+    StringRef name;
+    uint16_t kind, flags;
+    uint32_t signature;
+  };
+  struct InterfaceInstanceRecord {
+    uint32_t scope, nominal;
+  };
+  struct InterfaceCallableBindingRecord {
+    uint32_t member, scope, declaration, implementation;
+  };
+  struct InterfaceCallBindingRecord {
+    uint64_t id;
+    uint32_t member, access;
+  };
+  SmallVector<InterfaceCallableRecord> interfaceCallables;
+  SmallVector<InterfaceInstanceRecord> interfaceInstances;
+  SmallVector<InterfaceCallableBindingRecord> interfaceCallableBindings;
+  SmallVector<InterfaceCallBindingRecord> interfaceCallBindings;
+  struct CallableSignatureBindingRecord {
+    uint32_t unit, signature, flags;
+  };
+  SmallVector<CallableSignatureBindingRecord> callableSignatureBindings;
+  DenseSet<uint64_t> interfaceDeclarationIDs;
   struct FrozenValueRecord {
     uint32_t kindAndFlags = 0;
     uint64_t bitWidth = 0;
@@ -260,6 +370,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
   struct DefinitionSpecializationBindingRecord {
     uint32_t member = 0;
     uint32_t semanticType = 0;
+    sim::SimVPIDefinitionMemberSpecializationOp declaration;
+  };
+  struct DefinitionParameterValueRecord {
+    uint32_t binding = 0;
+    uint32_t value = 0;
   };
   struct DefinitionMemberEndpointRecord {
     uint32_t targetIndexAndTable = UINT32_MAX;
@@ -275,6 +390,38 @@ SmallVector<uint8_t> serializeDesignDatabase(
   struct DefinitionMemberInstanceRelationInverseRecord {
     uint32_t target = 0;
   };
+  struct ExpressionRootRecord {
+    uint32_t owner, templateIndex, firstLeaf;
+    uint16_t selector, mode;
+    uint32_t ordinal;
+    Source source;
+  };
+  struct ExpressionTemplateRecord {
+    uint32_t definition, firstNode, nodeCount, firstOperand, operandCount;
+    uint32_t leafCount, firstLeafShape;
+  };
+  struct ExpressionNodeRecord {
+    uint16_t kind, code;
+    uint32_t semantic, firstOperand, operandCount;
+    Source source;
+    uint32_t frozen;
+  };
+  struct ExpressionLeafShapeRecord {
+    uint32_t semantic;
+    uint16_t kind;
+    StringAttr identifier;
+  };
+  SmallVector<ExpressionRootRecord> expressionRoots;
+  SmallVector<ExpressionTemplateRecord> expressionTemplates;
+  SmallVector<ExpressionNodeRecord> expressionNodes;
+  SmallVector<uint32_t> expressionOperands, expressionLeaves;
+  SmallVector<std::pair<uint32_t, uint32_t>> expressionBoundMembers;
+  DenseMap<std::pair<uint32_t, uint32_t>, uint32_t> boundMemberIndices;
+  SmallVector<ExpressionLeafShapeRecord> expressionLeafShapes;
+  SmallVector<sim::SimVPIRelationDeclOp> expressionRootDeclarations;
+  llvm::StringMap<sim::SimVPIExpressionDeclOp> expressionsBySymbol;
+  DenseMap<Operation *, SmallVector<sim::SimVPIRelationDeclOp>>
+      expressionChildren;
   struct ResolvedNetRunRecord {
     uint32_t objectIndex = 0;
     uint32_t netType = 0;
@@ -297,7 +444,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
   SmallVector<sim::SimVPIObjectAnchorOp> anchors;
   SmallVector<sim::SimVPINettypeDeclOp> nettypes;
   SmallVector<sim::SimVPITypespecDeclOp> typespecs;
+  SmallVector<sim::SimVPIUnresolvedTypeAliasDeclOp> unresolvedAliases;
+  SmallVector<Operation *> sourceInheritance;
+  llvm::StringMap<Operation *> sourceInheritanceBySymbol;
+  SmallVector<sim::SimVPIClassMemberDeclOp> classMembers;
+  DenseMap<Operation *, sim::SimClassFieldDeclOp> classMemberFields;
+  DenseSet<uint64_t> classStaticStorage;
+  DenseMap<Operation *, sim::SimVPIObjectAnchorOp> eventArrayStorage;
+  DenseMap<Operation *, sim::VPITypeSemanticsAttr> eventArraySemantics;
   SmallVector<sim::SimVPIEnumConstDeclOp> enumConstants;
+  SmallVector<sim::SimVPIDefinitionBindingOp> primitiveDefinitionBindings;
   SmallVector<sim::SimVPIDefinitionDeclOp> definitionDeclarations;
   SmallVector<sim::SimVPIDefinitionMemberDeclOp> definitionMemberDeclarations;
   SmallVector<sim::SimVPIDefinitionSpecializationDeclOp>
@@ -316,6 +472,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
   DenseMap<uint64_t, sim::SimVPIObjectAnchorOp> anchorsByInventoryId;
   llvm::StringMap<sim::SimVPINettypeDeclOp> nettypesBySymbol;
   llvm::StringMap<sim::SimVPITypespecDeclOp> typespecsBySymbol;
+  llvm::StringMap<sim::SimVPIUnresolvedTypeAliasDeclOp>
+      unresolvedAliasesBySymbol;
+  llvm::StringMap<sim::SimVPIClassMemberDeclOp> classMembersBySymbol;
   DenseMap<uint64_t, sim::SimVPITypespecDeclOp> anonymousTypespecsByIdentity;
   SmallVector<RelationRecord> relations;
   SmallVector<FixedPropertyRecord> fixedProperties;
@@ -330,7 +489,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
   SmallVector<DefinitionSpecializationRecord> definitionSpecializations;
   SmallVector<DefinitionSpecializationBindingRecord>
       definitionSpecializationBindings;
+  SmallVector<DefinitionParameterValueRecord> definitionParameterValues;
   SmallVector<DefinitionMemberEndpointRecord> definitionMemberEndpoints;
+  DenseMap<uint32_t, uint32_t> definitionMemberEndpointOrdinals;
+  SmallVector<uint32_t> definitionEndpointCounts;
   SmallVector<DefinitionMemberInstanceRelationRecord>
       definitionMemberInstanceRelations;
   SmallVector<uint32_t> definitionMemberInstanceRelationTargets;
@@ -356,8 +518,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
       return false;
     // IEEE 1800-2023 37.33: a class variable is a VPI object whether or not
     // it references an object; its storage is the managed reference word.
-    if (isa<IntegerType, sim::LogicType, sim::StringType, sim::ClassHandleType>(
-            type) ||
+    if (isa<IntegerType, sim::LogicType, sim::StringType, sim::ClassHandleType,
+            sim::DynamicArrayType, sim::QueueType, sim::MailboxType,
+            sim::SemaphoreType, sim::AssocArrayType, sim::ProcessType,
+            sim::CovergroupHandleType, sim::VirtualInterfaceType, sim::EventType,
+            sim::ChandleType>(type) ||
         type.isF32() || type.isF64())
       return true;
     if (auto array = dyn_cast<sim::PackedArrayType>(type))
@@ -398,11 +563,19 @@ SmallVector<uint8_t> serializeDesignDatabase(
   llvm::DenseMap<uint64_t, PortConnection> wholePortConnections;
   llvm::DenseSet<uint64_t> wholeStoragePortSources, wholeNetPortSources;
   for (Operation &operation : design.getBody().front()) {
-    if (auto definition = dyn_cast<sim::SimVPIDefinitionDeclOp>(operation)) {
+    if (auto expression = dyn_cast<sim::SimVPIExpressionDeclOp>(operation)) {
+      if (includeStatements)
+        expressionsBySymbol[expression.getSymName()] = expression;
+    } else if (auto definition =
+                   dyn_cast<sim::SimVPIDefinitionDeclOp>(operation)) {
       if (includeStatements) {
         definitionDeclarations.push_back(definition);
         definitionsBySymbol[definition.getSymName()] = definition;
       }
+    } else if (auto binding =
+                   dyn_cast<sim::SimVPIDefinitionBindingOp>(operation)) {
+      if (includeStatements)
+        primitiveDefinitionBindings.push_back(binding);
     } else if (auto member =
                    dyn_cast<sim::SimVPIDefinitionMemberDeclOp>(operation)) {
       if (includeStatements) {
@@ -443,6 +616,21 @@ SmallVector<uint8_t> serializeDesignDatabase(
         nettypes.push_back(nettype);
         nettypesBySymbol[nettype.getSymName()] = nettype;
       }
+    } else if (isa<sim::SimVPILexicalClassTypespecDeclOp,
+                   sim::SimVPIClassExtendsDeclOp,
+                   sim::SimVPIClassParameterAssignDeclOp>(operation)) {
+      if (includeStatements) {
+        sourceInheritance.push_back(&operation);
+        sourceInheritanceBySymbol
+            [cast<StringAttr>(operation.getAttr("sym_name")).getValue()] =
+                &operation;
+      }
+    } else if (auto alias =
+                   dyn_cast<sim::SimVPIUnresolvedTypeAliasDeclOp>(operation)) {
+      if (includeStatements) {
+        unresolvedAliases.push_back(alias);
+        unresolvedAliasesBySymbol[alias.getSymName()] = alias;
+      }
     } else if (auto typespec = dyn_cast<sim::SimVPITypespecDeclOp>(operation)) {
       if (includeStatements) {
         typespecs.push_back(typespec);
@@ -461,6 +649,19 @@ SmallVector<uint8_t> serializeDesignDatabase(
             return {};
           }
         }
+      }
+    } else if (auto member =
+                   dyn_cast<sim::SimVPIClassMemberDeclOp>(operation)) {
+      if (includeStatements) {
+        classMembers.push_back(member);
+        classMembersBySymbol[member.getSymName()] = member;
+        if (member.getStaticStorage())
+          classStaticStorage.insert(*member.getStaticStorage());
+        if (member.getFieldAttr())
+          classMemberFields[member] =
+              classMemberSymbols
+                  .lookupNearestSymbolFrom<sim::SimClassFieldDeclOp>(
+                      member, member.getFieldAttr());
       }
     } else if (auto enumConstant =
                    dyn_cast<sim::SimVPIEnumConstDeclOp>(operation)) {
@@ -554,6 +755,30 @@ SmallVector<uint8_t> serializeDesignDatabase(
     else if (auto statement = dyn_cast<sim::SimStatementDeclOp>(operation)) {
       if (includeStatements)
         statements.push_back({statement, sourceFor(statement)});
+    } else if (auto declaration =
+                   dyn_cast<sim::SimVPIForeachDeclOp>(operation)) {
+      if (includeStatements)
+        foreachDeclarations.push_back(declaration);
+    } else if (auto local = dyn_cast<sim::SimVPILocalDeclOp>(operation)) {
+      if (includeStatements) {
+        localDeclarations.push_back(local);
+        localsBySymbol.try_emplace(local.getSymName(), local);
+      }
+    } else if (auto binding =
+                   dyn_cast<sim::SimVPIStaticLocalBindingOp>(operation)) {
+      if (includeStatements)
+        staticLocalBindings[binding.getStorageId()] = binding;
+    } else if (auto call = dyn_cast<sim::SimVPICallDeclOp>(operation)) {
+      if (includeStatements)
+        callDeclarations.push_back(call);
+    } else if (auto dispatch =
+                   dyn_cast<sim::SimVPIClassCallDispatchOp>(operation)) {
+      if (includeStatements)
+        classCallDispatchDeclarations.push_back(dispatch);
+    } else if (auto dispatch =
+                   dyn_cast<sim::SimVPIInterfaceCallDispatchOp>(operation)) {
+      if (includeStatements)
+        interfaceCallDeclarations.push_back(dispatch);
     } else if (auto site = dyn_cast<sim::SimStatementSiteDeclOp>(operation)) {
       if (includeStatements)
         statementSites.push_back({site});
@@ -604,26 +829,63 @@ SmallVector<uint8_t> serializeDesignDatabase(
           anchor.getMemberIndicesAttr() || anchor.getPrimitiveInputCountAttr();
       bool semanticIdentity = anchor.getVpiKind() ==
                               static_cast<uint32_t>(VPIObjectKind::ClassDefn);
+      bool specializedOwner = anchor.getParentAttr() &&
+          typespecsBySymbol.contains(anchor.getParentAttr().getValue());
+      bool sourceExpression =
+          anchor.getVpiKind() ==
+              static_cast<uint32_t>(VPIObjectKind::Constant) ||
+          anchor.getVpiKind() ==
+              static_cast<uint32_t>(VPIObjectKind::Operation);
+      bool primitiveTerminal =
+          anchor.getVpiKind() == static_cast<uint32_t>(VPIObjectKind::PrimTerm);
       bool compact =
+          !sourceExpression &&
           hasVPIObjectRepresentation(anchor.getVpiKind(),
                                      VPIObjectRepresentation::StaticImage) &&
-          (!findVPIValuePolicy(anchor.getVpiKind()) ||
+          (primitiveTerminal || !findVPIValuePolicy(anchor.getVpiKind()) ||
            anchor.getImmutableValueAttr()) &&
-          !indexed && !hasSemanticShape && !semanticIdentity;
+          !indexed && !hasSemanticShape && !semanticIdentity &&
+          !specializedOwner;
       uint16_t staticFlags =
           anchor.getHasExplicitParameterRangeAttr()
               ? static_cast<uint16_t>(
                     OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE)
               : 0;
+      if (anchor.getUnresolvedTypeParameterAttr())
+        staticFlags |= OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER;
+      if (anchor.getUnavailableDefaultAttr())
+        staticFlags |= OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT;
+      if (anchor.getUnresolvedValueParameterAttr())
+        staticFlags |= OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER;
       if (compact)
         staticObjects.push_back({*id, anchor.getEnclosingScopeId(),
                                  std::move(name), anchor.getVpiKind(),
                                  staticFlags, sourceFor(anchor), anchor});
       else
-        objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
-                           anchor.getVpiKind(), staticFlags, *id,
-                           anchor.getEnclosingScopeId(), std::move(name),
-                           Type{}, 0, sourceFor(anchor), true, anchor});
+        objects.push_back(
+            {OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, anchor.getVpiKind(),
+             staticFlags, *id, anchor.getEnclosingScopeId(), std::move(name),
+             Type{}, 0, sourceFor(anchor),
+             !specializedOwner && !sourceExpression && !primitiveTerminal,
+             anchor});
+    } else if (auto member =
+                   dyn_cast<sim::SimVPIClassMemberDeclOp>(operation)) {
+      if (!includeStatements)
+        continue;
+      auto field = classMemberFields.lookup(member);
+      auto id = staticInventoryID(member, member.getId(), 0);
+      if (!id || (member.getFieldAttr() && !field))
+        return {};
+      bool specialized = typespecsBySymbol.contains(member.getOwner());
+      bool indexName =
+          !field || (field.getIsStatic() ? specialized : !specialized);
+      uint32_t flags = field ? 0 : OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY;
+      objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+                         sim::vpiKindForClassMember(member.getVpiType()), flags,
+                         *id, member.getScopeId(),
+                         member.getHierarchicalName().str(),
+                         field ? field.getType() : Type{}, 0, sourceFor(member),
+                         indexName, member});
     } else if (auto nettype = dyn_cast<sim::SimVPINettypeDeclOp>(operation)) {
       if (!includeStatements)
         continue;
@@ -635,6 +897,58 @@ SmallVector<uint8_t> serializeDesignDatabase(
                          *id, nettype.getScopeId(),
                          nettype.getHierarchicalName().str(), Type{}, 0,
                          sourceFor(nettype), true, nettype});
+    } else if (isa<sim::SimVPILexicalClassTypespecDeclOp,
+                   sim::SimVPIClassExtendsDeclOp,
+                   sim::SimVPIClassParameterAssignDeclOp>(operation)) {
+      if (!includeStatements)
+        continue;
+      auto type = dyn_cast<sim::SimVPILexicalClassTypespecDeclOp>(operation);
+      auto clause = dyn_cast<sim::SimVPIClassExtendsDeclOp>(operation);
+      auto assignment =
+          dyn_cast<sim::SimVPIClassParameterAssignDeclOp>(operation);
+      uint64_t ordinal = cast<IntegerAttr>(operation.getAttr("id")).getInt();
+      auto id = staticInventoryID(&operation, ordinal, type ? 1 : 0);
+      if (!id)
+        return {};
+      uint32_t kind =
+          static_cast<uint32_t>(type     ? VPIObjectKind::ClassTypespec
+                                : clause ? VPIObjectKind::Extends
+                                         : VPIObjectKind::ParamAssign);
+      uint32_t caps =
+          type     ? OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC
+          : clause ? 0
+                   : OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT;
+      if (assignment &&
+          (assignment.getRhsAttr() || assignment.getUnavailableRhsAttr()))
+        caps = OBELISK_RT_DESIGN_CAP_EXPLICIT_CLASS_PARAMETER_ASSIGNMENT;
+      if (assignment && assignment.getUnavailableRhsAttr())
+        caps |= OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETER_RHS;
+      if (type && type.getUnavailableParametersAttr())
+        caps |= OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETERS;
+      if (clause && clause.getUnavailableBaseAttr())
+        caps |= OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_BASE;
+      if (clause && clause.getUnavailableArgumentsAttr())
+        caps |= OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CONSTRUCTOR_ARGUMENTS;
+      objects.push_back(
+          {OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, kind, caps, *id,
+           static_cast<uint64_t>(
+               cast<IntegerAttr>(operation.getAttr("scope_id")).getInt()),
+           type ? type.getDebugName().str() : std::string{}, Type{}, 0,
+           sourceFor(&operation), false, &operation});
+    } else if (auto alias =
+                   dyn_cast<sim::SimVPIUnresolvedTypeAliasDeclOp>(operation)) {
+      if (!includeStatements)
+        continue;
+      auto id = staticInventoryID(alias, alias.getId(), 1);
+      if (!id)
+        return {};
+      objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+                         static_cast<uint16_t>(VPIObjectKind::TypeParameter),
+                         OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS |
+                             OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC,
+                         *id, alias.getScopeId(),
+                         alias.getHierarchicalName().str(), Type{}, 0,
+                         sourceFor(alias), true, alias});
     } else if (auto typespec = dyn_cast<sim::SimVPITypespecDeclOp>(operation)) {
       if (!includeStatements)
         continue;
@@ -655,7 +969,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
           {OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, *vpiKind, caps, *id,
            typespec.getScopeId(), typespec.getHierarchicalName().str(), Type{},
            0, sourceFor(typespec),
-           typespec.getOrigin() == sim::VPITypespecOrigin::Typedef, typespec});
+           typespec.getOrigin() == sim::VPITypespecOrigin::Typedef &&
+               !typespec.getStatementScopeIdAttr(),
+           typespec});
     } else if (auto enumConstant =
                    dyn_cast<sim::SimVPIEnumConstDeclOp>(operation)) {
       if (!includeStatements)
@@ -676,10 +992,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
       objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
                          static_cast<uint16_t>(VPIObjectKind::EnumConst), 0,
                          *id, owner->second.getScopeId(), std::move(name),
-                         Type{}, 0, sourceFor(enumConstant), true,
+                         Type{}, 0, sourceFor(enumConstant),
+                         !owner->second.getStatementScopeIdAttr(),
                          enumConstant});
     } else if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
-      if (!isReflectableType(storage.getType())) {
+      if (!isReflectableType(storage.getType()) &&
+          !classStaticStorage.contains(storage.getId())) {
         if (includeStatements && hasFixedReflectionMetadata(storage)) {
           storage.emitOpError(
               "fixed VPI metadata would be dropped with an unsupported "
@@ -689,7 +1007,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
         continue;
       }
       if (FlatSymbolRefAttr reference =
-              sim::get<sim::metadata::VpiIdentityDelegated>(storage)) {
+              sim::get<sim::metadata::VpiIdentityDelegated>(storage);
+          reference && !classStaticStorage.contains(storage.getId())) {
         auto owner = anchorsBySymbol.find(reference.getValue());
         if (includeStatements &&
             (owner == anchorsBySymbol.end() ||
@@ -713,7 +1032,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
         }
         if (includeStatements && hasFixedReflectionMetadata(storage))
           explicitlyHandledFixedMetadata.insert(storage);
-        continue;
+        if (!includeStatements)
+          continue;
+        eventArrayStorage[storage] = owner->second;
+        eventArraySemantics[owner->second] = storage.getVpiTypeAttr();
       }
       uint32_t caps = profile & kDatabaseProfileWrite ? 3u : 1u;
       if (sim::SimPortDeclOp port = directStoragePorts.lookup(storage.getId()))
@@ -808,6 +1130,92 @@ SmallVector<uint8_t> serializeDesignDatabase(
   }
   if (scopes.empty())
     return {};
+  // A nested call is an expression occurrence, not an invented statement.
+  // Keep it unindexed and distinct even when spelling and location coincide.
+  llvm::sort(callDeclarations, [](auto left, auto right) {
+    return left.getId() < right.getId();
+  });
+  uint64_t nextCallObjectID = 0;
+  for (const Record &object : objects)
+    if (object.kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT)
+      nextCallObjectID = std::max(nextCallObjectID, object.id);
+  for (const StaticObjectRecord &object : staticObjects)
+    nextCallObjectID = std::max(nextCallObjectID, object.id);
+  llvm::sort(localDeclarations, [](auto left, auto right) {
+    return left.getId() < right.getId();
+  });
+  for (sim::SimVPILocalDeclOp local : localDeclarations) {
+    if (nextCallObjectID == UINT64_MAX) {
+      local.emitOpError("local declaration object identity cannot be encoded");
+      return {};
+    }
+    objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+                       sim::vpiKindForClassMember(local.getVpiType()),
+                       OBELISK_RT_DESIGN_CAP_FRAME_LOCAL, ++nextCallObjectID,
+                       local.getScopeId(), local.getHierarchicalName().str(),
+                       local.getValueType(), 0, sourceFor(local), false,
+                       local});
+  }
+  DenseSet<StringRef> classDispatchCalls;
+  for (auto dispatch : classCallDispatchDeclarations)
+    classDispatchCalls.insert(dispatch.getCall());
+  DenseSet<StringRef> interfaceDispatchCalls;
+  for (auto dispatch : interfaceCallDeclarations)
+    interfaceDispatchCalls.insert(dispatch.getCall());
+  for (sim::SimVPICallDeclOp call : callDeclarations) {
+    if (call.getStatementId())
+      continue;
+    if (nextCallObjectID == UINT64_MAX) {
+      call.emitOpError("call occurrence object identity cannot be encoded");
+      return {};
+    }
+    objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+                       static_cast<uint32_t>(call.getVpiKind()), 0,
+                       ++nextCallObjectID, call.getScopeId(),
+                       call.getName().str(), Type{}, 0, sourceFor(call), false,
+                       call});
+  }
+  llvm::sort(foreachDeclarations, [](auto left, auto right) {
+    return left.getStatementId() < right.getStatementId();
+  });
+  for (auto declaration : foreachDeclarations) {
+    auto statement = llvm::find_if(statements, [&](StatementRecord record) {
+      return record.declaration.getId() == declaration.getStatementId();
+    });
+    if (statement == statements.end()) {
+      declaration.emitOpError("foreach statement was not serialized");
+      return {};
+    }
+    for (auto [ordinal, index] :
+         llvm::enumerate(declaration.getLoopVariables())) {
+      if (!isa<UnitAttr>(index))
+        continue;
+      if (nextCallObjectID == UINT64_MAX) {
+        declaration.emitOpError("foreach skip identity cannot be encoded");
+        return {};
+      }
+      uint64_t id = ++nextCallObjectID;
+      foreachNullIDs[{declaration, ordinal}] = id;
+      staticObjects.push_back({id, statement->declaration.getScopeId(), "",
+                               static_cast<uint32_t>(VPIObjectKind::Operation),
+                               0, sourceFor(declaration), declaration});
+    }
+  }
+  // Direct lookup of a static property denotes its class declaration view.
+  // Its backing storage is implementation identity, not a second VPI object.
+  for (Record &object : objects)
+    if (auto storage =
+            dyn_cast_if_present<sim::SimStorageDeclOp>(object.identity);
+        storage && (classStaticStorage.contains(storage.getId()) ||
+                    eventArrayStorage.contains(storage))) {
+      object.indexName = false;
+      object.caps |= OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR;
+    }
+  for (Record &object : objects)
+    if (auto storage =
+            dyn_cast_if_present<sim::SimStorageDeclOp>(object.identity);
+        storage && staticLocalBindings.contains(storage.getId()))
+      object.caps |= OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR;
   // The compact format uses Name != 0 as its global-lookup root. Preserve
   // ambiguous static names in the full object table, where the existing
   // relation-only representation can retain a display name without indexing
@@ -821,7 +1229,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   SmallVector<StaticObjectRecord> uniqueStaticObjects;
   uniqueStaticObjects.reserve(staticObjects.size());
   for (StaticObjectRecord &object : staticObjects) {
-    if (staticNameCounts.lookup(object.name) == 1) {
+    if (object.name.empty() || staticNameCounts.lookup(object.name) == 1) {
       uniqueStaticObjects.push_back(std::move(object));
       continue;
     }
@@ -916,9 +1324,13 @@ SmallVector<uint8_t> serializeDesignDatabase(
   DenseMap<Operation *, uint32_t> definitionIndices, definitionMemberIndices,
       definitionSpecializationIndices;
   DenseMap<uint64_t, uint32_t> canonicalStorageTargetIndices,
-      canonicalNetTargetIndices, physicalNetObjectIndices;
+      canonicalNetTargetIndices, physicalNetObjectIndices,
+      physicalStorageObjectIndices;
   for (auto [index, scope] : llvm::enumerate(scopes))
     scopeIndices[scope.getId()] = static_cast<uint32_t>(index);
+  for (auto [index, object] : llvm::enumerate(objects))
+    if (object.identity)
+      objectIndices[object.identity] = static_cast<uint32_t>(index);
 
   auto automaticEdges = [](uint32_t sourceKind) {
     auto first = std::lower_bound(
@@ -941,6 +1353,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
       auto found = definitionsBySymbol.find(reference.getValue());
       if (found == definitionsBySymbol.end()) {
         scope.emitOpError(
+            "references a VPI definition that was not serialized");
+        return {};
+      }
+      referencedDefinitions.insert(found->second);
+    }
+    for (auto binding : primitiveDefinitionBindings) {
+      auto found = definitionsBySymbol.find(binding.getDefinition());
+      if (found == definitionsBySymbol.end()) {
+        binding.emitOpError(
             "references a VPI definition that was not serialized");
         return {};
       }
@@ -1030,6 +1451,14 @@ SmallVector<uint8_t> serializeDesignDatabase(
       ++owner.memberCount;
     }
 
+    definitionEndpointCounts.resize(definitions.size());
+    for (auto [index, member] : llvm::enumerate(definitionMembers))
+      if (member.declaration.getVpiKind() == uint32_t(VPIObjectKind::IODecl) ||
+          member.declaration.getVpiKind() ==
+              uint32_t(VPIObjectKind::ParamAssign))
+        definitionMemberEndpointOrdinals[index] =
+            definitionEndpointCounts[member.definition]++;
+
     // Build one compact target range for each generated definition-member
     // traversal. The ranges and target lists are shared by every instance.
     for (auto [definitionIndex, definition] : llvm::enumerate(definitions)) {
@@ -1038,7 +1467,17 @@ SmallVector<uint8_t> serializeDesignDatabase(
       auto [edgeFirst, edgeLast] = automaticEdges(
           static_cast<uint32_t>(definition.declaration.getVpiKind()));
       for (auto edge = edgeFirst; edge != edgeLast; ++edge) {
-        if (edge->automaticRelation != VPIAutomaticRelation::DefinitionMember)
+        bool parameters =
+            edge->automaticRelation == VPIAutomaticRelation::DirectChild &&
+            edge->mode == VPITraversalMode::Iterate &&
+            (edge->selector ==
+                 static_cast<uint32_t>(VPIObjectKind::Parameter) ||
+             edge->selector ==
+                 static_cast<uint32_t>(VPIObjectKind::TypeParameter) ||
+             edge->selector ==
+                 static_cast<uint32_t>(VPIObjectKind::ParamAssign));
+        if (edge->automaticRelation != VPIAutomaticRelation::DefinitionMember &&
+            !parameters)
           continue;
         uint32_t firstTarget =
             static_cast<uint32_t>(definitionMemberRelationTargets.size());
@@ -1124,14 +1563,34 @@ SmallVector<uint8_t> serializeDesignDatabase(
       definitionForSource[packedSource] =
           definitionIndices.lookup(found->second);
     }
+    for (auto binding : primitiveDefinitionBindings) {
+      auto source = anchorsBySymbol.find(binding.getSource());
+      auto definition = definitionsBySymbol.find(binding.getDefinition());
+      uint32_t packedSource = 0;
+      if (source == anchorsBySymbol.end() ||
+          definition == definitionsBySymbol.end() ||
+          !objectIndices.count(source->second) ||
+          !definitionIndices.count(definition->second) ||
+          definitionBindings.size() >= kVirtualBindingLimit ||
+          !tryPackTableIndex(TableKind::Object,
+                             objectIndices.lookup(source->second),
+                             packedSource) ||
+          definitionForSource.count(packedSource)) {
+        binding.emitOpError("primitive definition binding cannot be encoded");
+        return {};
+      }
+      uint32_t definitionIndex = definitionIndices.lookup(definition->second);
+      definitionBindings.push_back(
+          {packedSource, definitionIndex, UINT32_MAX, 0});
+      definitionForSource[packedSource] = definitionIndex;
+    }
     llvm::sort(definitionBindings, [](const DefinitionBindingRecord &left,
                                       const DefinitionBindingRecord &right) {
       return left.sourceIndexAndTable < right.sourceIndexAndTable;
     });
     for (DefinitionBindingRecord &binding : definitionBindings) {
-      const DefinitionRecord &definition = definitions[binding.definition];
-      if (definitionMemberEndpoints.size() >
-          UINT32_MAX - definition.memberCount) {
+      uint32_t endpointCount = definitionEndpointCounts[binding.definition];
+      if (definitionMemberEndpoints.size() > UINT32_MAX - endpointCount) {
         design.emitOpError("VPI definition-member endpoint table exceeds "
                            "32-bit indices");
         return {};
@@ -1139,17 +1598,17 @@ SmallVector<uint8_t> serializeDesignDatabase(
       binding.firstMemberEndpoint =
           static_cast<uint32_t>(definitionMemberEndpoints.size());
       definitionMemberEndpoints.resize(definitionMemberEndpoints.size() +
-                                       definition.memberCount);
+                                       endpointCount);
     }
   }
   for (auto [index, object] : llvm::enumerate(objects)) {
-    if (object.identity)
-      objectIndices[object.identity] = static_cast<uint32_t>(index);
     if (object.kind == OBELISK_RT_DESIGN_RECORD_PROCESS ||
         object.kind == OBELISK_RT_DESIGN_RECORD_FUNCTION)
       codeUnitObjectIndices[object.id] = static_cast<uint32_t>(index);
     if (isa_and_present<sim::SimNetDeclOp>(object.identity))
       physicalNetObjectIndices[object.id] = static_cast<uint32_t>(index);
+    if (isa_and_present<sim::SimStorageDeclOp>(object.identity))
+      physicalStorageObjectIndices[object.id] = static_cast<uint32_t>(index);
     if (includeStatements && object.kind == OBELISK_RT_DESIGN_RECORD_STORAGE &&
         wholeStoragePortSources.contains(object.id))
       canonicalStorageTargetIndices.try_emplace(object.id,
@@ -1159,8 +1618,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
       canonicalNetTargetIndices.try_emplace(object.id,
                                             static_cast<uint32_t>(index));
   }
-  for (auto [index, object] : llvm::enumerate(staticObjects))
+  for (auto [index, object] : llvm::enumerate(staticObjects)) {
     staticObjectIndices[object.identity] = static_cast<uint32_t>(index);
+    if (isa_and_present<sim::SimVPIForeachDeclOp>(object.identity))
+      foreachNullIndices[object.id] = static_cast<uint32_t>(index);
+  }
   for (const Record &object : objects) {
     auto identity =
         dyn_cast_if_present<sim::SimVPINetIdentityDeclOp>(object.identity);
@@ -1176,6 +1638,59 @@ SmallVector<uint8_t> serializeDesignDatabase(
         static_cast<uint32_t>(index);
     statementKinds[statement.declaration.getId()] =
         statement.declaration.getVpiKind();
+  }
+
+  if (includeStatements) {
+    for (auto binding :
+         design.getBody().front().getOps<sim::SimVPIThreadOriginBindingOp>()) {
+      auto statement = statementIndices.find(binding.getStatementId());
+      if (!codeUnitObjectIndices.contains(binding.getCodeUnitId()) ||
+          statement == statementIndices.end()) {
+        binding.emitOpError("thread-origin endpoint was not serialized");
+        return {};
+      }
+      threadOriginBindings.push_back(
+          {binding.getCodeUnitId(), statement->second});
+    }
+  }
+
+  for (sim::SimVPICallDeclOp call : callDeclarations) {
+    TableKind table = TableKind::Object;
+    uint32_t index = objectIndices.lookup(call);
+    if (auto statementID = call.getStatementId()) {
+      table = TableKind::Statement;
+      index = statementIndices.lookup(*statementID);
+    }
+    uint32_t packed = 0;
+    if (!tryPackTableIndex(table, index, packed)) {
+      call.emitOpError("call occurrence object reference cannot be packed");
+      return {};
+    }
+    callRefsBySymbol[call.getSymName()] = call;
+    callSiteBindings.push_back(
+        {call.getId(), packed,
+         codeUnitObjectIndices.lookup(call.getCodeUnitId()),
+         static_cast<uint32_t>(call.getIsIndirect()) |
+             (classDispatchCalls.contains(call.getSymName()) ? 2u : 0u) |
+             (interfaceDispatchCalls.contains(call.getSymName()) ? 4u : 0u)});
+  }
+
+  for (sim::SimVPILocalDeclOp local : localDeclarations) {
+    uint32_t owner = codeUnitObjectIndices.lookup(local.getCodeUnitId());
+    uint32_t scope = 0;
+    TableKind table = TableKind::Object;
+    uint32_t index = owner;
+    if (auto statement = local.getStatementScopeId()) {
+      table = TableKind::Statement;
+      index = statementIndices.lookup(*statement);
+    }
+    if (!tryPackTableIndex(table, index, scope)) {
+      local.emitOpError("local procedural scope reference cannot be packed");
+      return {};
+    }
+    frameLocalBindings.push_back({local.getId(), objectIndices.lookup(local),
+                                  owner, scope,
+                                  static_cast<uint32_t>(local.getOrdinal())});
   }
 
   DenseMap<uint64_t, uint32_t> automaticOrdinals;
@@ -1248,10 +1763,19 @@ SmallVector<uint8_t> serializeDesignDatabase(
     if (!tryPackRelationSource(sourceTable, sourceKind, iterate, packedSource))
       return sourceOperation->emitError(
           "preserved VPI relation source kind cannot be packed");
+    // Explicit operands are ordered occurrences. Repeated parameter uses
+    // share their declaration identity, but each position must survive in
+    // the expression (for example, both operands of P + P).
+    const bool sharedParameterOperand =
+        isa<sim::SimVPIRelationDeclOp>(sourceOperation) && iterate &&
+        sourceKind == static_cast<uint32_t>(VPIObjectKind::Operation) &&
+        selector == static_cast<uint32_t>(VPIRelationKind::OperandRel) &&
+        targetKind == static_cast<uint32_t>(VPIObjectKind::Parameter);
     if (!relationIdentities
              .insert(relationIdentity(sourceIndex, selector, packedSource,
                                       packedTarget))
-             .second)
+             .second &&
+        !sharedParameterOperand)
       return success();
     if (relations.size() == UINT32_MAX)
       return sourceOperation->emitError(
@@ -1267,9 +1791,18 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint32_t index;
     uint32_t vpiKind;
   };
-  DenseMap<Operation *, ImageObjectRef> anchorRefs, nettypeRefs, typespecRefs;
+  DenseMap<Operation *, ImageObjectRef> anchorRefs, nettypeRefs, typespecRefs,
+      classMemberRefs, unresolvedAliasRefs, sourceInheritanceRefs;
   DenseSet<uint32_t> lexicallyAnchoredObjectIndices;
+  DenseMap<uint64_t, ImageObjectRef> codeUnitSourceRefs;
   if (includeStatements) {
+    for (auto [index, object] : llvm::enumerate(objects))
+      if (auto storage =
+              dyn_cast_if_present<sim::SimStorageDeclOp>(object.identity);
+          storage && (classStaticStorage.contains(storage.getId()) ||
+                      eventArrayStorage.contains(storage) ||
+                      staticLocalBindings.contains(storage.getId())))
+        lexicallyAnchoredObjectIndices.insert(static_cast<uint32_t>(index));
     for (sim::SimVPIObjectAnchorOp anchor : anchors) {
       sim::VPIObjectBackingAttr backing = anchor.getBackingAttr();
       if (!backing || backing.getKind() == sim::VPIObjectBackingKind::Class) {
@@ -1287,6 +1820,21 @@ SmallVector<uint8_t> serializeDesignDatabase(
         uint32_t index = scopeIndices.lookup(id);
         anchorRefs[anchor] = {TableKind::Scope, index,
                               sim::vpiKindForScope(scopes[index])};
+        continue;
+      }
+      if (backing.getKind() == sim::VPIObjectBackingKind::Storage) {
+        uint64_t id = backing.getId().getValue().getZExtValue();
+        auto found = physicalStorageObjectIndices.find(id);
+        if (found == physicalStorageObjectIndices.end()) {
+          anchor.emitOpError("backing event storage was not serialized");
+          return {};
+        }
+        uint32_t index = found->second;
+        anchorRefs[anchor] = {TableKind::Object, index, objects[index].vpiKind};
+        // The event cell itself remains the public storage object. Only its
+        // lexical relations come from the exact source anchor; no private
+        // backing marker or second runtime identity is introduced.
+        lexicallyAnchoredObjectIndices.insert(index);
         continue;
       }
       if (backing.getKind() == sim::VPIObjectBackingKind::Net) {
@@ -1307,7 +1855,123 @@ SmallVector<uint8_t> serializeDesignDatabase(
       uint32_t index = codeUnitObjectIndices.lookup(id);
       anchorRefs[anchor] = {TableKind::Object, index, objects[index].vpiKind};
       objects[index].caps |= OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR;
+      if (anchor.getParentAttr() &&
+          typespecsBySymbol.contains(anchor.getParentAttr().getValue()))
+        objects[index].indexName = false;
       lexicallyAnchoredObjectIndices.insert(index);
+    }
+    SymbolTableCollection sourceScopeSymbols;
+    for (auto binding :
+         design.getBody().front().getOps<sim::SimVPICodeUnitScopeBindingOp>()) {
+      auto source =
+          sourceScopeSymbols.lookupNearestSymbolFrom<sim::SimVPIObjectAnchorOp>(
+              binding, binding.getSourceAttr());
+      auto found = anchorRefs.find(source);
+      if (found == anchorRefs.end() ||
+          !codeUnitObjectIndices.contains(binding.getCodeUnitId())) {
+        binding.emitOpError("code-unit source scope was not serialized");
+        return {};
+      }
+      uint32_t packed = 0;
+      if (!tryPackTableIndex(found->second.table, found->second.index,
+                             packed)) {
+        binding.emitOpError("code-unit source scope cannot be packed");
+        return {};
+      }
+      auto unit = cast<sim::SimCodeUnitDeclOp>(
+          objects[codeUnitObjectIndices.lookup(binding.getCodeUnitId())]
+              .identity);
+      const bool taskViaFunction =
+          unit.getCodeUnitKind() == sim::EntryKind::Function &&
+          sim::vpiCallableSourceKind(unit) == sim::EntryKind::Task;
+      codeUnitScopeBindings.push_back(
+          {binding.getCodeUnitId(), packed, taskViaFunction ? 1u : 0u});
+      codeUnitSourceRefs.try_emplace(binding.getCodeUnitId(), found->second);
+    }
+    llvm::sort(codeUnitScopeBindings, [](auto left, auto right) {
+      return left.codeUnitID < right.codeUnitID;
+    });
+    for (auto [storage, anchor] : eventArrayStorage) {
+      ImageObjectRef target = anchorRefs.lookup(anchor);
+      uint32_t packed = 0;
+      if (!tryPackTableIndex(target.table, target.index, packed)) {
+        storage->emitError("named-event-array binding index cannot be packed");
+        return {};
+      }
+      eventArrayStorageBindings.push_back(
+          {packed, objectIndices.lookup(storage)});
+    }
+    // The declaration and its scalar members share the exact semantic type
+    // retained on the executable storage, including source typedef identity.
+    for (sim::SimVPIObjectAnchorOp anchor : anchors) {
+      if (!anchor.getParentAttr() ||
+          anchor.getVpiKind() !=
+              static_cast<uint32_t>(VPIObjectKind::NamedEvent))
+        continue;
+      auto parent = anchorsBySymbol.find(anchor.getParentAttr().getValue());
+      if (parent == anchorsBySymbol.end())
+        continue;
+      sim::VPITypeSemanticsAttr semantic =
+          eventArraySemantics.lookup(parent->second);
+      while (semantic && semantic.getKind() == sim::VPITypeKind::UnpackedArray)
+        semantic = cast<sim::VPITypeSemanticsAttr>(semantic.getChildren()[0]);
+      if (semantic)
+        eventArraySemantics[anchor] = semantic;
+    }
+    DenseMap<uint64_t, uint32_t> terminalDriverObjects;
+    for (auto [index, object] : llvm::enumerate(objects))
+      if (auto driver = dyn_cast<sim::SimDriverDeclOp>(object.identity))
+        terminalDriverObjects[driver.getId()] = index;
+    for (auto binding : design.getOps<sim::SimVPITerminalDriverBindingOp>()) {
+      auto terminal = anchorsBySymbol.find(binding.getTerminal());
+      auto low = terminalDriverObjects.find(binding.getLowDriverId());
+      auto high = binding.getHighDriverId()
+                      ? terminalDriverObjects.find(*binding.getHighDriverId())
+                      : terminalDriverObjects.end();
+      if (terminal == anchorsBySymbol.end() ||
+          low == terminalDriverObjects.end() ||
+          (binding.getHighDriverId() && high == terminalDriverObjects.end())) {
+        binding.emitOpError("terminal or driver was not serialized");
+        return {};
+      }
+      auto target = anchorRefs.lookup(terminal->second);
+      uint32_t packed = 0;
+      if (!tryPackTableIndex(target.table, target.index, packed)) {
+        binding.emitOpError("primitive terminal index cannot be packed");
+        return {};
+      }
+      terminalDriverBindings.push_back(
+          {packed, low->second,
+           high == terminalDriverObjects.end() ? UINT32_MAX : high->second,
+           static_cast<uint32_t>(binding.getBitOffset())});
+    }
+    llvm::sort(terminalDriverBindings, [](const auto &left, const auto &right) {
+      return left.terminal < right.terminal;
+    });
+    for (auto binding :
+         design.getBody().front().getOps<sim::SimVPIEventBindingOp>()) {
+      auto found = anchorsBySymbol.find(binding.getEventAttr().getValue());
+      if (found == anchorsBySymbol.end()) {
+        binding.emitOpError("named-event anchor was not serialized");
+        return {};
+      }
+      ImageObjectRef target = anchorRefs.lookup(found->second);
+      uint32_t packed = 0;
+      if (!tryPackTableIndex(target.table, target.index, packed)) {
+        binding.emitOpError("named-event binding index cannot be packed");
+        return {};
+      }
+      eventBindings.push_back({packed, binding.getEventId()});
+    }
+    for (Operation *declaration : sourceInheritance) {
+      uint32_t index = objectIndices.lookup(declaration);
+      sourceInheritanceRefs[declaration] = {TableKind::Object, index,
+                                            objects[index].vpiKind};
+    }
+    for (auto alias : unresolvedAliases) {
+      uint32_t index = objectIndices.lookup(alias);
+      unresolvedAliasRefs[alias] = {TableKind::Object, index,
+                                    objects[index].vpiKind};
     }
     for (sim::SimVPITypespecDeclOp typespec : typespecs) {
       uint32_t index = objectIndices.lookup(typespec);
@@ -1317,6 +1981,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
     for (sim::SimVPINettypeDeclOp nettype : nettypes) {
       uint32_t index = objectIndices.lookup(nettype);
       nettypeRefs[nettype] = {TableKind::Object, index, objects[index].vpiKind};
+    }
+    for (sim::SimVPIClassMemberDeclOp member : classMembers) {
+      uint32_t index = objectIndices.lookup(member);
+      classMemberRefs[member] = {TableKind::Object, index, objects[index].vpiKind};
     }
   }
 
@@ -1396,6 +2064,37 @@ SmallVector<uint8_t> serializeDesignDatabase(
                              "definition");
         return {};
       }
+      if (member->second.getVpiKind() == uint32_t(VPIObjectKind::ParamAssign)) {
+        auto reference = endpoint.getExprTarget();
+        auto child = definitionBindingByScope.find(
+            reference.getId().getValue().getZExtValue());
+        auto target =
+            definitionMembersBySymbol.find(reference.getSymbol().getValue());
+        if (reference.getKind() != sim::VPIObjectRefKind::DefinitionMember ||
+            child == definitionBindingByScope.end() ||
+            target == definitionMembersBySymbol.end() ||
+            !definitionMemberIndices.count(target->second)) {
+          endpoint.emitOpError("assignment Lhs endpoint was not serialized");
+          return {};
+        }
+        auto pair = std::make_pair(
+            child->second, definitionMemberIndices.lookup(target->second));
+        auto [entry, inserted] =
+            boundMemberIndices.try_emplace(pair, expressionBoundMembers.size());
+        if (inserted)
+          expressionBoundMembers.push_back(pair);
+        uint32_t slot = binding.firstMemberEndpoint +
+                        definitionMemberEndpointOrdinals.lookup(memberIndex);
+        if (entry->second >= (uint32_t{1} << 30) ||
+            slot >= definitionMemberEndpoints.size() ||
+            definitionMemberEndpoints[slot].targetIndexAndTable != UINT32_MAX) {
+          endpoint.emitOpError(
+              "assignment endpoint is duplicate or not encodable");
+          return {};
+        }
+        definitionMemberEndpoints[slot].targetIndexAndTable = entry->second;
+        continue;
+      }
       uint64_t id = endpoint.getExprTarget().getId().getValue().getZExtValue();
       std::optional<ImageObjectRef> target;
       switch (endpoint.getExprTarget().getKind()) {
@@ -1419,6 +2118,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       }
       case sim::VPIObjectRefKind::Statement:
       case sim::VPIObjectRefKind::Port:
+      case sim::VPIObjectRefKind::Symbol:
         break;
       }
       bool ref =
@@ -1466,8 +2166,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
         endpoint.emitOpError("VPI expression endpoint cannot be packed");
         return {};
       }
-      uint32_t slot =
-          binding.firstMemberEndpoint + (memberIndex - definition.firstMember);
+      uint32_t slot = binding.firstMemberEndpoint +
+                      definitionMemberEndpointOrdinals.lookup(memberIndex);
       if (slot >= definitionMemberEndpoints.size() ||
           definitionMemberEndpoints[slot].targetIndexAndTable != UINT32_MAX) {
         endpoint.emitOpError(
@@ -1528,8 +2228,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
             "VPI definition-member relation source is not a RefObj");
         return {};
       }
-      uint32_t endpointIndex = sourceBinding.firstMemberEndpoint +
-                               (memberIndex - sourceDefinition.firstMember);
+      uint32_t endpointIndex =
+          sourceBinding.firstMemberEndpoint +
+          definitionMemberEndpointOrdinals.lookup(memberIndex);
       if (endpointIndex >= definitionMemberEndpoints.size() ||
           definitionMemberEndpoints[endpointIndex].targetIndexAndTable ==
               UINT32_MAX) {
@@ -1767,7 +2468,107 @@ SmallVector<uint8_t> serializeDesignDatabase(
     }
   }
 
+  // Automatic and static declarations share source order, while automatic
+  // frame inventory retains its independent dense activation-local order.
+  struct ProceduralVariable {
+    Operation *declaration;
+    uint32_t scope, ordinal, object;
+  };
+  SmallVector<ProceduralVariable> proceduralVariables;
+  for (auto [index, binding] : llvm::enumerate(frameLocalBindings)) {
+    auto local = localDeclarations[index];
+    proceduralVariables.push_back(
+        {local, binding.scope,
+         local.getSourceOrdinal().value_or(local.getOrdinal()),
+         binding.object});
+  }
+  for (auto [storageID, binding] : staticLocalBindings) {
+    auto storage = storageRefs.find(storageID);
+    if (storage == storageRefs.end() ||
+        storage->second.table != TableKind::Object) {
+      binding.emitOpError("static local source storage was not serialized");
+      return {};
+    }
+    uint32_t scope = 0;
+    auto statement = binding.getStatementScopeId();
+    if (!tryPackTableIndex(
+            statement ? TableKind::Statement : TableKind::Object,
+            statement ? statementIndices.lookup(*statement)
+                      : codeUnitObjectIndices.lookup(binding.getCodeUnitId()),
+            scope))
+      return {};
+    proceduralVariables.push_back(
+        {binding, scope, binding.getOrdinal(), storage->second.index});
+  }
+  llvm::sort(proceduralVariables, [](const auto &left, const auto &right) {
+    return std::tie(left.scope, left.ordinal) <
+           std::tie(right.scope, right.ordinal);
+  });
+  DenseMap<std::pair<uint32_t, uint32_t>, uint32_t> localSelectorOrdinals;
+  for (const auto &variable : proceduralVariables) {
+    TableKind scopeTable = unpackTableIndexKind(variable.scope);
+    uint32_t scopeIndex = unpackTableIndex(variable.scope);
+    uint32_t scopeKind = scopeTable == TableKind::Statement
+                             ? statements[scopeIndex].declaration.getVpiKind()
+                             : objects[scopeIndex].vpiKind;
+    uint32_t kind = objects[variable.object].vpiKind;
+    if (failed(addAutomaticRelation(scopeTable, scopeIndex, scopeKind,
+                                    TableKind::Object, variable.object, kind,
+                                    VPIAutomaticRelation::DirectChild)))
+      return {};
+    for (uint32_t selector :
+         {static_cast<uint32_t>(VPIRelationKind::VariablesRel),
+          static_cast<uint32_t>(VPIObjectKind::RegArray),
+          static_cast<uint32_t>(VPIObjectKind::Memory),
+          static_cast<uint32_t>(VPIObjectKind::NamedEvent),
+          static_cast<uint32_t>(VPIObjectKind::NamedEventArray),
+          static_cast<uint32_t>(VPIObjectKind::VirtualInterfaceVar)}) {
+      const auto *edge =
+          findVPITraversal(scopeKind, selector, VPITraversalMode::Iterate);
+      if (scopeKind == static_cast<uint32_t>(VPIObjectKind::ForeachStmt) ||
+          !edge || !vpiObjectSetContains(edge->targets, kind) ||
+          edge->automaticRelation == VPIAutomaticRelation::DirectChild)
+        continue;
+      if (failed(addRelation(
+              variable.declaration, scopeTable, scopeIndex, scopeKind, selector,
+              VPITraversalMode::Iterate, TableKind::Object, variable.object,
+              kind, localSelectorOrdinals[{variable.scope, selector}]++)))
+        return {};
+    }
+    const auto *scopeEdge =
+        findVPITraversal(kind, static_cast<uint32_t>(VPIRelationKind::ScopeRel),
+                         VPITraversalMode::Handle);
+    if (scopeEdge && vpiObjectSetContains(scopeEdge->targets, scopeKind) &&
+        failed(addRelation(
+            variable.declaration, TableKind::Object, variable.object, kind,
+            static_cast<uint32_t>(VPIRelationKind::ScopeRel),
+            VPITraversalMode::Handle, scopeTable, scopeIndex, scopeKind)))
+      return {};
+  }
+
   if (includeStatements) {
+    auto lookupLexicalOwner = [&](FlatSymbolRefAttr symbol) -> Operation * {
+      if (auto found = anchorsBySymbol.find(symbol.getValue());
+          found != anchorsBySymbol.end())
+        return found->second;
+      if (auto found = typespecsBySymbol.find(symbol.getValue());
+          found != typespecsBySymbol.end() &&
+          (found->second.getOrigin() ==
+               sim::VPITypespecOrigin::ClassSpecialization ||
+           found->second.getOrigin() == sim::VPITypespecOrigin::BuiltinClass))
+        return found->second;
+      auto *declaration = SymbolTable::lookupSymbolIn(design, symbol);
+      return isa_and_nonnull<sim::SimVPIClassParameterAssignDeclOp>(declaration)
+                 ? declaration
+                 : nullptr;
+    };
+    auto lexicalOwnerRef = [&](Operation *owner) {
+      if (isa<sim::SimVPIObjectAnchorOp>(owner))
+        return anchorRefs.lookup(owner);
+      if (isa<sim::SimVPIClassParameterAssignDeclOp>(owner))
+        return sourceInheritanceRefs.lookup(owner);
+      return typespecRefs.lookup(owner);
+    };
     DenseMap<Operation *, DenseMap<int64_t, uint32_t>> sparseArrayOrdinals;
     auto arrayElementOrdinal = [&](sim::SimVPIObjectAnchorOp array,
                                    sim::SimVPIObjectAnchorOp member)
@@ -1851,15 +2652,39 @@ SmallVector<uint8_t> serializeDesignDatabase(
           return {};
         continue;
       }
-      auto parent = anchorsBySymbol.find(anchor.getParentAttr().getValue());
-      if (parent == anchorsBySymbol.end()) {
+      Operation *parent = lookupLexicalOwner(anchor.getParentAttr());
+      if (!parent) {
         anchor.emitOpError(
             "lexical parent was not preserved for serialization");
         return {};
       }
-      ImageObjectRef source = anchorRefs.lookup(parent->second);
+      ImageObjectRef source = lexicalOwnerRef(parent);
       ImageObjectRef target = anchorRefs.lookup(anchor);
+      if (target.vpiKind == static_cast<uint32_t>(VPIObjectKind::PrimTerm)) {
+        if (failed(addRelation(
+                anchor, target.table, target.index, target.vpiKind,
+                static_cast<uint32_t>(VPIRelationKind::PrimitiveRel),
+                VPITraversalMode::Handle, source.table, source.index,
+                source.vpiKind)))
+          return {};
+      }
+      if (target.vpiKind == static_cast<uint32_t>(VPIObjectKind::Modport)) {
+        uint32_t packed = 0;
+        if (source.table != TableKind::Scope ||
+            source.vpiKind != static_cast<uint32_t>(VPIObjectKind::Interface) ||
+            !tryPackTableIndex(target.table, target.index, packed)) {
+          anchor.emitOpError("modport has no physical interface owner");
+          return {};
+        }
+        modportBindings.push_back(
+            {packed, source.index, anchor.getDebugName().str()});
+      }
       uint32_t lexicalSelector = target.vpiKind;
+      if (source.vpiKind ==
+              static_cast<uint32_t>(VPIObjectKind::ClassTypespec) &&
+          vpiObjectSetContains(VPIObjectSetID::ParameterIterationObjects,
+                               target.vpiKind))
+        lexicalSelector = static_cast<uint32_t>(VPIObjectKind::Parameter);
       const VPIIndexedAccessDescriptor *indexed =
           findVPIIndexedAccess(source.vpiKind);
       if (indexed &&
@@ -1869,16 +2694,19 @@ SmallVector<uint8_t> serializeDesignDatabase(
       const VPITraversalDescriptor *lexicalEdge = findVPITraversal(
           source.vpiKind, lexicalSelector, VPITraversalMode::Iterate);
       uint32_t lexicalOrdinal =
-          lexicalOrdinals[{parent->second, lexicalSelector}]++;
+          lexicalOrdinals[{parent, lexicalSelector}]++;
       FailureOr<std::optional<uint32_t>> indexedOrdinal =
-          arrayElementOrdinal(parent->second, anchor);
+          std::optional<uint32_t>{};
+      if (auto array = dyn_cast<sim::SimVPIObjectAnchorOp>(parent))
+        indexedOrdinal = arrayElementOrdinal(array, anchor);
       if (failed(indexedOrdinal))
         return {};
       if (*indexedOrdinal)
         lexicalOrdinal = **indexedOrdinal;
       if (lexicalEdge &&
+          lexicalEdge->automaticRelation != VPIAutomaticRelation::DirectChild &&
           vpiObjectSetContains(lexicalEdge->targets, target.vpiKind) &&
-          failed(addRelation(parent->second, source.table, source.index,
+          failed(addRelation(parent, source.table, source.index,
                              source.vpiKind, lexicalSelector,
                              VPITraversalMode::Iterate, target.table,
                              target.index, target.vpiKind, lexicalOrdinal)))
@@ -1898,9 +2726,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
             (edge->automaticRelation != VPIAutomaticRelation::ParentScope &&
              edge->automaticRelation != VPIAutomaticRelation::IndexedContainer))
           continue;
-        sim::SimVPIObjectAnchorOp ancestor = parent->second;
+        Operation *ancestor = parent;
         while (ancestor) {
-          ImageObjectRef ancestorRef = anchorRefs.lookup(ancestor);
+          ImageObjectRef ancestorRef = lexicalOwnerRef(ancestor);
           if (vpiObjectSetContains(edge->targets, ancestorRef.vpiKind)) {
             if (failed(addRelation(anchor, target.table, target.index,
                                    target.vpiKind, edge->selector,
@@ -1909,15 +2737,23 @@ SmallVector<uint8_t> serializeDesignDatabase(
               return {};
             break;
           }
-          if (!ancestor.getParentAttr())
+          FlatSymbolRefAttr ancestorParent;
+          if (auto object = dyn_cast<sim::SimVPIObjectAnchorOp>(ancestor))
+            ancestorParent = object.getParentAttr();
+          else if (isa<sim::SimVPIClassParameterAssignDeclOp>(ancestor))
             break;
-          auto next = anchorsBySymbol.find(ancestor.getParentAttr().getValue());
-          if (next == anchorsBySymbol.end()) {
-            ancestor.emitOpError(
+          else
+            ancestorParent =
+                cast<sim::SimVPITypespecDeclOp>(ancestor).getOwnerAttr();
+          if (!ancestorParent)
+            break;
+          Operation *next = lookupLexicalOwner(ancestorParent);
+          if (!next) {
+            ancestor->emitOpError(
                 "lexical ancestor was not preserved for serialization");
             return {};
           }
-          ancestor = next->second;
+          ancestor = next;
         }
       }
     }
@@ -1934,18 +2770,18 @@ SmallVector<uint8_t> serializeDesignDatabase(
     });
     DenseMap<Operation *, uint32_t> nettypeOrdinals;
     for (sim::SimVPINettypeDeclOp nettype : nettypes) {
-      auto owner = anchorsBySymbol.find(nettype.getOwnerAttr().getValue());
-      if (owner == anchorsBySymbol.end()) {
+      Operation *owner = lookupLexicalOwner(nettype.getOwnerAttr());
+      if (!owner) {
         nettype.emitOpError("VPI nettype owner was not preserved");
         return {};
       }
-      ImageObjectRef ownerRef = anchorRefs.lookup(owner->second);
+      ImageObjectRef ownerRef = lexicalOwnerRef(owner);
       ImageObjectRef nettypeRef = nettypeRefs.lookup(nettype);
       if (failed(addRelation(
-              owner->second, ownerRef.table, ownerRef.index, ownerRef.vpiKind,
+              owner, ownerRef.table, ownerRef.index, ownerRef.vpiKind,
               static_cast<uint32_t>(VPIRelationKind::NetTypedefRel),
               VPITraversalMode::Iterate, nettypeRef.table, nettypeRef.index,
-              nettypeRef.vpiKind, nettypeOrdinals[owner->second]++)))
+              nettypeRef.vpiKind, nettypeOrdinals[owner]++)))
         return {};
       if (FlatSymbolRefAttr alias = nettype.getDirectAliasAttr()) {
         auto target = nettypesBySymbol.find(alias.getValue());
@@ -1977,29 +2813,61 @@ SmallVector<uint8_t> serializeDesignDatabase(
       }
     }
 
+    DenseMap<Operation *, uint32_t> classSpecializationOrdinals;
     for (sim::SimVPITypespecDeclOp typespec : typespecs) {
-      auto owner = anchorsBySymbol.find(typespec.getOwnerAttr().getValue());
-      if (owner == anchorsBySymbol.end()) {
+      Operation *owner = nullptr;
+      ImageObjectRef ownerRef;
+      if (auto statementID = typespec.getStatementScopeId()) {
+        auto found = statementIndices.find(*statementID);
+        if (found != statementIndices.end()) {
+          auto statement = statements[found->second].declaration;
+          owner = statement;
+          ownerRef = {TableKind::Statement, found->second,
+                      statement.getVpiKind()};
+        }
+      } else {
+        owner = lookupLexicalOwner(typespec.getOwnerAttr());
+        if (owner)
+          ownerRef = lexicalOwnerRef(owner);
+      }
+      if (!owner) {
         typespec.emitOpError("VPI typespec owner was not preserved");
         return {};
       }
-      ImageObjectRef ownerRef = anchorRefs.lookup(owner->second);
       ImageObjectRef typespecRef = typespecRefs.lookup(typespec);
-      if (typespec.getOrigin() == sim::VPITypespecOrigin::Typedef) {
-        uint32_t ordinal = typedefOrdinals[owner->second]++;
+      if (typespec.getOrigin() == sim::VPITypespecOrigin::ClassSpecialization) {
+        uint32_t ordinal = classSpecializationOrdinals[owner]++;
         if (failed(addRelation(
-                owner->second, ownerRef.table, ownerRef.index, ownerRef.vpiKind,
+                typespec, ownerRef.table, ownerRef.index, ownerRef.vpiKind,
+                static_cast<uint32_t>(VPIObjectKind::ClassTypespec),
+                VPITraversalMode::Iterate, typespecRef.table, typespecRef.index,
+                typespecRef.vpiKind, ordinal)) ||
+            failed(addRelation(typespec, typespecRef.table, typespecRef.index,
+                               typespecRef.vpiKind,
+                               static_cast<uint32_t>(VPIObjectKind::ClassDefn),
+                               VPITraversalMode::Handle, ownerRef.table,
+                               ownerRef.index, ownerRef.vpiKind)) ||
+            failed(addRelation(typespec, typespecRef.table, typespecRef.index,
+                               typespecRef.vpiKind,
+                               static_cast<uint32_t>(VPIRelationKind::ScopeRel),
+                               VPITraversalMode::Handle, ownerRef.table,
+                               ownerRef.index, ownerRef.vpiKind)))
+          return {};
+      } else if (typespec.getOrigin() == sim::VPITypespecOrigin::Typedef) {
+        uint32_t ordinal = typedefOrdinals[owner]++;
+        if (failed(addRelation(
+                owner, ownerRef.table, ownerRef.index, ownerRef.vpiKind,
                 static_cast<uint32_t>(VPIRelationKind::TypedefRel),
                 VPITraversalMode::Iterate, typespecRef.table, typespecRef.index,
                 typespecRef.vpiKind, ordinal)))
           return {};
       } else if (typespec.getOrigin() == sim::VPITypespecOrigin::Interface) {
-        if (failed(addRelation(owner->second, ownerRef.table, ownerRef.index,
+        if (failed(addRelation(owner, ownerRef.table, ownerRef.index,
                                ownerRef.vpiKind,
                                static_cast<uint32_t>(VPIObjectKind::Typespec),
                                VPITraversalMode::Iterate, typespecRef.table,
                                typespecRef.index, typespecRef.vpiKind,
-                               interfaceTypespecOrdinals[owner->second]++)))
+                               interfaceTypespecOrdinals[owner]++)))
           return {};
       }
 
@@ -2042,6 +2910,177 @@ SmallVector<uint8_t> serializeDesignDatabase(
         return {};
     }
 
+    auto sourceSymbolRef = [&](FlatSymbolRefAttr symbol) -> ImageObjectRef {
+      if (auto source = sourceInheritanceBySymbol.lookup(symbol.getValue()))
+        return sourceInheritanceRefs.lookup(source);
+      if (auto anchor = anchorsBySymbol.lookup(symbol.getValue()))
+        return anchorRefs.lookup(anchor);
+      if (auto typespec = typespecsBySymbol.lookup(symbol.getValue()))
+        return typespecRefs.lookup(typespec);
+      if (auto alias = unresolvedAliasesBySymbol.lookup(symbol.getValue()))
+        return unresolvedAliasRefs.lookup(alias);
+      llvm_unreachable(
+          "verified source inheritance reference was not serialized");
+    };
+    auto inheritanceRelation = [&](Operation *declaration, ImageObjectRef from,
+                                   uint32_t selector, VPITraversalMode mode,
+                                   ImageObjectRef to, uint32_t ordinal = 0) {
+      return addRelation(declaration, from.table, from.index, from.vpiKind,
+                         selector, mode, to.table, to.index, to.vpiKind,
+                         ordinal);
+    };
+    llvm::DenseMap<Attribute, sim::SimVPIClassExtendsDeclOp>
+        sourceExtendsByOwner;
+    for (Operation *declaration : sourceInheritance)
+      if (auto clause = dyn_cast<sim::SimVPIClassExtendsDeclOp>(declaration))
+        sourceExtendsByOwner[clause.getOwnerAttr()] = clause;
+    auto originalHandleTarget = [&](FlatSymbolRefAttr source,
+                                    uint32_t selector) {
+      for (auto relation : generalRelationDeclarations)
+        if (relation.getSource().getKind() == sim::VPIObjectRefKind::Symbol &&
+            relation.getSource().getSymbol() == source &&
+            relation.getSelector() == selector &&
+            relation.getMode() == sim::VPIRelationMode::Handle &&
+            relation.getTarget().getKind() == sim::VPIObjectRefKind::Symbol)
+          return relation.getTarget().getSymbol();
+      return FlatSymbolRefAttr{};
+    };
+    for (Operation *declaration : sourceInheritance) {
+      ImageObjectRef self = sourceInheritanceRefs.lookup(declaration);
+      if (auto type =
+              dyn_cast<sim::SimVPILexicalClassTypespecDeclOp>(declaration)) {
+        if (failed(inheritanceRelation(
+                type, self, static_cast<uint32_t>(VPIObjectKind::ClassDefn),
+                VPITraversalMode::Handle,
+                sourceSymbolRef(type.getDefinitionAttr()))) ||
+            failed(inheritanceRelation(
+                type, self, static_cast<uint32_t>(VPIRelationKind::ScopeRel),
+                VPITraversalMode::Handle,
+                sourceSymbolRef(type.getOwnerAttr()))))
+          return {};
+        uint32_t parameterOrdinal = 0;
+        for (auto parameter : anchors) {
+          if (parameter.getParentAttr() != type.getDefinitionAttr() ||
+              !vpiObjectSetContains(VPIObjectSetID::ParameterIterationObjects,
+                                    parameter.getVpiKind()))
+            continue;
+          if (failed(inheritanceRelation(
+                  type, self, static_cast<uint32_t>(VPIObjectKind::Parameter),
+                  VPITraversalMode::Iterate, anchorRefs.lookup(parameter),
+                  parameterOrdinal++)))
+            return {};
+        }
+        FlatSymbolRefAttr inheritedType;
+        if (auto base = sourceExtendsByOwner.lookup(type.getDefinitionAttr()))
+          inheritedType = base.getBaseTypespecAttr();
+        else if (auto clause = originalHandleTarget(
+                     type.getDefinitionAttr(),
+                     static_cast<uint32_t>(VPIRelationKind::ExtendsRel)))
+          inheritedType = originalHandleTarget(
+              clause, static_cast<uint32_t>(VPIObjectKind::ClassTypespec));
+        if (inheritedType &&
+            failed(inheritanceRelation(
+                type, self, static_cast<uint32_t>(VPIRelationKind::ExtendsRel),
+                VPITraversalMode::Handle, sourceSymbolRef(inheritedType))))
+          return {};
+      } else if (auto clause =
+                     dyn_cast<sim::SimVPIClassExtendsDeclOp>(declaration)) {
+        auto owner = sourceSymbolRef(clause.getOwnerAttr());
+        if (failed(inheritanceRelation(
+                clause, owner,
+                static_cast<uint32_t>(VPIRelationKind::ExtendsRel),
+                VPITraversalMode::Handle, self)) ||
+            failed(inheritanceRelation(
+                clause, self, static_cast<uint32_t>(VPIObjectKind::ClassDefn),
+                VPITraversalMode::Handle, owner)))
+          return {};
+        if (auto base = clause.getBaseTypespecAttr())
+          if (failed(inheritanceRelation(
+                  clause, self,
+                  static_cast<uint32_t>(VPIObjectKind::ClassTypespec),
+                  VPITraversalMode::Handle, sourceSymbolRef(base))))
+            return {};
+      } else if (auto assignment =
+                     dyn_cast<sim::SimVPIClassParameterAssignDeclOp>(
+                         declaration)) {
+        auto parameter = sourceSymbolRef(assignment.getParameterAttr());
+        if (failed(inheritanceRelation(
+                assignment, sourceSymbolRef(assignment.getOwnerAttr()),
+                static_cast<uint32_t>(VPIObjectKind::ParamAssign),
+                VPITraversalMode::Iterate, self, assignment.getOrdinal())) ||
+            failed(inheritanceRelation(
+                assignment, self,
+                static_cast<uint32_t>(VPIRelationKind::LhsRel),
+                VPITraversalMode::Handle, parameter)) ||
+            failed(inheritanceRelation(
+                assignment, self,
+                static_cast<uint32_t>(VPIRelationKind::ScopeRel),
+                VPITraversalMode::Handle,
+                sourceSymbolRef(assignment.getOwnerAttr()))))
+          return {};
+        if (auto rhs = assignment.getRhsAttr()) {
+          if (failed(inheritanceRelation(
+                  assignment, self,
+                  static_cast<uint32_t>(VPIRelationKind::RhsRel),
+                  VPITraversalMode::Handle, sourceSymbolRef(rhs))))
+            return {};
+        }
+        if (assignment.getRhsAttr() || assignment.getUnavailableRhsAttr())
+          continue;
+        for (auto relation : generalRelationDeclarations)
+          if (relation.getSource().getKind() == sim::VPIObjectRefKind::Symbol &&
+              relation.getSource().getSymbol() ==
+                  assignment.getParameterAttr() &&
+              relation.getSelector() ==
+                  static_cast<uint32_t>(VPIRelationKind::ExprRel) &&
+              relation.getMode() == sim::VPIRelationMode::Handle) {
+            if (relation.getTarget().getKind() !=
+                sim::VPIObjectRefKind::Symbol) {
+              assignment.emitOpError(
+                  "original parameter default must preserve symbolic identity");
+              return {};
+            }
+            if (failed(inheritanceRelation(
+                    assignment, self,
+                    static_cast<uint32_t>(VPIRelationKind::RhsRel),
+                    VPITraversalMode::Handle,
+                    sourceSymbolRef(relation.getTarget().getSymbol()))))
+              return {};
+          }
+      }
+    }
+
+    llvm::sort(unresolvedAliases, [](auto left, auto right) {
+      return left.getId() < right.getId();
+    });
+    for (auto alias : unresolvedAliases) {
+      Operation *owner = lookupLexicalOwner(alias.getOwnerAttr());
+      ImageObjectRef ownerRef = lexicalOwnerRef(owner);
+      ImageObjectRef aliasRef = unresolvedAliasRefs.lookup(alias);
+      ImageObjectRef targetRef{};
+      if (auto target = unresolvedAliasesBySymbol.lookup(alias.getTarget()))
+        targetRef = unresolvedAliasRefs.lookup(target);
+      else
+        targetRef =
+            anchorRefs.lookup(anchorsBySymbol.lookup(alias.getTarget()));
+      if (failed(addRelation(
+              alias, ownerRef.table, ownerRef.index, ownerRef.vpiKind,
+              static_cast<uint32_t>(VPIRelationKind::TypedefRel),
+              VPITraversalMode::Iterate, aliasRef.table, aliasRef.index,
+              aliasRef.vpiKind, typedefOrdinals[owner]++)) ||
+          failed(addRelation(
+              alias, aliasRef.table, aliasRef.index, aliasRef.vpiKind,
+              static_cast<uint32_t>(VPIRelationKind::TypedefAliasRel),
+              VPITraversalMode::Handle, targetRef.table, targetRef.index,
+              targetRef.vpiKind)) ||
+          failed(addRelation(alias, aliasRef.table, aliasRef.index,
+                             aliasRef.vpiKind,
+                             static_cast<uint32_t>(VPIRelationKind::ScopeRel),
+                             VPITraversalMode::Handle, ownerRef.table,
+                             ownerRef.index, ownerRef.vpiKind)))
+        return {};
+    }
+
     llvm::sort(enumConstants, [](sim::SimVPIEnumConstDeclOp left,
                                  sim::SimVPIEnumConstDeclOp right) {
       return std::tuple(left.getEnumTypespecAttr().getValue(),
@@ -2068,48 +3107,58 @@ SmallVector<uint8_t> serializeDesignDatabase(
         return {};
     }
 
-    for (auto [sourceIndex, object] : llvm::enumerate(objects)) {
+    auto addDeclaredTypespec = [&](Operation *identity,
+                                   ImageObjectRef source) -> LogicalResult {
       sim::VPITypeSemanticsAttr semantic;
       if (auto storage =
-              dyn_cast_if_present<sim::SimStorageDeclOp>(object.identity))
+              dyn_cast_if_present<sim::SimStorageDeclOp>(identity))
         semantic = storage.getVpiTypeAttr();
       else if (auto net =
-                   dyn_cast_if_present<sim::SimNetDeclOp>(object.identity))
+                   dyn_cast_if_present<sim::SimNetDeclOp>(identity))
         semantic = net.getVpiTypeAttr();
-      else if (auto identity =
+      else if (auto netIdentity =
                    dyn_cast_if_present<sim::SimVPINetIdentityDeclOp>(
-                       object.identity))
-        semantic = identity.getVpiTypeAttr();
+                       identity))
+        semantic = netIdentity.getVpiTypeAttr();
       else if (auto port =
-                   dyn_cast_if_present<sim::SimPortDeclOp>(object.identity))
+                   dyn_cast_if_present<sim::SimPortDeclOp>(identity))
         semantic = port.getVpiTypeAttr();
       else if (auto nettype = dyn_cast_if_present<sim::SimVPINettypeDeclOp>(
-                   object.identity))
+                   identity))
         semantic = nettype.getTargetType();
+      else if (auto member = dyn_cast_if_present<sim::SimVPIClassMemberDeclOp>(
+                   identity))
+        semantic = member.getVpiType();
+      else if (auto local =
+                   dyn_cast_if_present<sim::SimVPILocalDeclOp>(identity))
+        semantic = local.getVpiType();
+      else if (auto anchor = dyn_cast_if_present<sim::SimVPIObjectAnchorOp>(
+                   identity))
+        semantic = anchor.getVpiTypeAttr();
       if (!semantic)
-        continue;
+        semantic = eventArraySemantics.lookup(identity);
+      if (!semantic)
+        return success();
       FlatSymbolRefAttr declaredNettype;
-      if (auto net = dyn_cast_if_present<sim::SimNetDeclOp>(object.identity))
+      if (auto net = dyn_cast_if_present<sim::SimNetDeclOp>(identity))
         declaredNettype = net.getNettypeAttr();
-      else if (auto identity =
+      else if (auto netIdentity =
                    dyn_cast_if_present<sim::SimVPINetIdentityDeclOp>(
-                       object.identity))
-        declaredNettype = identity.getNettypeAttr();
+                       identity))
+        declaredNettype = netIdentity.getNettypeAttr();
       if (declaredNettype) {
         auto target = nettypesBySymbol.find(declaredNettype.getValue());
         if (target == nettypesBySymbol.end()) {
-          object.identity->emitError("VPI nettype target was not serialized");
-          return {};
+          return identity->emitError("VPI nettype target was not serialized");
         }
         ImageObjectRef targetRef = nettypeRefs.lookup(target->second);
-        if (failed(addRelation(object.identity, TableKind::Object,
-                               static_cast<uint32_t>(sourceIndex),
-                               object.vpiKind,
+        if (failed(addRelation(identity, source.table, source.index,
+                               source.vpiKind,
                                static_cast<uint32_t>(VPIObjectKind::Typespec),
                                VPITraversalMode::Handle, targetRef.table,
                                targetRef.index, targetRef.vpiKind)))
-          return {};
-        continue;
+          return failure();
+        return success();
       }
       SymbolRefAttr reference;
       if (ArrayAttr aliases = semantic.getTypedefAliases();
@@ -2122,36 +3171,406 @@ SmallVector<uint8_t> serializeDesignDatabase(
         auto target =
             typespecsBySymbol.find(reference.getRootReference().getValue());
         if (target == typespecsBySymbol.end()) {
-          object.identity->emitError("VPI typespec target was not preserved");
-          return {};
+          return identity->emitError("VPI typespec target was not preserved");
         }
         targetTypespec = target->second;
       } else if (semantic.getKind() == sim::VPITypeKind::Enum) {
-        auto identity =
-            sim::get<sim::metadata::VpiSourceTypeIdentity>(object.identity);
-        if (!identity) {
-          object.identity->emitError(
+        auto sourceTypeIdentity =
+            sim::get<sim::metadata::VpiSourceTypeIdentity>(identity);
+        if (!sourceTypeIdentity) {
+          return identity->emitError(
               "anonymous enum VPI value has no source type identity");
-          return {};
         }
         targetTypespec = anonymousTypespecsByIdentity.lookup(
-            identity.getValue().getZExtValue());
+            sourceTypeIdentity.getValue().getZExtValue());
         if (!targetTypespec) {
-          object.identity->emitError(
+          return identity->emitError(
               "anonymous enum VPI value has no matching typespec identity");
-          return {};
         }
       }
       if (!targetTypespec)
-        continue;
+        return success();
       ImageObjectRef targetRef = typespecRefs.lookup(targetTypespec);
-      if (failed(addRelation(object.identity, TableKind::Object,
-                             static_cast<uint32_t>(sourceIndex), object.vpiKind,
+      return addRelation(identity, source.table, source.index, source.vpiKind,
                              static_cast<uint32_t>(VPIObjectKind::Typespec),
                              VPITraversalMode::Handle, targetRef.table,
-                             targetRef.index, targetRef.vpiKind)))
+                             targetRef.index, targetRef.vpiKind);
+    };
+    for (auto [index, object] : llvm::enumerate(objects))
+      if (failed(addDeclaredTypespec(
+              object.identity, {TableKind::Object, static_cast<uint32_t>(index),
+                                object.vpiKind})))
+        return {};
+    for (auto [index, object] : llvm::enumerate(staticObjects))
+      if (failed(addDeclaredTypespec(
+              object.identity,
+              {TableKind::StaticObject, static_cast<uint32_t>(index),
+               object.vpiKind})))
+        return {};
+  }
+
+  auto memberOwnerRef = [&](FlatSymbolRefAttr owner) -> ImageObjectRef {
+    if (auto found = anchorsBySymbol.find(owner.getValue());
+        found != anchorsBySymbol.end())
+      return anchorRefs.lookup(found->second);
+    return typespecRefs.lookup(typespecsBySymbol.lookup(owner.getValue()));
+  };
+  auto appendMemberBinding = [&](Operation *operation, ImageObjectRef member,
+                                 ImageObjectRef owner, FlatSymbolRefAttr classSymbol,
+                                 bool isStatic, bool isMethod,
+                                 uint64_t byteOffset, uint64_t eventID,
+                                 std::optional<uint64_t> storageID,
+                                 StringRef name) -> LogicalResult {
+    auto declaration =
+        classMemberSymbols.lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+            operation, classSymbol);
+    ClassMemberBindingRecord binding{};
+    binding.storage = UINT32_MAX;
+    binding.byteOffset = byteOffset;
+    binding.eventID = eventID;
+    binding.name = name.str();
+    binding.flags = static_cast<uint32_t>(isStatic) |
+                    (static_cast<uint32_t>(isMethod) << 1);
+    if (!declaration ||
+        !tryPackTableIndex(member.table, member.index, binding.member) ||
+        !tryPackTableIndex(owner.table, owner.index, binding.owner))
+      return operation->emitError("class member identity was not serialized");
+    binding.classID = declaration.getId();
+    if (storageID) {
+      auto storage = storageRefs.find(*storageID);
+      if (storage == storageRefs.end() ||
+          !tryPackTableIndex(storage->second.table, storage->second.index,
+                             binding.storage))
+        return operation->emitError("static class member storage was not serialized");
+    }
+    classMemberBindings.push_back(binding);
+    return success();
+  };
+  llvm::sort(classMembers, [&](auto left, auto right) {
+    auto ordinal = [&](auto member) -> uint64_t {
+      auto field = classMemberFields.lookup(member);
+      return field ? field.getOrdinal() : member.getId();
+    };
+    return std::make_tuple(left.getOwner(), ordinal(left), left.getId()) <
+           std::make_tuple(right.getOwner(), ordinal(right), right.getId());
+  });
+  DenseMap<std::pair<uint32_t, uint32_t>, uint32_t> memberOrdinals;
+  for (sim::SimVPIClassMemberDeclOp member : classMembers) {
+    auto field = classMemberFields.lookup(member);
+    ImageObjectRef source = memberOwnerRef(member.getOwnerAttr());
+    ImageObjectRef target = classMemberRefs.lookup(member);
+    uint32_t packedOwner = 0;
+    if (!tryPackTableIndex(source.table, source.index, packedOwner))
+      return {};
+    if (field && !field.getIsStatic() && !field.getOffset()) {
+      member.emitOpError("class field layout was not materialized");
+      return {};
+    }
+    if (field &&
+        failed(appendMemberBinding(
+            member, target, source, field.getOwnerAttr(), field.getIsStatic(),
+            false, field.getOffset().value_or(UINT64_MAX),
+            member.getStaticEvent().value_or(UINT64_MAX),
+            member.getStaticStorage(), member.getDebugName())))
+      return {};
+    if (failed(addAutomaticRelation(
+            source.table, source.index, source.vpiKind, target.table,
+            target.index, target.vpiKind, VPIAutomaticRelation::DirectChild)))
+      return {};
+    for (uint32_t selector : {
+             static_cast<uint32_t>(VPIRelationKind::VariablesRel),
+             static_cast<uint32_t>(VPIObjectKind::RegArray),
+             static_cast<uint32_t>(VPIObjectKind::Memory),
+             static_cast<uint32_t>(VPIObjectKind::NamedEvent),
+             static_cast<uint32_t>(VPIObjectKind::NamedEventArray),
+             static_cast<uint32_t>(VPIObjectKind::VirtualInterfaceVar)}) {
+      auto *edge = findVPITraversal(source.vpiKind, selector,
+                                    VPITraversalMode::Iterate);
+      if (!edge || !vpiObjectSetContains(edge->targets, target.vpiKind))
+        continue;
+      if (edge->automaticRelation == VPIAutomaticRelation::DirectChild)
+        continue;
+      if (failed(addRelation(member, source.table, source.index, source.vpiKind,
+                             selector, VPITraversalMode::Iterate, target.table,
+                             target.index, target.vpiKind,
+                             memberOrdinals[{packedOwner, selector}]++)))
         return {};
     }
+    const auto *scopeEdge = findVPITraversal(
+        target.vpiKind, static_cast<uint32_t>(VPIRelationKind::ScopeRel),
+        VPITraversalMode::Handle);
+    if (scopeEdge && vpiObjectSetContains(scopeEdge->targets, source.vpiKind) &&
+        failed(addRelation(member, target.table, target.index, target.vpiKind,
+                           static_cast<uint32_t>(VPIRelationKind::ScopeRel),
+                           VPITraversalMode::Handle, source.table, source.index,
+                           source.vpiKind)))
+      return {};
+  }
+  for (sim::SimVPIObjectAnchorOp anchor : anchors) {
+    if (!anchor.getClassMethodAttr())
+      continue;
+    auto method =
+        classMemberSymbols.lookupNearestSymbolFrom<sim::SimClassMethodDeclOp>(
+            anchor, anchor.getClassMethodAttr());
+    if (!method || !anchor.getParentAttr() ||
+        failed(appendMemberBinding(anchor, anchorRefs.lookup(anchor),
+                                   memberOwnerRef(anchor.getParentAttr()),
+                                   method.getOwnerAttr(), method.getIsStatic(),
+                                   true, UINT64_MAX, UINT64_MAX, std::nullopt,
+                                   anchor.getDebugName())))
+      return {};
+  }
+  llvm::sort(classMemberBindings, [](const auto &left, const auto &right) {
+    return left.member < right.member;
+  });
+
+  if (!classCallDispatchDeclarations.empty()) {
+    // Preserve authoritative direct declarations as well as the resolved pairs.
+    // The reader recomputes effective dispatch, including pure overrides and
+    // interface lowest-slot selection, instead of trusting a target whitelist.
+    analysis::ClassDispatchAnalysis dispatchAnalysis(design);
+    SymbolTableCollection symbols;
+    DenseMap<uint32_t, uint64_t> reflectedMethodOwners;
+    for (const auto &member : classMemberBindings)
+      if ((member.flags & 2) &&
+          unpackTableIndexKind(member.member) == TableKind::Object)
+        reflectedMethodOwners.try_emplace(unpackTableIndex(member.member),
+                                          member.classID);
+    auto reflectedCodeUnit =
+        [&](sim::SimClassMethodDeclOp method) -> std::optional<uint32_t> {
+      auto implementation = method.getImplementationAttr();
+      if (!implementation)
+        return std::nullopt;
+      auto function = symbols.lookupNearestSymbolFrom<sim::SimFuncOp>(
+          method, implementation);
+      if (!function || !function.getCodeUnitId())
+        return std::nullopt;
+      auto unit = codeUnitObjectIndices.find(*function.getCodeUnitId());
+      if (unit == codeUnitObjectIndices.end())
+        return std::nullopt;
+      auto owner = reflectedMethodOwners.find(unit->second);
+      if (owner == reflectedMethodOwners.end() ||
+          owner->second != dispatchAnalysis.lookup(method.getOwner()).getId())
+        return std::nullopt;
+      return unit->second;
+    };
+    for (sim::SimClassDeclOp declaration : dispatchAnalysis.getClasses()) {
+      const uint64_t classID = declaration.getId();
+      uint32_t flags = (declaration.getIsInterface() ? 1u : 0u) |
+                       (declaration.getIsAbstract() ? 2u : 0u);
+      classDispatchParentBindings.push_back({classID, 0, 0, flags});
+      if (auto base = declaration.getBase())
+        classDispatchParentBindings.push_back(
+            {classID, dispatchAnalysis.lookup(*base).getId(), 1, 0});
+      if (ArrayAttr interfaces = declaration.getInterfacesAttr())
+        for (Attribute attribute : interfaces) {
+          auto reference = cast<FlatSymbolRefAttr>(attribute);
+          classDispatchParentBindings.push_back(
+              {classID, dispatchAnalysis.lookup(reference.getValue()).getId(),
+               2, 0});
+        }
+    }
+    for (auto method :
+         design.getBody().front().getOps<sim::SimClassMethodDeclOp>()) {
+      if (!method.getIsVirtual())
+        continue;
+      uint32_t codeUnitIndex = UINT32_MAX;
+      uint32_t flags =
+          (method.getIsTask() ? 1u : 0u) | (method.getIsPure() ? 2u : 0u);
+      if (auto index = reflectedCodeUnit(method))
+        codeUnitIndex = *index;
+      if (codeUnitIndex == UINT32_MAX)
+        flags |= 4;
+      classDispatchMethodBindings.push_back(
+          {dispatchAnalysis.lookup(method.getOwner()).getId(),
+           *method.getSlot(), *method.getSignatureId(), codeUnitIndex, flags});
+    }
+    for (auto dispatch : classCallDispatchDeclarations) {
+      auto call = symbols.lookupNearestSymbolFrom<sim::SimVPICallDeclOp>(
+          dispatch, dispatch.getCallAttr());
+      auto method = symbols.lookupNearestSymbolFrom<sim::SimClassMethodDeclOp>(
+          dispatch, dispatch.getMethodAttr());
+      auto receiver = dispatchAnalysis.lookup(
+          cast<sim::ClassHandleType>(dispatch.getReceiverType()));
+      // A zero target is the contract header, including an empty pure domain.
+      callDispatchBindings.push_back({call.getId(), 0, receiver.getId(),
+                                      *method.getSlot(),
+                                      *method.getSignatureId()});
+      for (auto implementation : dispatchAnalysis.compatibleImplementations(
+               receiver, *method.getSlot(), *method.getSignatureId(),
+               method.getIsTask())) {
+        auto index = reflectedCodeUnit(implementation);
+        if (!index)
+          continue;
+        callDispatchBindings.push_back({call.getId(), objects[*index].id,
+                                        receiver.getId(), *method.getSlot(),
+                                        *method.getSignatureId()});
+      }
+    }
+    llvm::sort(callDispatchBindings, [](const auto &left, const auto &right) {
+      return std::tie(left.callID, left.codeUnitID) <
+             std::tie(right.callID, right.codeUnitID);
+    });
+    llvm::sort(classDispatchMethodBindings,
+               [](const auto &left, const auto &right) {
+                 return std::tie(left.classID, left.slot, left.signatureID) <
+                        std::tie(right.classID, right.slot, right.signatureID);
+               });
+    llvm::sort(
+        classDispatchParentBindings, [](const auto &left, const auto &right) {
+          return std::tie(left.classID, left.kind, left.parentClassID) <
+                 std::tie(right.classID, right.kind, right.parentClassID);
+        });
+  }
+
+  if (!interfaceCallDeclarations.empty()) {
+    // Source-owned contracts have already proved the original callable ABI.
+    // Retain nominal membership and declaration-owned extern implementation
+    // identities so the reader can independently derive each call's targets.
+    SymbolTableCollection symbols;
+    DenseSet<Operation *> requiredMembers;
+    for (auto contract : interfaceCallDeclarations)
+      requiredMembers.insert(
+          symbols.lookupNearestSymbolFrom<sim::SimVPIInterfaceMemberDeclOp>(
+              contract, contract.getMemberAttr()));
+    struct MemberRecord {
+      sim::SimVPIInterfaceMemberDeclOp declaration;
+      uint32_t nominal;
+    };
+    SmallVector<MemberRecord> members;
+    DenseSet<uint32_t> nominalTypes;
+    auto nominalReference = [&](Operation *source, FlatSymbolRefAttr reference,
+                                uint32_t &packed) -> LogicalResult {
+      auto type = symbols.lookupNearestSymbolFrom<sim::SimVPITypespecDeclOp>(
+          source, reference);
+      auto found = typespecRefs.find(type);
+      if (found == typespecRefs.end() ||
+          !tryPackTableIndex(found->second.table, found->second.index, packed))
+        return source->emitOpError("interface nominal type was not serialized");
+      return success();
+    };
+    for (auto member :
+         design.getBody().front().getOps<sim::SimVPIInterfaceMemberDeclOp>()) {
+      if (!requiredMembers.contains(member))
+        continue;
+      uint32_t nominal;
+      if (failed(
+              nominalReference(member, member.getInterfaceTypeAttr(), nominal)))
+        return {};
+      members.push_back({member, nominal});
+      nominalTypes.insert(nominal);
+    }
+    llvm::sort(members, [](auto left, auto right) {
+      return std::make_pair(left.nominal, left.declaration.getName()) <
+             std::make_pair(right.nominal, right.declaration.getName());
+    });
+    DenseMap<std::pair<Attribute, Attribute>, uint32_t> signatureIDs;
+    auto internSignature = [&](TypeAttr type, DenseI32ArrayAttr directions) {
+      auto [entry, inserted] = signatureIDs.try_emplace(
+          std::make_pair(Attribute(type), Attribute(directions)),
+          static_cast<uint32_t>(signatureIDs.size()) + 1);
+      return entry->second;
+    };
+    DenseMap<Operation *, uint32_t> memberIndices;
+    for (auto [index, record] : llvm::enumerate(members)) {
+      auto member = record.declaration;
+      memberIndices[member] = static_cast<uint32_t>(index);
+      interfaceCallables.push_back(
+          {record.nominal, member.getName(),
+           static_cast<uint16_t>(member.getMemberKind() == sim::EntryKind::Task
+                                     ? VPIObjectKind::Task
+                                     : VPIObjectKind::Function),
+           static_cast<uint16_t>(member.getIsExtern()),
+           internSignature(member.getSignatureAttr(),
+                           member.getDirectionsAttr())});
+    }
+    for (auto instance : design.getBody()
+                             .front()
+                             .getOps<sim::SimVPIInterfaceInstanceBindingOp>()) {
+      uint32_t nominal;
+      if (failed(nominalReference(instance, instance.getInterfaceTypeAttr(),
+                                  nominal)))
+        return {};
+      if (!nominalTypes.contains(nominal))
+        continue;
+      auto scope = scopeIndices.find(instance.getScopeId());
+      if (scope == scopeIndices.end()) {
+        instance.emitOpError("interface instance scope was not serialized");
+        return {};
+      }
+      interfaceInstances.push_back({scope->second, nominal});
+    }
+    DenseSet<uint32_t> requiredSignatureUnits;
+    for (auto callable :
+         design.getBody().front().getOps<sim::SimVPICallableDeclOp>()) {
+      if (!callable.getInterfaceMemberAttr())
+        continue;
+      auto member =
+          symbols.lookupNearestSymbolFrom<sim::SimVPIInterfaceMemberDeclOp>(
+              callable, callable.getInterfaceMemberAttr());
+      auto index = memberIndices.find(member);
+      if (index == memberIndices.end())
+        continue;
+      auto declaration = codeUnitObjectIndices.find(callable.getCodeUnitId());
+      // Ordinary extern calls execute the resolved provider directly. An extern
+      // fork/join executes its declared aggregation unit, including zero
+      // exports.
+      uint64_t implementationID = callable.getCodeUnitId();
+      if (auto exports = callable.getInterfaceExports();
+          exports && !callable.getIsForkJoin())
+        implementationID = exports->front();
+      auto implementation = codeUnitObjectIndices.find(implementationID);
+      if (declaration == codeUnitObjectIndices.end() ||
+          implementation == codeUnitObjectIndices.end()) {
+        callable.emitOpError("interface callable endpoint was not serialized");
+        return {};
+      }
+      uint32_t scope = scopeIndices.lookup(objects[declaration->second].scope);
+      interfaceCallableBindings.push_back(
+          {index->second, scope, declaration->second, implementation->second});
+      interfaceDeclarationIDs.insert(callable.getCodeUnitId());
+      requiredSignatureUnits.insert(declaration->second);
+      requiredSignatureUnits.insert(implementation->second);
+    }
+    // Source ABI facts are emitted from declarations, independently of the
+    // selected implementation rows. Omit facts with no dispatch endpoint.
+    for (auto callable :
+         design.getBody().front().getOps<sim::SimVPICallableDeclOp>()) {
+      auto unit = codeUnitObjectIndices.find(callable.getCodeUnitId());
+      if (unit == codeUnitObjectIndices.end() ||
+          !requiredSignatureUnits.contains(unit->second))
+        continue;
+      callableSignatureBindings.push_back(
+          {unit->second,
+           internSignature(callable.getSignatureAttr(),
+                           callable.getDirectionsAttr()),
+           (callable.getInterfaceExportsAttr() ? 1u : 0u) |
+               (callable.getIsForkJoin() ? 2u : 0u)});
+    }
+    llvm::sort(callableSignatureBindings,
+               [](const auto &left, const auto &right) {
+                 return left.unit < right.unit;
+               });
+    for (auto contract : interfaceCallDeclarations) {
+      auto call = symbols.lookupNearestSymbolFrom<sim::SimVPICallDeclOp>(
+          contract, contract.getCallAttr());
+      auto member =
+          symbols.lookupNearestSymbolFrom<sim::SimVPIInterfaceMemberDeclOp>(
+              contract, contract.getMemberAttr());
+      interfaceCallBindings.push_back(
+          {call.getId(), memberIndices.lookup(member), contract.getAccess()});
+    }
+    llvm::sort(interfaceInstances, [](const auto &left, const auto &right) {
+      return left.scope < right.scope;
+    });
+    llvm::sort(interfaceCallableBindings,
+               [](const auto &left, const auto &right) {
+                 return std::tie(left.member, left.scope) <
+                        std::tie(right.member, right.scope);
+               });
+    llvm::sort(interfaceCallBindings, [](const auto &left, const auto &right) {
+      return left.id < right.id;
+    });
   }
 
   for (sim::SimVPIStatementRelationDeclOp relation : relationDeclarations) {
@@ -2236,59 +3655,380 @@ SmallVector<uint8_t> serializeDesignDatabase(
            static_cast<uint16_t>(relation.getSelector()), sourceKindAndTable});
     }
   }
+  DenseMap<uint64_t, ImageObjectRef> initializerScopes;
+  if (includeStatements) {
+    DenseMap<uint32_t, ImageObjectRef> sourceScopes;
+    for (const RelationRecord &relation : relations) {
+      if (relation.iterate ||
+          relation.selector != static_cast<uint32_t>(VPIRelationKind::ScopeRel))
+        continue;
+      uint32_t source = 0;
+      if (!tryPackTableIndex(relation.sourceTable, relation.sourceIndex,
+                             source))
+        return {};
+      auto table = unpackTableIndexKind(relation.targetIndexAndTable);
+      auto index = unpackTableIndex(relation.targetIndexAndTable);
+      uint32_t kind =
+          table == TableKind::Scope ? sim::vpiKindForScope(scopes[index])
+          : table == TableKind::Statement
+              ? statements[index].declaration.getVpiKind()
+          : table == TableKind::StaticObject ? staticObjects[index].vpiKind
+                                             : objects[index].vpiKind;
+      sourceScopes.try_emplace(source, ImageObjectRef{table, index, kind});
+    }
+    DenseMap<uint64_t, ImageObjectRef> initializerSources = storageRefs;
+    for (sim::SimVPIClassMemberDeclOp member : classMembers)
+      if (auto storage = member.getStaticStorage();
+          storage && typespecsBySymbol.contains(member.getOwner()))
+        initializerSources[*storage] = classMemberRefs.lookup(member);
+    for (auto [storage, anchor] : eventArrayStorage)
+      initializerSources[cast<sim::SimStorageDeclOp>(storage).getId()] =
+          anchorRefs.lookup(anchor);
+    for (auto binding :
+         design.getBody().front().getOps<sim::SimVPIInitializerBindingOp>()) {
+      auto source = initializerSources.find(binding.getStorageId());
+      uint32_t packed = 0;
+      if (source == initializerSources.end() ||
+          !tryPackTableIndex(source->second.table, source->second.index,
+                             packed) ||
+          !sourceScopes.contains(packed)) {
+        binding.emitOpError(
+            "initializer source variable or lexical scope was not serialized");
+        return {};
+      }
+      initializerBindings.push_back({binding.getCodeUnitId(), packed, 0});
+      initializerScopes.try_emplace(binding.getCodeUnitId(),
+                                    sourceScopes.lookup(packed));
+    }
+    llvm::sort(initializerBindings, [](auto left, auto right) {
+      return left.codeUnitID < right.codeUnitID;
+    });
+  }
+
+  for (auto [ordinal, call] : llvm::enumerate(callDeclarations)) {
+    const auto binding = callSiteBindings[ordinal];
+    TableKind sourceTable = unpackTableIndexKind(binding.object);
+    uint32_t sourceIndex = unpackTableIndex(binding.object);
+    const uint32_t callKind = call.getVpiKind();
+    // The nearest retained scope owns the occurrence; enclosing expressions
+    // and composite statements do not become false lexical scopes.
+    TableKind scopeTable = TableKind::Scope;
+    uint32_t scopeIndex = scopeIndices.lookup(call.getScopeId());
+    uint32_t scopeKind = sim::vpiKindForScope(scopes[scopeIndex]);
+    for (auto enclosing = call.getEnclosingStatementId(); enclosing;) {
+      uint32_t index = statementIndices.lookup(*enclosing);
+      auto statement = statements[index].declaration;
+      if (statement.getIsScope()) {
+        scopeTable = TableKind::Statement;
+        scopeIndex = index;
+        scopeKind = statement.getVpiKind();
+        break;
+      }
+      enclosing = statement.getParentId();
+    }
+    if (scopeTable == TableKind::Scope) {
+      auto source = codeUnitSourceRefs.find(call.getCodeUnitId());
+      ImageObjectRef ownerRef =
+          source != codeUnitSourceRefs.end()
+              ? source->second
+              : ImageObjectRef{TableKind::Object, binding.owner,
+                               objects[binding.owner].vpiKind};
+      const auto *owner = findVPIObjectKind(ownerRef.vpiKind);
+      if (owner && (owner->families & vpiFamilyMask(VPIObjectFamily::Scope))) {
+        scopeTable = ownerRef.table;
+        scopeIndex = ownerRef.index;
+        scopeKind = ownerRef.vpiKind;
+      }
+    }
+    if (auto initializer = initializerScopes.find(call.getCodeUnitId());
+        initializer != initializerScopes.end()) {
+      scopeTable = initializer->second.table;
+      scopeIndex = initializer->second.index;
+      scopeKind = initializer->second.vpiKind;
+    }
+    if (findVPITraversal(callKind,
+                         static_cast<uint32_t>(VPIRelationKind::ScopeRel),
+                         VPITraversalMode::Handle) &&
+        failed(addRelation(call, sourceTable, sourceIndex, callKind,
+                           static_cast<uint32_t>(VPIRelationKind::ScopeRel),
+                           VPITraversalMode::Handle, scopeTable, scopeIndex,
+                           scopeKind)))
+      return {};
+    if (auto calleeID = call.getCalleeCodeUnitId()) {
+      uint32_t callee = codeUnitObjectIndices.lookup(*calleeID);
+      auto mapped = codeUnitSourceRefs.find(*calleeID);
+      ImageObjectRef target = mapped != codeUnitSourceRefs.end()
+                                  ? mapped->second
+                                  : ImageObjectRef{TableKind::Object, callee,
+                                                   objects[callee].vpiKind};
+      if (failed(addRelation(call, sourceTable, sourceIndex, callKind,
+                             target.vpiKind, VPITraversalMode::Handle,
+                             target.table, target.index, target.vpiKind)))
+        return {};
+    }
+  }
+
+  for (auto declaration : foreachDeclarations) {
+    uint32_t statement = statementIndices.lookup(declaration.getStatementId());
+    uint32_t foreachKind = static_cast<uint32_t>(VPIObjectKind::ForeachStmt);
+    ImageObjectRef collection;
+    if (declaration.getCollection().getKind() ==
+        sim::VPIObjectRefKind::Storage) {
+      auto found = storageRefs.find(
+          declaration.getCollection().getId().getValue().getZExtValue());
+      if (found == storageRefs.end()) {
+        declaration.emitOpError("foreach collection was not serialized");
+        return {};
+      }
+      collection = found->second;
+    } else {
+      auto local = localsBySymbol.lookup(
+          declaration.getCollection().getSymbol().getValue());
+      if (!local || !objectIndices.contains(local)) {
+        declaration.emitOpError("foreach local collection was not serialized");
+        return {};
+      }
+      collection = {TableKind::Object, objectIndices.lookup(local),
+                    sim::vpiKindForClassMember(local.getVpiType())};
+    }
+    if (failed(addRelation(declaration, TableKind::Statement, statement,
+                           foreachKind,
+                           static_cast<uint32_t>(VPIRelationKind::VariablesRel),
+                           VPITraversalMode::Iterate, collection.table,
+                           collection.index, collection.vpiKind, 0)))
+      return {};
+    for (auto [ordinal, index] :
+         llvm::enumerate(declaration.getLoopVariables())) {
+      ImageObjectRef target;
+      if (auto symbol = dyn_cast<FlatSymbolRefAttr>(index)) {
+        auto local = localsBySymbol.lookup(symbol.getValue());
+        target = {TableKind::Object, objectIndices.lookup(local),
+                  sim::vpiKindForClassMember(local.getVpiType())};
+      } else {
+        target = {TableKind::StaticObject,
+                  foreachNullIndices.lookup(
+                      foreachNullIDs.lookup({declaration, ordinal})),
+                  static_cast<uint32_t>(VPIObjectKind::Operation)};
+      }
+      if (failed(addRelation(
+              declaration, TableKind::Statement, statement, foreachKind,
+              static_cast<uint32_t>(VPIRelationKind::LoopVarsRel),
+              VPITraversalMode::Iterate, target.table, target.index,
+              target.vpiKind, ordinal)))
+        return {};
+    }
+  }
+
+  // Explicit graph edges cannot replace or extend a slice owned by another
+  // inventory producer. In particular, typespec owners, aliases, and lexical
+  // anchors synthesize relations that are not all tagged automatic in the LRM
+  // traversal model. Check the final physical identities, including backings.
+  DenseSet<uint64_t> synthesizedRelationGroups;
+  for (const RelationRecord &relation : relations)
+    synthesizedRelationGroups.insert(
+        relationIdentity(relation.sourceIndex, relation.selector,
+                         relation.sourceKindAndTable, 0)
+            .first);
+  auto resolvePhysicalReference =
+      [&](Operation *use, sim::VPIObjectRefAttr reference,
+          StringRef endpoint) -> std::optional<ImageObjectRef> {
+    uint64_t id =
+        reference.getId() ? reference.getId().getValue().getZExtValue() : 0;
+    std::optional<ImageObjectRef> resolved;
+    switch (reference.getKind()) {
+    case sim::VPIObjectRefKind::Statement: {
+      auto found = statementIndices.find(id);
+      if (found != statementIndices.end())
+        resolved = ImageObjectRef{TableKind::Statement, found->second,
+                                  statementKinds.lookup(id)};
+      break;
+    }
+    case sim::VPIObjectRefKind::Storage: {
+      auto found = storageRefs.find(id);
+      if (found != storageRefs.end())
+        resolved = found->second;
+      break;
+    }
+    case sim::VPIObjectRefKind::Net: {
+      auto found = netRefs.find(id);
+      if (found != netRefs.end())
+        resolved = found->second;
+      break;
+    }
+    case sim::VPIObjectRefKind::NetIdentity: {
+      auto found = netIdentityRefs.find(id);
+      if (found != netIdentityRefs.end())
+        resolved = found->second;
+      break;
+    }
+    case sim::VPIObjectRefKind::Port: {
+      auto found = portRefs.find(id);
+      if (found != portRefs.end())
+        resolved = found->second;
+      break;
+    }
+    case sim::VPIObjectRefKind::DefinitionMember:
+      break;
+    case sim::VPIObjectRefKind::Symbol: {
+      StringRef name = reference.getSymbol().getValue();
+      if (auto anchor = anchorsBySymbol.find(name);
+          anchor != anchorsBySymbol.end())
+        resolved = anchorRefs.lookup(anchor->second);
+      else if (auto typespec = typespecsBySymbol.find(name);
+               typespec != typespecsBySymbol.end())
+        resolved = typespecRefs.lookup(typespec->second);
+      else if (auto source = sourceInheritanceBySymbol.find(name);
+               source != sourceInheritanceBySymbol.end())
+        resolved = sourceInheritanceRefs.lookup(source->second);
+      else if (auto alias = unresolvedAliasesBySymbol.find(name);
+               alias != unresolvedAliasesBySymbol.end())
+        resolved = unresolvedAliasRefs.lookup(alias->second);
+      else if (auto nettype = nettypesBySymbol.find(name);
+               nettype != nettypesBySymbol.end())
+        resolved = nettypeRefs.lookup(nettype->second);
+      else if (auto member = classMembersBySymbol.find(name);
+               member != classMembersBySymbol.end())
+        resolved = classMemberRefs.lookup(member->second);
+      else if (auto call = callRefsBySymbol.find(name);
+               call != callRefsBySymbol.end())
+        resolved = call->second.getStatementId()
+                       ? ImageObjectRef{TableKind::Statement,
+                                        statementIndices.lookup(
+                                            *call->second.getStatementId()),
+                                        call->second.getVpiKind()}
+                       : ImageObjectRef{TableKind::Object,
+                                        objectIndices.lookup(call->second),
+                                        call->second.getVpiKind()};
+      else if (auto local = localsBySymbol.find(name);
+               local != localsBySymbol.end())
+        resolved = ImageObjectRef{
+            TableKind::Object, objectIndices.lookup(local->second),
+            sim::vpiKindForClassMember(local->second.getVpiType())};
+      break;
+    }
+    }
+    if (!resolved)
+      use->emitOpError() << endpoint << " VPI reference " << reference
+                         << " was not serialized";
+    return resolved;
+  };
+  auto expressionFor = [&](sim::VPIObjectRefAttr reference) {
+    return reference.getKind() == sim::VPIObjectRefKind::Symbol
+               ? expressionsBySymbol.lookup(reference.getSymbol().getValue())
+               : sim::SimVPIExpressionDeclOp{};
+  };
+  auto isCaseLabel = [&](sim::SimVPIRelationDeclOp relation) {
+    auto source = relation.getSource();
+    if (source.getKind() != sim::VPIObjectRefKind::Statement ||
+        relation.getSelector() != uint32_t(VPIRelationKind::ExprRel) ||
+        relation.getMode() != sim::VPIRelationMode::Iterate)
+      return false;
+    auto statement =
+        statementIndices.find(source.getId().getValue().getZExtValue());
+    return statement != statementIndices.end() &&
+           statements[statement->second].declaration.getVpiKind() ==
+               uint32_t(VPIObjectKind::CaseItem);
+  };
+  auto isCallArgument = [&](sim::SimVPIRelationDeclOp relation) {
+    if (relation.getSelector() != uint32_t(VPIRelationKind::ArgumentRel) ||
+        relation.getMode() != sim::VPIRelationMode::Iterate)
+      return false;
+    auto source = relation.getSource();
+    if (source.getKind() != sim::VPIObjectRefKind::Symbol)
+      return false;
+    auto found = callRefsBySymbol.find(source.getSymbol().getValue());
+    return found != callRefsBySymbol.end() &&
+           (found->second.getVpiKind() == uint32_t(VPIObjectKind::FuncCall) ||
+            found->second.getVpiKind() == uint32_t(VPIObjectKind::TaskCall));
+  };
+  auto expressionUseSource = [&](sim::SimVPIRelationDeclOp relation) {
+    if (!isCaseLabel(relation))
+      return relation.getSource();
+    auto index = statementIndices.lookup(
+        relation.getSource().getId().getValue().getZExtValue());
+    auto parent = statements[index].declaration.getParentIdAttr();
+    return parent ? sim::VPIObjectRefAttr::get(relation.getContext(),
+                                               sim::VPIObjectRefKind::Statement,
+                                               parent)
+                  : sim::VPIObjectRefAttr{};
+  };
+  DenseSet<Attribute> compactExpressionGroups;
+  DenseSet<std::pair<Attribute, Attribute>> caseTargets;
+  for (auto relation : generalRelationDeclarations)
+    if ((isCaseLabel(relation) || isCallArgument(relation)) &&
+        (!caseTargets.insert({relation.getSource(), relation.getTarget()})
+              .second ||
+         expressionFor(relation.getTarget()) ||
+         relation.getTarget().getKind() ==
+             sim::VPIObjectRefKind::DefinitionMember))
+      compactExpressionGroups.insert(relation.getSource());
+  auto definitionMemberFor = [&](sim::VPIObjectRefAttr reference) {
+    return reference.getKind() == sim::VPIObjectRefKind::Symbol
+               ? definitionMembersBySymbol.lookup(
+                     reference.getSymbol().getValue())
+               : sim::SimVPIDefinitionMemberDeclOp{};
+  };
   for (sim::SimVPIRelationDeclOp relation : generalRelationDeclarations) {
-    auto resolveReference =
-        [&](sim::VPIObjectRefAttr reference,
-            StringRef endpoint) -> std::optional<ImageObjectRef> {
-      uint64_t id = reference.getId().getValue().getZExtValue();
-      std::optional<ImageObjectRef> resolved;
-      switch (reference.getKind()) {
-      case sim::VPIObjectRefKind::Statement: {
-        auto found = statementIndices.find(id);
-        if (found != statementIndices.end())
-          resolved = ImageObjectRef{TableKind::Statement, found->second,
-                                    statementKinds.lookup(id)};
-        break;
+    if (relation.getSource().getKind() ==
+        sim::VPIObjectRefKind::DefinitionMember) {
+      // Whole contextual declaration Uses are derived from the independently
+      // validated forward root. They need no per-instance reverse record.
+      bool exactUse =
+          relation.getSelector() == uint32_t(VPIRelationKind::UseRel) &&
+          relation.getMode() == sim::VPIRelationMode::Iterate &&
+          llvm::any_of(generalRelationDeclarations, [&](auto forward) {
+            return expressionUseSource(forward) == relation.getTarget() &&
+                   forward.getTarget() == relation.getSource() &&
+                   (forward.getMode() == sim::VPIRelationMode::Handle ||
+                    isCaseLabel(forward) || isCallArgument(forward));
+          });
+      if (!exactUse) {
+        relation.emitOpError("contextual declaration relation requires an "
+                             "exact expression root");
+        return {};
       }
-      case sim::VPIObjectRefKind::Storage: {
-        auto found = storageRefs.find(id);
-        if (found != storageRefs.end())
-          resolved = found->second;
-        break;
-      }
-      case sim::VPIObjectRefKind::Net: {
-        auto found = netRefs.find(id);
-        if (found != netRefs.end())
-          resolved = found->second;
-        break;
-      }
-      case sim::VPIObjectRefKind::NetIdentity: {
-        auto found = netIdentityRefs.find(id);
-        if (found != netIdentityRefs.end())
-          resolved = found->second;
-        break;
-      }
-      case sim::VPIObjectRefKind::Port: {
-        auto found = portRefs.find(id);
-        if (found != portRefs.end())
-          resolved = found->second;
-        break;
-      }
-      }
-      if (!resolved)
-        relation.emitOpError() << endpoint << " VPI reference "
-                               << stringifyVPIObjectRefKind(reference.getKind())
-                               << " ID " << id << " was not serialized";
-      return resolved;
-    };
+      continue;
+    }
+    if (definitionMemberFor(relation.getSource())) {
+      expressionRootDeclarations.push_back(relation);
+      continue;
+    }
+    if (auto expression = expressionFor(relation.getSource())) {
+      expressionChildren[expression].push_back(relation);
+      continue;
+    }
+    if (((isCaseLabel(relation) || isCallArgument(relation)) &&
+         compactExpressionGroups.contains(relation.getSource())) ||
+        expressionFor(relation.getTarget()) ||
+        relation.getTarget().getKind() ==
+            sim::VPIObjectRefKind::DefinitionMember) {
+      expressionRootDeclarations.push_back(relation);
+      continue;
+    }
     std::optional<ImageObjectRef> source =
-        resolveReference(relation.getSource(), "source");
+        resolvePhysicalReference(relation, relation.getSource(), "source");
     std::optional<ImageObjectRef> target =
-        resolveReference(relation.getTarget(), "target");
+        resolvePhysicalReference(relation, relation.getTarget(), "target");
     if (!source || !target)
       return {};
     auto mode = static_cast<VPITraversalMode>(
         static_cast<uint32_t>(relation.getMode()));
+    uint16_t packedSource = 0;
+    if (!tryPackRelationSource(source->table, source->vpiKind,
+                               mode == VPITraversalMode::Iterate,
+                               packedSource)) {
+      relation.emitOpError("relation source VPI kind cannot be packed");
+      return {};
+    }
+    if (synthesizedRelationGroups.contains(
+            relationIdentity(source->index, relation.getSelector(),
+                             packedSource, 0)
+                .first)) {
+      relation.emitOpError(
+          "relation source, selector, and access mode are already supplied "
+          "by design inventory");
+      return {};
+    }
     if (failed(addRelation(relation, source->table, source->index,
                            source->vpiKind, relation.getSelector(), mode,
                            target->table, target->index, target->vpiKind,
@@ -2534,6 +4274,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
     } else if (isa<sim::ClassHandleType>(type)) {
       record.kind = 1;
       record.name = "class";
+    } else if (sim::isManagedHandleType(type) ||
+               sim::isSimulationHandleType(type)) {
+      record.kind = 1;
+      record.name = "handle";
     } else if (auto packed = dyn_cast<sim::PackedArrayType>(type)) {
       record.kind = 2;
       record.flags |= 4;
@@ -2627,6 +4371,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     return {};
 
   llvm::StringMap<ImageObjectRef> semanticIdentityObjects;
+  llvm::StringMap<ImageObjectRef> classSpecializationObjects;
+  DenseMap<Attribute, ImageObjectRef> builtinClassObjects;
   for (sim::SimVPIObjectAnchorOp anchor : anchors) {
     sim::VPIObjectBackingAttr backing = anchor.getBackingAttr();
     if (!backing || backing.getKind() != sim::VPIObjectBackingKind::Class ||
@@ -2641,6 +4387,31 @@ SmallVector<uint8_t> serializeDesignDatabase(
   }
   for (sim::SimVPITypespecDeclOp typespec : typespecs) {
     sim::VPITypeSemanticsAttr semantic = typespec.getTargetType();
+    if (typespec.getOrigin() == sim::VPITypespecOrigin::BuiltinClass) {
+      auto reference = typespecRefs.find(typespec);
+      if (reference == typespecRefs.end()) {
+        typespec.emitOpError("canonical builtin class was not serialized");
+        return {};
+      }
+      builtinClassObjects[sim::stripVPITypedefAliases(semantic)] =
+          reference->second;
+      continue;
+    }
+    if (typespec.getOrigin() == sim::VPITypespecOrigin::ClassSpecialization) {
+      auto owner = anchorsBySymbol.find(typespec.getOwnerAttr().getValue());
+      auto reference = typespecRefs.find(typespec);
+      if (owner == anchorsBySymbol.end() || reference == typespecRefs.end()) {
+        typespec.emitOpError(
+            "canonical class specialization was not serialized");
+        return {};
+      }
+      StringRef identity = semantic.getSymbol().getRootReference().getValue();
+      classSpecializationObjects[identity] = reference->second;
+      // Keep class semantic identity lexical. The separate specialization
+      // binding below distinguishes classes instantiated from one generic defn.
+      semanticIdentityObjects[identity] = anchorRefs.lookup(owner->second);
+      continue;
+    }
     if (semantic.getKind() != sim::VPITypeKind::VirtualInterface ||
         !semantic.getSymbol() ||
         typespec.getOrigin() != sim::VPITypespecOrigin::Interface)
@@ -2683,6 +4454,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
   SmallVector<SemanticTypeRecord> semanticTypes;
   SmallVector<SemanticTypeEdgeRecord> semanticTypeEdges;
   SmallVector<SemanticRootBindingRecord> semanticRootBindings;
+  struct ClassTypeBindingRecord {
+    uint64_t classID;
+    uint32_t typespecIndexAndTable;
+  };
+  struct SemanticClassBindingRecord {
+    uint32_t semanticType;
+    uint32_t typespecIndexAndTable;
+  };
+  SmallVector<ClassTypeBindingRecord> classTypeBindings;
+  SmallVector<SemanticClassBindingRecord> semanticClassBindings;
   DenseMap<std::tuple<Attribute, uint32_t, uint32_t>, uint32_t>
       semanticTypeIndices;
   bool semanticTypeError = false;
@@ -2697,6 +4478,24 @@ SmallVector<uint8_t> serializeDesignDatabase(
     }
     return true;
   };
+  for (sim::SimVPITypespecDeclOp typespec : typespecs) {
+    if (typespec.getOrigin() != sim::VPITypespecOrigin::ClassSpecialization)
+      continue;
+    auto declaration =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+            typespec, typespec.getTargetType().getSymbol());
+    uint32_t packed = 0;
+    if (!declaration ||
+        !packSemanticObject(typespecRefs.lookup(typespec), packed)) {
+      typespec.emitOpError("could not bind canonical class specialization");
+      return {};
+    }
+    classTypeBindings.push_back({declaration.getId(), packed});
+  }
+  llvm::sort(classTypeBindings, [](const auto &left, const auto &right) {
+    return left.classID < right.classID;
+  });
+
   auto semanticArrayShape = [&](sim::SimVPIObjectAnchorOp anchor) {
     DenseI64ArrayAttr ranges = anchor.getIndexRangesAttr();
     DenseI64ArrayAttr dimensionFlags = anchor.getIndexDimensionFlagsAttr();
@@ -2741,6 +4540,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
       return {};
     if (auto storage = dyn_cast<sim::SimStorageDeclOp>(identity))
       return storage.getVpiTypeAttr();
+    if (auto member = dyn_cast<sim::SimVPIClassMemberDeclOp>(identity))
+      return member.getVpiType();
+    if (auto local = dyn_cast<sim::SimVPILocalDeclOp>(identity))
+      return local.getVpiType();
+    if (auto binding =
+            dyn_cast<sim::SimVPIDefinitionMemberSpecializationOp>(identity))
+      return binding.getEffectiveType();
+    if (auto expression = dyn_cast<sim::SimVPIExpressionDeclOp>(identity))
+      return expression.getVpiTypeAttr();
     if (auto net = dyn_cast<sim::SimNetDeclOp>(identity))
       return net.getVpiTypeAttr();
     if (auto netIdentity = dyn_cast<sim::SimVPINetIdentityDeclOp>(identity))
@@ -2750,9 +4558,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
     if (auto anchor = dyn_cast<sim::SimVPIObjectAnchorOp>(identity)) {
       if (sim::VPITypeSemanticsAttr semantic = anchor.getVpiTypeAttr())
         return semantic;
+      if (auto semantic = eventArraySemantics.lookup(anchor))
+        return semantic;
       return semanticArrayShape(anchor);
     }
-    if (auto typespec = dyn_cast<sim::SimVPITypespecDeclOp>(identity)) {
+    auto typespec = dyn_cast<sim::SimVPITypespecDeclOp>(identity);
+    if (auto constant = dyn_cast<sim::SimVPIEnumConstDeclOp>(identity))
+      if (constant.getImmutableValueAttr())
+        typespec =
+            typespecsBySymbol.lookup(constant.getEnumTypespecAttr().getValue());
+    if (typespec) {
       sim::VPITypeSemanticsAttr semantic = typespec.getTargetType();
       ArrayAttr aliases = semantic.getTypedefAliases();
       if (!aliases || aliases.empty())
@@ -2830,6 +4645,28 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint32_t index = static_cast<uint32_t>(semanticTypes.size());
     semanticTypeIndices[key] = index;
     semanticTypes.push_back({semantic, 0, 0, 0, aliasObject, identityTarget});
+    if (semantic.getKind() == sim::VPITypeKind::Class) {
+      auto canonical = classSpecializationObjects.find(
+          semantic.getSymbol().getRootReference().getValue());
+      if (canonical != classSpecializationObjects.end()) {
+        uint32_t packed = 0;
+        if (!packSemanticObject(canonical->second, packed))
+          return std::nullopt;
+        semanticClassBindings.push_back({index, packed});
+      }
+    }
+    if (semantic.getKind() == sim::VPITypeKind::Mailbox ||
+        semantic.getKind() == sim::VPITypeKind::Semaphore ||
+        semantic.getKind() == sim::VPITypeKind::Process) {
+      auto canonical =
+          builtinClassObjects.find(sim::stripVPITypedefAliases(semantic));
+      if (canonical != builtinClassObjects.end()) {
+        uint32_t packed = 0;
+        if (!packSemanticObject(canonical->second, packed))
+          return std::nullopt;
+        semanticClassBindings.push_back({index, packed});
+      }
+    }
     const uint32_t firstEdge = static_cast<uint32_t>(semanticTypeEdges.size());
     const uint32_t edgeCount =
         static_cast<uint32_t>(semantic.getChildren().size());
@@ -2970,7 +4807,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
         return {};
       }
       bindingsBySpecialization[specializationIndex].push_back(
-          {memberIndex, *rootIndex});
+          {memberIndex, *rootIndex, binding});
     }
     for (auto [index, bindings] : llvm::enumerate(bindingsBySpecialization)) {
       llvm::sort(bindings, [](const auto &left, const auto &right) {
@@ -3009,6 +4846,147 @@ SmallVector<uint8_t> serializeDesignDatabase(
       return {};
   }
 
+  // Pair exact source semantics with normalized storage for all reflected
+  // values. Managed handles hide element/key types in the physical graph;
+  // one typed owner namespace retains those child layouts without inferring
+  // storage from source names or a runtime allocation's type ID.
+  auto appendValueLayout =
+      [&](Operation *owner, ValueLayoutOwnerKind ownerKind, uint32_t ownerIndex,
+          Type rootType,
+          sim::VPITypeSemanticsAttr rootSemantic) -> LogicalResult {
+    using WorkItem = std::pair<Type, sim::VPITypeSemanticsAttr>;
+    SmallVector<WorkItem> pending{{rootType, rootSemantic}};
+    DenseMap<Attribute, Type> visited;
+    while (!pending.empty()) {
+      auto [physical, semantic] = pending.pop_back_val();
+      auto [found, inserted] = visited.try_emplace(semantic, physical);
+      if (!inserted) {
+        if (found->second != physical) {
+          owner->emitError(
+              "value semantic node has conflicting storage layouts");
+          return failure();
+        }
+        continue;
+      }
+      auto physicalIndex = addType(physical);
+      auto semanticIndex = addSemanticType(semantic);
+      if (!physicalIndex || !semanticIndex) {
+        owner->emitError("value storage layout was not serialized");
+        return failure();
+      }
+      valueElementBindings.push_back(
+          {ownerKind, ownerIndex, *semanticIndex, *physicalIndex});
+      // Executable enums may scalarize their source base; the complete enum
+      // value remains an exact packed leaf with its own storage binding.
+      if (semantic.getKind() == sim::VPITypeKind::Enum)
+        continue;
+      ArrayAttr children = semantic.getChildren();
+      if (children.empty())
+        continue;
+      SmallVector<Type> childTypes;
+      if (auto array = dyn_cast<sim::PackedArrayType>(physical))
+        childTypes.push_back(array.getElementType());
+      else if (auto array = dyn_cast<sim::UnpackedArrayType>(physical))
+        childTypes.push_back(array.getElementType());
+      else if (auto array = dyn_cast<sim::AssocArrayType>(physical)) {
+        childTypes.push_back(array.getKeyType());
+        childTypes.push_back(array.getElementType());
+      } else if (auto mailbox = dyn_cast<sim::MailboxType>(physical))
+        childTypes.push_back(mailbox.getElementType());
+      else if (Type element = sim::getContainerElement(physical))
+        childTypes.push_back(element);
+      else {
+        ArrayAttr fields;
+        if (auto value = dyn_cast<sim::PackedStructType>(physical))
+          fields = value.getFields();
+        else if (auto value = dyn_cast<sim::UnpackedStructType>(physical))
+          fields = value.getFields();
+        else if (auto value = dyn_cast<sim::PackedUnionType>(physical))
+          fields = value.getFields();
+        else if (auto value = dyn_cast<sim::UnpackedUnionType>(physical))
+          fields = value.getFields();
+        if (fields)
+          for (Attribute field : fields)
+            childTypes.push_back(cast<sim::FieldAttr>(field).getType());
+      }
+      if (childTypes.size() != children.size()) {
+        owner->emitError(
+            "value semantic children have no exact storage layout");
+        return failure();
+      }
+      for (auto [ordinal, child] : llvm::enumerate(children)) {
+        if (semantic.getKind() == sim::VPITypeKind::AssocArray &&
+            ordinal == 0 && sim::getPackedWidth(childTypes[ordinal]))
+          continue;
+        pending.emplace_back(childTypes[ordinal],
+                             cast<sim::VPITypeSemanticsAttr>(child));
+      }
+    }
+    return success();
+  };
+
+  if (includeStatements) {
+    for (sim::SimVPITypespecDeclOp typespec : typespecs) {
+      TypeAttr message = typespec.getMessageTypeAttr();
+      if (!message)
+        continue;
+      auto reference = typespecRefs.find(typespec);
+      uint32_t packed = 0;
+      if (reference == typespecRefs.end() ||
+          !tryPackTableIndex(reference->second.table, reference->second.index,
+                             packed)) {
+        typespec.emitOpError("canonical mailbox typespec was not serialized");
+        return {};
+      }
+      if (failed(appendValueLayout(
+              typespec, ValueLayoutOwnerKind::ReflectedObject, packed,
+              message.getValue(),
+              cast<sim::VPITypeSemanticsAttr>(
+                  typespec.getTargetType().getChildren()[0]))))
+        return {};
+    }
+    for (auto [index, object] : llvm::enumerate(objects)) {
+      if (!object.identity || !object.type ||
+          !isa<sim::SimStorageDeclOp, sim::SimVPIClassMemberDeclOp,
+               sim::SimVPILocalDeclOp>(object.identity))
+        continue;
+      auto semantic = semanticForObject(object.identity);
+      if (!semantic)
+        continue;
+      uint32_t packed = 0;
+      if (!tryPackTableIndex(TableKind::Object, index, packed) ||
+          failed(appendValueLayout(object.identity,
+                                   ValueLayoutOwnerKind::ReflectedObject,
+                                   packed, object.type, semantic)))
+        return {};
+    }
+    SmallVector<sim::SimVPIBoxTypeDeclOp> descriptors;
+    for (auto descriptor :
+         design.getBody().front().getOps<sim::SimVPIBoxTypeDeclOp>())
+      descriptors.push_back(descriptor);
+    llvm::sort(descriptors, [](auto left, auto right) {
+      return left.getId() < right.getId();
+    });
+    for (auto [index, descriptor] : llvm::enumerate(descriptors)) {
+      auto semantic = addSemanticType(descriptor.getVpiType());
+      auto physical = addType(descriptor.getValueType());
+      if (!semantic || !physical || index > UINT32_MAX ||
+          (index && descriptors[index - 1].getId() == descriptor.getId())) {
+        descriptor.emitOpError("box type descriptor could not be serialized");
+        return {};
+      }
+      boxTypeBindings.push_back({descriptor.getId(), *semantic, *physical});
+      if (failed(appendValueLayout(
+              descriptor, ValueLayoutOwnerKind::BoxDescriptor, index,
+              descriptor.getValueType(), descriptor.getVpiType())))
+        return {};
+    }
+  }
+  llvm::sort(valueElementBindings, [](const auto &left, const auto &right) {
+    return std::tie(left.ownerKind, left.ownerIndex, left.semanticType) <
+           std::tie(right.ownerKind, right.ownerIndex, right.semanticType);
+  });
+
   // Freeze immutable object values only after anchor identities have their
   // final physical table/index. Values are hash-consed separately from sparse
   // source bindings so later definition specializations can reuse this pool.
@@ -3024,39 +5002,57 @@ SmallVector<uint8_t> serializeDesignDatabase(
       }
     };
     llvm::StringMap<uint32_t> frozenValueIndices;
-    for (sim::SimVPIObjectAnchorOp anchor : anchors) {
-      sim::FrozenConstantAttr frozen = anchor.getImmutableValueAttr();
-      if (!frozen)
-        continue;
-      auto reference = anchorRefs.find(anchor);
-      if (reference == anchorRefs.end()) {
-        anchor.emitOpError("immutable VPI value source was not serialized");
-        return {};
+    SmallVector<
+        std::tuple<Operation *, sim::FrozenConstantAttr, ImageObjectRef>>
+        immutableSources;
+    for (sim::SimVPIObjectAnchorOp anchor : anchors)
+      if (auto frozen = anchor.getImmutableValueAttr()) {
+        auto reference = anchorRefs.find(anchor);
+        if (reference == anchorRefs.end()) {
+          anchor.emitOpError("immutable VPI value source was not serialized");
+          return {};
+        }
+        immutableSources.emplace_back(anchor, frozen, reference->second);
       }
-      uint32_t packedSource = 0;
-      if (!tryPackTableIndex(reference->second.table, reference->second.index,
-                             packedSource)) {
-        anchor.emitOpError("immutable VPI value source cannot be packed");
-        return {};
+    for (sim::SimVPIEnumConstDeclOp constant : enumConstants)
+      if (auto frozen = constant.getImmutableValueAttr()) {
+        auto index = objectIndices.find(constant);
+        if (index == objectIndices.end()) {
+          constant.emitOpError(
+              "immutable enum value source was not serialized");
+          return {};
+        }
+        immutableSources.emplace_back(
+            constant, frozen,
+            ImageObjectRef{TableKind::Object, index->second,
+                           static_cast<uint32_t>(VPIObjectKind::EnumConst)});
       }
+    auto internFrozenValue =
+        [&](Operation *source,
+            sim::FrozenConstantAttr frozen) -> std::optional<uint32_t> {
       auto planes = dyn_cast<ArrayAttr>(frozen.getValue());
       std::optional<unsigned> width = sim::getPackedWidth(frozen.getType());
       if (!planes || planes.size() != 2 || !width || *width == 0) {
-        anchor.emitOpError("immutable VPI value is not a fixed packed value");
-        return {};
+        source->emitOpError("immutable VPI value is not a fixed packed value");
+        return std::nullopt;
       }
       const llvm::APInt &value = cast<IntegerAttr>(planes[0]).getValue();
       const llvm::APInt &unknown = cast<IntegerAttr>(planes[1]).getValue();
       uint64_t planeBytes = (uint64_t{*width} + 7) / 8;
       if (planeBytes > UINT64_MAX / 2 ||
           frozenValuePayload.size() > UINT64_MAX - planeBytes * 2) {
-        anchor.emitOpError("immutable VPI value payload exceeds image limits");
-        return {};
+        source->emitOpError("immutable VPI value payload exceeds image limits");
+        return std::nullopt;
+      }
+      auto semantic = semanticForObject(source);
+      if (!semantic) {
+        source->emitOpError("immutable VPI value has no source type");
+        return std::nullopt;
       }
       uint32_t kindAndFlags =
           static_cast<uint32_t>(FrozenValueKind::Packed) |
           (frozen.getIsSigned() ? frozenValueSigned : 0) |
-          (anchor.getVpiTypeAttr().getIsFourState() ? frozenValueFourState : 0);
+          (semantic.getIsFourState() ? frozenValueFourState : 0);
       SmallVector<uint8_t> payload;
       payload.reserve(static_cast<size_t>(planeBytes * 2));
       appendPlane(payload, value, planeBytes);
@@ -3084,8 +5080,368 @@ SmallVector<uint8_t> serializeDesignDatabase(
         frozenValues.push_back(record);
         llvm::append_range(frozenValuePayload, payload);
       }
-      frozenValueBindings.push_back({packedSource, entry->second});
+      return entry->second;
+    };
+    for (auto [source, frozen, reference] : immutableSources) {
+      uint32_t packedSource = 0;
+      if (!tryPackTableIndex(reference.table, reference.index, packedSource)) {
+        source->emitOpError("immutable VPI value source cannot be packed");
+        return {};
+      }
+      auto value = internFrozenValue(source, frozen);
+      if (!value)
+        return {};
+      frozenValueBindings.push_back({packedSource, *value});
     }
+    for (auto [index, binding] :
+         llvm::enumerate(definitionSpecializationBindings))
+      if (auto frozen = binding.declaration.getImmutableValueAttr()) {
+        auto value = internFrozenValue(binding.declaration, frozen);
+        if (!value)
+          return {};
+        definitionParameterValues.push_back(
+            {static_cast<uint32_t>(index), *value});
+      }
+    // Intern syntax independently of its concrete declaration bindings. Every
+    // node ordinal is a source occurrence: equal sibling subtrees stay
+    // distinct.
+    DenseMap<uint64_t, uint32_t> expressionScopeBindings;
+    DenseMap<uint64_t, sim::SimScopeDeclOp> expressionScopes;
+    for (auto scope : scopes)
+      expressionScopes[scope.getId()] = scope;
+    for (auto [index, binding] : llvm::enumerate(definitionBindings))
+      if (unpackTableIndexKind(binding.sourceIndexAndTable) == TableKind::Scope)
+        expressionScopeBindings
+            [scopes[unpackTableIndex(binding.sourceIndexAndTable)].getId()] =
+                index;
+    llvm::StringMap<uint32_t> expressionTemplateIndices;
+    auto append32 = [](std::string &key, uint32_t value) {
+      for (unsigned byte = 0; byte != 4; ++byte)
+        key.push_back(static_cast<char>(value >> (byte * 8)));
+    };
+    auto contextScope = [&](ImageObjectRef owner,
+                            uint32_t selector) -> std::optional<uint64_t> {
+      uint64_t id;
+      switch (owner.table) {
+      case TableKind::Statement:
+        id = statements[owner.index].declaration.getScopeId();
+        break;
+      case TableKind::Object:
+        id = objects[owner.index].scope;
+        break;
+      case TableKind::StaticObject:
+        id = staticObjects[owner.index].scope;
+        break;
+      default:
+        return std::nullopt;
+      }
+      if (owner.vpiKind == uint32_t(VPIObjectKind::Port) &&
+          selector == uint32_t(VPIRelationKind::HighConnRel)) {
+        auto scope = expressionScopes.lookup(id);
+        if (!scope || !scope.getParent())
+          return std::nullopt;
+        id = *scope.getParent();
+      }
+      return id;
+    };
+    auto leaf =
+        [&](Operation *use, sim::VPIObjectRefAttr reference, uint64_t context,
+            ExpressionLeafShapeRecord &shape) -> std::optional<uint32_t> {
+      if (auto member = definitionMemberFor(reference)) {
+        auto index = definitionMemberIndices.find(member);
+        if (context != UINT64_MAX || index == definitionMemberIndices.end() ||
+            index->second >= (uint32_t{1} << 30))
+          return std::nullopt;
+        shape = {UINT32_MAX, uint16_t(member.getVpiKind())};
+        return index
+            ->second; // Definition-local declaration, contextual at query.
+      }
+      if (reference.getKind() == sim::VPIObjectRefKind::DefinitionMember) {
+        auto instance = expressionScopeBindings.find(
+            reference.getId().getValue().getZExtValue());
+        auto member =
+            definitionMembersBySymbol.find(reference.getSymbol().getValue());
+        if (instance == expressionScopeBindings.end() ||
+            member == definitionMembersBySymbol.end() ||
+            !definitionMemberIndices.count(member->second))
+          return std::nullopt;
+        uint32_t memberIndex = definitionMemberIndices.lookup(member->second);
+        const auto &binding = definitionBindings[instance->second];
+        if (binding.specialization == UINT32_MAX ||
+            binding.definition != definitionMembers[memberIndex].definition)
+          return std::nullopt;
+        const auto &specialization =
+            definitionSpecializations[binding.specialization];
+        bool found = false;
+        for (uint32_t offset = 0; offset != specialization.bindingCount;
+             ++offset) {
+          const auto &effective =
+              definitionSpecializationBindings[specialization.firstBinding +
+                                               offset];
+          if (effective.member != memberIndex)
+            continue;
+          shape = {effective.semanticType,
+                   uint16_t(member->second.getVpiKind())};
+          found = true;
+          break;
+        }
+        if (!found || memberIndex >= (uint32_t{1} << 30))
+          return std::nullopt;
+        if (reference.getId().getValue().getZExtValue() == context)
+          return memberIndex; // LocalDefinitionMember.
+        auto pair = std::make_pair(instance->second, memberIndex);
+        auto [entry, inserted] =
+            boundMemberIndices.try_emplace(pair, expressionBoundMembers.size());
+        if (inserted)
+          expressionBoundMembers.push_back(pair);
+        if (entry->second >= (uint32_t{1} << 30))
+          return std::nullopt;
+        return (uint32_t{2} << 30) | entry->second;
+      }
+      auto object = resolvePhysicalReference(use, reference, "expression leaf");
+      if (!object ||
+          (object->table != TableKind::Object &&
+           object->table != TableKind::StaticObject) ||
+          object->index >= (uint32_t{1} << 30))
+        return std::nullopt;
+      Operation *identity = object->table == TableKind::Object
+                                ? objects[object->index].identity
+                                : staticObjects[object->index].identity;
+      auto semantic = semanticForObject(identity);
+      auto type = semantic ? addSemanticType(semantic) : std::nullopt;
+      if (!type)
+        return std::nullopt;
+      shape = {*type, uint16_t(object->vpiKind)};
+      return ((object->table == TableKind::Object ? uint32_t{1} : uint32_t{3})
+              << 30) |
+             object->index;
+    };
+    constexpr uint64_t expressionCursorLimit = uint64_t{1} << 30;
+    for (auto relation : expressionRootDeclarations) {
+      if (expressionRoots.size() >= expressionCursorLimit) {
+        relation.emitOpError(
+            "expression root count exceeds the compact cursor limit");
+        return {};
+      }
+      auto memberOwner = definitionMemberFor(relation.getSource());
+      std::optional<uint64_t> context;
+      uint32_t packedOwner = 0, definition = UINT32_MAX;
+      uint16_t rootMode = uint16_t(relation.getMode());
+      if (memberOwner) {
+        if (!definitionMemberIndices.count(memberOwner))
+          return {};
+        packedOwner = definitionMemberIndices.lookup(memberOwner);
+        definition = definitionMembers[packedOwner].definition;
+        context = UINT64_MAX; // Deliberately no instance scope.
+        rootMode |= expressionRootDefinitionMember;
+      } else {
+        auto owner = resolvePhysicalReference(relation, relation.getSource(),
+                                              "expression owner");
+        context =
+            owner ? contextScope(*owner, relation.getSelector()) : std::nullopt;
+        if (!owner || !context ||
+            !tryPackTableIndex(owner->table, owner->index, packedOwner)) {
+          relation.emitOpError(
+              "expression root requires an exact retained source context");
+          return {};
+        }
+        if (auto instance = expressionScopeBindings.find(*context);
+            instance != expressionScopeBindings.end())
+          definition = definitionBindings[instance->second].definition;
+      }
+      SmallVector<ExpressionNodeRecord> nodes;
+      SmallVector<uint32_t> operands, leaves;
+      SmallVector<ExpressionLeafShapeRecord> shapes;
+      SmallVector<sim::SimVPIExpressionDeclOp> order;
+      DenseMap<Operation *, uint32_t> ordinals;
+      auto root = expressionFor(relation.getTarget());
+      if (root) {
+        SmallVector<sim::SimVPIExpressionDeclOp> work{root};
+        while (!work.empty()) {
+          auto node = work.pop_back_val();
+          if (ordinals.contains(node)) {
+            node.emitOpError("expression occurrence is shared or cyclic");
+            return {};
+          }
+          if (order.size() >= expressionCursorLimit) {
+            node.emitOpError(
+                "expression node count exceeds the compact cursor limit");
+            return {};
+          }
+          ordinals[node] = static_cast<uint32_t>(order.size());
+          order.push_back(node);
+          auto &children = expressionChildren[node];
+          auto rank = [&](sim::SimVPIRelationDeclOp child) {
+            uint32_t selector = child.getSelector();
+            if (node.getVpiKind() == uint32_t(VPIObjectKind::Operation))
+              return uint64_t(child.getOrdinal());
+            if (selector == uint32_t(VPIRelationKind::ParentRel))
+              return uint64_t{0};
+            if (selector == uint32_t(VPIRelationKind::IndexRel) ||
+                selector == uint32_t(VPIRelationKind::LeftRangeRel) ||
+                selector == uint32_t(VPIRelationKind::BaseExprRel))
+              return uint64_t{1};
+            return uint64_t{2};
+          };
+          llvm::sort(children, [&](auto left, auto right) {
+            return rank(left) < rank(right);
+          });
+          for (auto child : llvm::reverse(children))
+            if (child.getSelector() != uint32_t(VPIRelationKind::UseRel))
+              if (auto expression = expressionFor(child.getTarget()))
+                work.push_back(expression);
+        }
+        for (auto node : order) {
+          auto semantic = node.getSourceOnly()
+                              ? std::optional<uint32_t>(UINT32_MAX)
+                              : addSemanticType(node.getVpiTypeAttr());
+          auto frozen =
+              node.getImmutableValueAttr()
+                  ? internFrozenValue(node, node.getImmutableValueAttr())
+                  : std::optional<uint32_t>(UINT32_MAX);
+          if (!semantic || !frozen)
+            return {};
+          uint16_t code = node.getVpiKind() == uint32_t(VPIObjectKind::Constant)
+                              ? uint16_t(7) // Integral frozen literal.
+                              : uint16_t(node.getOpType().value_or(
+                                    node.getIndexedDirection().value_or(0)));
+          if (operands.size() >= expressionCursorLimit ||
+              expressionChildren[node].size() >=
+                  expressionCursorLimit - operands.size()) {
+            node.emitOpError(
+                "expression operands exceed the compact cursor limit");
+            return {};
+          }
+          uint32_t first = static_cast<uint32_t>(operands.size());
+          for (auto child : expressionChildren[node]) {
+            if (child.getSelector() == uint32_t(VPIRelationKind::UseRel))
+              continue;
+            if (auto expression = expressionFor(child.getTarget())) {
+              operands.push_back(ordinals.lookup(expression));
+              continue;
+            }
+            ExpressionLeafShapeRecord shape;
+            auto target = leaf(child, child.getTarget(), *context, shape);
+            if (!target || leaves.size() >= (uint32_t{1} << 31)) {
+              child.emitOpError(
+                  "expression leaf has no exact compact declaration binding");
+              return {};
+            }
+            shape.identifier =
+                sim::get<sim::metadata::VpiExpressionIdentifier>(child);
+            operands.push_back((uint32_t{1} << 31) | uint32_t(leaves.size()));
+            leaves.push_back(*target);
+            shapes.push_back(shape);
+          }
+          nodes.push_back({uint16_t(node.getVpiKind()), code, *semantic, first,
+                           uint32_t(operands.size() - first), sourceFor(node),
+                           *frozen});
+        }
+      } else {
+        ExpressionLeafShapeRecord shape;
+        auto target = leaf(relation, relation.getTarget(), *context, shape);
+        if (!target) {
+          relation.emitOpError(
+              "contextual root has no exact declaration binding");
+          return {};
+        }
+        leaves.push_back(*target);
+      }
+      uint32_t templateIndex = UINT32_MAX;
+      if (root) {
+        std::string key;
+        append32(key, definition);
+        // Source defaults have declaration-owned occurrence identity even when
+        // two declarations contain equal syntax and source coordinates.
+        append32(key, memberOwner ? packedOwner : UINT32_MAX);
+        append32(key, nodes.size());
+        append32(key, operands.size());
+        append32(key, shapes.size());
+        for (const auto &node : nodes) {
+          append32(key, node.kind);
+          append32(key, node.code);
+          append32(key, node.semantic);
+          append32(key, node.firstOperand);
+          append32(key, node.operandCount);
+          append32(key, node.source.file.size());
+          key.append(node.source.file);
+          append32(key, node.source.lineColumn >> 32);
+          append32(key, node.source.lineColumn);
+          append32(key, node.frozen);
+        }
+        for (auto operand : operands)
+          append32(key, operand);
+        for (const auto &shape : shapes) {
+          append32(key, shape.semantic);
+          append32(key, shape.kind);
+          StringRef name =
+              shape.identifier ? shape.identifier.getValue() : StringRef{};
+          append32(key, name.size());
+          key.append(name.str());
+        }
+        auto [entry, inserted] = expressionTemplateIndices.try_emplace(
+            key, expressionTemplates.size());
+        templateIndex = entry->second;
+        if (inserted) {
+          if (expressionTemplates.size() >= UINT32_MAX ||
+              nodes.size() > UINT32_MAX - expressionNodes.size() ||
+              expressionOperands.size() >= expressionCursorLimit ||
+              operands.size() >=
+                  expressionCursorLimit - expressionOperands.size() ||
+              shapes.size() > UINT32_MAX - expressionLeafShapes.size()) {
+            relation.emitOpError(
+                "expression template pools exceed their compact limits");
+            return {};
+          }
+          expressionTemplates.push_back(
+              {definition, uint32_t(expressionNodes.size()),
+               uint32_t(nodes.size()), uint32_t(expressionOperands.size()),
+               uint32_t(operands.size()), uint32_t(leaves.size()),
+               uint32_t(expressionLeafShapes.size())});
+          llvm::append_range(expressionNodes, nodes);
+          llvm::append_range(expressionOperands, operands);
+          llvm::append_range(expressionLeafShapes, shapes);
+        }
+      }
+      if (leaves.size() > UINT32_MAX - expressionLeaves.size()) {
+        relation.emitOpError(
+            "expression leaf bindings exceed the compact limit");
+        return {};
+      }
+      expressionRoots.push_back({packedOwner,
+                                 templateIndex,
+                                 uint32_t(expressionLeaves.size()),
+                                 uint16_t(relation.getSelector()),
+                                 rootMode,
+                                 uint32_t(relation.getOrdinal()),
+                                 {}});
+      llvm::append_range(expressionLeaves, leaves);
+    }
+    for (auto original : design.getOps<sim::SimVPIDefinitionTypeDefaultOp>()) {
+      auto member =
+          classMemberSymbols.lookupSymbolIn<sim::SimVPIDefinitionMemberDeclOp>(
+              design, original.getMemberAttr());
+      auto semantic = addSemanticType(original.getOriginalType());
+      if (!member || !definitionMemberIndices.count(member) || !semantic ||
+          expressionRoots.size() >= expressionCursorLimit) {
+        original.emitOpError(
+            "original type default has no compact source root");
+        return {};
+      }
+      Source source = sourceFor(original);
+      expressionRoots.push_back(
+          {definitionMemberIndices.lookup(member), *semantic, 0,
+           uint16_t(member.getVpiKind() == uint32_t(VPIObjectKind::ParamAssign)
+                        ? VPIRelationKind::RhsRel
+                        : VPIRelationKind::ExprRel),
+           uint16_t(expressionRootDefinitionMember |
+                    expressionRootConcreteTypeDefault),
+           uint32_t(source.lineColumn >> 32), source});
+    }
+    llvm::sort(expressionRoots, [](const auto &left, const auto &right) {
+      return std::tie(left.owner, left.selector, left.mode, left.ordinal) <
+             std::tie(right.owner, right.selector, right.mode, right.ordinal);
+    });
     llvm::sort(frozenValueBindings, [](const FrozenValueBindingRecord &left,
                                        const FrozenValueBindingRecord &right) {
       return left.sourceIndexAndTable < right.sourceIndexAndTable;
@@ -3192,7 +5548,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
         findVPIProperty(exactKind, selector);
     if (!descriptor ||
         (descriptor->realization != VPIPropertyRealization::FixedImage &&
-         descriptor->realization != VPIPropertyRealization::DefinitionImage) ||
+         descriptor->realization != VPIPropertyRealization::DefinitionImage &&
+         descriptor->realization != VPIPropertyRealization::OptionalImage) ||
         selector > UINT16_MAX)
       return operation->emitError(
           "immutable property is not an encodable image property for "
@@ -3214,6 +5571,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
           auto integer = dyn_cast<IntegerAttr>(value);
           agrees = integer && definition.source.lineColumn >> 32 ==
                                   integer.getValue().getZExtValue();
+        } else if (selector == 33) {
+          auto integer = dyn_cast<IntegerAttr>(value);
+          agrees = integer && definition.declaration.getPrimitiveType() &&
+                   *definition.declaration.getPrimitiveType() ==
+                       integer.getValue().getZExtValue();
         }
         if (!agrees)
           return operation->emitError(
@@ -3223,6 +5585,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     }
     FixedPropertyRecord record;
     record.sourceIndexAndTable = packedSource;
+    record.optionalImage =
+        descriptor->realization == VPIPropertyRealization::OptionalImage;
     record.selector = static_cast<uint16_t>(selector);
     record.kindAndFlags = static_cast<uint16_t>(descriptor->valueKind);
     switch (descriptor->valueKind) {
@@ -3281,6 +5645,108 @@ SmallVector<uint8_t> serializeDesignDatabase(
     auto addOperationProperties = [&](Operation *operation,
                                       uint32_t packedSource,
                                       uint32_t exactKind) -> LogicalResult {
+      if (auto anchor = dyn_cast<sim::SimVPIObjectAnchorOp>(operation);
+          anchor &&
+          (exactKind == static_cast<uint32_t>(VPIObjectKind::Parameter) ||
+           exactKind == static_cast<uint32_t>(VPIObjectKind::Task) ||
+           exactKind == static_cast<uint32_t>(VPIObjectKind::Function) ||
+           (exactKind == static_cast<uint32_t>(VPIObjectKind::ClassDefn) &&
+            llvm::any_of(sourceInheritance,
+                         [&](Operation *declaration) {
+                           auto type =
+                               dyn_cast<sim::SimVPILexicalClassTypespecDeclOp>(
+                                   declaration);
+                           return type && type.getDefinitionAttr().getValue() ==
+                                              anchor.getSymName();
+                         }))) &&
+          !anchor.getDebugName().empty())
+        if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
+                                    anchor.getDebugNameAttr())))
+          return failure();
+      if (auto unit = dyn_cast<sim::SimCodeUnitDeclOp>(operation);
+          unit && interfaceDeclarationIDs.contains(unit.getId()) &&
+          sim::isVPIVisibleCodeUnit(unit))
+        if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
+                                    unit.getDebugNameAttr())))
+          return failure();
+      if (auto constant = dyn_cast<sim::SimVPIEnumConstDeclOp>(operation))
+        if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
+                                    constant.getNameAttr())))
+          return failure();
+      if (auto typespec = dyn_cast<sim::SimVPITypespecDeclOp>(operation);
+          typespec && typespec.getOrigin() == sim::VPITypespecOrigin::Typedef)
+        if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
+                                    typespec.getDebugNameAttr())))
+          return failure();
+      if (auto assignment =
+              dyn_cast<sim::SimVPIClassParameterAssignDeclOp>(operation))
+        if (assignment.getIsNamedAttr() &&
+            failed(addFixedProperty(operation, packedSource, exactKind, 21,
+                                    BoolAttr::get(design.getContext(), true))))
+          return failure();
+      if (auto type =
+              dyn_cast<sim::SimVPILexicalClassTypespecDeclOp>(operation))
+        if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
+                                    type.getDebugNameAttr())))
+          return failure();
+      if (auto alias =
+              dyn_cast<sim::SimVPIUnresolvedTypeAliasDeclOp>(operation))
+        if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
+                                    alias.getDebugNameAttr())))
+          return failure();
+      if (auto member = dyn_cast<sim::SimVPIClassMemberDeclOp>(operation))
+        if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
+                                    member.getDebugNameAttr())))
+          return failure();
+      // Most declaration names are the final hierarchy component. Keep a
+      // sparse exact override only when that legacy derivation loses an
+      // authoritative identifier (for example an escaped dotted name).
+      auto needsExactName = [](StringAttr debugName,
+                               std::optional<StringRef> hierarchy) {
+        if (!debugName || debugName.getValue().empty())
+          return false;
+        StringRef leaf = hierarchy.value_or(debugName.getValue());
+        size_t dot = leaf.rfind('.'), colon = leaf.rfind("::");
+        if (colon != StringRef::npos && (dot == StringRef::npos || colon > dot))
+          leaf = leaf.drop_front(colon + 2);
+        else if (dot != StringRef::npos)
+          leaf = leaf.drop_front(dot + 1);
+        return leaf != debugName.getValue();
+      };
+      if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation);
+          storage && (staticLocalBindings.contains(storage.getId()) ||
+                      needsExactName(storage.getDebugNameAttr(),
+                                     storage.getHierarchicalName())))
+        if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
+                                    storage.getDebugNameAttr())))
+          return failure();
+      if (auto net = dyn_cast<sim::SimNetDeclOp>(operation);
+          net &&
+          needsExactName(net.getDebugNameAttr(), net.getHierarchicalName()))
+        if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
+                                    net.getDebugNameAttr())))
+          return failure();
+      if (isa<sim::SimVPIForeachDeclOp>(operation))
+        if (failed(addFixedProperty(operation, packedSource, exactKind, 39,
+                                    builder.getI32IntegerAttr(36))))
+          return failure();
+      if (auto local = dyn_cast<sim::SimVPILocalDeclOp>(operation)) {
+        if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
+                                    local.getDebugNameAttr())))
+          return failure();
+        if (findVPIProperty(exactKind, 50) &&
+            failed(addFixedProperty(operation, packedSource, exactKind, 50,
+                                    builder.getBoolAttr(true))))
+          return failure();
+      }
+      if (auto member = dyn_cast<sim::SimVPIClassMemberDeclOp>(operation);
+          member && member.getFieldAttr() &&
+          (exactKind == static_cast<uint32_t>(VPIObjectKind::NamedEvent) ||
+           exactKind == static_cast<uint32_t>(VPIObjectKind::NamedEventArray)))
+        if (failed(addFixedProperty(
+                operation, packedSource, exactKind, 50,
+                builder.getBoolAttr(!classMemberFields.lookup(member).getIsStatic()))))
+          return failure();
       if (operation->hasAttr("is_protected") &&
           failed(addFixedProperty(operation, packedSource, exactKind, 74,
                                   builder.getBoolAttr(true))))
@@ -3349,17 +5815,23 @@ SmallVector<uint8_t> serializeDesignDatabase(
                 addCodeUnitProperties(operation, packedSource, source.vpiKind)))
           return {};
     }
-    // False is the canonical sparse representation of every immutable Boolean
-    // property, but it participates in duplicate/conflict detection before
-    // being erased.
+    for (auto [index, call] : llvm::enumerate(callDeclarations)) {
+      const auto *property = reflection::findVPIProperty(call.getVpiKind(), 2);
+      if (property &&
+          failed(addFixedProperty(call, callSiteBindings[index].object,
+                                  call.getVpiKind(), 2, call.getNameAttr())))
+        return {};
+    }
+    // Required image Booleans encode false by absence. Optional image facts
+    // retain explicit false because absence requests the derived fallback.
     fixedProperties.erase(
-        std::remove_if(fixedProperties.begin(), fixedProperties.end(),
-                       [](const FixedPropertyRecord &property) {
-                         return property.kindAndFlags ==
-                                    static_cast<uint16_t>(
-                                        VPIPropertyValueKind::Boolean) &&
-                                property.payload == 0;
-                       }),
+        std::remove_if(
+            fixedProperties.begin(), fixedProperties.end(),
+            [](const FixedPropertyRecord &property) {
+              return property.kindAndFlags ==
+                         static_cast<uint16_t>(VPIPropertyValueKind::Boolean) &&
+                     property.payload == 0 && !property.optionalImage;
+            }),
         fixedProperties.end());
     llvm::sort(fixedProperties, [](const FixedPropertyRecord &left,
                                    const FixedPropertyRecord &right) {
@@ -3548,7 +6020,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       intern(object.source.file);
   }
   for (const StaticObjectRecord &object : staticObjects) {
-    intern(object.name);
+    if (!object.name.empty())
+      intern(object.name);
     if (!object.source.file.empty())
       intern(object.source.file);
   }
@@ -3569,13 +6042,20 @@ SmallVector<uint8_t> serializeDesignDatabase(
   for (const SemanticTypeEdgeRecord &edge : semanticTypeEdges)
     if (!edge.name.empty())
       intern(edge.name);
+  for (const ClassMemberBindingRecord &member : classMemberBindings)
+    intern(member.name);
+  for (const ModportBindingRecord &modport : modportBindings)
+    intern(modport.name);
+  for (const InterfaceCallableRecord &member : interfaceCallables)
+    intern(member.name);
   for (DefinitionRecord &definition : definitions) {
     intern(definition.declaration.getDefinitionName());
     if (!definition.source.file.empty())
       intern(definition.source.file);
   }
   for (DefinitionMemberRecord &member : definitionMembers) {
-    intern(member.declaration.getMemberName());
+    if (!member.declaration.getMemberName().empty())
+      intern(member.declaration.getMemberName());
     if (!member.source.file.empty())
       intern(member.source.file);
   }
@@ -3592,6 +6072,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
   }
 
   SmallVector<uint8_t> output(HeaderLayout.size, 0);
+  for (const auto &shape : expressionLeafShapes)
+    if (shape.identifier)
+      intern(shape.identifier.getValue());
+  for (const auto &node : expressionNodes)
+    if (!node.source.file.empty())
+      intern(node.source.file);
+  for (const auto &root : expressionRoots)
+    if (!root.source.file.empty())
+      intern(root.source.file);
   uint64_t scopeOffset = output.size();
   DenseMap<uint64_t, uint64_t> scopeOffsets;
   for (auto [index, scope] : llvm::enumerate(scopes))
@@ -3619,9 +6108,93 @@ SmallVector<uint8_t> serializeDesignDatabase(
   uint64_t semanticRootBindingOffset =
       semanticTypeEdgeOffset +
       semanticTypeEdges.size() * SemanticTypeEdgeLayout.size;
-  uint64_t relationIndexOffset =
+  uint64_t classTypeBindingOffset =
       semanticRootBindingOffset +
       semanticRootBindings.size() * SemanticRootBindingLayout.size;
+  uint64_t semanticClassBindingOffset =
+      classTypeBindingOffset +
+      classTypeBindings.size() * ClassTypeBindingLayout.size;
+  uint64_t classMemberBindingOffset =
+      semanticClassBindingOffset +
+      semanticClassBindings.size() * SemanticClassBindingLayout.size;
+  uint64_t modportBindingOffset =
+      classMemberBindingOffset +
+      classMemberBindings.size() * ClassMemberBindingLayout.size;
+  uint64_t boxTypeBindingOffset =
+      modportBindingOffset + modportBindings.size() * ModportBindingLayout.size;
+  uint64_t valueElementBindingOffset =
+      boxTypeBindingOffset + boxTypeBindings.size() * BoxTypeBindingLayout.size;
+  uint64_t eventBindingOffset =
+      valueElementBindingOffset +
+      valueElementBindings.size() * ValueElementBindingLayout.size;
+  uint64_t eventArrayStorageBindingOffset =
+      eventBindingOffset + eventBindings.size() * EventBindingLayout.size;
+  uint64_t threadOriginBindingOffset =
+      eventArrayStorageBindingOffset +
+      eventArrayStorageBindings.size() * EventArrayStorageBindingLayout.size;
+  uint64_t callSiteBindingOffset =
+      threadOriginBindingOffset +
+      threadOriginBindings.size() * ThreadOriginBindingLayout.size;
+  uint64_t frameLocalBindingOffset =
+      callSiteBindingOffset +
+      callSiteBindings.size() * CallSiteBindingLayout.size;
+  uint64_t callDispatchBindingOffset =
+      frameLocalBindingOffset +
+      frameLocalBindings.size() * FrameLocalBindingLayout.size;
+  uint64_t classDispatchMethodBindingOffset =
+      callDispatchBindingOffset +
+      callDispatchBindings.size() * CallDispatchBindingLayout.size;
+  uint64_t classDispatchParentBindingOffset =
+      classDispatchMethodBindingOffset +
+      classDispatchMethodBindings.size() *
+          ClassDispatchMethodBindingLayout.size;
+  uint64_t interfaceCallableOffset = classDispatchParentBindingOffset +
+                                     classDispatchParentBindings.size() *
+                                         ClassDispatchParentBindingLayout.size;
+  uint64_t interfaceInstanceOffset =
+      interfaceCallableOffset +
+      interfaceCallables.size() * InterfaceCallableLayout.size;
+  uint64_t interfaceCallableBindingOffset =
+      interfaceInstanceOffset +
+      interfaceInstances.size() * InterfaceInstanceLayout.size;
+  uint64_t interfaceCallBindingOffset =
+      interfaceCallableBindingOffset +
+      interfaceCallableBindings.size() * InterfaceCallableBindingLayout.size;
+  uint64_t callableSignatureBindingOffset =
+      interfaceCallBindingOffset +
+      interfaceCallBindings.size() * InterfaceCallBindingLayout.size;
+  uint64_t codeUnitScopeBindingOffset =
+      callableSignatureBindingOffset +
+      callableSignatureBindings.size() * CallableSignatureBindingLayout.size;
+  uint64_t initializerBindingOffset =
+      codeUnitScopeBindingOffset +
+      codeUnitScopeBindings.size() * CodeUnitScopeBindingLayout.size;
+  uint64_t expressionRootBindingOffset =
+      initializerBindingOffset +
+      initializerBindings.size() * InitializerBindingLayout.size;
+  uint64_t expressionTemplateOffset =
+      expressionRootBindingOffset +
+      expressionRoots.size() * ExpressionRootBindingLayout.size;
+  uint64_t expressionNodeOffset =
+      expressionTemplateOffset +
+      expressionTemplates.size() * ExpressionTemplateLayout.size;
+  uint64_t expressionOperandOffset =
+      expressionNodeOffset + expressionNodes.size() * ExpressionNodeLayout.size;
+  uint64_t expressionLeafOffset =
+      expressionOperandOffset +
+      expressionOperands.size() * ExpressionOperandLayout.size;
+  uint64_t expressionBoundMemberOffset =
+      expressionLeafOffset +
+      expressionLeaves.size() * ExpressionLeafLayout.size;
+  uint64_t expressionLeafShapeOffset =
+      expressionBoundMemberOffset +
+      expressionBoundMembers.size() * ExpressionBoundMemberLayout.size;
+  uint64_t terminalDriverBindingOffset =
+      expressionLeafShapeOffset +
+      expressionLeafShapes.size() * ExpressionLeafShapeLayout.size;
+  uint64_t relationIndexOffset =
+      terminalDriverBindingOffset +
+      terminalDriverBindings.size() * TerminalDriverBindingLayout.size;
   uint64_t relationIndexDimensionOffset =
       relationIndexOffset + relationIndices.size() * RelationIndexLayout.size;
   uint64_t relationIndexKeyOffset =
@@ -3659,10 +6232,13 @@ SmallVector<uint8_t> serializeDesignDatabase(
   uint64_t definitionSpecializationBindingOffset =
       definitionSpecializationOffset +
       definitionSpecializations.size() * DefinitionSpecializationLayout.size;
-  uint64_t definitionMemberEndpointOffset =
+  uint64_t definitionParameterValueOffset =
       definitionSpecializationBindingOffset +
       definitionSpecializationBindings.size() *
           DefinitionSpecializationBindingLayout.size;
+  uint64_t definitionMemberEndpointOffset =
+      definitionParameterValueOffset +
+      definitionParameterValues.size() * DefinitionParameterValueLayout.size;
   uint64_t definitionMemberInstanceRelationOffset =
       definitionMemberEndpointOffset +
       definitionMemberEndpoints.size() * DefinitionMemberEndpointLayout.size;
@@ -3813,7 +6389,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
         object.source.file.empty()
             ? 0
             : static_cast<uint32_t>(intern(object.source.file)));
-    writer.setName(static_cast<uint32_t>(intern(object.name)));
+    writer.setName(
+        object.name.empty() ? 0 : static_cast<uint32_t>(intern(object.name)));
     writer.setSourceLine(static_cast<uint32_t>(object.source.lineColumn >> 32));
     writer.setSourceColumn(static_cast<uint32_t>(object.source.lineColumn));
     writer.setVPIKind(static_cast<uint16_t>(object.vpiKind));
@@ -3928,6 +6505,71 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setSemanticTypeEdgeCount(semanticTypeEdges.size());
     writer.setSemanticRootBindingOffset(semanticRootBindingOffset);
     writer.setSemanticRootBindingCount(semanticRootBindings.size());
+    writer.setClassTypeBindingOffset(classTypeBindingOffset);
+    writer.setClassTypeBindingCount(classTypeBindings.size());
+    writer.setSemanticClassBindingOffset(semanticClassBindingOffset);
+    writer.setSemanticClassBindingCount(semanticClassBindings.size());
+    writer.setClassMemberBindingOffset(classMemberBindingOffset);
+    writer.setClassMemberBindingCount(classMemberBindings.size());
+    writer.setModportBindingOffset(modportBindingOffset);
+    writer.setModportBindingCount(modportBindings.size());
+    writer.setMailboxElementBindingOffset(0);
+    writer.setMailboxElementBindingCount(0);
+    writer.setBoxTypeBindingOffset(boxTypeBindingOffset);
+    writer.setBoxTypeBindingCount(boxTypeBindings.size());
+    writer.setValueElementBindingOffset(valueElementBindingOffset);
+    writer.setValueElementBindingCount(valueElementBindings.size());
+    writer.setEventBindingOffset(eventBindingOffset);
+    writer.setEventBindingCount(eventBindings.size());
+    writer.setEventArrayStorageBindingOffset(eventArrayStorageBindingOffset);
+    writer.setEventArrayStorageBindingCount(eventArrayStorageBindings.size());
+    writer.setThreadOriginBindingOffset(threadOriginBindingOffset);
+    writer.setThreadOriginBindingCount(threadOriginBindings.size());
+    writer.setCallSiteBindingOffset(callSiteBindingOffset);
+    writer.setCallSiteBindingCount(callSiteBindings.size());
+    writer.setFrameLocalBindingOffset(frameLocalBindingOffset);
+    writer.setFrameLocalBindingCount(frameLocalBindings.size());
+    writer.setCallDispatchBindingOffset(callDispatchBindingOffset);
+    writer.setCallDispatchBindingCount(callDispatchBindings.size());
+    writer.setClassDispatchMethodBindingOffset(
+        classDispatchMethodBindingOffset);
+    writer.setClassDispatchMethodBindingCount(
+        classDispatchMethodBindings.size());
+    writer.setClassDispatchParentBindingOffset(
+        classDispatchParentBindingOffset);
+    writer.setClassDispatchParentBindingCount(
+        classDispatchParentBindings.size());
+    writer.setInterfaceCallableOffset(interfaceCallableOffset);
+    writer.setInterfaceCallableCount(interfaceCallables.size());
+    writer.setInterfaceInstanceOffset(interfaceInstanceOffset);
+    writer.setInterfaceInstanceCount(interfaceInstances.size());
+    writer.setInterfaceCallableBindingOffset(interfaceCallableBindingOffset);
+    writer.setInterfaceCallableBindingCount(interfaceCallableBindings.size());
+    writer.setInterfaceCallBindingOffset(interfaceCallBindingOffset);
+    writer.setInterfaceCallBindingCount(interfaceCallBindings.size());
+    writer.setCallableSignatureBindingOffset(callableSignatureBindingOffset);
+    writer.setCallableSignatureBindingCount(callableSignatureBindings.size());
+    writer.setCodeUnitScopeBindingOffset(codeUnitScopeBindingOffset);
+    writer.setCodeUnitScopeBindingCount(codeUnitScopeBindings.size());
+    writer.setInitializerBindingOffset(initializerBindingOffset);
+    writer.setInitializerBindingCount(initializerBindings.size());
+    writer.setExpressionRootBindingOffset(expressionRootBindingOffset);
+    writer.setExpressionRootBindingCount(expressionRoots.size());
+    writer.setExpressionTemplateOffset(expressionTemplateOffset);
+    writer.setExpressionTemplateCount(expressionTemplates.size());
+    writer.setExpressionNodeOffset(expressionNodeOffset);
+    writer.setExpressionNodeCount(expressionNodes.size());
+    writer.setExpressionOperandOffset(expressionOperandOffset);
+    writer.setExpressionOperandCount(expressionOperands.size());
+    writer.setExpressionLeafOffset(expressionLeafOffset);
+    writer.setExpressionLeafCount(expressionLeaves.size());
+    writer.setExpressionBoundMemberOffset(expressionBoundMemberOffset);
+    writer.setExpressionBoundMemberCount(expressionBoundMembers.size());
+    writer.setExpressionLeafShapeOffset(expressionLeafShapeOffset);
+    writer.setExpressionLeafShapeCount(expressionLeafShapes.size());
+    writer.setTerminalDriverBindingOffset(terminalDriverBindingOffset);
+    writer.setTerminalDriverBindingCount(terminalDriverBindings.size());
+
     writer.setRelationIndexOffset(relationIndexOffset);
     writer.setRelationIndexCount(relationIndices.size());
     writer.setRelationIndexDimensionOffset(relationIndexDimensionOffset);
@@ -3962,6 +6604,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
         definitionSpecializationBindingOffset);
     writer.setDefinitionSpecializationBindingCount(
         definitionSpecializationBindings.size());
+    writer.setDefinitionParameterValueOffset(definitionParameterValueOffset);
+    writer.setDefinitionParameterValueCount(definitionParameterValues.size());
     writer.setDefinitionMemberEndpointOffset(definitionMemberEndpointOffset);
     writer.setDefinitionMemberEndpointCount(definitionMemberEndpoints.size());
     writer.setDefinitionMemberInstanceRelationOffset(
@@ -4059,6 +6703,190 @@ SmallVector<uint8_t> serializeDesignDatabase(
         entry.name.empty() ? 0 : static_cast<uint32_t>(intern(entry.name)));
     writer.setPackedOffset(entry.packedOffset);
   }
+  for (auto [index, binding] : llvm::enumerate(classTypeBindings)) {
+    ClassTypeBindingWriter writer(output.data() + classTypeBindingOffset +
+                                  index * ClassTypeBindingLayout.size);
+    writer.setClassID(binding.classID);
+    writer.setTypespecIndexAndTable(binding.typespecIndexAndTable);
+  }
+  for (auto [index, binding] : llvm::enumerate(boxTypeBindings)) {
+    BoxTypeBindingWriter writer(output.data() + boxTypeBindingOffset +
+                                index * BoxTypeBindingLayout.size);
+    writer.setID(binding.id);
+    writer.setSemanticTypeIndex(binding.semanticType);
+    writer.setPhysicalTypeIndex(binding.physicalType);
+  }
+  for (auto [index, binding] : llvm::enumerate(valueElementBindings)) {
+    ValueElementBindingWriter writer(output.data() + valueElementBindingOffset +
+                                     index * ValueElementBindingLayout.size);
+    writer.setOwnerKind(static_cast<uint32_t>(binding.ownerKind));
+    writer.setOwnerIndex(binding.ownerIndex);
+    writer.setSemanticTypeIndex(binding.semanticType);
+    writer.setPhysicalTypeIndex(binding.physicalType);
+  }
+  for (auto [index, binding] : llvm::enumerate(frameLocalBindings)) {
+    FrameLocalBindingWriter writer(output.data() + frameLocalBindingOffset +
+                                   index * FrameLocalBindingLayout.size);
+    writer.setID(binding.id);
+    writer.setObjectIndex(binding.object);
+    writer.setOwnerCodeUnitIndex(binding.owner);
+    writer.setScopeIndexAndTable(binding.scope);
+    writer.setOrdinal(binding.ordinal);
+  }
+  for (auto [index, binding] : llvm::enumerate(initializerBindings)) {
+    InitializerBindingWriter writer(output.data() + initializerBindingOffset +
+                                    index * InitializerBindingLayout.size);
+    writer.setCodeUnitID(binding.codeUnitID);
+    writer.setSourceIndexAndTable(binding.source);
+    writer.setReserved(0);
+  }
+  for (auto [index, binding] : llvm::enumerate(codeUnitScopeBindings)) {
+    CodeUnitScopeBindingWriter writer(output.data() +
+                                      codeUnitScopeBindingOffset +
+                                      index * CodeUnitScopeBindingLayout.size);
+    writer.setCodeUnitID(binding.codeUnitID);
+    writer.setSourceIndexAndTable(binding.source);
+    writer.setFlags(binding.flags);
+  }
+  for (auto [index, binding] : llvm::enumerate(callSiteBindings)) {
+    CallSiteBindingWriter writer(output.data() + callSiteBindingOffset +
+                                 index * CallSiteBindingLayout.size);
+    writer.setID(binding.id);
+    writer.setObjectIndexAndTable(binding.object);
+    writer.setOwnerCodeUnitIndex(binding.owner);
+    writer.setFlags(binding.flags);
+    writer.setReserved(0);
+  }
+  for (auto [index, binding] : llvm::enumerate(callDispatchBindings)) {
+    CallDispatchBindingWriter writer(output.data() + callDispatchBindingOffset +
+                                     index * CallDispatchBindingLayout.size);
+    writer.setCallID(binding.callID);
+    writer.setCodeUnitID(binding.codeUnitID);
+    writer.setReceiverClassID(binding.receiverClassID);
+    writer.setSlot(binding.slot);
+    writer.setSignatureID(binding.signatureID);
+  }
+  for (auto [index, binding] : llvm::enumerate(classDispatchMethodBindings)) {
+    ClassDispatchMethodBindingWriter writer(
+        output.data() + classDispatchMethodBindingOffset +
+        index * ClassDispatchMethodBindingLayout.size);
+    writer.setClassID(binding.classID);
+    writer.setSlot(binding.slot);
+    writer.setSignatureID(binding.signatureID);
+    writer.setCodeUnitIndex(binding.codeUnitIndex);
+    writer.setFlags(binding.flags);
+  }
+  for (auto [index, binding] : llvm::enumerate(classDispatchParentBindings)) {
+    ClassDispatchParentBindingWriter writer(
+        output.data() + classDispatchParentBindingOffset +
+        index * ClassDispatchParentBindingLayout.size);
+    writer.setClassID(binding.classID);
+    writer.setParentClassID(binding.parentClassID);
+    writer.setKind(binding.kind);
+    writer.setFlags(binding.flags);
+  }
+  for (auto [index, member] : llvm::enumerate(interfaceCallables)) {
+    InterfaceCallableWriter writer(output.data() + interfaceCallableOffset +
+                                   index * InterfaceCallableLayout.size);
+    writer.setTypeIndexAndTable(member.nominal);
+    writer.setNameOffset(stringOffsets.lookup(member.name));
+    writer.setNameSize(member.name.size());
+    writer.setKind(member.kind);
+    writer.setFlags(member.flags);
+    writer.setSignatureID(member.signature);
+    writer.setReserved(0);
+  }
+  for (auto [index, binding] : llvm::enumerate(callableSignatureBindings)) {
+    CallableSignatureBindingWriter writer(
+        output.data() + callableSignatureBindingOffset +
+        index * CallableSignatureBindingLayout.size);
+    writer.setCodeUnitIndex(binding.unit);
+    writer.setSignatureID(binding.signature);
+    writer.setFlags(binding.flags);
+  }
+  for (auto [index, instance] : llvm::enumerate(interfaceInstances)) {
+    InterfaceInstanceWriter writer(output.data() + interfaceInstanceOffset +
+                                   index * InterfaceInstanceLayout.size);
+    writer.setScopeIndex(instance.scope);
+    writer.setTypeIndexAndTable(instance.nominal);
+  }
+  for (auto [index, binding] : llvm::enumerate(interfaceCallableBindings)) {
+    InterfaceCallableBindingWriter writer(
+        output.data() + interfaceCallableBindingOffset +
+        index * InterfaceCallableBindingLayout.size);
+    writer.setMemberIndex(binding.member);
+    writer.setScopeIndex(binding.scope);
+    writer.setDeclarationIndex(binding.declaration);
+    writer.setImplementationIndex(binding.implementation);
+  }
+  for (auto [index, binding] : llvm::enumerate(interfaceCallBindings)) {
+    InterfaceCallBindingWriter writer(output.data() +
+                                      interfaceCallBindingOffset +
+                                      index * InterfaceCallBindingLayout.size);
+    writer.setCallID(binding.id);
+    writer.setMemberIndex(binding.member);
+    writer.setAccess(binding.access);
+  }
+  llvm::sort(threadOriginBindings, [](const auto &left, const auto &right) {
+    return left.codeUnit < right.codeUnit;
+  });
+  for (auto [index, binding] : llvm::enumerate(threadOriginBindings)) {
+    ThreadOriginBindingWriter writer(output.data() + threadOriginBindingOffset +
+                                     index * ThreadOriginBindingLayout.size);
+    writer.setCodeUnitID(binding.codeUnit);
+    writer.setStatementIndex(binding.statement);
+    writer.setReserved(0);
+  }
+  llvm::sort(eventArrayStorageBindings,
+             [](const auto &left, const auto &right) {
+               return left.array < right.array;
+             });
+  for (auto [index, binding] : llvm::enumerate(eventArrayStorageBindings)) {
+    EventArrayStorageBindingWriter writer(
+        output.data() + eventArrayStorageBindingOffset +
+        index * EventArrayStorageBindingLayout.size);
+    writer.setArrayIndexAndTable(binding.array);
+    writer.setStorageIndex(binding.storage);
+  }
+  llvm::sort(eventBindings, [](const auto &left, const auto &right) {
+    return left.event < right.event;
+  });
+  for (auto [index, binding] : llvm::enumerate(eventBindings)) {
+    EventBindingWriter writer(output.data() + eventBindingOffset +
+                              index * EventBindingLayout.size);
+    writer.setEventIndexAndTable(binding.event);
+    writer.setReserved(0);
+    writer.setEventID(binding.id);
+  }
+  llvm::sort(modportBindings, [](const auto &left, const auto &right) {
+    return left.modport < right.modport;
+  });
+  for (auto [index, binding] : llvm::enumerate(modportBindings)) {
+    ModportBindingWriter writer(output.data() + modportBindingOffset +
+                                index * ModportBindingLayout.size);
+    writer.setModportIndexAndTable(binding.modport);
+    writer.setScopeIndex(binding.scope);
+    writer.setName(static_cast<uint32_t>(intern(binding.name)));
+  }
+  for (auto [index, binding] : llvm::enumerate(classMemberBindings)) {
+    ClassMemberBindingWriter writer(output.data() + classMemberBindingOffset +
+                                     index * ClassMemberBindingLayout.size);
+    writer.setMemberIndexAndTable(binding.member);
+    writer.setOwnerIndexAndTable(binding.owner);
+    writer.setClassID(binding.classID);
+    writer.setByteOffset(binding.byteOffset);
+    writer.setStorageIndexAndTable(binding.storage);
+    writer.setFlags(binding.flags);
+    writer.setEventID(binding.eventID);
+    writer.setName(static_cast<uint32_t>(intern(binding.name)));
+  }
+  for (auto [index, binding] : llvm::enumerate(semanticClassBindings)) {
+    SemanticClassBindingWriter writer(output.data() +
+                                      semanticClassBindingOffset +
+                                      index * SemanticClassBindingLayout.size);
+    writer.setSemanticType(binding.semanticType);
+    writer.setTypespecIndexAndTable(binding.typespecIndexAndTable);
+  }
   for (auto [index, binding] : llvm::enumerate(semanticRootBindings)) {
     SemanticRootBindingWriter writer(output.data() + semanticRootBindingOffset +
                                      index * SemanticRootBindingLayout.size);
@@ -4070,7 +6898,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
                             index * DefinitionLayout.size);
     writer.setVPIKind(
         static_cast<uint16_t>(definition.declaration.getVpiKind()));
-    writer.setFlags(0);
+    writer.setFlags(definition.declaration.getPrimitiveType().value_or(0));
     writer.setName(static_cast<uint32_t>(
         intern(definition.declaration.getDefinitionName())));
     writer.setFile(definition.source.file.empty()
@@ -4093,18 +6921,39 @@ SmallVector<uint8_t> serializeDesignDatabase(
   for (auto [index, member] : llvm::enumerate(definitionMembers)) {
     DefinitionMemberWriter writer(output.data() + definitionMemberOffset +
                                   index * DefinitionMemberLayout.size);
-    writer.setName(
-        static_cast<uint32_t>(intern(member.declaration.getMemberName())));
+    writer.setName(member.declaration.getMemberName().empty()
+                       ? 0
+                       : static_cast<uint32_t>(
+                             intern(member.declaration.getMemberName())));
     writer.setFile(member.source.file.empty()
                        ? 0
                        : static_cast<uint32_t>(intern(member.source.file)));
     writer.setLine(static_cast<uint32_t>(member.source.lineColumn >> 32));
     writer.setColumn(static_cast<uint32_t>(member.source.lineColumn));
     writer.setVPIKind(static_cast<uint16_t>(member.declaration.getVpiKind()));
-    writer.setFlags(
+    uint16_t flags =
         member.declaration.getDirectionAttr()
             ? static_cast<uint16_t>(member.declaration.getDirection().value())
-            : 0);
+            : 0;
+    if (member.declaration.getIsLocalParam())
+      flags |= 1u << 8;
+    if (member.declaration.getHasExplicitParameterRange())
+      flags |= 1u << 9;
+    if (member.declaration.getUnavailableDefault())
+      flags |= 1u << 10;
+    if (member.declaration.getHasOriginalDefault())
+      flags |= 1u << 11;
+    if (member.declaration.getParamAssignByName())
+      flags |= 1u;
+    if (member.declaration.getParamAssignType())
+      flags |= 2u;
+    if (member.declaration.getParamAssignDefault())
+      flags |= 4u;
+    if (member.declaration.getUnavailableRhs())
+      flags |= 1u << 10;
+    if (member.declaration.getHasOriginalRhs())
+      flags |= 1u << 11;
+    writer.setFlags(flags);
   }
   for (auto [index, relation] : llvm::enumerate(definitionMemberRelations)) {
     DefinitionMemberRelationWriter writer(
@@ -4139,6 +6988,13 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setMember(binding.member);
     writer.setSemanticType(binding.semanticType);
   }
+  for (auto [index, value] : llvm::enumerate(definitionParameterValues)) {
+    DefinitionParameterValueWriter writer(
+        output.data() + definitionParameterValueOffset +
+        index * DefinitionParameterValueLayout.size);
+    writer.setSpecializationBinding(value.binding);
+    writer.setFrozenValue(value.value);
+  }
   for (auto [index, endpoint] : llvm::enumerate(definitionMemberEndpoints)) {
     DefinitionMemberEndpointWriter writer(
         output.data() + definitionMemberEndpointOffset +
@@ -4170,6 +7026,83 @@ SmallVector<uint8_t> serializeDesignDatabase(
         output.data() + definitionMemberInstanceRelationInverseOffset +
         index * DefinitionMemberInstanceRelationInverseLayout.size);
     writer.setTarget(inverse.target);
+  }
+  for (auto [index, binding] : llvm::enumerate(terminalDriverBindings)) {
+    TerminalDriverBindingWriter writer(
+        output.data() + terminalDriverBindingOffset +
+        index * TerminalDriverBindingLayout.size);
+    writer.setTerminalIndexAndTable(binding.terminal);
+    writer.setLowDriverIndex(binding.low);
+    writer.setHighDriverIndex(binding.high);
+    writer.setBitOffset(binding.bit);
+  }
+  for (auto [index, root] : llvm::enumerate(expressionRoots)) {
+    ExpressionRootBindingWriter writer(
+        output.data() + expressionRootBindingOffset +
+        index * ExpressionRootBindingLayout.size);
+    writer.setOwnerIndexAndTable(root.owner);
+    writer.setTemplateIndex(root.templateIndex);
+    writer.setFirstLeaf(root.mode & expressionRootConcreteTypeDefault
+                            ? (root.source.file.empty()
+                                   ? UINT32_MAX
+                                   : uint32_t(intern(root.source.file)))
+                            : root.firstLeaf);
+    writer.setSelector(root.selector);
+    writer.setMode(root.mode);
+    writer.setOrdinal(root.ordinal);
+  }
+  for (auto [index, recipe] : llvm::enumerate(expressionTemplates)) {
+    ExpressionTemplateWriter writer(output.data() + expressionTemplateOffset +
+                                    index * ExpressionTemplateLayout.size);
+    writer.setDefinitionIndex(recipe.definition);
+    writer.setFirstNode(recipe.firstNode);
+    writer.setNodeCount(recipe.nodeCount);
+    writer.setFirstOperand(recipe.firstOperand);
+    writer.setOperandCount(recipe.operandCount);
+    writer.setLeafCount(recipe.leafCount);
+    writer.setFirstLeafShape(recipe.firstLeafShape);
+  }
+  for (auto [index, node] : llvm::enumerate(expressionNodes)) {
+    ExpressionNodeWriter writer(output.data() + expressionNodeOffset +
+                                index * ExpressionNodeLayout.size);
+    writer.setKind(node.kind);
+    writer.setCode(node.code);
+    writer.setSemanticTypeIndex(node.semantic);
+    writer.setFirstOperand(node.firstOperand);
+    writer.setOperandCount(node.operandCount);
+    writer.setFile(node.source.file.empty()
+                       ? UINT32_MAX
+                       : uint32_t(intern(node.source.file)));
+    writer.setLine(node.source.lineColumn >> 32);
+    writer.setColumn(node.source.lineColumn);
+    writer.setFrozenValueIndex(node.frozen);
+  }
+  for (auto [index, target] : llvm::enumerate(expressionOperands)) {
+    ExpressionOperandWriter writer(output.data() + expressionOperandOffset +
+                                   index * ExpressionOperandLayout.size);
+    writer.setTarget(target);
+  }
+  for (auto [index, target] : llvm::enumerate(expressionLeaves)) {
+    ExpressionLeafWriter writer(output.data() + expressionLeafOffset +
+                                index * ExpressionLeafLayout.size);
+    writer.setTarget(target);
+  }
+  for (auto [index, pair] : llvm::enumerate(expressionBoundMembers)) {
+    ExpressionBoundMemberWriter writer(
+        output.data() + expressionBoundMemberOffset +
+        index * ExpressionBoundMemberLayout.size);
+    writer.setDefinitionBindingIndex(pair.first);
+    writer.setMemberIndex(pair.second);
+  }
+  for (auto [index, shape] : llvm::enumerate(expressionLeafShapes)) {
+    ExpressionLeafShapeWriter writer(output.data() + expressionLeafShapeOffset +
+                                     index * ExpressionLeafShapeLayout.size);
+    writer.setSemanticTypeIndex(shape.semantic);
+    writer.setKind(shape.kind);
+    writer.setReserved(0);
+    writer.setIdentifier(shape.identifier
+                             ? uint32_t(intern(shape.identifier.getValue()))
+                             : UINT32_MAX);
   }
   for (auto [index, frozen] : llvm::enumerate(frozenValues)) {
     FrozenValueWriter writer(output.data() + frozenValueOffset +
@@ -4268,9 +7201,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
                        stringOffset + intern(object.name),
                        objectOffset + index * ObjectLayout.size, object.name});
   for (auto [index, object] : llvm::enumerate(staticObjects))
-    names.push_back(
-        {stableHash(object.name), stringOffset + intern(object.name),
-         staticObjectOffset + index * StaticObjectLayout.size, object.name});
+    if (!object.name.empty())
+      names.push_back(
+          {stableHash(object.name), stringOffset + intern(object.name),
+           staticObjectOffset + index * StaticObjectLayout.size, object.name});
   llvm::sort(names, [](const Index &left, const Index &right) {
     return std::tie(left.hash, left.text) < std::tie(right.hash, right.text);
   });

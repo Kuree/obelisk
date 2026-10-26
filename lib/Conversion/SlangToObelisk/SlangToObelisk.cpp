@@ -610,6 +610,54 @@ public:
     patterns.add<ConcreteASTNodeConversion<slangir::CoverageOptionOp,
                                            ir::SVCoverageOptionOp>>(converter,
                                                                     &context);
+    patterns
+        .add<ConcreteASTNodeConversion<slangir::SourceClassDefinitionSymbolOp,
+                                       ir::SVSourceClassDefinitionSymbolOp>,
+             ConcreteASTNodeConversion<slangir::SourceClassPropertySymbolOp,
+                                       ir::SVSourceClassPropertySymbolOp>,
+             ConcreteASTNodeConversion<slangir::SourceClassTypeAliasSymbolOp,
+                                       ir::SVSourceClassTypeAliasSymbolOp>,
+             ConcreteASTNodeConversion<slangir::SourceDeclaredTypeOp,
+                                       ir::SVSourceDeclaredTypeOp>,
+             ConcreteASTNodeConversion<slangir::SourceDeclaredTypeReferenceOp,
+                                       ir::SVSourceDeclaredTypeReferenceOp>,
+             ConcreteASTNodeConversion<slangir::SourceUnavailableTypeOp,
+                                       ir::SVSourceUnavailableTypeOp>,
+             ConcreteASTNodeConversion<slangir::SourceClassExtendsOp,
+                                       ir::SVSourceClassExtendsOp>,
+             ConcreteASTNodeConversion<slangir::SourceParameterActualOp,
+                                       ir::SVSourceParameterActualOp>,
+             ConcreteASTNodeConversion<slangir::SourceClassParameterActualOp,
+                                       ir::SVSourceClassParameterActualOp>,
+             ConcreteASTNodeConversion<slangir::SourceClassConstraintSymbolOp,
+                                       ir::SVSourceClassConstraintSymbolOp>,
+             ConcreteASTNodeConversion<slangir::SourceClassMethodSymbolOp,
+                                       ir::SVSourceClassMethodSymbolOp>,
+             ConcreteASTNodeConversion<slangir::SourceValueParameterSymbolOp,
+                                       ir::SVSourceValueParameterSymbolOp>,
+             ConcreteASTNodeConversion<slangir::SourceValueDefaultOp,
+                                       ir::SVSourceValueDefaultOp>,
+             ConcreteASTNodeConversion<slangir::SourceParameterReferenceOp,
+                                       ir::SVSourceParameterReferenceOp>,
+             ConcreteASTNodeConversion<slangir::SourceUnaryExpressionOp,
+                                       ir::SVSourceUnaryExpressionOp>,
+             ConcreteASTNodeConversion<slangir::SourceBinaryExpressionOp,
+                                       ir::SVSourceBinaryExpressionOp>,
+             ConcreteASTNodeConversion<slangir::SourceConditionalExpressionOp,
+                                       ir::SVSourceConditionalExpressionOp>,
+             ConcreteASTNodeConversion<slangir::SourceTypeParameterSymbolOp,
+                                       ir::SVSourceTypeParameterSymbolOp>>(
+            converter, &context);
+    patterns.add<ConcreteASTNodeConversion<slangir::SourceTypeDefaultOp,
+                                           ir::SVSourceTypeDefaultOp>>(
+        converter, &context);
+    patterns
+        .add<ConcreteASTNodeConversion<slangir::SourceTypeReferenceDefaultOp,
+                                       ir::SVSourceTypeReferenceDefaultOp>>(
+            converter, &context);
+    patterns.add<ConcreteASTNodeConversion<slangir::SourceUnsupportedDefaultOp,
+                                           ir::SVSourceUnsupportedDefaultOp>>(
+        converter, &context);
 #define SLANG_AST_NODE(Category, Kind, CppType)                                \
   patterns.add<                                                                \
       ConcreteASTNodeConversion<slangir::CppType##Op, ir::SV##CppType##Op>>(   \

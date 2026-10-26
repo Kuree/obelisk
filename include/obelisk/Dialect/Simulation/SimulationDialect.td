@@ -550,6 +550,17 @@ def ObeliskSimulationDialect : Dialect {
     "::mlir::StringAttr":$hierarchical_name,
     "::mlir::UnitAttr":$rematerialized,
     "::mlir::FlatSymbolRefAttr":$vpi_anchor,
+    // Exact immutable statement occurrence retained across fork outlining.
+    "::mlir::IntegerAttr":$vpi_statement_id,
+    // Exact source call declaration, including calls nested in expressions.
+    "::mlir::FlatSymbolRefAttr":$vpi_call_site,
+    // Exact net whose generated call invokes its retained resolution function.
+    "::mlir::IntegerAttr":$vpi_resolution_net,
+    // Exact declaration and remapped source type retained until unit lowering.
+    "::mlir::FlatSymbolRefAttr":$vpi_local,
+    "::obelisk::sim::VPITypeSemanticsAttr":$vpi_declared_type,
+    // Exact procedural activation boundary retained until frame ABI lowering.
+    "::mlir::UnitAttr":$vpi_frame_instrumentation,
     "::mlir::BoolAttr":$vpi_automatic,
     "::mlir::BoolAttr":$vpi_cell_instance,
     "::mlir::StringAttr":$vpi_definition_name,
@@ -558,6 +569,8 @@ def ObeliskSimulationDialect : Dialect {
     // storage remains in the execution layout but is omitted from the VPI
     // object inventory.
     "::mlir::FlatSymbolRefAttr":$vpi_identity_delegated,
+    // Original untyped-mailbox argument: exact immutable box type identity.
+    "::mlir::FlatSymbolRefAttr":$vpi_box_type,
     // Exact frontend enum identity retained solely to reconnect a value object
     // to its anonymous enum typespec in the immutable VPI relation image.
     "::mlir::IntegerAttr":$vpi_source_type_identity,
@@ -573,7 +586,12 @@ def ObeliskSimulationDialect : Dialect {
     // operand's assignment pattern can reach (IEEE 1800-2023 21.2.1.6).
     "::mlir::ArrayAttr":$enum_formats,
     "::mlir::ArrayAttr":$enum_method_names,
-    "::mlir::ArrayAttr":$enum_method_values
+    "::mlir::ArrayAttr":$enum_method_values,
+    // Exact shared declaration together with its elaborated instance context.
+    "::obelisk::sim::VPIObjectRefAttr":$vpi_definition_member,
+    // Raw exact identifier of an unqualified source expression leaf. This is
+    // not a hierarchical path or pre-escaped text; absence means unavailable.
+    "::mlir::StringAttr":$vpi_expression_identifier
   );
 }
 

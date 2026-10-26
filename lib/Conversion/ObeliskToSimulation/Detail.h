@@ -175,11 +175,11 @@ inline constexpr ::mlir::StringLiteral clockingVariableAttrName =
     "clocking_variable";
 inline constexpr ::mlir::StringLiteral clockingAccessDirectionAttrName =
     "clocking_access_direction";
-/// Marks the selection of a built-in base object (`$base`) that converts a
-/// derived handle to its semaphore or mailbox base type; a null handle
-/// converts to null.
-inline constexpr ::mlir::StringLiteral builtinBaseUpcastAttrName =
-    "builtin_base_upcast";
+/// Preserve the source builtin base and its private payload field while
+/// executable user-class inheritance remains a chain of class declarations.
+inline constexpr ::mlir::StringLiteral builtinBaseTypeAttrName = "builtin_base";
+inline constexpr ::mlir::StringLiteral builtinBaseFieldAttrName =
+    "builtin_base_field";
 /// Path of the private design storage that mirrors the published sample of a
 /// clocking input whose changes are observed (IEEE 1800-2023 14.13, 14.15).
 inline std::string getClockingSamplePath(::llvm::StringRef clockVariable) {

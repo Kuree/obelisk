@@ -258,6 +258,22 @@ bool validateReflectionSchema(const RecordKeeper &records) {
       return false;
     }
   }
+  DenseSet<uint32_t> valueOwnerValues;
+  StringSet<> valueOwnerNames;
+  for (const Record *kind :
+       records.getAllDerivedDefinitions("ReflectionValueLayoutOwnerKind")) {
+    StringRef name;
+    uint32_t value = 0;
+    if (!getCppName(*kind, "value layout owner kind", name) ||
+        !getU32(*kind, "value", 0, value))
+      return false;
+    if (!valueOwnerNames.insert(name).second ||
+        !valueOwnerValues.insert(value).second) {
+      PrintError(kind->getLoc(),
+                 "duplicate value layout owner kind name or value");
+      return false;
+    }
+  }
   return true;
 }
 
@@ -481,6 +497,26 @@ bool emitReflectionLayouts(const RecordKeeper &records, raw_ostream &os) {
         "constexpr uint32_t unpackRecordKindPayload(uint32_t value) {\n"
         "  return value >> recordKindPayloadShift;\n"
         "}\n\n";
+
+  auto ownerKindRecords =
+      records.getAllDerivedDefinitions("ReflectionValueLayoutOwnerKind");
+  SmallVector<const Record *> ownerKinds(ownerKindRecords.begin(),
+                                         ownerKindRecords.end());
+  llvm::sort(ownerKinds, [](const Record *left, const Record *right) {
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
+  });
+  os << "enum class ValueLayoutOwnerKind : uint32_t {\n";
+  for (const Record *kind : ownerKinds)
+    os << formatv("  {0} = {1},\n", kind->getValueAsString("cppName"),
+                  kind->getValueAsInt("value"));
+  os << "};\n\n"
+        "constexpr bool isValidValueLayoutOwnerKind(ValueLayoutOwnerKind kind) "
+        "{\n"
+        "  switch (kind) {\n";
+  for (const Record *kind : ownerKinds)
+    os << formatv("  case ValueLayoutOwnerKind::{0}:\n",
+                  kind->getValueAsString("cppName"));
+  os << "    return true;\n  }\n  return false;\n}\n\n";
 
   auto tableKindRecords =
       records.getAllDerivedDefinitions("ReflectionTableKind");
@@ -907,11 +943,8 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
   const std::pair<StringRef, uint32_t> supportedPropertyProtectedAccesses[] = {
       {"Denied", 0}, {"Allowed", 1}};
   const std::pair<StringRef, uint32_t> supportedPropertyRealizations[] = {
-      {"Derived", 0},
-      {"FixedImage", 1},
-      {"Runtime", 2},
-      {"IndexedImage", 3},
-      {"DefinitionImage", 4}};
+      {"Derived", 0},      {"FixedImage", 1},      {"Runtime", 2},
+      {"IndexedImage", 3}, {"DefinitionImage", 4}, {"OptionalImage", 5}};
   const std::pair<StringRef, uint32_t> supportedObjectRepresentations[] = {
       {"PhysicalScope", 0}, {"PhysicalObject", 1}, {"CodeUnit", 2},
       {"Statement", 3},     {"StaticImage", 4},    {"SemanticSynthetic", 5},
@@ -1890,8 +1923,108 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
         "-*-===//\n\n";
   os << "#ifndef OBELISK_REFLECTION_VPIOBJECTMODEL_H_INC\n";
   os << "#define OBELISK_REFLECTION_VPIOBJECTMODEL_H_INC\n\n";
-  os << "#include <cstddef>\n#include <cstdint>\n\n";
+  os << "#include <cstddef>\n#include <cstdint>\n#include <string_view>\n\n";
   os << "namespace obelisk::reflection {\n\n";
+
+  auto operatorRecords = records.getAllDerivedDefinitions("VPISourceOperator");
+  SmallVector<const Record *> sourceOperators(operatorRecords.begin(),
+                                              operatorRecords.end());
+  llvm::sort(sourceOperators, [](const Record *left, const Record *right) {
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
+  });
+  DenseSet<int64_t> sourceOperatorValues;
+  DenseSet<std::pair<StringRef, int64_t>> sourceOperatorNames;
+  os << "struct VPISourceOperatorDescriptor {\n"
+        "  const char *sourceName;\n"
+        "  uint16_t value;\n"
+        "  uint8_t arity;\n"
+        "  const char *token;\n"
+        "  uint8_t precedence;\n"
+        "  bool rightAssociative;\n"
+        "};\n\n"
+        "inline constexpr VPISourceOperatorDescriptor vpiSourceOperators[] = "
+        "{\n";
+  for (const Record *operation : sourceOperators) {
+    auto name = operation->getValueAsString("sourceName");
+    auto value = operation->getValueAsInt("value");
+    auto arity = operation->getValueAsInt("arity");
+    auto precedence = operation->getValueAsInt("precedence");
+    if (name.empty() || value < 0 || value > UINT16_MAX ||
+        (arity < 1 || arity > 3) || precedence <= 0 || precedence > UINT8_MAX ||
+        operation->getValueAsString("token").empty() ||
+        (arity == 3 && operation->getValueAsString("token").size() != 2) ||
+        !sourceOperatorValues.insert(value).second ||
+        !sourceOperatorNames.insert({name, arity}).second)
+      PrintFatalError(operation->getLoc(),
+                      "invalid or duplicate source operator");
+    os << formatv("  {{\"{0}\", {1}, {2}, \"{3}\", {4}, {5}},\n", name, value,
+                  arity, operation->getValueAsString("token"), precedence,
+                  operation->getValueAsBit("rightAssociative") ? "true"
+                                                               : "false");
+  }
+  os << "};\n\n"
+        "inline constexpr const VPISourceOperatorDescriptor "
+        "*findVPISourceOperator(\n"
+        "    uint32_t value) {\n"
+        "  for (const auto &operation : vpiSourceOperators)\n"
+        "    if (operation.value == value) return &operation;\n"
+        "  return nullptr;\n"
+        "}\n\n"
+        "inline constexpr const VPISourceOperatorDescriptor "
+        "*findVPISourceOperator(\n"
+        "    std::string_view sourceName, uint8_t arity) {\n"
+        "  for (const auto &operation : vpiSourceOperators)\n"
+        "    if (sourceName == operation.sourceName && arity == "
+        "operation.arity)\n"
+        "      return &operation;\n"
+        "  return nullptr;\n"
+        "}\n\n";
+
+  auto primitiveRecords =
+      records.getAllDerivedDefinitions("VPIBuiltinPrimitive");
+  SmallVector<const Record *> primitives(primitiveRecords.begin(),
+                                         primitiveRecords.end());
+  llvm::sort(primitives, [](const Record *left, const Record *right) {
+    return left->getValueAsInt("value") < right->getValueAsInt("value");
+  });
+  DenseSet<int64_t> primitiveValues;
+  DenseSet<StringRef> primitiveNames;
+  os << "struct VPIBuiltinPrimitiveDescriptor {\n"
+        "  const char *sourceName;\n"
+        "  uint16_t value;\n"
+        "  uint16_t objectKind;\n"
+        "  uint16_t defaultDriveStrength;\n"
+        "};\n\n"
+        "inline constexpr VPIBuiltinPrimitiveDescriptor vpiBuiltinPrimitives[] "
+        "= {\n";
+  for (const Record *primitive : primitives) {
+    auto name = primitive->getValueAsString("sourceName");
+    auto value = primitive->getValueAsInt("value");
+    auto kind = primitive->getValueAsDef("objectKind")->getValueAsInt("value");
+    if (name.empty() || value <= 0 || value > UINT16_MAX || kind <= 0 ||
+        kind > UINT16_MAX || !primitiveValues.insert(value).second ||
+        !primitiveNames.insert(name).second)
+      PrintFatalError(primitive->getLoc(),
+                      "invalid or duplicate built-in primitive");
+    auto strength = primitive->getValueAsInt("defaultDriveStrength");
+    if (strength != 0 && strength != 32 && strength != 64)
+      PrintFatalError(primitive->getLoc(), "invalid default drive strength");
+    os << formatv("  {{\"{0}\", {1}, {2}, {3}},\n", name, value, kind,
+                  strength);
+  }
+  os << "};\n\n"
+        "inline constexpr const VPIBuiltinPrimitiveDescriptor "
+        "*findVPIBuiltinPrimitive(uint32_t value) {\n"
+        "  for (const auto &primitive : vpiBuiltinPrimitives)\n"
+        "    if (primitive.value == value) return &primitive;\n"
+        "  return nullptr;\n"
+        "}\n\n"
+        "inline constexpr const VPIBuiltinPrimitiveDescriptor "
+        "*findVPIBuiltinPrimitive(std::string_view sourceName) {\n"
+        "  for (const auto &primitive : vpiBuiltinPrimitives)\n"
+        "    if (sourceName == primitive.sourceName) return &primitive;\n"
+        "  return nullptr;\n"
+        "}\n\n";
 
   auto familyRecords = records.getAllDerivedDefinitions("VPIObjectFamily");
   SmallVector<const Record *> families(familyRecords.begin(),
@@ -3648,7 +3781,7 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
         record[4] > static_cast<uint8_t>(
                                     VPIPropertyValueKind::String) ||
         ((record[5] >> 3) & 7) >
-            static_cast<uint8_t>(VPIPropertyRealization::DefinitionImage) ||
+            static_cast<uint8_t>(VPIPropertyRealization::OptionalImage) ||
         (record[5] & ~UINT8_C(63)) != 0)
       return false;
     if (record[4] != static_cast<uint8_t>(descriptor->valueKind) ||

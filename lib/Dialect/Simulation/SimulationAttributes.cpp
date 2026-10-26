@@ -129,8 +129,18 @@ VPIPropertySetAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 
 LogicalResult
 VPIObjectRefAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
-                         VPIObjectRefKind kind, IntegerAttr id) {
-  (void)kind;
+                         VPIObjectRefKind kind, IntegerAttr id,
+                         FlatSymbolRefAttr symbol) {
+  if (kind == VPIObjectRefKind::Symbol) {
+    if (id || !symbol)
+      return emitError() << "symbol VPI object reference requires only a symbol";
+    return success();
+  }
+  if (kind == VPIObjectRefKind::DefinitionMember) {
+    if (!symbol)
+      return emitError() << "definition-member VPI reference requires a symbol";
+  } else if (symbol)
+    return emitError() << "numeric VPI object reference cannot carry a symbol";
   if (!id || !id.getType().isSignlessInteger(64))
     return emitError() << "VPI object reference ID must be a signless i64";
   if (id.getValue().isNegative())
@@ -146,9 +156,10 @@ VPIObjectBackingAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
   case VPIObjectBackingKind::Scope:
   case VPIObjectBackingKind::CodeUnit:
   case VPIObjectBackingKind::Net:
+  case VPIObjectBackingKind::Storage:
     if (!id || symbol)
-      return emitError()
-             << "VPI scope/code-unit/net backing requires only a numeric ID";
+      return emitError() << "VPI scope/code-unit/net/storage backing requires "
+                            "only a numeric ID";
     if (!id.getType().isSignlessInteger(64))
       return emitError() << "VPI backing ID must be a signless i64";
     if (id.getValue().isNegative())

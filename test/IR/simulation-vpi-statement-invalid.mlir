@@ -229,7 +229,18 @@ module {
   simulation.design @name_on_ordinary_statement {
     simulation.scope.decl 0
     simulation.code_unit.decl 1 in 0 initial hierarchy "top.initial"
-    // expected-error @below {{only named begin/fork may carry a name}}
+    // expected-error @below {{only named begin/fork or loop scopes may carry a name}}
     simulation.statement.decl 1 in 1 scope 0 type 38 name "illegal"
+  }
+}
+
+// -----
+
+module {
+  simulation.design @named_for_requires_scope {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 initial hierarchy "top.initial"
+    // expected-error @+1 {{only named begin/fork or loop scopes may carry a name}}
+    simulation.statement.decl 1 in 1 scope 0 type 15 name "illegal"
   }
 }

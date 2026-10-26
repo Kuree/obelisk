@@ -44,6 +44,17 @@ def ObjectTable : ReflectionTableKind<"Object", 1>;
 def StatementTable : ReflectionTableKind<"Statement", 2>;
 def StaticObjectTable : ReflectionTableKind<"StaticObject", 3>;
 
+// Layout owners are explicit namespaces. A box descriptor is not a reflected
+// source object and must never be encoded with a forged object-table kind.
+class ReflectionValueLayoutOwnerKind<string cppName_, int value_> {
+  string cppName = cppName_;
+  int value = value_;
+}
+def ReflectedValueLayoutOwner
+    : ReflectionValueLayoutOwnerKind<"ReflectedObject", 0>;
+def BoxValueLayoutOwner
+    : ReflectionValueLayoutOwnerKind<"BoxDescriptor", 1>;
+
 def HeaderMagic : ReflectionField<"Magic", 0, Bytes8>;
 def HeaderVersion : ReflectionField<"Version", 8, U32LE>;
 def HeaderReserved : ReflectionField<"Reserved", 12, U32LE>;
@@ -270,6 +281,69 @@ def SemanticRootBindingType : ReflectionField<"SemanticType", 4, U32LE>;
 def SemanticRootBinding : ReflectionLayout<"SemanticRootBinding", 8,
   [SemanticRootBindingObjectIndexAndTable, SemanticRootBindingType]>;
 
+// Runtime class identity and semantic class nodes independently bind to the
+// canonical specialization object. Typedef aliases can introduce additional
+// semantic nodes without duplicating the runtime class descriptor.
+def ClassTypeBindingClassID : ReflectionField<"ClassID", 0, U64LE>;
+def ClassTypeBindingTypespec : ReflectionField<"TypespecIndexAndTable", 8, U32LE>;
+def ClassTypeBinding : ReflectionLayout<"ClassTypeBinding", 12,
+  [ClassTypeBindingClassID, ClassTypeBindingTypespec]>;
+def SemanticClassBindingType : ReflectionField<"SemanticType", 0, U32LE>;
+def SemanticClassBindingTypespec
+    : ReflectionField<"TypespecIndexAndTable", 4, U32LE>;
+def SemanticClassBinding : ReflectionLayout<"SemanticClassBinding", 8,
+  [SemanticClassBindingType, SemanticClassBindingTypespec]>;
+
+// A canonical mailbox class typespec binds its effective element's exact
+// normalized storage layout. Rows are sorted by (packed typespec reference,
+// semantic type index). Enum values and associative lookup keys are whole
+// packed leaves without layout bindings. The physical type index is distinct
+// from semantic type identity.
+def MailboxElementBindingTypespec
+    : ReflectionField<"TypespecIndexAndTable", 0, U32LE>;
+def MailboxElementBindingSemantic : ReflectionField<"SemanticTypeIndex", 4, U32LE>;
+def MailboxElementBindingType : ReflectionField<"PhysicalTypeIndex", 8, U32LE>;
+def MailboxElementBinding : ReflectionLayout<"MailboxElementBinding", 12,
+  [MailboxElementBindingTypespec, MailboxElementBindingSemantic,
+   MailboxElementBindingType]>;
+
+// Stable runtime box identity binds to roots in the existing semantic and
+// physical graphs. IDs are positive and unique; rows are sorted by ID.
+def BoxTypeBindingID : ReflectionField<"ID", 0, U64LE>;
+def BoxTypeBindingSemantic : ReflectionField<"SemanticTypeIndex", 8, U32LE>;
+def BoxTypeBindingPhysical : ReflectionField<"PhysicalTypeIndex", 12, U32LE>;
+def BoxTypeBinding : ReflectionLayout<"BoxTypeBinding", 16,
+  [BoxTypeBindingID, BoxTypeBindingSemantic, BoxTypeBindingPhysical]>;
+
+// Exact value-layout pairs use a typed owner namespace. ReflectedObject uses
+// a packed Object/StaticObject reference; BoxDescriptor uses a BoxTypeBinding
+// row index. Rows are sorted by (owner kind, owner index, semantic type).
+// Legacy MailboxElementBinding rows remain readable, but cannot overlap an
+// owner group in this table. New writers use this common table.
+def ValueElementBindingOwnerKind : ReflectionField<"OwnerKind", 0, U32LE>;
+def ValueElementBindingOwnerIndex : ReflectionField<"OwnerIndex", 4, U32LE>;
+def ValueElementBindingSemantic : ReflectionField<"SemanticTypeIndex", 8, U32LE>;
+def ValueElementBindingPhysical : ReflectionField<"PhysicalTypeIndex", 12, U32LE>;
+def ValueElementBinding : ReflectionLayout<"ValueElementBinding", 16,
+  [ValueElementBindingOwnerKind, ValueElementBindingOwnerIndex,
+   ValueElementBindingSemantic, ValueElementBindingPhysical]>;
+
+// Sparse class declaration bindings. Flags bit 0 is static and bit 1 is a
+// method. Nonapplicable byte offsets/event IDs use UINT64_MAX, and absent
+// backing storage uses UINT32_MAX. The owner is lexical or specialized.
+def ClassMemberBindingMember : ReflectionField<"MemberIndexAndTable", 0, U32LE>;
+def ClassMemberBindingOwner : ReflectionField<"OwnerIndexAndTable", 4, U32LE>;
+def ClassMemberBindingClassID : ReflectionField<"ClassID", 8, U64LE>;
+def ClassMemberBindingByteOffset : ReflectionField<"ByteOffset", 16, U64LE>;
+def ClassMemberBindingStorage : ReflectionField<"StorageIndexAndTable", 24, U32LE>;
+def ClassMemberBindingFlags : ReflectionField<"Flags", 28, U32LE>;
+def ClassMemberBindingEventID : ReflectionField<"EventID", 32, U64LE>;
+def ClassMemberBindingName : ReflectionField<"Name", 40, U32LE>;
+def ClassMemberBinding : ReflectionLayout<"ClassMemberBinding", 44,
+  [ClassMemberBindingMember, ClassMemberBindingOwner, ClassMemberBindingClassID,
+   ClassMemberBindingByteOffset, ClassMemberBindingStorage,
+   ClassMemberBindingFlags, ClassMemberBindingEventID, ClassMemberBindingName]>;
+
 // Immutable indexing geometry for relation-backed static arrays.  Records are
 // sorted by object-table index; dense arrays reference declared ranges in
 // left-to-right order, while sparse generate arrays reference exact source
@@ -328,6 +402,8 @@ def FixedProperty : ReflectionLayout<"FixedProperty", 16,
 // are sorted by that key for allocation-free binary lookup. Relative string
 // offsets are 32-bit offsets into the canonical image string pool.
 def DefinitionVPIKind : ReflectionField<"VPIKind", 0, U16LE>;
+// Kind data: zero for module/interface/program, validated vpiPrimType
+// for built-in primitive definitions. No per-instance property copy.
 def DefinitionFlags : ReflectionField<"Flags", 2, U16LE>;
 def DefinitionName : ReflectionField<"Name", 4, U32LE>;
 def DefinitionFile : ReflectionField<"File", 8, U32LE>;
@@ -357,7 +433,12 @@ def DefinitionBinding : ReflectionLayout<"DefinitionBinding", 16,
 
 // Definition-owned declarations are templates. A synthetic runtime cursor
 // combines one of these member indices with an elaborated instance scope.
-// Flags currently carry the exact low-byte vpiDirection value for IODecl.
+// IODecl flags carry exact low-byte vpiDirection. Parameter flags use bits
+// 8/9/10 for localparam, explicit packed range, and known-unavailable default;
+// type parameters permit only localparam and unavailable default. Bit 11 marks
+// a complete original source root. ParamAssign members are unnamed: their
+// kind-specific bits 0/1/2 mean named connection, type target, and named-empty
+// default selection; bits 10/11 mean unavailable/retained original RHS.
 def DefinitionMemberName : ReflectionField<"Name", 0, U32LE>;
 def DefinitionMemberFile : ReflectionField<"File", 4, U32LE>;
 def DefinitionMemberLine : ReflectionField<"Line", 8, U32LE>;
@@ -409,9 +490,21 @@ def DefinitionSpecializationBinding
       [DefinitionSpecializationBindingMember,
        DefinitionSpecializationBindingSemanticType]>;
 
+// Sparse immutable payloads for value-parameter specialization bindings.
+// Equal specializations share one row and the existing interned value pool.
+def DefinitionParameterValueSpecializationBinding
+    : ReflectionField<"SpecializationBinding", 0, U32LE>;
+def DefinitionParameterValueFrozenValue
+    : ReflectionField<"FrozenValue", 4, U32LE>;
+def DefinitionParameterValue : ReflectionLayout<"DefinitionParameterValue", 8,
+    [DefinitionParameterValueSpecializationBinding,
+     DefinitionParameterValueFrozenValue]>;
+
 // One instance-specific expression endpoint per definition member. The row
 // ordinal is implicit in DefinitionBinding.FirstMemberEndpoint, so the common
-// direct case costs only one packed table/index word.
+// direct case costs only one packed table/index word. Only IODecl and
+// ParamAssign consume slots. For IODecl the word is a packed expression target;
+// for ParamAssign it indexes ExpressionBoundMember, the exact child declaration.
 def DefinitionMemberEndpointTarget
     : ReflectionField<"TargetIndexAndTable", 0, U32LE>;
 def DefinitionMemberEndpoint : ReflectionLayout<"DefinitionMemberEndpoint", 4,
@@ -454,6 +547,75 @@ def DefinitionMemberInstanceRelationInverseTarget
 def DefinitionMemberInstanceRelationInverse
     : ReflectionLayout<"DefinitionMemberInstanceRelationInverse", 4,
       [DefinitionMemberInstanceRelationInverseTarget]>;
+
+// Shared expression templates retain source occurrences by local node ordinal.
+// An exact root relation slot supplies instance identity and declaration leaves;
+// neither a node nor a leaf allocates a duplicate physical Object record.
+// TemplateIndex UINT32_MAX denotes a direct contextual declaration root with
+// one leaf. Other roots use template node zero. Node FirstOperand is relative
+// to its template operand slice; template slices are dense and disjoint.
+// Operand bit31 tags a leaf ordinal; otherwise it names a local node ordinal.
+// Leaf high bits form their own namespace: 0 local definition member, 1 Object,
+// 2 ExpressionBoundMember, 3 StaticObject. All payloads use the low30 bits.
+def ExpressionRootBindingOwnerIndexAndTable : ReflectionField<"OwnerIndexAndTable", 0, U32LE>;
+def ExpressionRootBindingTemplateIndex : ReflectionField<"TemplateIndex", 4, U32LE>;
+def ExpressionRootBindingFirstLeaf : ReflectionField<"FirstLeaf", 8, U32LE>;
+def ExpressionRootBindingSelector : ReflectionField<"Selector", 12, U16LE>;
+// Low bit is Handle/Iterate; bit 1 selects a definition-member default owner.
+// The latter carries a raw DefinitionMember index, never a packed table tag.
+// Bit 2 additionally selects a concrete original TypeParameter default:
+// TemplateIndex is SemanticTypeIndex, FirstLeaf is File (UINT32_MAX if absent),
+// and Ordinal is Line. This mode has no template, operand, or leaf payload.
+def ExpressionRootBindingMode : ReflectionField<"Mode", 14, U16LE>;
+def ExpressionRootBindingOrdinal : ReflectionField<"Ordinal", 16, U32LE>;
+def ExpressionRootBinding : ReflectionLayout<"ExpressionRootBinding", 20,
+  [ExpressionRootBindingOwnerIndexAndTable, ExpressionRootBindingTemplateIndex, ExpressionRootBindingFirstLeaf, ExpressionRootBindingSelector, ExpressionRootBindingMode, ExpressionRootBindingOrdinal]>;
+
+def ExpressionTemplateDefinitionIndex : ReflectionField<"DefinitionIndex", 0, U32LE>;
+def ExpressionTemplateFirstNode : ReflectionField<"FirstNode", 4, U32LE>;
+def ExpressionTemplateNodeCount : ReflectionField<"NodeCount", 8, U32LE>;
+def ExpressionTemplateFirstOperand : ReflectionField<"FirstOperand", 12, U32LE>;
+def ExpressionTemplateOperandCount : ReflectionField<"OperandCount", 16, U32LE>;
+def ExpressionTemplateLeafCount : ReflectionField<"LeafCount", 20, U32LE>;
+def ExpressionTemplateFirstLeafShape : ReflectionField<"FirstLeafShape", 24, U32LE>;
+def ExpressionTemplate : ReflectionLayout<"ExpressionTemplate", 28,
+  [ExpressionTemplateDefinitionIndex, ExpressionTemplateFirstNode, ExpressionTemplateNodeCount, ExpressionTemplateFirstOperand, ExpressionTemplateOperandCount, ExpressionTemplateLeafCount, ExpressionTemplateFirstLeafShape]>;
+
+def ExpressionNodeKind : ReflectionField<"Kind", 0, U16LE>;
+def ExpressionNodeCode : ReflectionField<"Code", 2, U16LE>;
+// UINT32_MAX explicitly denotes a source-only Operation with no retained
+// elaborated result type/value. Every typed value node has a valid semantic
+// index, and a typed parent may not consume source-only child syntax.
+def ExpressionNodeSemanticTypeIndex : ReflectionField<"SemanticTypeIndex", 4, U32LE>;
+def ExpressionNodeFirstOperand : ReflectionField<"FirstOperand", 8, U32LE>;
+def ExpressionNodeOperandCount : ReflectionField<"OperandCount", 12, U32LE>;
+def ExpressionNodeFile : ReflectionField<"File", 16, U32LE>;
+def ExpressionNodeLine : ReflectionField<"Line", 20, U32LE>;
+def ExpressionNodeColumn : ReflectionField<"Column", 24, U32LE>;
+def ExpressionNodeFrozenValueIndex : ReflectionField<"FrozenValueIndex", 28, U32LE>;
+def ExpressionNode : ReflectionLayout<"ExpressionNode", 32,
+  [ExpressionNodeKind, ExpressionNodeCode, ExpressionNodeSemanticTypeIndex, ExpressionNodeFirstOperand, ExpressionNodeOperandCount, ExpressionNodeFile, ExpressionNodeLine, ExpressionNodeColumn, ExpressionNodeFrozenValueIndex]>;
+
+def ExpressionOperandTarget : ReflectionField<"Target", 0, U32LE>;
+def ExpressionOperand : ReflectionLayout<"ExpressionOperand", 4,
+  [ExpressionOperandTarget]>;
+
+def ExpressionLeafTarget : ReflectionField<"Target", 0, U32LE>;
+def ExpressionLeaf : ReflectionLayout<"ExpressionLeaf", 4,
+  [ExpressionLeafTarget]>;
+
+def ExpressionBoundMemberDefinitionBindingIndex : ReflectionField<"DefinitionBindingIndex", 0, U32LE>;
+def ExpressionBoundMemberMemberIndex : ReflectionField<"MemberIndex", 4, U32LE>;
+def ExpressionBoundMember : ReflectionLayout<"ExpressionBoundMember", 8,
+  [ExpressionBoundMemberDefinitionBindingIndex, ExpressionBoundMemberMemberIndex]>;
+
+def ExpressionLeafShapeSemanticTypeIndex : ReflectionField<"SemanticTypeIndex", 0, U32LE>;
+def ExpressionLeafShapeKind : ReflectionField<"Kind", 4, U16LE>;
+def ExpressionLeafShapeReserved : ReflectionField<"Reserved", 6, U16LE>;
+def ExpressionLeafShapeIdentifier : ReflectionField<"Identifier", 8, U32LE>;
+def ExpressionLeafShape : ReflectionLayout<"ExpressionLeafShape", 12,
+  [ExpressionLeafShapeSemanticTypeIndex, ExpressionLeafShapeKind,
+   ExpressionLeafShapeReserved, ExpressionLeafShapeIdentifier]>;
 
 // Per-bit immutable resolved-net subtypes. Runs are sorted by object index and
 // first bit, nonoverlapping, and maximally coalesced. Missing bits deliberately
@@ -586,7 +748,137 @@ def SemanticDirectoryFrozenValuePayloadOffset
     : ReflectionField<"FrozenValuePayloadOffset", 384, U64LE>;
 def SemanticDirectoryFrozenValuePayloadSize
     : ReflectionField<"FrozenValuePayloadSize", 392, U64LE>;
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 400,
+def SemanticDirectoryClassTypeBindingOffset
+    : ReflectionField<"ClassTypeBindingOffset", 400, U64LE>;
+def SemanticDirectoryClassTypeBindingCount
+    : ReflectionField<"ClassTypeBindingCount", 408, U64LE>;
+def SemanticDirectorySemanticClassBindingOffset
+    : ReflectionField<"SemanticClassBindingOffset", 416, U64LE>;
+def SemanticDirectorySemanticClassBindingCount
+    : ReflectionField<"SemanticClassBindingCount", 424, U64LE>;
+def SemanticDirectoryClassMemberBindingOffset
+    : ReflectionField<"ClassMemberBindingOffset", 432, U64LE>;
+def SemanticDirectoryClassMemberBindingCount
+    : ReflectionField<"ClassMemberBindingCount", 440, U64LE>;
+def SemanticDirectoryModportBindingOffset
+    : ReflectionField<"ModportBindingOffset", 448, U64LE>;
+def SemanticDirectoryModportBindingCount
+    : ReflectionField<"ModportBindingCount", 456, U64LE>;
+def SemanticDirectoryMailboxElementBindingOffset
+    : ReflectionField<"MailboxElementBindingOffset", 464, U64LE>;
+def SemanticDirectoryMailboxElementBindingCount
+    : ReflectionField<"MailboxElementBindingCount", 472, U64LE>;
+def SemanticDirectoryEventBindingOffset
+    : ReflectionField<"EventBindingOffset", 480, U64LE>;
+def SemanticDirectoryEventBindingCount
+    : ReflectionField<"EventBindingCount", 488, U64LE>;
+def SemanticDirectoryEventArrayStorageBindingOffset
+    : ReflectionField<"EventArrayStorageBindingOffset", 496, U64LE>;
+def SemanticDirectoryEventArrayStorageBindingCount
+    : ReflectionField<"EventArrayStorageBindingCount", 504, U64LE>;
+def SemanticDirectoryThreadOriginBindingOffset
+    : ReflectionField<"ThreadOriginBindingOffset", 512, U64LE>;
+def SemanticDirectoryThreadOriginBindingCount
+    : ReflectionField<"ThreadOriginBindingCount", 520, U64LE>;
+def SemanticDirectoryBoxTypeBindingOffset
+    : ReflectionField<"BoxTypeBindingOffset", 528, U64LE>;
+def SemanticDirectoryBoxTypeBindingCount
+    : ReflectionField<"BoxTypeBindingCount", 536, U64LE>;
+def SemanticDirectoryValueElementBindingOffset
+    : ReflectionField<"ValueElementBindingOffset", 544, U64LE>;
+def SemanticDirectoryValueElementBindingCount
+    : ReflectionField<"ValueElementBindingCount", 552, U64LE>;
+def SemanticDirectoryCallSiteBindingOffset
+    : ReflectionField<"CallSiteBindingOffset", 560, U64LE>;
+def SemanticDirectoryCallSiteBindingCount
+    : ReflectionField<"CallSiteBindingCount", 568, U64LE>;
+def SemanticDirectoryFrameLocalBindingOffset
+    : ReflectionField<"FrameLocalBindingOffset", 576, U64LE>;
+def SemanticDirectoryFrameLocalBindingCount
+    : ReflectionField<"FrameLocalBindingCount", 584, U64LE>;
+def SemanticDirectoryCallDispatchBindingOffset
+    : ReflectionField<"CallDispatchBindingOffset", 592, U64LE>;
+def SemanticDirectoryCallDispatchBindingCount
+    : ReflectionField<"CallDispatchBindingCount", 600, U64LE>;
+def SemanticDirectoryClassDispatchMethodBindingOffset
+    : ReflectionField<"ClassDispatchMethodBindingOffset", 608, U64LE>;
+def SemanticDirectoryClassDispatchMethodBindingCount
+    : ReflectionField<"ClassDispatchMethodBindingCount", 616, U64LE>;
+def SemanticDirectoryClassDispatchParentBindingOffset
+    : ReflectionField<"ClassDispatchParentBindingOffset", 624, U64LE>;
+def SemanticDirectoryClassDispatchParentBindingCount
+    : ReflectionField<"ClassDispatchParentBindingCount", 632, U64LE>;
+def SemanticDirectoryInterfaceCallableOffset
+    : ReflectionField<"InterfaceCallableOffset", 640, U64LE>;
+def SemanticDirectoryInterfaceCallableCount
+    : ReflectionField<"InterfaceCallableCount", 648, U64LE>;
+def SemanticDirectoryInterfaceInstanceOffset
+    : ReflectionField<"InterfaceInstanceOffset", 656, U64LE>;
+def SemanticDirectoryInterfaceInstanceCount
+    : ReflectionField<"InterfaceInstanceCount", 664, U64LE>;
+def SemanticDirectoryInterfaceCallableBindingOffset
+    : ReflectionField<"InterfaceCallableBindingOffset", 672, U64LE>;
+def SemanticDirectoryInterfaceCallableBindingCount
+    : ReflectionField<"InterfaceCallableBindingCount", 680, U64LE>;
+def SemanticDirectoryInterfaceCallBindingOffset
+    : ReflectionField<"InterfaceCallBindingOffset", 688, U64LE>;
+def SemanticDirectoryInterfaceCallBindingCount
+    : ReflectionField<"InterfaceCallBindingCount", 696, U64LE>;
+
+def SemanticDirectoryCallableSignatureBindingOffset
+    : ReflectionField<"CallableSignatureBindingOffset", 704, U64LE>;
+def SemanticDirectoryCallableSignatureBindingCount
+    : ReflectionField<"CallableSignatureBindingCount", 712, U64LE>;
+
+def SemanticDirectoryCodeUnitScopeBindingOffset
+    : ReflectionField<"CodeUnitScopeBindingOffset", 720, U64LE>;
+def SemanticDirectoryCodeUnitScopeBindingCount
+    : ReflectionField<"CodeUnitScopeBindingCount", 728, U64LE>;
+
+def SemanticDirectoryInitializerBindingOffset
+    : ReflectionField<"InitializerBindingOffset", 736, U64LE>;
+def SemanticDirectoryInitializerBindingCount
+    : ReflectionField<"InitializerBindingCount", 744, U64LE>;
+
+def SemanticDirectoryExpressionRootBindingOffset
+    : ReflectionField<"ExpressionRootBindingOffset", 752, U64LE>;
+def SemanticDirectoryExpressionRootBindingCount
+    : ReflectionField<"ExpressionRootBindingCount", 760, U64LE>;
+def SemanticDirectoryDefinitionParameterValueOffset
+    : ReflectionField<"DefinitionParameterValueOffset", 768, U64LE>;
+def SemanticDirectoryDefinitionParameterValueCount
+    : ReflectionField<"DefinitionParameterValueCount", 776, U64LE>;
+def SemanticDirectoryExpressionTemplateOffset
+    : ReflectionField<"ExpressionTemplateOffset", 784, U64LE>;
+def SemanticDirectoryExpressionTemplateCount
+    : ReflectionField<"ExpressionTemplateCount", 792, U64LE>;
+def SemanticDirectoryExpressionNodeOffset
+    : ReflectionField<"ExpressionNodeOffset", 800, U64LE>;
+def SemanticDirectoryExpressionNodeCount
+    : ReflectionField<"ExpressionNodeCount", 808, U64LE>;
+def SemanticDirectoryExpressionOperandOffset
+    : ReflectionField<"ExpressionOperandOffset", 816, U64LE>;
+def SemanticDirectoryExpressionOperandCount
+    : ReflectionField<"ExpressionOperandCount", 824, U64LE>;
+def SemanticDirectoryExpressionLeafOffset
+    : ReflectionField<"ExpressionLeafOffset", 832, U64LE>;
+def SemanticDirectoryExpressionLeafCount
+    : ReflectionField<"ExpressionLeafCount", 840, U64LE>;
+def SemanticDirectoryExpressionBoundMemberOffset
+    : ReflectionField<"ExpressionBoundMemberOffset", 848, U64LE>;
+def SemanticDirectoryExpressionBoundMemberCount
+    : ReflectionField<"ExpressionBoundMemberCount", 856, U64LE>;
+def SemanticDirectoryExpressionLeafShapeOffset
+    : ReflectionField<"ExpressionLeafShapeOffset", 864, U64LE>;
+def SemanticDirectoryExpressionLeafShapeCount
+    : ReflectionField<"ExpressionLeafShapeCount", 872, U64LE>;
+
+def SemanticDirectoryTerminalDriverBindingOffset
+    : ReflectionField<"TerminalDriverBindingOffset", 880, U64LE>;
+def SemanticDirectoryTerminalDriverBindingCount
+    : ReflectionField<"TerminalDriverBindingCount", 888, U64LE>;
+
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 896,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -633,7 +925,249 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 400,
    SemanticDirectoryFrozenValueBindingOffset,
    SemanticDirectoryFrozenValueBindingCount,
    SemanticDirectoryFrozenValuePayloadOffset,
-   SemanticDirectoryFrozenValuePayloadSize]>;
+   SemanticDirectoryFrozenValuePayloadSize,
+   SemanticDirectoryClassTypeBindingOffset,
+   SemanticDirectoryClassTypeBindingCount,
+   SemanticDirectorySemanticClassBindingOffset,
+   SemanticDirectorySemanticClassBindingCount,
+   SemanticDirectoryClassMemberBindingOffset,
+   SemanticDirectoryClassMemberBindingCount,
+   SemanticDirectoryModportBindingOffset,
+   SemanticDirectoryModportBindingCount,
+   SemanticDirectoryMailboxElementBindingOffset,
+   SemanticDirectoryMailboxElementBindingCount,
+   SemanticDirectoryEventBindingOffset,
+   SemanticDirectoryEventBindingCount,
+   SemanticDirectoryEventArrayStorageBindingOffset,
+   SemanticDirectoryEventArrayStorageBindingCount,
+   SemanticDirectoryThreadOriginBindingOffset,
+   SemanticDirectoryThreadOriginBindingCount,
+   SemanticDirectoryBoxTypeBindingOffset,
+   SemanticDirectoryBoxTypeBindingCount,
+   SemanticDirectoryValueElementBindingOffset,
+   SemanticDirectoryValueElementBindingCount,
+   SemanticDirectoryCallSiteBindingOffset,
+   SemanticDirectoryCallSiteBindingCount,
+   SemanticDirectoryFrameLocalBindingOffset,
+   SemanticDirectoryFrameLocalBindingCount,
+   SemanticDirectoryCallDispatchBindingOffset,
+   SemanticDirectoryCallDispatchBindingCount,
+   SemanticDirectoryClassDispatchMethodBindingOffset,
+   SemanticDirectoryClassDispatchMethodBindingCount,
+   SemanticDirectoryClassDispatchParentBindingOffset,
+   SemanticDirectoryClassDispatchParentBindingCount,
+   SemanticDirectoryInterfaceCallableOffset,
+   SemanticDirectoryInterfaceCallableCount,
+   SemanticDirectoryInterfaceInstanceOffset,
+   SemanticDirectoryInterfaceInstanceCount,
+   SemanticDirectoryInterfaceCallableBindingOffset,
+   SemanticDirectoryInterfaceCallableBindingCount,
+   SemanticDirectoryInterfaceCallBindingOffset,
+   SemanticDirectoryInterfaceCallBindingCount,
+   SemanticDirectoryCallableSignatureBindingOffset,
+   SemanticDirectoryCallableSignatureBindingCount,
+   SemanticDirectoryCodeUnitScopeBindingOffset,
+   SemanticDirectoryCodeUnitScopeBindingCount,
+   SemanticDirectoryInitializerBindingOffset,
+   SemanticDirectoryInitializerBindingCount,
+   SemanticDirectoryExpressionRootBindingOffset,
+   SemanticDirectoryExpressionRootBindingCount,
+   SemanticDirectoryDefinitionParameterValueOffset,
+   SemanticDirectoryDefinitionParameterValueCount,
+   SemanticDirectoryExpressionTemplateOffset,
+   SemanticDirectoryExpressionTemplateCount,
+   SemanticDirectoryExpressionNodeOffset,
+   SemanticDirectoryExpressionNodeCount,
+   SemanticDirectoryExpressionOperandOffset,
+   SemanticDirectoryExpressionOperandCount,
+   SemanticDirectoryExpressionLeafOffset,
+   SemanticDirectoryExpressionLeafCount,
+   SemanticDirectoryExpressionBoundMemberOffset,
+   SemanticDirectoryExpressionBoundMemberCount,
+   SemanticDirectoryExpressionLeafShapeOffset,
+   SemanticDirectoryExpressionLeafShapeCount,
+   SemanticDirectoryTerminalDriverBindingOffset,
+   SemanticDirectoryTerminalDriverBindingCount]>;
+
+// One exact scalar primitive output selects existing driver planes. The
+// optional second descriptor is the explicitly paired high-polarity bank.
+def TerminalDriverBindingTerminal : ReflectionField<"TerminalIndexAndTable", 0, U32LE>;
+def TerminalDriverBindingLow : ReflectionField<"LowDriverIndex", 4, U32LE>;
+def TerminalDriverBindingHigh : ReflectionField<"HighDriverIndex", 8, U32LE>;
+def TerminalDriverBindingBit : ReflectionField<"BitOffset", 12, U32LE>;
+def TerminalDriverBinding : ReflectionLayout<"TerminalDriverBinding", 16,
+  [TerminalDriverBindingTerminal, TerminalDriverBindingLow,
+   TerminalDriverBindingHigh, TerminalDriverBindingBit]>;
+
+// Exact compatible implementations derived from typed class dispatch. Rows
+// are sorted by (CallID, CodeUnitID); every row in one call group carries the
+// same receiver, slot and signature. Retained method and ancestry facts below
+// prove the complete target set, including pure shadows and interface order.
+def CallDispatchBindingCallID : ReflectionField<"CallID", 0, U64LE>;
+def CallDispatchBindingCodeUnitID : ReflectionField<"CodeUnitID", 8, U64LE>;
+def CallDispatchBindingReceiverClassID
+    : ReflectionField<"ReceiverClassID", 16, U64LE>;
+def CallDispatchBindingSlot : ReflectionField<"Slot", 24, U64LE>;
+def CallDispatchBindingSignatureID
+    : ReflectionField<"SignatureID", 32, U64LE>;
+def CallDispatchBinding : ReflectionLayout<"CallDispatchBinding", 40,
+  [CallDispatchBindingCallID, CallDispatchBindingCodeUnitID,
+   CallDispatchBindingReceiverClassID, CallDispatchBindingSlot,
+   CallDispatchBindingSignatureID]>;
+
+// Direct declarations only; inherited entries remain in the base class.
+// Flags: bit0 task, bit1 pure, bit2 no reflected implementation code unit.
+// Interface method declarations use the interface-dispatch slot UINT32_MAX.
+def ClassDispatchMethodBindingClassID
+    : ReflectionField<"ClassID", 0, U64LE>;
+def ClassDispatchMethodBindingSlot : ReflectionField<"Slot", 8, U64LE>;
+def ClassDispatchMethodBindingSignatureID
+    : ReflectionField<"SignatureID", 16, U64LE>;
+def ClassDispatchMethodBindingCodeUnitIndex
+    : ReflectionField<"CodeUnitIndex", 24, U32LE>;
+def ClassDispatchMethodBindingFlags : ReflectionField<"Flags", 28, U32LE>;
+def ClassDispatchMethodBinding : ReflectionLayout<"ClassDispatchMethodBinding",
+  32, [ClassDispatchMethodBindingClassID, ClassDispatchMethodBindingSlot,
+       ClassDispatchMethodBindingSignatureID,
+       ClassDispatchMethodBindingCodeUnitIndex,
+       ClassDispatchMethodBindingFlags]>;
+
+// Kind0 declares a class (ParentClassID0; flags bit0 interface, bit1 abstract).
+// Kind1 is its ordinary base and Kind2 one direct implemented/base interface;
+// edge rows have zero flags. Sorted (ClassID, Kind, ParentClassID).
+def ClassDispatchParentBindingClassID
+    : ReflectionField<"ClassID", 0, U64LE>;
+def ClassDispatchParentBindingParentClassID
+    : ReflectionField<"ParentClassID", 8, U64LE>;
+def ClassDispatchParentBindingKind : ReflectionField<"Kind", 16, U32LE>;
+def ClassDispatchParentBindingFlags : ReflectionField<"Flags", 20, U32LE>;
+def ClassDispatchParentBinding : ReflectionLayout<"ClassDispatchParentBinding",
+  24, [ClassDispatchParentBindingClassID, ClassDispatchParentBindingParentClassID,
+       ClassDispatchParentBindingKind, ClassDispatchParentBindingFlags]>;
+
+// A declaration identity and exact lexical scope; no executable address.
+def FrameLocalBindingID : ReflectionField<"ID", 0, U64LE>;
+def FrameLocalBindingObject : ReflectionField<"ObjectIndex", 8, U32LE>;
+def FrameLocalBindingOwner : ReflectionField<"OwnerCodeUnitIndex", 12, U32LE>;
+def FrameLocalBindingScope : ReflectionField<"ScopeIndexAndTable", 16, U32LE>;
+def FrameLocalBindingOrdinal : ReflectionField<"Ordinal", 20, U32LE>;
+def FrameLocalBinding : ReflectionLayout<"FrameLocalBinding", 24,
+  [FrameLocalBindingID, FrameLocalBindingObject, FrameLocalBindingOwner,
+   FrameLocalBindingScope, FrameLocalBindingOrdinal]>;
+
+// Declaration-owned nominal interface membership, independent of source calls.
+// Callable flags bit0 denotes an extern member. Original callable ABI equality
+// is verified by typed compiler inventory; it is not approximated by a hash.
+// Implementation rows are sorted (MemberIndex, ScopeIndex). Ordinary members
+// have identical declaration and implementation indices; an extern fork/join
+// task retains its declaration as the executable aggregator.
+// Call contracts are sorted by CallID. All compatible elaborated interfaces
+// participate across top modules. Access is 0 plain, 1 import, 2 export.
+def InterfaceCallableTypeIndexAndTable : ReflectionField<"TypeIndexAndTable", 0, U32LE>;
+def InterfaceCallableNameOffset : ReflectionField<"NameOffset", 4, U32LE>;
+def InterfaceCallableNameSize : ReflectionField<"NameSize", 8, U32LE>;
+def InterfaceCallableKind : ReflectionField<"Kind", 12, U16LE>;
+def InterfaceCallableFlags : ReflectionField<"Flags", 14, U16LE>;
+def InterfaceCallableSignatureID : ReflectionField<"SignatureID", 16, U32LE>;
+def InterfaceCallableReserved : ReflectionField<"Reserved", 20, U32LE>;
+def InterfaceCallable : ReflectionLayout<"InterfaceCallable", 24,
+  [InterfaceCallableTypeIndexAndTable, InterfaceCallableNameOffset, InterfaceCallableNameSize, InterfaceCallableKind, InterfaceCallableFlags, InterfaceCallableSignatureID, InterfaceCallableReserved]>;
+
+def InterfaceInstanceScopeIndex : ReflectionField<"ScopeIndex", 0, U32LE>;
+def InterfaceInstanceTypeIndexAndTable : ReflectionField<"TypeIndexAndTable", 4, U32LE>;
+def InterfaceInstance : ReflectionLayout<"InterfaceInstance", 8,
+  [InterfaceInstanceScopeIndex, InterfaceInstanceTypeIndexAndTable]>;
+
+def InterfaceCallableBindingMemberIndex : ReflectionField<"MemberIndex", 0, U32LE>;
+def InterfaceCallableBindingScopeIndex : ReflectionField<"ScopeIndex", 4, U32LE>;
+def InterfaceCallableBindingDeclarationIndex : ReflectionField<"DeclarationIndex", 8, U32LE>;
+def InterfaceCallableBindingImplementationIndex : ReflectionField<"ImplementationIndex", 12, U32LE>;
+def InterfaceCallableBinding : ReflectionLayout<"InterfaceCallableBinding", 16,
+  [InterfaceCallableBindingMemberIndex, InterfaceCallableBindingScopeIndex, InterfaceCallableBindingDeclarationIndex, InterfaceCallableBindingImplementationIndex]>;
+
+def InterfaceCallBindingCallID : ReflectionField<"CallID", 0, U64LE>;
+def InterfaceCallBindingMemberIndex : ReflectionField<"MemberIndex", 8, U32LE>;
+def InterfaceCallBindingAccess : ReflectionField<"Access", 12, U32LE>;
+def InterfaceCallBinding : ReflectionLayout<"InterfaceCallBinding", 16,
+  [InterfaceCallBindingCallID, InterfaceCallBindingMemberIndex, InterfaceCallBindingAccess]>;
+
+// Canonical original source ABI equivalence, frozen independently of dispatch
+// bindings. Signature IDs intern the normalized function type and directions.
+// Every retained unit is an endpoint of an interface callable binding. Flags
+// bit0 marks declaration-owned exports; bit1 marks an extern task aggregator.
+def CallableSignatureBindingCodeUnitIndex : ReflectionField<"CodeUnitIndex", 0, U32LE>;
+def CallableSignatureBindingSignatureID : ReflectionField<"SignatureID", 4, U32LE>;
+def CallableSignatureBindingFlags : ReflectionField<"Flags", 8, U32LE>;
+def CallableSignatureBinding : ReflectionLayout<"CallableSignatureBinding", 12,
+  [CallableSignatureBindingCodeUnitIndex, CallableSignatureBindingSignatureID, CallableSignatureBindingFlags]>;
+
+// Exact immutable call occurrences, including expression-nested calls.
+// Flags bit0 marks indirect dispatch; bit1 requires the exact class contract
+// and complete target group in CallDispatchBinding (and implies bit0).
+// Bit2 instead requires an exact InterfaceCallBinding. Bits1/2 exclude each
+// other and both require indirect bit0.
+// Maps an internal callable implementation to its exact public source scope.
+// Rows are sorted by code-unit ID; source references are unique.
+def CodeUnitScopeBindingCodeUnitID : ReflectionField<"CodeUnitID", 0, U64LE>;
+def CodeUnitScopeBindingSource : ReflectionField<"SourceIndexAndTable", 8, U32LE>;
+// Bit0 proves a source task implemented by a synchronous function ABI thunk.
+def CodeUnitScopeBindingFlags : ReflectionField<"Flags", 12, U32LE>;
+def CodeUnitScopeBinding : ReflectionLayout<"CodeUnitScopeBinding", 16,
+  [CodeUnitScopeBindingCodeUnitID, CodeUnitScopeBindingSource,
+   CodeUnitScopeBindingFlags]>;
+
+// Exact source variable whose nonprocedural initializer owns this helper.
+def InitializerBindingCodeUnitID : ReflectionField<"CodeUnitID", 0, U64LE>;
+def InitializerBindingSource : ReflectionField<"SourceIndexAndTable", 8, U32LE>;
+def InitializerBindingReserved : ReflectionField<"Reserved", 12, U32LE>;
+def InitializerBinding : ReflectionLayout<"InitializerBinding", 16,
+  [InitializerBindingCodeUnitID, InitializerBindingSource,
+   InitializerBindingReserved]>;
+
+def CallSiteBindingID : ReflectionField<"ID", 0, U64LE>;
+def CallSiteBindingObject : ReflectionField<"ObjectIndexAndTable", 8, U32LE>;
+def CallSiteBindingOwner : ReflectionField<"OwnerCodeUnitIndex", 12, U32LE>;
+def CallSiteBindingFlags : ReflectionField<"Flags", 16, U32LE>;
+def CallSiteBindingReserved : ReflectionField<"Reserved", 20, U32LE>;
+def CallSiteBinding : ReflectionLayout<"CallSiteBinding", 24,
+  [CallSiteBindingID, CallSiteBindingObject, CallSiteBindingOwner,
+   CallSiteBindingFlags, CallSiteBindingReserved]>;
+
+// Sparse exact code-unit identity to immutable source statement mapping.
+def ThreadOriginBindingCodeUnitID : ReflectionField<"CodeUnitID", 0, U64LE>;
+def ThreadOriginBindingStatement : ReflectionField<"StatementIndex", 8, U32LE>;
+def ThreadOriginBindingReserved : ReflectionField<"Reserved", 12, U32LE>;
+def ThreadOriginBinding : ReflectionLayout<"ThreadOriginBinding", 16,
+  [ThreadOriginBindingCodeUnitID, ThreadOriginBindingStatement,
+   ThreadOriginBindingReserved]>;
+
+// Exact runtime identity of a source named event without a mutable event cell.
+// Event zero is valid. The all-ones sentinel is never an event identity.
+// Lexical fixed event arrays retain their exact private executable storage.
+// The public members remain immutable relation-index objects; their ordinal
+// selects the physical array using each validated dimension's stride.
+def EventArrayStorageBindingArray
+    : ReflectionField<"ArrayIndexAndTable", 0, U32LE>;
+def EventArrayStorageBindingStorage : ReflectionField<"StorageIndex", 4, U32LE>;
+def EventArrayStorageBinding : ReflectionLayout<"EventArrayStorageBinding", 8,
+  [EventArrayStorageBindingArray, EventArrayStorageBindingStorage]>;
+
+def EventBindingObject : ReflectionField<"EventIndexAndTable", 0, U32LE>;
+def EventBindingReserved : ReflectionField<"Reserved", 4, U32LE>;
+def EventBindingID : ReflectionField<"EventID", 8, U64LE>;
+def EventBinding : ReflectionLayout<"EventBinding", 16,
+  [EventBindingObject, EventBindingReserved, EventBindingID]>;
+
+// Exact source names identify modports within a physical interface instance.
+// Hierarchy display strings may contain escaped separators. Entries are sorted
+// by packed modport endpoint and require matching interface traversal edges.
+def ModportBindingObject : ReflectionField<"ModportIndexAndTable", 0, U32LE>;
+def ModportBindingScope : ReflectionField<"ScopeIndex", 4, U32LE>;
+def ModportBindingName : ReflectionField<"Name", 8, U32LE>;
+def ModportBindingReserved : ReflectionField<"Reserved", 12, U32LE>;
+def ModportBinding : ReflectionLayout<"ModportBinding", 16,
+  [ModportBindingObject, ModportBindingScope, ModportBindingName,
+   ModportBindingReserved]>;
 
 def ScopeRecord : ReflectionRecordKind<"Scope", 1, Scope>;
 def StorageRecord : ReflectionRecordKind<"Storage", 2, Object>;

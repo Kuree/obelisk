@@ -53,11 +53,14 @@ struct ContainerHeader {
   // equality plan words; null for every other container.
   const obelisk_rt_element_type_v1 *keyElement;
   const uint64_t *keyPlan;
+  // Exact immutable source descriptor for a boxed value. Zero means the box
+  // predates VPI metadata; it never means a type inferred from element storage.
+  uint64_t boxTypeID;
 };
 
 static_assert(sizeof(BufferHeader) == 16);
 static_assert(sizeof(AssocSlot) == 32);
-static_assert(sizeof(ContainerHeader) == (sizeof(void *) == 8 ? 160 : 136));
+static_assert(sizeof(ContainerHeader) == (sizeof(void *) == 8 ? 168 : 144));
 
 inline uint64_t elementStride(const obelisk_rt_element_type_v1 *element) {
   return element->value_size *

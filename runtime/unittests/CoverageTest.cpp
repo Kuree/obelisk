@@ -4222,17 +4222,71 @@ TEST_F(CoverageRuntimeDesignTest,
   bool entered = false;
   ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
             OBELISK_RT_OK);
-  obelisk_rt_object_v1 *first = nullptr, *second = nullptr,
-                       *unrelated = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_mailbox_create_typed(lane, 99,
-                                               OBELISK_RT_ELEMENT_BITS, 0, 4, 4,
-                                               32, nullptr, 0, 1, &first),
+  // The first mailbox is a user class derived from a builtin. Its identity
+  // must be captured without replacing it by the private container payload.
+  const uint64_t payloadOffset = sizeof(obelisk_rt_managed_word_v1);
+  obelisk_rt_trace_entry_v1 payloadTrace{};
+  payloadTrace.offset = payloadOffset;
+  payloadTrace.count = 1;
+  payloadTrace.kind = OBELISK_RT_TRACE_STRONG;
+  payloadTrace.slot_kind = OBELISK_RT_MANAGED_SLOT_MAILBOX;
+  obelisk_rt_trace_layout_v1 baseLayout{OBELISK_RT_VERSION,
+                                        0,
+                                        payloadOffset +
+                                            sizeof(obelisk_rt_managed_word_v1),
+                                        alignof(obelisk_rt_managed_word_v1),
+                                        &payloadTrace,
+                                        1};
+  obelisk_rt_trace_entry_v1 inheritedTrace{};
+  inheritedTrace.count = 1;
+  inheritedTrace.kind = OBELISK_RT_TRACE_EMBEDDED;
+  inheritedTrace.child_layout = &baseLayout;
+  obelisk_rt_trace_layout_v1 derivedLayout{
+      OBELISK_RT_VERSION, 0, baseLayout.size, baseLayout.alignment,
+      &inheritedTrace,    1};
+  obelisk_rt_class_descriptor_v1 base{};
+  base.version = OBELISK_RT_VERSION;
+  base.class_id = 1;
+  base.instance_size = baseLayout.size;
+  base.instance_alignment = baseLayout.alignment;
+  base.layout = &baseLayout;
+  base.builtin_base_kind = OBELISK_RT_BUILTIN_CLASS_MAILBOX;
+  base.builtin_base_offset = payloadOffset;
+  obelisk_rt_class_descriptor_v1 derived{};
+  derived.version = OBELISK_RT_VERSION;
+  derived.class_id = 2;
+  derived.instance_size = derivedLayout.size;
+  derived.instance_alignment = derivedLayout.alignment;
+  derived.layout = &derivedLayout;
+  derived.base = &base;
+  ASSERT_EQ(obelisk_rt_v1_class_register(context, &base), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_class_register(context, &derived), OBELISK_RT_OK);
+  std::array<obelisk_rt_object_v1 *, 5> allocationObjects{};
+  auto *&first = allocationObjects[0];
+  auto *&second = allocationObjects[1];
+  auto *&unrelated = allocationObjects[2];
+  auto *&wrongMessage = allocationObjects[3];
+  auto *&firstPayload = allocationObjects[4];
+  obelisk_rt_gc_root_range_v1 allocationRoots{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_range_push(lane, &allocationRoots,
+                                             allocationObjects.data(),
+                                             allocationObjects.size()),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_mailbox_create_typed(
+                lane, 99, OBELISK_RT_ELEMENT_BITS, 0, 4, 4, 32, nullptr, 0, 1,
+                &firstPayload),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &derived, &first),
+            OBELISK_RT_OK);
+  const uint64_t payloadWord =
+      obelisk_rt_managed_word_from_object(firstPayload);
+  ASSERT_EQ(obelisk_rt_v1_object_write(first, payloadOffset, &payloadWord,
+                                       sizeof(payloadWord)),
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_mailbox_create_typed(lane, 99,
                                                OBELISK_RT_ELEMENT_BITS, 0, 4, 4,
                                                32, nullptr, 0, 0, &second),
             OBELISK_RT_OK);
-  obelisk_rt_object_v1 *wrongMessage = nullptr;
   ASSERT_EQ(obelisk_rt_v1_mailbox_create_typed(
                 lane, 100, OBELISK_RT_ELEMENT_BITS, 0, 4, 4, 32, nullptr, 0, 0,
                 &wrongMessage),
@@ -4247,13 +4301,15 @@ TEST_F(CoverageRuntimeDesignTest,
   ASSERT_EQ(obelisk_rt_v1_queue_create(lane, &element, UINT64_MAX, &unrelated),
             OBELISK_RT_OK);
   obelisk_rt_gc_root_v1 unrelatedRoot{};
-  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &unrelatedRoot, &unrelated),
-            OBELISK_RT_OK);
   const uint64_t firstWord = obelisk_rt_managed_word_from_object(first);
+  EXPECT_NE(firstWord, payloadWord);
   const uint64_t secondWord = obelisk_rt_managed_word_from_object(second);
   uint64_t word = firstWord, storage = 0;
   const obelisk_rt_managed_root_slot_v1 root{
-      0, OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER, 0};
+      0,
+      OBELISK_RT_MANAGED_ROOT_KIND_CLASS |
+          OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER,
+      0};
   ASSERT_EQ(obelisk_rt_v1_native_state_alloc_with_typed_roots(
                 context, 64, reinterpret_cast<const uint8_t *>(&word), nullptr,
                 &root, 1, &storage),
@@ -4324,6 +4380,10 @@ TEST_F(CoverageRuntimeDesignTest,
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_native_state_release(context, storage, 0),
             OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_range_pop(lane, &allocationRoots),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &unrelatedRoot, &unrelated),
+            OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
   for (uint64_t id : {70, 71, 72}) {
     uint64_t captured = 42;
@@ -4341,6 +4401,12 @@ TEST_F(CoverageRuntimeDesignTest,
     EXPECT_EQ(captured, 42u);
   }
   uint32_t count = 0;
+  EXPECT_EQ(obelisk_rt_v1_object_is_instance(first, &derived), 1u);
+  obelisk_rt_object_v1 *retainedPayload = nullptr;
+  ASSERT_EQ(obelisk_rt_builtin_class_payload(first, BuiltinClassKind::Mailbox,
+                                             &retainedPayload),
+            OBELISK_RT_OK);
+  EXPECT_EQ(retainedPayload, firstPayload);
   ASSERT_EQ(obelisk_rt_v1_mailbox_num(first, &count), OBELISK_RT_OK);
   EXPECT_EQ(count, 1u);
   ASSERT_EQ(obelisk_rt_v1_mailbox_num(second, &count), OBELISK_RT_OK);

@@ -17,6 +17,17 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   if (std::optional<LogicalResult> encoded =
           encodeArithmeticOperation(plan, operation))
     return *encoded;
+  if (auto op = dyn_cast<sim::SimVPIFrameBindOp>(operation)) {
+    auto declaration =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimVPILocalDeclOp>(
+            op, op.getDeclarationAttr());
+    if (!declaration)
+      return op.emitOpError("local declaration was not preserved");
+    return emitIntrinsicRegisters(plan, kIntrinsicVPIFrameBind,
+                                  {emitU64Constant(plan, declaration.getId()),
+                                   reg(plan, op.getReference())},
+                                  {});
+  }
   auto binary = [&](uint16_t opcode, Value result, Value left, Value right) {
     emit({opcode, 0, reg(plan, result), reg(plan, left), reg(plan, right)});
     return success();
@@ -975,6 +986,50 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     return emitIntrinsicRegisters(plan, intrinsic, inputs,
                                   {reg(plan, op.getResult())});
   }
+  if (isa<sim::SimVPIFrameObservationEndOp>(operation))
+    return success();
+  if (auto op = dyn_cast<sim::SimVPICallPrepareOp>(operation)) {
+    auto call = SymbolTable::lookupNearestSymbolFrom<sim::SimVPICallDeclOp>(
+        op, op.getCallAttr());
+    if (!call)
+      return op.emitOpError("missing verified VPI call declaration");
+    return emitIntrinsicRegisters(
+        plan, OBELISK_RT_INTRINSIC_V1_VPI_CALL_PREPARE,
+        {emitU64Constant(plan, call.getId())}, {reg(plan, op.getTicket())});
+  }
+  if (auto op = dyn_cast<sim::SimVPIFrameEnterForeignOp>(operation))
+    return emitIntrinsicRegisters(
+        plan, OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER_PREPARED,
+        {emitU64Constant(plan, op.getCodeUnitId()), emitU64Constant(plan, 0)},
+        {reg(plan, op.getActivation())});
+  if (auto op = dyn_cast<sim::SimVPIResolutionPrepareOp>(operation))
+    return emitIntrinsicRegisters(
+        plan, OBELISK_RT_INTRINSIC_V1_VPI_RESOLUTION_PREPARE,
+        {emitU64Constant(plan, op.getNetId())}, {reg(plan, op.getTicket())});
+  if (auto op = dyn_cast<sim::SimVPIFrameEnterPreparedOp>(operation))
+    return emitIntrinsicRegisters(
+        plan, OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER_PREPARED,
+        {emitU64Constant(plan, op.getCodeUnitId()),
+         emitU64Constant(plan, op.getIsTask())},
+        {reg(plan, op.getActivation())});
+  if (auto op = dyn_cast<sim::SimVPIFrameEnterOp>(operation))
+    return emitIntrinsicRegisters(
+        plan, OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER,
+        {emitU64Constant(plan, op.getCodeUnitId()),
+         emitU64Constant(plan, op.getStatementId() ? 2 : 0),
+         emitU64Constant(plan,
+                         op.getStatementId().value_or(op.getCodeUnitId()))},
+        {reg(plan, op.getActivation())});
+  if (auto op = dyn_cast<sim::SimVPIFrameCheckpointOp>(operation))
+    return emitIntrinsicRegisters(
+        plan, OBELISK_RT_INTRINSIC_V1_VPI_FRAME_CHECKPOINT,
+        {emitU64Constant(plan, op.getStatementId())}, {});
+  if (auto op = dyn_cast<sim::SimVPIFrameLeaveOp>(operation))
+    return emitIntrinsic(plan, OBELISK_RT_INTRINSIC_V1_VPI_FRAME_LEAVE,
+                         {op.getActivation()}, {});
+  if (auto op = dyn_cast<sim::SimVPICallFinishOp>(operation))
+    return emitIntrinsic(plan, OBELISK_RT_INTRINSIC_V1_VPI_CALL_FINISH,
+                         {op.getTicket()}, {});
   if (isa<sim::SimDisableChildrenOp>(operation))
     return emitIntrinsic(plan, kIntrinsicDisableChildren, {}, {});
   if (auto op = dyn_cast<sim::SimControlEnterOp>(operation)) {
@@ -996,6 +1051,17 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
       flags |= UINT32_C(1) << 31;
     return emitIntrinsic(plan, kIntrinsicControlDisable, inputs, {}, flags);
   }
+  if (auto op = dyn_cast<sim::SimControlMatchOp>(operation))
+    return binary(Compare, op.getMatches(), op.getSelected(),
+                  op.getActivation());
+  if (auto op = dyn_cast<sim::SimControlDisableSelectedOp>(operation))
+    return emitIntrinsicRegisters(
+        plan, OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE_SELECTED,
+        {emitU64Constant(plan, op.getTargetId()),
+         op.getActivation() ? reg(plan, op.getActivation())
+                            : emitU64Constant(plan, 0),
+         emitU64Constant(plan, op.getHierarchical() ? 1 : 0)},
+        {reg(plan, op.getSelected())});
   if (auto op = dyn_cast<sim::SimControlEscapePendingOp>(operation))
     return emitIntrinsic(plan, kIntrinsicControlEscapePending, {},
                          {op.getPending()});

@@ -7,6 +7,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <functional>
 #include <optional>
@@ -106,9 +107,10 @@ static bool isFixedForeachCollectionUse(Operation *reference) {
   return false;
 }
 
-static bool markForeachIteratorObserverCapture(
-    Operation *use, Operation *iterator,
-    const llvm::StringMap<Operation *> &semanticSymbols) {
+static bool
+markForeachIteratorObserverCapture(Operation *use, Operation *iterator,
+                                   SymbolTableCollection &sourceSymbols) {
+  ModuleOp module = use->getParentOfType<ModuleOp>();
   for (Operation *parent = use; parent; parent = parent->getParentOp()) {
     auto foreach = dyn_cast<semantic::SVForeachLoopStatementOp>(parent);
     if (!foreach)
@@ -120,10 +122,9 @@ static bool markForeachIteratorObserverCapture(
           dimension
               ? dimension.getAs<SymbolRefAttr>(foreach_metadata::iteratorSymbol)
               : SymbolRefAttr{};
-      auto found = reference
-                       ? semanticSymbols.find(reference.getLeafReference())
-                       : semanticSymbols.end();
-      if (found == semanticSymbols.end() || found->second != iterator)
+      Operation *found =
+          reference ? sourceSymbols.lookupSymbolIn(module, reference) : nullptr;
+      if (found != iterator)
         continue;
       if (dimension.contains(
               sim::metadata::ForeachIteratorObserverCapture::getNameStr()))
@@ -198,6 +199,7 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
   bool invalid = false;
   PreparedCaptures result;
   PreparedUnits analysisUnits = units;
+  SymbolTableCollection sourceSymbols;
   llvm::DenseMap<Operation *, Operation *> constructorSources;
   llvm::DenseMap<Operation *, SmallVector<Operation *>> propertyInitializers;
   llvm::StringMap<semantic::SVClassTypeOp> classesBySymbol;
@@ -246,6 +248,44 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
   }
   llvm::DenseMap<Operation *, llvm::StringSet<>> subroutineLocalDescriptors;
   auto &writtenDescriptors = result.writtenDescriptors;
+  // Display paths omit unnamed scopes. Count source declarations before any
+  // use is cloned or rewritten, so two distinct automatic symbols cannot
+  // collapse into one string-keyed executable binding.
+  llvm::StringMap<Operation *> automaticPaths;
+  llvm::SmallPtrSet<Operation *, 32> ambiguousAutomatics;
+  llvm::SmallPtrSet<Operation *, 4> sourceModules;
+  SmallVector<StringRef> reservedPaths;
+  for (const auto &entry : descriptors)
+    reservedPaths.push_back(entry.getKey());
+  for (const PreparedUnit &unit : analysisUnits.units) {
+    auto module = unit.source->getParentOfType<ModuleOp>();
+    if (!module || !sourceModules.insert(module).second)
+      continue;
+    module.walk([&](Operation *source) {
+      StringRef path = getHierarchyName(source);
+      if (!path.empty())
+        reservedPaths.push_back(path);
+      if (auto referenced =
+              source->getAttrOfType<StringAttr>("referenced_path"))
+        reservedPaths.push_back(referenced.getValue());
+      if (path.empty() || !SymbolTable::getSymbolName(source) ||
+          !isAutomaticLocalSymbol(source))
+        return;
+      auto [found, inserted] = automaticPaths.try_emplace(path, source);
+      if (!inserted && found->second != source) {
+        ambiguousAutomatics.insert(found->second);
+        ambiguousAutomatics.insert(source);
+      }
+    });
+  }
+  // These are private capture keys, never public declaration names. Reserve
+  // the namespace against all source paths, including escaped identifiers.
+  std::string automaticPrefix = "$local.";
+  while (llvm::any_of(reservedPaths, [&](StringRef path) {
+    return path.starts_with(automaticPrefix);
+  }))
+    automaticPrefix.insert(automaticPrefix.size() - 1, 1, '$');
+  llvm::DenseMap<Operation *, std::string> automaticKeys;
 
   for (const PreparedUnit &unit : analysisUnits.units) {
     llvm::StringSet<> seenPaths;
@@ -303,13 +343,38 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       if (!reference || !referencedSymbol ||
           !isAutomaticLocalSymbol(referencedSymbol) ||
           (!descriptors.contains(path) &&
-           !isa<semantic::SVPatternVarSymbolOp>(referencedSymbol)))
+           !isa<semantic::SVPatternVarSymbolOp>(referencedSymbol) &&
+           !ambiguousAutomatics.contains(referencedSymbol)))
         return std::nullopt;
-      StringRef symbolPath = getHierarchyName(referencedSymbol);
-      std::string localPath = (symbolPath.empty() ? path : symbolPath).str();
-      localPath += ".$local.";
-      localPath += reference.getLeafReference().getValue();
-      return localPath;
+      auto found = automaticKeys.find(referencedSymbol);
+      if (found != automaticKeys.end())
+        return found->second;
+      SmallVector<StringAttr> names;
+      auto module = referencedSymbol->getParentOfType<ModuleOp>();
+      for (Operation *symbol = referencedSymbol; symbol && symbol != module;
+           symbol = symbol->getParentOp())
+        if (auto name = SymbolTable::getSymbolName(symbol))
+          names.push_back(name);
+      if (names.empty())
+        return std::nullopt;
+      SmallVector<FlatSymbolRefAttr> nested;
+      for (StringAttr name :
+           llvm::reverse(ArrayRef<StringAttr>(names).drop_back()))
+        nested.push_back(FlatSymbolRefAttr::get(name));
+      auto canonical = SymbolRefAttr::get(names.back(), nested);
+      if (!module ||
+          sourceSymbols.lookupSymbolIn(module, canonical) != referencedSymbol) {
+        emitError(getSemanticLocation(referencedSymbol))
+            << "automatic capture has no exact source symbol identity";
+        invalid = true;
+        return std::nullopt;
+      }
+      std::string key = automaticPrefix;
+      llvm::raw_string_ostream stream(key);
+      canonical.print(stream);
+      stream.flush();
+      return automaticKeys.try_emplace(referencedSymbol, std::move(key))
+          .first->second;
     };
     std::function<void(Operation *)> collectBinding = [&](Operation *nested) {
       if (isa<semantic::SVEventTriggerStatementOp>(nested))
@@ -456,12 +521,10 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       if (!isa<semantic::SVVariableDeclStatementOp>(nested) &&
           isFixedForeachCollectionUse(nested))
         return;
-      Operation *referencedSymbol = nullptr;
-      if (reference) {
-        auto symbol = semanticSymbols.find(reference.getLeafReference());
-        if (symbol != semanticSymbols.end())
-          referencedSymbol = symbol->second;
-      }
+      Operation *referencedSymbol =
+          reference ? sourceSymbols.lookupSymbolIn(
+                          unit.source->getParentOfType<ModuleOp>(), reference)
+                    : nullptr;
       // Function formals are already represented by public argument bindings.
       // Static tasks retain their descriptor capture because overlapping
       // activations copy each formal into shared task storage. Production
@@ -483,12 +546,8 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
           result.mayPublishSchedulerState.insert(unit.source);
         return;
       }
-      // Unnamed statement scopes are not part of Slang's hierarchical name,
-      // so an automatic local can have the same path string as design
-      // storage it shadows. Give the local binding a stable symbol-qualified
-      // path and freeze that path on every use before the unit is cloned.
-      // The descriptor retains the source hierarchy while lowerUnit can now
-      // distinguish the two bindings without consulting the symbol table.
+      // Freeze the exact automatic identity before cloning. Source declaration
+      // names remain unchanged; only private executable lookup uses this key.
       bool automaticLocal =
           referencedSymbol && isAutomaticLocalSymbol(referencedSymbol);
       if (!isa<semantic::SVVariableDeclStatementOp>(nested) &&
@@ -535,7 +594,7 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
           result.observerLocals[unit.source].push_back(
               {path.str(), *type, true, false});
           if (!markForeachIteratorObserverCapture(nested, referencedSymbol,
-                                                  semanticSymbols)) {
+                                                  sourceSymbols)) {
             emitError(getSemanticLocation(nested))
                 << "observer foreach iterator has no owning loop dimension";
             invalid = true;
@@ -586,7 +645,7 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
         destination.push_back(
             {path.str(), *type, isAutomaticLocalSymbol(referencedSymbol),
              isa<semantic::SVPatternVarSymbolOp>(referencedSymbol), observerNet,
-             covergroupRef});
+             covergroupRef, referencedSymbol});
         referencedSymbol->walk<WalkOrder::PreOrder>(
             [&](Operation *initializerNode) {
               collectBinding(initializerNode);
@@ -613,12 +672,10 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
         auto reference = dimension ? dimension.getAs<SymbolRefAttr>(
                                          foreach_metadata::iteratorSymbol)
                                    : SymbolRefAttr{};
-        Operation *referencedSymbol = nullptr;
-        if (reference) {
-          auto symbol = semanticSymbols.find(reference.getLeafReference());
-          if (symbol != semanticSymbols.end())
-            referencedSymbol = symbol->second;
-        }
+        Operation *referencedSymbol =
+            reference ? sourceSymbols.lookupSymbolIn(
+                            unit.source->getParentOfType<ModuleOp>(), reference)
+                      : nullptr;
         auto qualified =
             path ? qualifiedAutomaticPath(path.getValue(), reference,
                                           referencedSymbol)
@@ -689,11 +746,9 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
           StringAttr path = property.getPath();
           SymbolRefAttr reference = property.getSymbol();
           Operation *referencedSymbol = nullptr;
-          if (reference) {
-            auto symbol = semanticSymbols.find(reference.getLeafReference());
-            if (symbol != semanticSymbols.end())
-              referencedSymbol = symbol->second;
-          }
+          if (reference)
+            referencedSymbol = sourceSymbols.lookupSymbolIn(
+                unit.source->getParentOfType<ModuleOp>(), reference);
           auto qualified =
               path ? qualifiedAutomaticPath(path.getValue(), reference,
                                             referencedSymbol)

@@ -48,6 +48,7 @@ enum class InlineLegality {
   UnknownMetadata,
   UnfrozenDisplayScope,
   UnknownBoundaryMetadata,
+  VPIFrameActivation,
 };
 
 bool hasLateInlineMetadata(SimDesignOp design);

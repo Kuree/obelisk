@@ -10,8 +10,11 @@
 
 #include "SimulationVerifiers.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Dialect/DPI/DPIDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Dialect/Simulation/SimulationVPI.h"
+#include "obelisk/Reflection/VPIObjectModel.h"
 #include "obelisk/Runtime/StableHash.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -89,6 +92,42 @@ void SimFuncOp::print(OpAsmPrinter &printer) {
       getArgAttrsAttrName(), getResAttrsAttrName());
 }
 
+static LogicalResult verifyVPILocalBinding(Operation *operation,
+                                           SimFuncOp function,
+                                           FlatSymbolRefAttr reference,
+                                           Type valueType,
+                                           SymbolTableCollection &symbols) {
+  auto local =
+      symbols.lookupNearestSymbolFrom<SimVPILocalDeclOp>(operation, reference);
+  if (!local)
+    return operation->emitOpError(
+        "declaration must name a simulation.vpi_local.decl");
+  if (valueType != local.getValueType())
+    return operation->emitOpError(
+        "automatic reference type must match its local declaration");
+  auto design = operation->getParentOfType<SimDesignOp>();
+  if (!function || !design || !function.getCodeUnitId())
+    return operation->emitOpError(
+        "requires an exact executable code-unit owner");
+  if (*function.getCodeUnitId() == local.getCodeUnitId())
+    return success();
+  // Outlined forks retain original source ownership through their exact
+  // statement-origin binding. No execution helper invents a lexical scope.
+  SimCodeUnitDeclOp executable;
+  for (auto unit : design.getOps<SimCodeUnitDeclOp>())
+    if (unit.getId() == *function.getCodeUnitId())
+      executable = unit;
+  if (executable && executable.getInternal())
+    for (auto origin : design.getOps<SimVPIThreadOriginBindingOp>())
+      if (origin.getCodeUnitId() == *function.getCodeUnitId())
+        for (auto statement : design.getOps<SimStatementDeclOp>())
+          if (statement.getId() == origin.getStatementId() &&
+              statement.getCodeUnitId() == local.getCodeUnitId())
+            return success();
+  return operation->emitOpError(
+      "local declaration belongs to a different lexical code unit");
+}
+
 LogicalResult verifyUnitBindings(SimFuncOp function) {
   // The simulation dialect verifies that the bindings are an array.
   ArrayAttr bindings = sim::get<sim::metadata::Bindings>(function);
@@ -108,6 +147,21 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
   llvm::StringMap<PathState> paths;
   SmallVector<std::optional<unsigned>> argumentBindings(type.getNumInputs());
   std::optional<unsigned> returnBinding;
+  SymbolTableCollection localSymbols;
+  llvm::DenseSet<Attribute> localDeclarations;
+  auto verifyLocal = [&](FlatSymbolRefAttr reference,
+                         Type valueType) -> LogicalResult {
+    if (!reference)
+      return success();
+    if (failed(verifyVPILocalBinding(function, function, reference, valueType,
+                                     localSymbols)))
+      return failure();
+    // Binding paths are private execution keys; the exact declaration symbol
+    // carries identity even when unnamed scopes share a public hierarchy.
+    if (!localDeclarations.insert(reference).second)
+      return function.emitOpError("duplicates a VPI local declaration binding");
+    return success();
+  };
 
   auto claimProvider = [&](StringRef path, unsigned index,
                            ProviderKind kind) -> LogicalResult {
@@ -146,6 +200,8 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
       continue;
     }
     if (auto local = dyn_cast<LocalBindingAttr>(binding)) {
+      if (failed(verifyLocal(local.getVpiLocal(), local.getType())))
+        return failure();
       if (failed(claimProvider(local.getPath().getValue(), index,
                                ProviderKind::Local)))
         return failure();
@@ -198,6 +254,8 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
     argumentBindings[argumentIndex] = index;
 
     Type argumentType = type.getInput(argument.getArgument());
+    if (failed(verifyLocal(argument.getVpiLocal(), argumentType)))
+      return failure();
     StringRef path = argument.getPath().getValue();
     PathState &state = paths[path];
     switch (argument.getKind()) {
@@ -441,9 +499,290 @@ LogicalResult SimCallOp::verify() {
   return success();
 }
 
+namespace {
+struct VPIProbeOwner {
+  SimFuncOp function;
+  SimDesignOp design;
+  SimCodeUnitDeclOp unit;
+  uint64_t lexicalID;
+};
+FailureOr<VPIProbeOwner> vpiProbeOwner(Operation *operation) {
+  auto function = operation->getParentOfType<SimFuncOp>();
+  auto design = operation->getParentOfType<SimDesignOp>();
+  if (!function || !design || !function.getCodeUnitId()) {
+    operation->emitOpError("requires an exact executable code-unit owner");
+    return failure();
+  }
+  const uint64_t id = *function.getCodeUnitId();
+  SimCodeUnitDeclOp unit;
+  for (auto declaration : design.getOps<SimCodeUnitDeclOp>())
+    if (declaration.getId() == id)
+      unit = declaration;
+  if (!unit) {
+    operation->emitOpError("executable owner has no code-unit declaration");
+    return failure();
+  }
+  uint64_t lexicalID = id;
+  if (unit.getInternal())
+    for (auto origin : design.getOps<SimVPIThreadOriginBindingOp>())
+      if (origin.getCodeUnitId() == id)
+        for (auto statement : design.getOps<SimStatementDeclOp>())
+          if (statement.getId() == origin.getStatementId() &&
+              statement.getCodeUnitId())
+            lexicalID = *statement.getCodeUnitId();
+  return VPIProbeOwner{function, design, unit, lexicalID};
+}
+
+LogicalResult verifyVPIProbeStatement(Operation *operation, int64_t id,
+                                      bool requireScope) {
+  auto owner = vpiProbeOwner(operation);
+  if (failed(owner))
+    return failure();
+  for (auto statement : owner->design.getOps<SimStatementDeclOp>()) {
+    if (statement.getId() != id)
+      continue;
+    if (statement.getCodeUnitId() != owner->lexicalID)
+      return operation->emitOpError(
+          "statement belongs to a different lexical code unit");
+    if (requireScope && !statement.getIsScope().value_or(false))
+      return operation->emitOpError("frame origin must name a statement scope");
+    return success();
+  }
+  return operation->emitOpError("references an unknown statement ID");
+}
+} // namespace
+
+LogicalResult
+SimVPICallPrepareOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  auto call =
+      symbols.lookupNearestSymbolFrom<SimVPICallDeclOp>(*this, getCallAttr());
+  if (!call)
+    return emitOpError("call must name a simulation.vpi_call.decl");
+  auto owner = vpiProbeOwner(*this);
+  if (failed(owner))
+    return failure();
+  if (call.getCodeUnitId() != owner->lexicalID)
+    return emitOpError("call belongs to a different lexical code unit");
+  auto *edge = reflection::findVPITraversal(
+      static_cast<uint32_t>(reflection::VPIObjectKind::Frame),
+      static_cast<uint32_t>(reflection::VPIRelationKind::OriginRel),
+      reflection::VPITraversalMode::Handle);
+  if (!edge ||
+      !reflection::vpiObjectSetContains(edge->targets, call.getVpiKind()))
+    return emitOpError("call kind cannot be a procedural frame origin");
+  return success();
+}
+
+LogicalResult
+SimVPIFrameEnterForeignOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  auto owner = vpiProbeOwner(*this);
+  auto call =
+      symbols.lookupNearestSymbolFrom<SimVPICallDeclOp>(*this, getCallAttr());
+  if (failed(owner))
+    return failure();
+  if (!call || call.getCodeUnitId() != owner->lexicalID)
+    return emitOpError("foreign entry requires its exact lexical source call");
+  using Kind = reflection::VPIObjectKind;
+  bool task = call.getVpiKind() == static_cast<uint32_t>(Kind::TaskCall) ||
+              call.getVpiKind() == static_cast<uint32_t>(Kind::MethodTaskCall);
+  bool function =
+      call.getVpiKind() == static_cast<uint32_t>(Kind::FuncCall) ||
+      call.getVpiKind() == static_cast<uint32_t>(Kind::MethodFuncCall);
+  if (!task && !function)
+    return emitOpError("foreign entry call kind cannot be a frame origin");
+  if (getCodeUnitId() <= 0 || (call.getCalleeCodeUnitId() &&
+                               *call.getCalleeCodeUnitId() != getCodeUnitId()))
+    return emitOpError("foreign entry disagrees with the source call target");
+  for (auto unit : owner->design.getOps<SimCodeUnitDeclOp>())
+    if (unit.getId() == getCodeUnitId()) {
+      if (unit.getCodeUnitKind() != EntryKind::Function ||
+          !dpi::has<dpi::Import>(unit))
+        return emitOpError(
+            "foreign entry requires an imported Function ABI code unit");
+      if (vpiCallableSourceKind(unit) !=
+          (task ? EntryKind::Task : EntryKind::Function))
+        return emitOpError(
+            "foreign entry source task/function kind disagrees with its call");
+      bool bound =
+          llvm::any_of(owner->design.getOps<SimVPICodeUnitScopeBindingOp>(),
+                       [&](auto binding) {
+                         return binding.getCodeUnitId() == getCodeUnitId();
+                       });
+      return bound ? success()
+                   : emitOpError("foreign entry requires an exact public "
+                                 "source scope binding");
+    }
+  return emitOpError("foreign entry references an unknown code unit");
+}
+
+namespace {
+FailureOr<uint64_t> vpiResolutionTarget(Operation *operation, int64_t id) {
+  auto owner = vpiProbeOwner(operation);
+  if (failed(owner))
+    return failure();
+  SimNetDeclOp net;
+  for (auto candidate : owner->design.getOps<SimNetDeclOp>())
+    if (candidate.getId() == id)
+      net = candidate;
+  if (!net) {
+    operation->emitOpError("references an unknown resolution net ID");
+    return failure();
+  }
+  auto nettype =
+      net.getNettypeAttr()
+          ? SymbolTable::lookupNearestSymbolFrom<SimVPINettypeDeclOp>(
+                net, net.getNettypeAttr())
+          : SimVPINettypeDeclOp{};
+  auto anchor =
+      nettype && nettype.getResolutionFunctionAttr()
+          ? SymbolTable::lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+                nettype, nettype.getResolutionFunctionAttr())
+          : SimVPIObjectAnchorOp{};
+  uint64_t target = 0;
+  if (anchor &&
+      anchor.getVpiKind() ==
+          static_cast<uint32_t>(reflection::VPIObjectKind::Function)) {
+    if (auto backing = anchor.getBackingAttr()) {
+      if (backing.getKind() == VPIObjectBackingKind::CodeUnit)
+        target = backing.getId().getValue().getZExtValue();
+    } else {
+      for (auto binding : owner->design.getOps<SimVPICodeUnitScopeBindingOp>())
+        if (binding.getSourceAttr().getValue() == anchor.getSymName())
+          target = binding.getCodeUnitId();
+    }
+  }
+  if (!target) {
+    operation->emitOpError("net requires an exact resolution-function binding");
+    return failure();
+  }
+  for (auto unit : owner->design.getOps<SimCodeUnitDeclOp>())
+    if (unit.getId() == target && unit.getCodeUnitKind() == EntryKind::Function)
+      return target;
+  operation->emitOpError("resolution target must be a function code unit");
+  return failure();
+}
+} // namespace
+
+LogicalResult SimVPIResolutionPrepareOp::verify() {
+  if (getNetIdAttr().getValue().isNegative())
+    return emitOpError("net ID must be nonnegative");
+  return success(succeeded(vpiResolutionTarget(*this, getNetId())));
+}
+
+LogicalResult SimVPIFrameEnterPreparedOp::verify() {
+  if (failed(verifyPositive(*this, getCodeUnitIdAttr(), "code-unit ID")))
+    return failure();
+  auto owner = vpiProbeOwner(*this);
+  if (failed(owner))
+    return failure();
+  if (owner->unit.getId() != getCodeUnitId())
+    return emitOpError("entry must name its exact executable code unit");
+  if (owner->unit.getCodeUnitKind() !=
+      (getIsTask() ? EntryKind::Task : EntryKind::Function))
+    return emitOpError("entry task/function kind disagrees with its code unit");
+  return success();
+}
+
+LogicalResult SimVPIFrameEnterOp::verify() {
+  if (failed(verifyPositive(*this, getCodeUnitIdAttr(), "code-unit ID")))
+    return failure();
+  auto owner = vpiProbeOwner(*this);
+  if (failed(owner))
+    return failure();
+  if (owner->unit.getId() != getCodeUnitId())
+    return emitOpError("entry must name its exact executable code unit");
+  if (getStatementIdAttr()) {
+    if (failed(verifyPositive(*this, getStatementIdAttr(), "statement ID")))
+      return failure();
+    return verifyVPIProbeStatement(*this, *getStatementId(), true);
+  }
+  return success();
+}
+
+LogicalResult SimVPICallObservationOp::verify() {
+  Operation *call = (*this)->getPrevNode();
+  if (!call || !isa<SimCallOp, SimClassDirectCallOp, SimClassVirtualCallOp,
+                    SimDPICallOp>(call))
+    return emitOpError("must immediately follow a synchronous call");
+  if (getObserved().empty())
+    return emitOpError("requires at least one observed reference");
+  if (getEndingTargets().size() != getObserved().size())
+    return emitOpError("requires one ending-target inventory per observation");
+  for (Attribute attribute : getEndingTargets()) {
+    auto targets = dyn_cast<DenseI64ArrayAttr>(attribute);
+    if (!targets || llvm::any_of(targets.asArrayRef(),
+                                 [](int64_t target) { return target <= 0; }))
+      return emitOpError("ending targets must be positive control identities");
+  }
+  return success();
+}
+
+LogicalResult SimVPIFrameCheckpointOp::verify() {
+  if (failed(verifyNonnegative(*this, getStatementIdAttr(), "statement ID")))
+    return failure();
+  if (!getStatementId())
+    return success();
+  return verifyVPIProbeStatement(*this, getStatementId(), false);
+}
+
+LogicalResult verifyVPICallSite(Operation *operation,
+                                SymbolTableCollection &symbols, bool isTask) {
+  auto reference = sim::get<metadata::VpiCallSite>(operation);
+  if (!reference)
+    return success();
+  auto declaration =
+      symbols.lookupNearestSymbolFrom<SimVPICallDeclOp>(operation, reference);
+  if (!declaration)
+    return operation->emitOpError(
+        "VPI call site must name a simulation.vpi_call.decl");
+  using ObjectKind = reflection::VPIObjectKind;
+  auto kind = static_cast<ObjectKind>(declaration.getVpiKind());
+  bool taskKind = kind == ObjectKind::TaskCall ||
+                  kind == ObjectKind::MethodTaskCall ||
+                  kind == ObjectKind::SysTaskCall;
+  if (taskKind != isTask)
+    return operation->emitOpError(
+        "VPI call site task/function kind disagrees with executable call");
+  if (isa<SimClassVirtualCallOp, SimClassVirtualTaskCallOp>(operation) &&
+      !declaration.getIsIndirect())
+    return operation->emitOpError(
+        "virtual executable call requires an indirect VPI call site");
+  if (auto declaredCallee = declaration.getCalleeCodeUnitId();
+      declaredCallee && !declaration.getIsIndirect()) {
+    if (auto calleeRef =
+            operation->getAttrOfType<FlatSymbolRefAttr>("callee")) {
+      auto callee =
+          symbols.lookupNearestSymbolFrom<SimFuncOp>(operation, calleeRef);
+      if (!callee || callee.getCodeUnitId() != declaredCallee)
+        return operation->emitOpError(
+            "VPI direct call target disagrees with the executable code unit");
+    }
+  }
+  return success();
+}
+
+LogicalResult
+SimVPIFrameBindOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  return verifyVPILocalBinding(
+      *this, (*this)->getParentOfType<SimFuncOp>(), getDeclarationAttr(),
+      getReference().getType().getElementType(), symbols);
+}
+
 LogicalResult SimCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (failed(verifyVPICallSite(*this, symbolTable, false)))
+    return failure();
   auto callee = symbolTable.lookupNearestSymbolFrom<SimFuncOp>(getOperation(),
                                                                getCalleeAttr());
+  if (auto net = sim::get<metadata::VpiResolutionNet>(*this)) {
+    if (sim::has<metadata::VpiCallSite>(*this))
+      return emitOpError("net resolution call cannot also name a source call");
+    auto target = vpiResolutionTarget(*this, net.getInt());
+    if (failed(target))
+      return failure();
+    if (!callee || callee.getCodeUnitId() != *target)
+      return emitOpError(
+          "net resolution call target disagrees with its nettype");
+  }
   if (!callee || (callee.getEntryKind() != EntryKind::Function &&
                   callee.getEntryKind() != EntryKind::Observer))
     return emitOpError("callee must name a sibling function or observer entry");
@@ -578,6 +917,8 @@ LogicalResult SimTaskCallOp::verify() {
 
 LogicalResult
 SimTaskCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (failed(verifyVPICallSite(*this, symbolTable, true)))
+    return failure();
   auto callee = symbolTable.lookupNearestSymbolFrom<SimFuncOp>(getOperation(),
                                                                getCalleeAttr());
   if (!callee || callee.getEntryKind() != EntryKind::Task)
@@ -631,6 +972,8 @@ LogicalResult SimClassVirtualTaskCallOp::verify() {
 
 LogicalResult SimClassVirtualTaskCallOp::verifySymbolUses(
     SymbolTableCollection &symbolTable) {
+  if (failed(verifyVPICallSite(*this, symbolTable, true)))
+    return failure();
   auto method = symbolTable.lookupNearestSymbolFrom<SimClassMethodDeclOp>(
       getOperation(), getMethodAttr());
   if (!method || !method.getIsVirtual() || !method.getIsTask() ||
@@ -646,6 +989,10 @@ LogicalResult SimClassVirtualTaskCallOp::verifySymbolUses(
       !type.getResults().empty())
     return emitOpError("receiver or arguments do not match the virtual task");
   return success();
+}
+
+LogicalResult SimDPICallOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  return verifyVPICallSite(*this, symbols, getIsTask());
 }
 
 void SimDPICallOp::getEffects(
@@ -959,6 +1306,36 @@ LogicalResult SimControlDisableOp::verify() {
   if (getActivation() && getHierarchical())
     return emitOpError(
         "hierarchical disable must not name one activation token");
+  return success();
+}
+
+LogicalResult SimControlDisableSelectedOp::verify() {
+  if (failed(verifyPositive(*this, getTargetIdAttr(), "control target ID")))
+    return failure();
+  if (getActivation() && getHierarchical())
+    return emitOpError(
+        "hierarchical disable must not name one activation token");
+  return success();
+}
+
+SuccessorOperands
+SimControlLocalBoundaryOp::getSuccessorOperands(unsigned index) {
+  assert(index < 2);
+  return SuccessorOperands(
+      MutableOperandRange(getOperation(), getOperation()->getNumOperands(), 0));
+}
+
+LogicalResult SimControlLocalBoundaryOp::verify() {
+  auto function = getOperation()->getParentOfType<SimFuncOp>();
+  if (!function || function.getEntryKind() != EntryKind::Function)
+    return emitOpError("requires a synchronous function entry");
+  if (getExit() == getBody() || getExit()->getParent() != &function.getBody() ||
+      getBody()->getParent() != &function.getBody() ||
+      getExit() == &function.getBody().front() ||
+      getBody() == &function.getBody().front() ||
+      !getExit()->getArguments().empty() || !getBody()->getArguments().empty())
+    return emitOpError(
+        "requires distinct argument-free local exit and body blocks");
   return success();
 }
 

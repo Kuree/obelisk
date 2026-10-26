@@ -1,3 +1,6 @@
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0 vpi=full' | FileCheck %s --check-prefix=VPI
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3 vpi=full' | FileCheck %s --check-prefix=VPI
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=vpi=off' | FileCheck %s --check-prefix=VPI-OFF
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 // RUN: obelisk-opt %s '--test-obelisk-edit-attributes=has=is_interface_extern set={is_fork_join}' '--test-obelisk-edit-attributes=replace-from="!obelisk.subroutine<() -> !obelisk.void, false>" replace-to="!obelisk.subroutine<() -> (), true>"' '--test-obelisk-edit-attributes=match={subroutine_kind = 0 : i32} set={subroutine_kind = 1 : i32}' '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=FORKJOIN
 
@@ -125,3 +128,17 @@ module {
 // FORKJOIN: simulation.task.call @{{unit_[0-9]+}}
 // FORKJOIN: simulation.func private @[[YB]]
 // FORKJOIN: simulation.task.call @{{unit_[0-9]+}}
+
+// VPI-DAG: simulation.code_unit.decl [[X:[0-9]+]] in 2 function hierarchy "top.x.ping"
+// VPI-DAG: simulation.code_unit.decl [[Y:[0-9]+]] in 3 function hierarchy "top.y.ping"
+// VPI-DAG: simulation.code_unit.decl [[P:[0-9]+]] in 4 function hierarchy "top.p.ping"
+// VPI-DAG: simulation.code_unit.decl [[Q:[0-9]+]] in 5 function hierarchy "top.q.ping"
+// VPI: simulation.vpi_interface_member.decl @[[MEMBER:[^ ]+]] of @{{[^ ]+}} name "ping" function signature () -> () directions [] {is_extern}
+// VPI-DAG: simulation.vpi_callable.decl [[X]] signature () -> () directions [] member @[[MEMBER]] {interface_exports = array<i64: [[P]]>}
+// VPI-DAG: simulation.vpi_callable.decl [[Y]] signature () -> () directions [] member @[[MEMBER]] {interface_exports = array<i64: [[Q]]>}
+// VPI: simulation.vpi_interface_call.dispatch @{{[^ ]+}} member @[[MEMBER]] access 1
+// VPI-OFF-NOT: simulation.vpi_interface
+// VPI-OFF-NOT: simulation.vpi_callable
+// VPI-OFF: simulation.design
+// VPI-OFF-NOT: simulation.vpi_interface
+// VPI-OFF-NOT: simulation.vpi_callable

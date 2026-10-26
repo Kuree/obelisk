@@ -38,6 +38,7 @@ struct ManagedClassLayoutAnalysis {
     uint32_t alignment;
     std::optional<uint64_t> weakReferentOffset;
     mlir::SmallVector<Field> fields;
+    std::optional<uint64_t> builtinBaseOffset;
   };
 
   static mlir::FailureOr<ManagedClassLayoutAnalysis>

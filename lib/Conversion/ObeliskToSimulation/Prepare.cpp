@@ -12,10 +12,13 @@
 #include "LowerUnit.h"
 #include "PrepareCaptures.h"
 #include "PrepareDeclarations.h"
+#include "PrepareExpressions.h"
+#include "PrepareLocals.h"
 #include "PrepareNetTopology.h"
 #include "PrepareRandomFunctions.h"
 #include "PrepareRandomIteration.h"
 #include "PrepareRandomTemplates.h"
+#include "PrepareStatements.h"
 #include "PrepareTopology.h"
 #include "PrepareUnits.h"
 #include "PrepareValidation.h"
@@ -2704,10 +2707,13 @@ void ObeliskSimPreparePass::runOnOperation() {
   if (invalid)
     return abort();
 
+  PreparedProceduralTypes proceduralTypes;
+  llvm::DenseMap<Operation *, FlatSymbolRefAttr> primitiveTerminals;
   FailureOr<llvm::StringMap<DescriptorInfo>> preparedDescriptors =
-      materializeDesignDescriptors(module, design, semanticRoot, *portAliases,
-                                   *scopes, *classes, designPrecisionFs,
-                                   builder);
+      materializeDesignDescriptors(
+          module, design, semanticRoot, *portAliases, *scopes, *classes,
+          designPrecisionFs, preserveVPIMethodBindings, preserveVPIBoxBindings,
+          proceduralTypes, primitiveTerminals, builder);
   if (failed(preparedDescriptors))
     return abort();
   llvm::StringMap<DescriptorInfo> &descriptors = *preparedDescriptors;
@@ -2991,6 +2997,48 @@ void ObeliskSimPreparePass::runOnOperation() {
   if (failed(preparedNetTopology))
     return abort();
   ContinuousDriverMap &continuousDrivers = *preparedNetTopology;
+
+  // Source terminal occurrences survive net collapsing and paired-bank driver
+  // planning. Bind only a complete scalar contribution; no ordinal or display
+  // path is used to infer which physical driver belongs to an output.
+  llvm::DenseMap<Operation *, SmallVector<const DriverInfo *>> terminalDrivers;
+  for (const auto &entry : continuousDrivers)
+    for (const DriverInfo &driver : entry.second)
+      if (driver.primitiveTerminalSource)
+        terminalDrivers[driver.primitiveTerminalSource].push_back(&driver);
+  SmallVector<std::pair<Operation *, FlatSymbolRefAttr>> terminalOrder(
+      primitiveTerminals.begin(), primitiveTerminals.end());
+  llvm::sort(terminalOrder, [](const auto &left, const auto &right) {
+    return left.second.getValue() < right.second.getValue();
+  });
+  for (const auto &terminal : terminalOrder) {
+    auto found = terminalDrivers.find(terminal.first);
+    if (found == terminalDrivers.end())
+      continue;
+    auto &drivers = found->second;
+    if (drivers.empty() || drivers.size() > 2 ||
+        drivers.front()->drivenWidth != 1 ||
+        drivers.front()->drivenLow > UINT32_MAX)
+      continue;
+    const DriverInfo *low = drivers.front(), *high = nullptr;
+    if (drivers.size() == 2) {
+      if (low->strengthBank == 1)
+        std::swap(drivers[0], drivers[1]);
+      low = drivers[0];
+      high = drivers[1];
+      if (low->strengthBank != 0 || high->strengthBank != 1 ||
+          high->drivenLow != low->drivenLow || high->drivenWidth != 1)
+        continue;
+    } else if (low->strengthBank)
+      continue;
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToEnd(&design.getBody().front());
+    sim::SimVPITerminalDriverBindingOp::create(
+        builder, getSemanticLocation(terminal.first), terminal.second,
+        builder.getI64IntegerAttr(low->descriptor.id),
+        high ? builder.getI64IntegerAttr(high->descriptor.id) : IntegerAttr{},
+        builder.getI64IntegerAttr(low->drivenLow));
+  }
 
   // IEEE 1800-2017 Clause 30 module paths delay changes produced by a path's
   // source before publishing them at its destination. Unconditional paths
@@ -4690,6 +4738,40 @@ void ObeliskSimPreparePass::runOnOperation() {
       module, semanticRoot, sourceUnits, semanticSymbols, *scopes, builder);
   if (failed(preparedUnits))
     return abort();
+  if (failed(materializeProceduralStatements(
+          design, *preparedUnits, semanticSymbols, builder)))
+    return abort();
+  if (failed(
+          materializeProceduralTypes(module, design, proceduralTypes, builder)))
+    return abort();
+  // A declaration initializer has its own executable helper, but no source
+  // activation. Retain its exact static object before inventorying its calls;
+  // the runtime then derives the call's lexical scope from that declaration.
+  if (preserveVPIMethodBindings)
+    for (const PreparedUnit &unit : preparedUnits->units) {
+      auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(unit.source);
+      if (!isa<semantic::SVVariableSymbolOp>(unit.source) &&
+          !(property &&
+            property.getLifetime() == semantic::SVVariableLifetime::Static))
+        continue;
+      auto descriptor = descriptors.find(getHierarchyName(unit.source));
+      if (descriptor == descriptors.end() ||
+          descriptor->second.kind != DescriptorInfo::Kind::Storage) {
+        emitError(getSemanticLocation(unit.source))
+            << "static initializer has no exact source storage descriptor";
+        return abort();
+      }
+      sim::SimVPIInitializerBindingOp::create(builder,
+                                              getSemanticLocation(unit.source),
+                                              unit.id, descriptor->second.id);
+    }
+  if (failed(materializeProceduralCalls(design, *preparedUnits, semanticSymbols,
+                                        builder)))
+    return abort();
+  if (preserveVPIMethodBindings &&
+      failed(materializeVPIInterfaceDispatch(design, semanticRoot,
+                                             *preparedUnits, *scopes, builder)))
+    return abort();
   auto &units = preparedUnits->units;
   auto &directCalleeNames = preparedUnits->directCalleeNames;
   auto &codeUnitDeclarations = preparedUnits->declarations;
@@ -4702,16 +4784,12 @@ void ObeliskSimPreparePass::runOnOperation() {
     auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source);
     if (!subroutine)
       continue;
-    // DPI imports use ABI helpers rather than source task/function code units.
-    // Such a helper is executable machinery, not the imported object's
-    // physical identity, so leave the static VPI anchor unbacked.
-    if (subroutine.getIsDpiImport().value_or(false))
-      continue;
     sim::EntryKind expectedKind =
         subroutine.getSubroutineKind() == semantic::SVSubroutineKind::Task
             ? sim::EntryKind::Task
             : sim::EntryKind::Function;
-    if (unit.entryKind != expectedKind)
+    if (unit.entryKind != expectedKind &&
+        !subroutine.getIsDpiImport().value_or(false))
       continue;
     auto anchorRef = sim::get<sim::metadata::VpiAnchor>(unit.source);
     if (!anchorRef)
@@ -4720,6 +4798,15 @@ void ObeliskSimPreparePass::runOnOperation() {
         SymbolTable::lookupSymbolIn(design, anchorRef));
     if (!anchor || anchor.getBackingAttr())
       continue;
+    if (subroutine.getIsDpiImport().value_or(false)) {
+      // The ABI thunk implements this exact source declaration but does not
+      // replace its public identity. Frames resolve its source scope through
+      // an explicit binding, independent of any particular caller.
+      sim::SimVPICodeUnitScopeBindingOp::create(
+          builder, getSemanticLocation(unit.source),
+          builder.getI64IntegerAttr(unit.id), anchorRef);
+      continue;
+    }
     anchor.setBackingAttr(sim::VPIObjectBackingAttr::get(
         context, sim::VPIObjectBackingKind::CodeUnit,
         builder.getI64IntegerAttr(unit.id), FlatSymbolRefAttr{}));
@@ -9311,6 +9398,13 @@ void ObeliskSimPreparePass::runOnOperation() {
       *preparedUnits, descriptors, semanticSymbols, classSources);
   if (failed(preparedCaptures))
     return abort();
+  if (preserveVPIMethodBindings &&
+      failed(materializeProceduralLocals(
+          design, *preparedUnits, *preparedCaptures, descriptors, builder)))
+    return abort();
+  if (failed(materializeProceduralExpressionRelations(design, *preparedUnits,
+                                                      descriptors, builder)))
+    return abort();
   auto &unitCaptures = preparedCaptures->descriptors;
   auto &unitReadCaptures = preparedCaptures->readDescriptors;
   auto &unitWrittenCaptures = preparedCaptures->writtenDescriptors;
@@ -10156,7 +10250,9 @@ void ObeliskSimPreparePass::runOnOperation() {
           subroutine && subroutine.getReturnVariablePath() == local.path;
       bindings.push_back(sim::LocalBindingAttr::get(
           context, builder.getStringAttr(local.path), local.type,
-          local.automatic, local.patternVariable, isReturn));
+          local.automatic, local.patternVariable, isReturn,
+          local.source ? sim::get<sim::metadata::VpiLocal>(local.source)
+                       : FlatSymbolRefAttr{}));
     }
     for (const PreparedConstant &constant : constants)
       bindings.push_back(sim::ConstantBindingAttr::get(
@@ -10267,7 +10363,9 @@ void ObeliskSimPreparePass::runOnOperation() {
               argument,
               isRef ? sim::UnitArgumentKind::Direct
                     : sim::UnitArgumentKind::FormalLocal,
-              copyOut, IntegerAttr{}, copyIn));
+              copyOut, IntegerAttr{}, copyIn,
+              isRef ? FlatSymbolRefAttr{}
+                    : sim::get<sim::metadata::VpiLocal>(formal)));
           if (directTask && copyOut) {
             unsigned destinationArgument = reordered.size();
             reordered.push_back(sim::RefType::get(context, *type));
@@ -10301,7 +10399,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           formalBindings.push_back(sim::ArgumentBindingAttr::get(
               context, argument.getPath(), argument.getArgument() + offset,
               argument.getKind(), argument.getCopyOut(),
-              argument.getLvalueNode(), argument.getCopyIn()));
+              argument.getLvalueNode(), argument.getCopyIn(),
+              argument.getVpiLocal()));
         }
         inputs = std::move(reordered);
         argAttrs = std::move(reorderedAttrs);
@@ -10881,6 +10980,12 @@ void ObeliskSimPreparePass::runOnOperation() {
         "domain", sim::ExecutionDomainAttr::get(
                       context, programDomain ? sim::ExecutionDomain::Program
                                              : sim::ExecutionDomain::Design)));
+    if (preserveVPIFrames &&
+        (isa<semantic::SVProceduralBlockSymbolOp>(unit.source) ||
+         isa<semantic::SVSubroutineSymbolOp>(unit.source)))
+      functionAttrs.push_back(
+          sim::named<sim::metadata::VpiFrameInstrumentation>(
+              builder.getUnitAttr()));
     unit.function = sim::SimFuncOp::create(
         builder, getSemanticLocation(unit.source), unit.symbol, type,
         unit.entryKind, functionAttrs, argAttrs);
@@ -12825,6 +12930,9 @@ void ObeliskSimPreparePass::runOnOperation() {
             resolverBuilder, net.getLoc(), TypeRange{net.getType()},
             FlatSymbolRefAttr::get(context, resolutionFunction.getSymName()),
             operands, ArrayAttr{}, ArrayAttr{});
+        if (preserveVPIMethodBindings)
+          sim::set<sim::metadata::VpiResolutionNet>(
+              call, resolverBuilder.getI64IntegerAttr(net.getId()));
         resolved = call.getResult(0);
       }
       for (Value netHandle : netHandles)

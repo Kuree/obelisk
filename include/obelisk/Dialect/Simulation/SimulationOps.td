@@ -78,19 +78,31 @@ def SimVPIDefinitionDeclOp : SimOp<"vpi_definition.decl", [
   ]> {
   let summary = "shared source definition identity for VPI instances";
   let description = [{
-    Preserves one source module, interface, or program definition independently
-    of its elaborated instances. Definition-invariant VPI metadata can therefore
+    Preserves one source module, interface, program, or built-in primitive
+    definition independently of its elaborated instances. Definition-invariant VPI metadata can therefore
     be serialized once and reached through compact instance bindings. This is
     reflection inventory only and never participates in executable scheduling.
   }];
   let arguments = (ins SymbolNameAttr:$sym_name, I32Attr:$vpi_kind,
                        StrAttr:$definition_name,
-                       OptionalAttr<LocationAttr>:$definition_loc);
+                       OptionalAttr<LocationAttr>:$definition_loc,
+                       OptionalAttr<I32Attr>:$primitive_type);
   let assemblyFormat = [{
     $sym_name `type` $vpi_kind `name` $definition_name
-    (`definition_loc` $definition_loc^)? attr-dict
+    (`definition_loc` $definition_loc^)?
+    (`primitive_type` $primitive_type^)? attr-dict
   }];
   let hasVerifier = 1;
+}
+
+def SimVPIDefinitionBindingOp : SimOp<"vpi_definition.bind", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "bind an exact primitive instance to its shared definition";
+  let arguments = (ins FlatSymbolRefAttr:$source,
+                       FlatSymbolRefAttr:$definition);
+  let assemblyFormat = "$source `to` $definition attr-dict";
 }
 
 def SimVPIDefinitionMemberDeclOp : SimOp<"vpi_definition_member.decl", [
@@ -107,11 +119,39 @@ def SimVPIDefinitionMemberDeclOp : SimOp<"vpi_definition_member.decl", [
   let arguments = (ins SymbolNameAttr:$sym_name,
                        FlatSymbolRefAttr:$definition, I32Attr:$vpi_kind,
                        I32Attr:$ordinal, StrAttr:$member_name,
-                       OptionalAttr<SimVPIIODirection>:$direction);
+                       OptionalAttr<SimVPIIODirection>:$direction,
+                       OptionalAttr<UnitAttr>:$is_local_param,
+                       OptionalAttr<UnitAttr>:$has_explicit_parameter_range,
+                       OptionalAttr<UnitAttr>:$unavailable_default,
+                       OptionalAttr<UnitAttr>:$has_original_default,
+                       OptionalAttr<UnitAttr>:$param_assign_by_name,
+                       OptionalAttr<UnitAttr>:$param_assign_type,
+                       OptionalAttr<UnitAttr>:$param_assign_default,
+                       OptionalAttr<UnitAttr>:$unavailable_rhs,
+                       OptionalAttr<UnitAttr>:$has_original_rhs);
   let assemblyFormat = [{
     $sym_name `of` $definition `type` $vpi_kind `ordinal` $ordinal
     `name` $member_name (`direction` $direction^)? attr-dict
   }];
+  let hasVerifier = 1;
+}
+
+def SimVPIDefinitionTypeDefaultOp : SimOp<"vpi_definition_type_default", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "original builtin typespec source of a shared member";
+  let description = [{
+    Stores an original type source independently of effective specialization types.
+    The exact member must be a TypeParameter with has_original_default or a
+    type-target ParamAssign with has_original_rhs. This
+    bounded form admits anonymous builtin leaf types, without nominal or alias
+    identity. A type parameter reference uses an exact Expr (default) or Rhs
+    (assignment) relation instead.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$member,
+                       SimVPITypeSemanticsAttr:$original_type);
+  let assemblyFormat = "$member `type` $original_type attr-dict";
   let hasVerifier = 1;
 }
 
@@ -135,10 +175,11 @@ def SimVPIDefinitionMemberSpecializationOp
         DeclareOpInterfaceMethods<SymbolUserOpInterface>,
         MemoryEffects<[MemWrite<SimInventoryResource>]>
       ]> {
-  let summary = "effective type of one member in a shared specialization";
+  let summary = "effective type and immutable value in a shared specialization";
   let arguments = (ins FlatSymbolRefAttr:$specialization,
                        FlatSymbolRefAttr:$member,
-                       SimVPITypeSemanticsAttr:$effective_type);
+                       SimVPITypeSemanticsAttr:$effective_type,
+                       OptionalAttr<SimFrozenConstantAttr>:$immutable_value);
   let assemblyFormat = [{
     $specialization `member` $member `type` $effective_type attr-dict
   }];
@@ -230,6 +271,22 @@ def SimCodeUnitDeclOp : SimOp<"code_unit.decl", [
   let hasVerifier = 1;
 }
 
+def SimVPICodeUnitScopeBindingOp : SimOp<"vpi_code_unit_scope.bind", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "source callable scope of an internal executable code unit";
+  let description = [{
+    Connects an executable ABI helper to the exact source task or function it
+    implements. The source anchor retains its own public identity; the helper
+    never becomes a second public callable. This declaration is independent of
+    any call occurrence or runtime activation.
+  }];
+  let arguments = (ins I64Attr:$code_unit_id, FlatSymbolRefAttr:$source);
+  let assemblyFormat = "$code_unit_id `to` $source attr-dict";
+  let hasVerifier = 1;
+}
+
 def SimStatementDeclOp : SimOp<"statement.decl", [
     MemoryEffects<[MemWrite<SimInventoryResource>]>
   ]> {
@@ -254,6 +311,222 @@ def SimStatementDeclOp : SimOp<"statement.decl", [
                        OptionalAttr<UnitAttr>:$is_protected);
   let assemblyFormat = [{$id (`in` $code_unit_id^)? `scope` $scope_id
     `type` $vpi_kind (`parent` $parent_id^)? (`name` $name^)? attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimVPILocalDeclOp : SimOp<"vpi_local.decl", [
+    Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable declaration of a frame automatic variable";
+  let description = [{
+    Preserves a local declaration independently of any runtime activation or
+    storage allocation. Its owner is the exact lexical code unit; `within`
+    names the nearest retained procedural scope statement when present.
+    Without `within`, the owner must be a task or function scope. Declaration
+    ordinals are dense within each exact scope. The stable ID belongs to the
+    independent local-declaration namespace. This operation does not initialize
+    or allocate storage; an executable binding supplies the current automatic
+    reference after that reference exists.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
+                       I64Attr:$code_unit_id, I64Attr:$scope_id,
+                       OptionalAttr<I64Attr>:$statement_scope_id,
+                       I32Attr:$ordinal, StrAttr:$hierarchical_name,
+                       StrAttr:$debug_name, TypeAttr:$value_type,
+                       SimVPITypeSemanticsAttr:$vpi_type,
+                       OptionalAttr<I32Attr>:$source_ordinal);
+  let assemblyFormat = [{$sym_name `id` $id `in` $code_unit_id `scope`
+    $scope_id (`within` $statement_scope_id^)? `ordinal` $ordinal
+    `hierarchy` $hierarchical_name `debug` $debug_name `:` $value_type attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimVPIForeachDeclOp : SimOp<"vpi_foreach.decl", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "exact fixed-array foreach collection and ordered index declarations";
+  let description = [{
+    Names an existing foreach statement and its whole fixed-array declaration.
+    Each loop_variables entry is an exact local symbol or a unit attribute for
+    a skipped dimension. Positions are source order, independent of the dense
+    local declaration ordinals. Skips serialize as distinct unnamed NullOp
+    occurrences; actual index variables retain their declaration identities.
+  }];
+  let arguments = (ins I64Attr:$statement_id,
+                       SimVPIObjectRefAttr:$collection,
+                       ArrayAttr:$loop_variables);
+  let assemblyFormat = "$statement_id `collection` $collection `indices` $loop_variables attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPIStaticLocalBindingOp : SimOp<"vpi_static_local.bind",
+    [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+  let summary = "exact procedural scope of existing static variable storage";
+  let description = [{
+    Refines an existing static storage declaration's source owner without
+    introducing another variable identity. The owner is a task/function or
+    the nearest retained scope statement of the exact lexical code unit.
+    The ordinal is source declaration order across automatic and static
+    declarations; automatic declarations retain their separate dense frame
+    inventory ordinal and carry source_ordinal when the orders differ.
+    Delegated class and named-event identities use their own owner bindings.
+  }];
+  let arguments = (ins I64Attr:$storage_id, I64Attr:$code_unit_id,
+                       OptionalAttr<I64Attr>:$statement_scope_id,
+                       I32Attr:$ordinal);
+  let assemblyFormat = "$storage_id `in` $code_unit_id (`within` $statement_scope_id^)? `ordinal` $ordinal attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPIFrameBindOp : SimOp<"vpi.frame.bind", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemRead<SimStorageResource>, MemWrite<SimExternalResource>]>
+  ]> {
+  let summary = "bind an exact automatic local declaration to its live storage";
+  let description = [{
+    The reference names an owned automatic allocation of the declaration's
+    exact normalized type. The active frame must own that declaration's
+    lexical scope. This establishes a weak observation binding: it neither
+    initializes the source variable nor retains its storage or managed values.
+    Source lowering keeps the allocation's observation borrow alive through
+    the corresponding frame exit. Ref/inout aliases require their own explicit
+    alias representation and must not be passed as owned local allocations.
+  }];
+  let arguments = (ins SimContextType:$context, SimRefType:$reference,
+                       FlatSymbolRefAttr:$declaration);
+  let assemblyFormat = "$context `,` $reference `to` $declaration attr-dict `:` type($reference)";
+}
+
+def SimVPIInitializerBindingOp : SimOp<"vpi_initializer_binding",
+    [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+  let summary = "exact static source storage initialized by an internal helper";
+  let description = [{
+    Binds a nonprocedural initializer's executable identity to existing static
+    source storage. The helper introduces no procedural scope or frame. Calls
+    retain their helper owner and derive their lexical scope from the source
+    variable, including the canonical class property for static class storage.
+  }];
+  let arguments = (ins I64Attr:$code_unit_id, I64Attr:$storage_id);
+  let assemblyFormat = "$code_unit_id `storage` $storage_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPICallDeclOp : SimOp<"vpi_call.decl", [
+    Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable identity of one source task/function call";
+  let description = [{
+    Identifies the actual call occurrence independently of executable clones.
+    A discarded call may alias its existing statement identity. Calls nested
+    within another expression have independent unnamed expression identities;
+    they never acquire a fabricated statement-containment edge. The enclosing
+    statement provides lexical context only. The optional callee code-unit ID
+    identifies a statically resolved source declaration, not a dynamic override.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
+                       I64Attr:$code_unit_id, I64Attr:$scope_id,
+                       I32Attr:$vpi_kind, StrAttr:$name,
+                       OptionalAttr<I64Attr>:$statement_id,
+                       OptionalAttr<I64Attr>:$enclosing_statement_id,
+                       OptionalAttr<I64Attr>:$callee_code_unit_id,
+                       UnitAttr:$is_indirect);
+  let assemblyFormat = [{$sym_name `id` $id `in` $code_unit_id `scope`
+    $scope_id `type` $vpi_kind `name` $name
+    (`statement` $statement_id^)? (`within` $enclosing_statement_id^)?
+    (`callee` $callee_code_unit_id^)? attr-dict}];
+  let hasVerifier = 1;
+}
+
+// Declaration-owned callable facts survive executable IPO. These are original
+// source ABI types, before hidden receivers, captures, or return slots.
+def SimVPICallableDeclOp : SimOp<"vpi_callable.decl", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "original callable ABI and interface export provenance";
+  let arguments = (ins I64Attr:$code_unit_id,
+                       TypeAttrOf<FunctionType>:$signature,
+                       DenseI32ArrayAttr:$directions,
+                       OptionalAttr<FlatSymbolRefAttr>:$interface_member,
+                       OptionalAttr<DenseI64ArrayAttr>:$interface_exports,
+                       UnitAttr:$is_fork_join);
+  let assemblyFormat = [{$code_unit_id `signature` $signature
+    `directions` $directions (`member` $interface_member^)? attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimVPIInterfaceMemberDeclOp : SimOp<"vpi_interface_member.decl", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "a callable member of one exact nominal interface type";
+  let arguments = (ins SymbolNameAttr:$sym_name,
+                       FlatSymbolRefAttr:$interface_type, StrAttr:$name,
+                       SimEntryKind:$member_kind,
+                       TypeAttrOf<FunctionType>:$signature,
+                       DenseI32ArrayAttr:$directions, UnitAttr:$is_extern);
+  let assemblyFormat = [{$sym_name `of` $interface_type `name` $name
+    $member_kind `signature` $signature `directions` $directions attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimVPIInterfaceInstanceBindingOp : SimOp<"vpi_interface_instance.bind", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "exact nominal type of an elaborated interface instance";
+  let arguments = (ins I64Attr:$scope_id, FlatSymbolRefAttr:$interface_type);
+  let assemblyFormat = "$scope_id `to` $interface_type attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPIInterfaceCallDispatchOp : SimOp<"vpi_interface_call.dispatch", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "source identity and visibility contract of an indirect interface call";
+  let description = [{
+    Identifies the exact nominal member independently of its executable target
+    set. Access is 0 for an unrestricted interface, 1 for a modport import, and
+    2 for a modport export. All elaborated instances of the exact nominal
+    interface type participate, including instances under another top module
+    (IEEE 1800-2023 25.9). Empty target sets remain explicit contracts. Implementations are derived only
+    from declaration-owned interface membership and exports.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$call,
+                       FlatSymbolRefAttr:$member,
+                       I32Attr:$access);
+  let assemblyFormat = [{$call `member` $member `access` $access attr-dict}];
+  let hasVerifier = 1;
+}
+
+// A class dispatch domain is symbolic inventory, not an unchecked list of
+// target function IDs. The image encoder derives compatible implementations
+// from the same class-dispatch analysis used by executable lowering.
+def SimVPIClassCallDispatchOp : SimOp<"vpi_class_call_dispatch", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "exact receiver type and method of a reflected virtual call";
+  let arguments = (ins FlatSymbolRefAttr:$call,
+                       TypeAttrOf<SimClassHandleType>:$receiver_type,
+                       FlatSymbolRefAttr:$method);
+  let assemblyFormat = "$call `on` $receiver_type `via` $method attr-dict";
+}
+
+def SimVPIThreadOriginBindingOp : SimOp<"vpi_thread_origin_binding", [
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "exact source statement of a runtime thread activation";
+  let description = [{
+    Associates an executable code-unit identity with the source statement that
+    created that thread. This is immutable reflection inventory, independent of
+    statement containment. An outlined internal fork branch can therefore name
+    its original statement without moving that statement from its lexical owner.
+  }];
+  let arguments = (ins I64Attr:$code_unit_id, I64Attr:$statement_id);
+  let assemblyFormat = "$code_unit_id `origin` $statement_id attr-dict";
   let hasVerifier = 1;
 }
 
@@ -299,6 +572,7 @@ def SimVPIStatementRelationDeclOp : SimOp<
 }
 
 def SimVPIRelationDeclOp : SimOp<"vpi_relation.decl", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemWrite<SimInventoryResource>]>
   ]> {
   let summary = "immutable general VPI object relation";
@@ -315,6 +589,41 @@ def SimVPIRelationDeclOp : SimOp<"vpi_relation.decl", [
                        SimVPIObjectRefAttr:$target);
   let assemblyFormat = [{
     $source `selector` $selector $mode `ordinal` $ordinal `to` $target attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIExpressionDeclOp : SimOp<"vpi_expression.decl", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "exact typed occurrence in a source RTL expression";
+  let description = [{
+    Preserves one computed source occurrence independently of shared declaration
+    leaves. `owner`, `selector`, `mode`, and `ordinal` identify its exact incoming
+    relation slot. This structural ownership is separate from the public Parent
+    relation of a selection. Value occurrences have an exact packed result type;
+    integral Constants also have immutable planes. A source_only Operation
+    explicitly retains syntax without an elaborated result type or value.
+    Its physical and semantic type pair must be absent. Operation and indexed-select
+    classifications are retained explicitly. These records neither allocate
+    simulation storage nor execute or schedule the expression. Exactly one
+    source context is retained: an instance scope, or a shared definition whose
+    original Parameter default owns this occurrence. The latter never captures
+    an arbitrary effective specialization.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
+      I32Attr:$vpi_kind, OptionalAttr<I64Attr>:$scope_id,
+      SimVPIObjectRefAttr:$owner,
+      I32Attr:$selector, SimVPIRelationMode:$mode, I64Attr:$ordinal,
+      OptionalAttr<TypeAttr>:$type,
+      OptionalAttr<SimVPITypeSemanticsAttr>:$vpi_type,
+      OptionalAttr<SimFrozenConstantAttr>:$immutable_value,
+      OptionalAttr<I32Attr>:$op_type, OptionalAttr<I32Attr>:$indexed_direction,
+      UnitAttr:$source_only, OptionalAttr<FlatSymbolRefAttr>:$definition);
+  let assemblyFormat = [{
+    $sym_name `id` $id `type` $vpi_kind (`in` $scope_id^)? `owned_by` $owner
+    `selector` $selector $mode `ordinal` $ordinal (`:` $type^)? attr-dict
   }];
   let hasVerifier = 1;
 }
@@ -351,8 +660,9 @@ def SimVPIObjectAnchorOp : SimOp<"vpi_object.anchor", [
   let summary = "canonical source identity for a persistent VPI object";
   let description = [{
     Separates source-language identity from executable descriptor identity.
-    `parent` preserves exact lexical ownership even when the display hierarchy
-    is ambiguous, as it is for multiple compilation units.  A backing maps the
+    `parent` names another anchor or a canonical class-specialization typespec
+    and preserves exact lexical ownership even when the display hierarchy is
+    ambiguous, as it is for multiple compilation units. A backing maps the
     anchor onto an existing scope, class, or code-unit record; otherwise the
     serializer materializes a static-only reflection object.  Anchors never
     participate in scheduling or executable lowering. Relation-backed arrays
@@ -362,6 +672,17 @@ def SimVPIObjectAnchorOp : SimOp<"vpi_object.anchor", [
     `primitive_input_count` preserves the IEEE 37.33 vpiSize value for scalar
     primitive anchors. `vpi_type` and `immutable_value` preserve the exact
     source type and elaborated value of static-only objects such as parameters.
+    Effective type parameters retain only `vpi_type`; their resolved data type
+    is not a value and does not allocate immutable value storage. A lexical
+    generic type parameter instead carries `unresolved_type_parameter` and no
+    effective payload; its exact ClassDefn owner supplies source identity.
+    A lexical generic value parameter carries `unresolved_value_parameter` and
+    likewise has no effective type or value. Constant and Operation
+    anchors retain unnamed original-default expression occurrences, with exact
+    parameter/operator ownership and explicit generated expression relations.
+    `unavailable_default` retains the original source text for a present default
+    whose structure is unsupported. It is exclusive with an explicit Expr
+    relation; absence of both denotes no source default.
     `has_explicit_parameter_range` records whether a value parameter directly
     declared a packed range, rather than inheriting one from a built-in or
     typedef type. These attributes remain reflection metadata and never
@@ -381,12 +702,79 @@ def SimVPIObjectAnchorOp : SimOp<"vpi_object.anchor", [
                        OptionalAttr<I64Attr>:$primitive_input_count,
                        OptionalAttr<SimVPITypeSemanticsAttr>:$vpi_type,
                        OptionalAttr<SimFrozenConstantAttr>:$immutable_value,
-                       OptionalAttr<UnitAttr>:$has_explicit_parameter_range);
+                       OptionalAttr<UnitAttr>:$has_explicit_parameter_range,
+                       OptionalAttr<FlatSymbolRefAttr>:$class_method,
+                       OptionalAttr<UnitAttr>:$unresolved_type_parameter,
+                       OptionalAttr<StrAttr>:$unavailable_default,
+                       OptionalAttr<UnitAttr>:$unresolved_value_parameter);
   let assemblyFormat = [{
     $sym_name `id` $inventory_id `type` $vpi_kind
     `in` $enclosing_scope_id (`parent` $parent^)?
     `ordinal` $owner_ordinal `hierarchy` $hierarchical_name
     `debug` $debug_name attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPITerminalDriverBindingOp : SimOp<"vpi_terminal_driver.bind", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "exact published driver state of a scalar primitive output";
+  let description = [{
+    Retains an output occurrence's own delayed driver state independently of
+    the resolved connected net. The optional high driver must be the exact
+    complementary polarity bank of the low driver. This inventory creates no
+    state, and both selectors use the same bit offset within their descriptors.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$terminal, I64Attr:$low_driver_id,
+                       OptionalAttr<I64Attr>:$high_driver_id,
+                       I64Attr:$bit_offset);
+  let assemblyFormat = "$terminal `low` $low_driver_id (`high` $high_driver_id^)? `bit` $bit_offset attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPIEventBindingOp : SimOp<"vpi_event_binding", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "exact runtime identity of an immutable named-event declaration";
+  let description = [{
+    Associates a source named-event anchor with the event identity used by its
+    executable waits and triggers. This is immutable reflection inventory and
+    does not create an event or schedule work. Mutable event reference cells
+    use their storage binding instead.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$event, I64Attr:$event_id);
+  let assemblyFormat = "$event `id` $event_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPIClassMemberDeclOp : SimOp<"vpi_class_member.decl", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable class property declaration and executable binding";
+  let description = [{
+    Separates a lexical or specialized property declaration from its live
+    receiver. `owner` names a class-definition anchor or canonical class
+    typespec; an optional `field` names the exact executable class field. A
+    declaration without a field is lexical: it has an exact concrete source
+    type and a ClassDefn owner, but no executable value or backing. The source ID
+    shares the VPI anchor inventory namespace. A static property names its
+    existing storage or named event; instance properties use the class field's
+    native offset. This operation never allocates executable state.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
+                       I64Attr:$scope_id, FlatSymbolRefAttr:$owner,
+                       OptionalAttr<FlatSymbolRefAttr>:$field,
+                       StrAttr:$hierarchical_name, StrAttr:$debug_name,
+                       SimVPITypeSemanticsAttr:$vpi_type,
+                       OptionalAttr<I64Attr>:$static_storage,
+                       OptionalAttr<I64Attr>:$static_event);
+  let assemblyFormat = [{
+    $sym_name `id` $id `in` $scope_id `owner` $owner (`field` $field^)?
+    `hierarchy` $hierarchical_name `debug` $debug_name attr-dict
   }];
   let hasVerifier = 1;
 }
@@ -417,6 +805,25 @@ def SimVPINettypeDeclOp : SimOp<"vpi_nettype.decl", [
   let hasVerifier = 1;
 }
 
+def SimVPIBoxTypeDeclOp : SimOp<"vpi_box_type.decl", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable exact source type and storage layout for boxed values";
+  let description = [{
+    A positive stable ID binds a boxed runtime value to its exact source
+    semantics and normalized element storage type. This is a typed descriptor,
+    not a source VPI object. Its semantic and physical DAGs use the ordinary
+    reflection image graphs. No source type may be inferred from the executable
+    element type ID. The declaration survives executable symbol optimization.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
+                       TypeAttr:$value_type,
+                       SimVPITypeSemanticsAttr:$vpi_type);
+  let assemblyFormat = "$sym_name `id` $id `:` $value_type attr-dict";
+  let hasVerifier = 1;
+}
+
 def SimVPITypespecDeclOp : SimOp<"vpi_typespec.decl", [
     Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemWrite<SimInventoryResource>]>
@@ -425,27 +832,125 @@ def SimVPITypespecDeclOp : SimOp<"vpi_typespec.decl", [
   let description = [{
     Preserves a source typespec as a resolvable symbol after semantic IR is
     erased. For typedefs and anonymous enums, `owner` is the exact source VPI
-    anchor and, unlike `scope_id`, does not collapse lexical package,
+    anchor, or `statement_scope_id` names the exact procedural statement scope.
+    Exactly one owner is present. Unlike `scope_id`, neither collapses lexical package,
     compilation-unit, class, subroutine, property, or sequence scopes. An
     interface typespec uses its enclosing persistent anchor as an image
     namespace because IEEE 1800 exposes it through `vpiTypespec`, not an owner
-    traversal. `target_type` retains the complete canonical source shape,
+    traversal. A builtin class typespec represents the alias-free process,
+    semaphore, or mailbox specialization and is owned by the source standard
+    package; it has no class definition or executable class descriptor.
+    A canonical mailbox specialization can preserve its normalized element
+    storage type in `message_type`. It supplies exact immutable layout for VPI
+    message snapshots and does not change the mailbox's own handle storage.
+    `target_type` retains the complete canonical source shape,
     optional interface/modport identity, and ordered typedef-alias layers. The
     declaration is reflection inventory only and never participates in
     executable type conversion or scheduling.
   }];
   let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
-                       I64Attr:$scope_id, FlatSymbolRefAttr:$owner,
+                       I64Attr:$scope_id, OptionalAttr<FlatSymbolRefAttr>:$owner,
                        StrAttr:$hierarchical_name,
                        StrAttr:$debug_name,
                        SimVPITypeSemanticsAttr:$target_type,
                        DefaultValuedAttr<SimVPITypespecOrigin,
                          "::obelisk::sim::VPITypespecOrigin::Typedef">:$origin,
-                       OptionalAttr<I64Attr>:$source_type_identity);
+                       OptionalAttr<I64Attr>:$source_type_identity,
+                       OptionalAttr<TypeAttr>:$message_type,
+                       OptionalAttr<I64Attr>:$statement_scope_id);
   let assemblyFormat = [{
-    $sym_name `id` $id `in` $scope_id `owner` $owner
+    $sym_name `id` $id `in` $scope_id (`owner` $owner^)?
+    (`within` $statement_scope_id^)?
     `hierarchy` $hierarchical_name
     `debug` $debug_name attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPILexicalClassTypespecDeclOp
+    : SimOp<"vpi_lexical_class_typespec.decl",
+            [Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+             MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+  let summary =
+      "source class type construct without an effective specialization";
+  let description = [{
+    Represents the lexical class type in an extends clause (IEEE 37.32 details
+    1-3). `owner` is the class in which the construct occurs; `definition` names
+    the referenced lexical class declaration. The typespec has no executable
+    class identity, semantic type root, member inventory, or specialization
+    iteration membership. Omitted actuals are represented by default parameter
+    assignments; unsupported explicit actuals retain their source syntax.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id, I64Attr:$scope_id,
+      FlatSymbolRefAttr:$owner, FlatSymbolRefAttr:$definition,
+      StrAttr:$debug_name, OptionalAttr<StrAttr>:$unavailable_parameters);
+  let assemblyFormat = [{
+    $sym_name `id` $id `in` $scope_id `owner` $owner `definition` $definition
+    `debug` $debug_name attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIClassExtendsDeclOp
+    : SimOp<"vpi_class_extends.decl",
+            [Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+             MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+  let summary = "immutable source class extends occurrence";
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id, I64Attr:$scope_id,
+      FlatSymbolRefAttr:$owner, OptionalAttr<FlatSymbolRefAttr>:$base_typespec,
+      OptionalAttr<StrAttr>:$unavailable_base,
+      OptionalAttr<StrAttr>:$unavailable_arguments);
+  let assemblyFormat = [{
+    $sym_name `id` $id `in` $scope_id `owner` $owner attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIClassParameterAssignDeclOp
+    : SimOp<"vpi_class_parameter_assign.decl",
+            [Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+             MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+  let summary = "source class parameter assignment with exact RHS provenance";
+  let description = [{
+    The Lhs is a parameter of the lexical class named by `owner`'s definition.
+    An explicit `rhs` names its exact source expression or type. An explicit
+    unsupported RHS retains `unavailable_rhs`; with neither attribute, Rhs
+    shares the formal declaration's original Expr. `is_named` preserves named
+    syntax, including an empty named actual selecting the original default.
+    No assignment substitutes an elaborated value. The ordinal is dense in
+    declaration order among non-local parameters.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id, I64Attr:$scope_id,
+      FlatSymbolRefAttr:$owner, FlatSymbolRefAttr:$parameter, I64Attr:$ordinal,
+      OptionalAttr<FlatSymbolRefAttr>:$rhs,
+      OptionalAttr<StrAttr>:$unavailable_rhs, OptionalAttr<UnitAttr>:$is_named);
+  let assemblyFormat = [{
+    $sym_name `id` $id `in` $scope_id `owner` $owner `parameter` $parameter
+    `ordinal` $ordinal attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIUnresolvedTypeAliasDeclOp
+    : SimOp<"vpi_unresolved_type_alias.decl",
+            [Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+             MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+  let summary = "lexical typedef of an unresolved class type parameter";
+  let description = [{
+    Preserves a distinct named typespec identity when its underlying type
+    parameter has no effective type (IEEE 1800-2023 37.25 details 6 and 11).
+    The exact target is an unresolved type parameter in the same lexical class,
+    or a preceding alias of such a parameter. The object has public kind
+    TypeParameter, but is a typedef, not a parameter declaration: it has no
+    effective semantic root, value, default expression, or Parameter inventory
+    membership. Concrete typedefs continue to use vpi_typespec.decl.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id, I64Attr:$scope_id,
+      FlatSymbolRefAttr:$owner, FlatSymbolRefAttr:$target,
+      StrAttr:$hierarchical_name, StrAttr:$debug_name);
+  let assemblyFormat = [{
+    $sym_name `id` $id `in` $scope_id `owner` $owner `alias` $target
+    `hierarchy` $hierarchical_name `debug` $debug_name attr-dict
   }];
   let hasVerifier = 1;
 }
@@ -459,13 +964,15 @@ def SimVPIEnumConstDeclOp : SimOp<"vpi_enum_const.decl", [
     Preserves one enum member in declaration order after semantic IR is
     erased. `enum_typespec` is an exact symbol relation to the owning enum
     typespec, so escaped names and identically named compilation-unit enums
-    cannot collide. `value` retains the source four-state constant spelling
-    for later reflection-image encoding. This declaration never participates
-    in execution or scheduling.
+    cannot collide. `value` retains the source four-state constant spelling;
+    `immutable_value` retains its typed packed planes for value queries. Legacy
+    declarations without a typed value retain metadata only. This declaration
+    never participates in execution or scheduling.
   }];
   let arguments = (ins I64Attr:$id, I64Attr:$ordinal,
                        FlatSymbolRefAttr:$enum_typespec,
-                       StrAttr:$name, StrAttr:$value);
+                       StrAttr:$name, StrAttr:$value,
+                       OptionalAttr<SimFrozenConstantAttr>:$immutable_value);
   let assemblyFormat = [{
     $id `enum` $enum_typespec `ordinal` $ordinal
     `name` $name `value` $value attr-dict
@@ -1484,7 +1991,8 @@ def SimClassDeclOp : SimOp<"class.decl", [
     BoolAttr:$is_abstract,
     BoolAttr:$is_interface,
     BoolAttr:$is_final,
-    OptionalAttr<StrAttr>:$debug_name
+    OptionalAttr<StrAttr>:$debug_name,
+    OptionalAttr<FlatSymbolRefAttr>:$builtin_base
   );
   let assemblyFormat = [{
     $sym_name `id` $id (`extends` $base^)?
@@ -1621,6 +2129,24 @@ def SimBoxPackOp : SimOp<"box.pack", [Pure]> {
   let arguments = (ins SimDynamicArrayType:$input);
   let results = (outs SimBoxType:$result);
   let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+}
+
+def SimBoxBindTypeOp : SimOp<"box.bind_type", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "bind a boxed value's immutable exact source type descriptor";
+  let description = [{
+    The typed input is the one-element dynamic-array representation before
+    box.pack erases its element type. The descriptor's normalized value type
+    must match exactly. At runtime, the array must have one element and belong
+    to the executing context. A first binding is immutable; repeating the same
+    binding is permitted and a different binding is rejected. The operation
+    has an explicit heap write effect; box.pack remains a pure identity cast.
+  }];
+  let arguments = (ins SimDynamicArrayType:$input,
+                       FlatSymbolRefAttr:$descriptor);
+  let assemblyFormat = "$input `to` $descriptor attr-dict `:` type($input)";
 }
 
 def SimBoxCastOp : SimOp<"box.cast", [Pure]> {
@@ -2512,11 +3038,33 @@ def SimClassCopyOp : SimOp<"class.copy", [
   let hasVerifier = 1;
 }
 
+def SimClassObjectType : AnyTypeOf<[
+  SimClassHandleType, SimMailboxType, SimSemaphoreType]>;
+
+def SimClassBuiltinUpcastOp : SimOp<"class.builtin_upcast", [
+    Pure, DeclareOpInterfaceMethods<SymbolUserOpInterface>
+  ]> {
+  let summary = "preserve object identity through a built-in base view";
+  let description = [{
+    Converts a user class handle to its inherited semaphore or mailbox type.
+    The class declaration's builtin_base field supplies the exact base type.
+    The result retains the outer object identity, including null; builtin
+    operations resolve the private payload through its class descriptor.
+    This operation never reads or extracts the embedded payload field.
+  }];
+  let arguments = (ins SimClassHandleType:$object);
+  let results = (outs AnyTypeOf<[SimMailboxType, SimSemaphoreType]>:$result);
+  let assemblyFormat = [{
+    $object attr-dict `:` qualified(type($object))
+    `to` qualified(type($result))
+  }];
+}
+
 def SimClassIsInstanceOp : SimOp<"class.is_instance", [
     Pure, DeclareOpInterfaceMethods<SymbolUserOpInterface>
   ]> {
   let summary = "test a dynamic class against a class or interface";
-  let arguments = (ins SimClassHandleType:$object,
+  let arguments = (ins SimClassObjectType:$object,
                        FlatSymbolRefAttr:$target);
   let results = (outs I1:$result);
   let assemblyFormat =
@@ -2540,7 +3088,7 @@ def SimClassCastOp : SimOp<"class.cast", [
     Pure, DeclareOpInterfaceMethods<SymbolUserOpInterface>
   ]> {
   let summary = "checked class or interface cast";
-  let arguments = (ins SimClassHandleType:$object);
+  let arguments = (ins SimClassObjectType:$object);
   let results = (outs SimClassHandleType:$result);
   let assemblyFormat = [{
     $object attr-dict `:` qualified(type($object))
@@ -3203,6 +3751,7 @@ def SimClassVirtualTaskCallOp : SimOp<"class.virtual_task_call", [
 }
 
 def SimDPICallOp : SimOp<"dpi.call", [
+  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "shared zero-time DPI-C import boundary";
@@ -3879,6 +4428,151 @@ def SimProcessControlOp : SimOp<"process.control", [
   let hasVerifier = 1;
 }
 
+// Exact observation of dynamic procedural activations. The context is explicit;
+// IDs designate retained immutable declarations, never runtime frame indices.
+def SimVPICallPrepareOp
+    : SimOp<
+          "vpi.call.prepare", [DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+                               MemoryEffects<[MemWrite<SimProcessResource>]>]> {
+  let summary = "prepare one exact source call without entering its callee";
+  let arguments = (ins SimContextType:$runtime_context,
+      FlatSymbolRefAttr:$call);
+  let results = (outs I64:$ticket);
+  let assemblyFormat = "$runtime_context `from` $call attr-dict";
+}
+
+def SimVPIFrameEnterForeignOp : SimOp<"vpi.frame.enter_foreign", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemRead<SimInventoryResource>, MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "enter an exact imported callable whose body is foreign";
+  let description = [{
+    Consumes a prepared source call around an inlined DPI import ABI boundary.
+    The callable has an exact code-unit-to-source-scope binding, but no SV body
+    in which to emit an ordinary callee prologue. Physical transport is always
+    synchronous Function, including a source DPI task.
+  }];
+  let arguments = (ins SimContextType:$runtime_context,
+                       FlatSymbolRefAttr:$call, I64Attr:$code_unit_id);
+  let results = (outs I64:$activation);
+  let assemblyFormat = "$runtime_context `from` $call `unit` $code_unit_id attr-dict";
+}
+
+def SimVPIResolutionPrepareOp
+    : SimOp<"vpi.resolution.prepare",
+            [MemoryEffects<[MemWrite<SimProcessResource>]>]> {
+  let summary = "prepare the exact net-origin activation of its resolver";
+  let description = [{
+    The net's retained nettype and resolution-function binding determine the
+    callee. Net ID zero is valid. The generated caller does not acquire a frame;
+    the resolution function consumes the ticket in its ordinary prologue.
+  }];
+  let arguments = (ins SimContextType:$runtime_context, I64Attr:$net_id);
+  let results = (outs I64:$ticket);
+  let assemblyFormat = "$runtime_context `net` $net_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPIFrameEnterPreparedOp
+    : SimOp<"vpi.frame.enter_prepared",
+            [MemoryEffects<[MemWrite<SimProcessResource>]>]> {
+  let summary = "enter the prepared activation from its callee prologue";
+  let arguments = (ins SimContextType:$runtime_context, I64Attr:$code_unit_id,
+      DefaultValuedAttr<BoolAttr, "false">:$is_task);
+  let results = (outs I64:$activation);
+  let assemblyFormat = "$runtime_context `unit` $code_unit_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPIFrameEnterOp
+    : SimOp<
+          "vpi.frame.enter", [MemoryEffects<[MemWrite<SimProcessResource>]>]> {
+  let summary = "enter an exact root or nested statement scope";
+  let arguments = (ins SimContextType:$runtime_context, I64Attr:$code_unit_id,
+      OptionalAttr<I64Attr>:$statement_id);
+  let results = (outs I64:$activation);
+  let assemblyFormat = [{
+    $runtime_context `unit` $code_unit_id (`within` $statement_id^)? attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIFrameCheckpointOp
+    : SimOp<"vpi.frame.checkpoint",
+            [MemoryEffects<[MemWrite<SimProcessResource>]>]> {
+  let summary = "record the exact current source statement or its unavailability";
+  let description = [{
+    Positive IDs identify exact statements in the current lexical code unit.
+    Zero explicitly clears unavailable current-statement metadata rather than
+    leaving an earlier statement falsely current. A later positive checkpoint
+    restores exact identity.
+  }];
+  let arguments = (ins SimContextType:$runtime_context, I64Attr:$statement_id);
+  let assemblyFormat = "$runtime_context `statement` $statement_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPICallObservationOp : SimOp<"vpi.call.observation", [
+    MemoryEffects<[MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "retain exact source frame borrows across a synchronous call";
+  let description = [{
+    This temporary source-lowering inventory immediately follows one exact
+    synchronous call. Its references are the observations active at that call
+    occurrence. Exceptional-return propagation consumes it to place an
+    observation_end on each actual abnormal exit; normal paths retain their
+    frame.leave endpoints. It must disappear before backend lowering.
+  }];
+  let arguments = (ins Arg<Variadic<SimRefType>,
+      "active frame observation", [MemRead<SimStorageResource>]>:$observed,
+      ArrayAttr:$ending_targets);
+  let assemblyFormat = [{`(` $observed `:` type($observed) `)` attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimVPIFrameObservationEndOp : SimOp<"vpi.frame.observation_end", [
+    MemoryEffects<[MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "end local observation borrows on an already unwound exit";
+  let description = [{
+    A nonlocal disable or process termination may already have destroyed the
+    observed activation, so the exit must not execute frame.leave again. This
+    operation ends that activation's outstanding local observation borrows at
+    the exact exceptional CFG exit. It keeps their real Ref owners live until
+    owner-release planning consumes these endpoints; native and bytecode
+    lowering then erase the marker without retaining or reading runtime state.
+  }];
+  let arguments = (ins Arg<Variadic<SimRefType>, "", [MemRead<SimStorageResource>]>:$observed);
+  let assemblyFormat = "(`(` $observed^ `:` type($observed) `)`)? attr-dict";
+}
+
+def SimVPIFrameLeaveOp
+    : SimOp<
+          "vpi.frame.leave", [MemoryEffects<[MemWrite<SimProcessResource>]>]> {
+  let summary = "end a procedural activation and its local observation borrows";
+  let description = [{
+    Observed references are lexical observation-borrow endpoints. They keep
+    actual automatic owners live through this activation's query lifetime and
+    must survive ownership planning; they do not extend the runtime lifetime
+    after the frame leaves. Nonlocal disable ends observation at its control
+    operation instead of executing a second leave on an unwound activation.
+  }];
+  let arguments = (ins SimContextType:$runtime_context, I64:$activation,
+      Arg<Variadic<SimRefType>, "", [MemRead<SimStorageResource>]>:$observed);
+  let assemblyFormat = [{
+    $runtime_context `,` $activation
+    (`observing` `(` $observed^ `:` type($observed) `)`)? attr-dict
+  }];
+}
+
+def SimVPICallFinishOp
+    : SimOp<
+          "vpi.call.finish", [MemoryEffects<[MemWrite<SimProcessResource>]>]> {
+  let summary = "finish a consumed or cancelled source-call ticket";
+  let arguments = (ins SimContextType:$runtime_context, I64:$ticket);
+  let assemblyFormat = "$runtime_context `,` $ticket attr-dict";
+}
+
 def SimControlEnterOp : SimOp<"control.enter", [
     MemoryEffects<[MemWrite<SimProcessResource>]>
   ]> {
@@ -3938,6 +4632,45 @@ def SimControlDisableOp : SimOp<"control.disable", [
   let hasVerifier = 1;
 }
 
+def SimControlDisableSelectedOp : SimOp<"control.disable_selected", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>, MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "disable controls and return the exact current activation selected";
+  let description = [{
+    Returns the outermost affected dynamic activation in this logical process,
+    or zero if only other processes were affected. The returned scalar remains
+    usable after the selected control is unwound; it cannot enter or leave a
+    control. Hierarchical recursive occurrences are distinguished by this token.
+  }];
+  let arguments = (ins I64Attr:$target_id, Optional<SimControlType>:$activation,
+      DefaultValuedAttr<BoolAttr, "false">:$hierarchical);
+  let results = (outs I64:$selected);
+  let assemblyFormat = "$target_id (`activation` $activation^)? attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimControlMatchOp : SimOp<"control.match", [Pure]> {
+  let summary = "test a selected token against one exact control activation";
+  let arguments = (ins I64:$selected, SimControlType:$activation);
+  let results = (outs I1:$matches);
+  let assemblyFormat = "$selected `,` $activation attr-dict";
+}
+
+def SimControlLocalBoundaryOp : SimOp<"control.local_boundary", [
+    Terminator, DeclareOpInterfaceMethods<BranchOpInterface>]> {
+  let summary = "retain a synchronous control exit until escape CFG lowering";
+  let description = [{
+    This compiler-only boundary keeps the exact activation and exit block for
+    synchronous functions. Escape lowering creates actual branches to the exit
+    only for the matching dynamic token, then replaces this marker with its
+    ordinary body branch. It registers no scheduler continuation.
+  }];
+  let arguments = (ins SimControlType:$activation);
+  let successors = (successor AnySuccessor:$exit, AnySuccessor:$body);
+  let assemblyFormat = "$activation `exit` $exit `body` $body attr-dict";
+  let hasVerifier = 1;
+}
+
 def SimControlEscapePendingOp : SimOp<"control.escape_pending", [
     MemoryEffects<[MemRead<SimProcessResource>,
                    MemWrite<SimProcessResource>]>
@@ -3961,8 +4694,8 @@ def SimControlNonlocalExitOp : SimOp<"control.nonlocal_exit"> {
     boundary or to an abnormal task return whose caller boundary was prepared
     by the runtime.
   }];
-  let arguments = (ins I64Attr:$target_id);
-  let assemblyFormat = "$target_id attr-dict";
+  let arguments = (ins I64Attr:$target_id, Optional<I64>:$selected);
+  let assemblyFormat = "$target_id (`selected` $selected^)? attr-dict";
 }
 
 def SimStaticOnceOp : SimOp<"static.once", [

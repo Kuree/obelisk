@@ -152,7 +152,8 @@ endpackage
 // FRONTEND-DAG: simulation.scope.decl {{.*}} hierarchy "top.u" {{.*}} vpi_kind 32 definition @[[CELL]] specialization @[[CELL_SPEC]]
 // FRONTEND-DAG: simulation.scope.decl {{.*}} hierarchy "top.v" {{.*}} vpi_kind 32 definition @[[CELL]] specialization @[[CELL_SPEC]]
 // FRONTEND-DAG: simulation.vpi_definition.decl @[[PARAM:[^ ]+]] type 32 name "param_cell"
-// FRONTEND-DAG: simulation.vpi_definition_member.decl @[[PARAM_P:[^ ]+]] of @[[PARAM]] type 28 ordinal 0 name "p" direction input
+// FRONTEND-DAG: simulation.vpi_definition_member.decl @[[PARAM_W:[^ ]+]] of @[[PARAM]] type 41 ordinal 0 name "W"
+// FRONTEND-DAG: simulation.vpi_definition_member.decl @[[PARAM_P:[^ ]+]] of @[[PARAM]] type 28 ordinal 1 name "p" direction input
 // FRONTEND-DAG: simulation.vpi_definition_specialization.decl @[[PARAM_SPEC8:[^ ]+]] of @[[PARAM]]
 // FRONTEND-DAG: simulation.vpi_definition_member.specialize @[[PARAM_SPEC8]] member @[[PARAM_P]] type <kind = packed_array, {{.*}} range = [7, 0]
 // FRONTEND-DAG: simulation.vpi_definition_specialization.decl @[[PARAM_SPEC4:[^ ]+]] of @[[PARAM]]
@@ -176,7 +177,7 @@ endpackage
 // FRONTEND-DAG: simulation.vpi_object.anchor {{.*}} type 32 {{.*}} hierarchy "top" {{.*}} vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 7 : i32, value = true>, #simulation.vpi_property<selector = 9 : i32, value = "top">, #simulation.vpi_property<selector = 50 : i32, value = true>, #simulation.vpi_property<selector = 600 : i32, value = true>]>
 // The automatic task and named events freeze declaration-specific lifetime.
 // Events remain queryable even when no activation frame is alive.
-// FRONTEND-DAG: simulation.vpi_object.anchor {{.*}} type 59 {{.*}} hierarchy "top.work" {{.*}} vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 50 : i32, value = true>]>
+// FRONTEND-DAG: simulation.vpi_object.anchor {{.*}} type 59 {{.*}} hierarchy "top.work" {{.*}} vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 50 : i32, value = true>, #simulation.vpi_property<selector = 620 : i32, value = 1 : i32>, #simulation.vpi_property<selector = 635 : i32, value = false>]>
 // FRONTEND-DAG: simulation.vpi_object.anchor {{.*}} type 34 {{.*}} hierarchy "top.work.ready" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 50 : i32, value = true>]>
 // FRONTEND-DAG: simulation.vpi_object.anchor {{.*}} type 129 {{.*}} hierarchy "top.work.events" {{.*}} vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 50 : i32, value = true>]>
 // FRONTEND-DAG: simulation.vpi_object.anchor {{.*}} type 34 {{.*}} hierarchy "top.work.events[0]" {{.*}} vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 50 : i32, value = true>]>

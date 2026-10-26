@@ -1,8 +1,22 @@
+add("37.17", S({vpiRegArray}), vpiRange, Mode::Iterate, S({vpiRange}),
+    Order::Index);
+add("37.17", S({vpiRegArray}), vpiReg, Mode::Iterate,
+    S({vpiIntegerVar, vpiRealVar, vpiReg, vpiRegBit, vpiTimeVar,
+       vpiRegArray, vpiLongIntVar, vpiShortIntVar, vpiIntVar, vpiShortRealVar,
+       vpiByteVar, vpiClassVar, vpiStringVar, vpiEnumVar, vpiStructVar,
+       vpiUnionVar, vpiBitVar, vpiChandleVar, vpiPackedArrayVar,
+       vpiVirtualInterfaceVar}), Order::Index);
 // IEEE 1800-2023 clauses 37.5-37.50. This is deliberately a test-side
 // concrete-object oracle: every entry names the LRM clause, the complete
 // expanded source set, selector/mode, complete concrete target set, and
 // ordering.  Do not replace these relations with production TableGen sets;
 // that would make a broadened or omitted production relation self-validating.
+add("37.12", S({vpiClassObj}), vpiReg, Mode::Iterate, S({vpiReg}),
+    Order::None);
+add("37.12", S({vpiClassObj}), vpiRegArray, Mode::Iterate, S({vpiRegArray}),
+    Order::None);
+add("37.12", S({vpiClassObj}), vpiMemory, Mode::Iterate, S({vpiRegArray}),
+    Order::None);
 add("37.5", S({vpiModule}), vpiContAssign, Mode::Iterate, S({vpiContAssign}),
     Order::None, true);
 add("37.17",
@@ -78,6 +92,8 @@ add("37.5",
     vpiModule, Mode::Handle, S({vpiModule}), Order::None);
 add("37.28", S({vpiParamAssign, vpiParameter, vpiTypeParameter}), vpiModule,
     Mode::Handle, S({vpiModule}), Order::None);
+add("37.10", S({vpiParameter}), vpiInstance, Mode::Handle,
+    S({vpiPackage, vpiModule, vpiInterface, vpiProgram}), Order::None);
 add("37.17; 37.20",
     S({vpiIntegerVar,
        vpiRealVar,
@@ -133,6 +149,8 @@ add("37.30", S({vpiInterfaceTypespec}), vpiParamAssign, Mode::Iterate,
     S({vpiParamAssign}), Order::None);
 add("37.28", S({vpiModule}), vpiParamAssign, Mode::Iterate, S({vpiParamAssign}),
     Order::None);
+add("37.12; 37.28", S({vpiInterface}), vpiParamAssign,
+    Mode::Iterate, S({vpiParamAssign}), Order::None);
 add("37.28",
     S({vpiBegin, vpiFor, vpiFork, vpiFunction, vpiNamedBegin, vpiNamedFork,
        vpiTask, vpiGenScope, vpiClassTypespec, vpiClockingBlock, vpiClassDefn}),
@@ -141,9 +159,11 @@ add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), vpiParameter,
     Mode::Iterate, S({vpiParameter, vpiTypeParameter}), Order::None);
 add("37.12; 37.85",
     S({vpiBegin, vpiFor, vpiFork, vpiFunction, vpiNamedBegin, vpiNamedFork,
-       vpiTask, vpiGenScope, vpiClassTypespec, vpiClockingBlock, vpiClassDefn}),
+       vpiTask, vpiGenScope, vpiClockingBlock, vpiClassDefn}),
     vpiParameter, Mode::Iterate, S({vpiParameter, vpiTypeParameter}),
     Order::None);
+add("37.32", S({vpiClassTypespec}), vpiParameter, Mode::Iterate,
+    S({vpiParameter, vpiTypeParameter}), Order::None);
 add("37.33", S({vpiClassObj}), vpiParameter, Mode::Iterate,
     S({vpiParameter, vpiTypeParameter}), Order::None);
 add("37.17",
@@ -717,7 +737,10 @@ add("37.50", S({vpiAssert}), vpiElseStmt, Mode::Handle,
        vpiContinue,
        vpiReturnStmt,
        vpiImmediateAssume,
-       vpiImmediateCover}),
+       vpiImmediateCover,
+       vpiFuncCall,
+       vpiMethodFuncCall,
+       vpiSysFuncCall}),
     Order::None, true);
 add("37.14", S({vpiPort}), vpiHighConn, Mode::Handle,
     S({vpiConstant,
@@ -2118,7 +2141,11 @@ add("37.17",
        vpiPackedArrayVar,
        vpiVirtualInterfaceVar}),
     vpiParent, Mode::Handle,
-    S({vpiRegArray, vpiClassVar, vpiStructVar, vpiUnionVar, vpiPackedArrayVar}),
+    S({vpiIntegerVar, vpiRealVar, vpiReg, vpiRegBit, vpiTimeVar,
+       vpiRegArray, vpiLongIntVar, vpiShortIntVar, vpiIntVar, vpiShortRealVar,
+       vpiByteVar, vpiClassVar, vpiStringVar, vpiEnumVar, vpiStructVar,
+       vpiUnionVar, vpiBitVar, vpiChandleVar, vpiPackedArrayVar,
+       vpiVirtualInterfaceVar}),
     Order::None);
 add("37.27", S({vpiNamedEvent}), vpiParent, Mode::Handle,
     S({vpiNamedEventArray}), Order::None);
@@ -3032,14 +3059,17 @@ add("37.17",
     S({vpiReg, vpiStructVar, vpiUnionVar, vpiBitVar, vpiPackedArrayVar}),
     vpiBit, Mode::Iterate, S({vpiRegBit}), Order::Index);
 add("37.16; 37.46",
-    S({vpiNet, vpiNetBit, vpiNetArray, vpiUnionNet, vpiShortRealNet, vpiRealNet,
-       vpiByteNet, vpiShortIntNet, vpiIntNet, vpiLongIntNet, vpiBitNet,
+    S({vpiNetBit, vpiNetArray, vpiUnionNet, vpiShortRealNet, vpiRealNet,
+       vpiByteNet, vpiShortIntNet, vpiIntNet, vpiLongIntNet,
        vpiInterconnectNet, vpiInterconnectArray, vpiEnumNet, vpiIntegerNet,
        vpiTimeNet, vpiStructNet, vpiPackedArrayNet}),
     vpiDriver, Mode::Iterate,
     S({vpiContAssign, vpiForce, vpiPort, vpiPrimTerm, vpiDelayTerm,
        vpiContAssignBit}),
     Order::None);
+add("37.16; 37.46", S({vpiNet, vpiBitNet}), vpiDriver, Mode::Iterate,
+    S({vpiContAssign, vpiForce, vpiPort, vpiPrimTerm, vpiDelayTerm,
+       vpiContAssignBit, vpiPartSelect, vpiIndexedPartSelect}), Order::None);
 add("37.45", S({vpiDelayTerm}), vpiDriver, Mode::Iterate,
     S({vpiContAssign, vpiForce, vpiPort, vpiPrimTerm, vpiDelayTerm,
        vpiContAssignBit}),
@@ -3091,14 +3121,17 @@ add("37.12; 37.85",
        vpiForeachStmt}),
     Order::None);
 add("37.16; 37.46",
-    S({vpiNet, vpiNetBit, vpiNetArray, vpiUnionNet, vpiShortRealNet, vpiRealNet,
-       vpiByteNet, vpiShortIntNet, vpiIntNet, vpiLongIntNet, vpiBitNet,
+    S({vpiNetBit, vpiNetArray, vpiUnionNet, vpiShortRealNet, vpiRealNet,
+       vpiByteNet, vpiShortIntNet, vpiIntNet, vpiLongIntNet,
        vpiInterconnectNet, vpiInterconnectArray, vpiEnumNet, vpiIntegerNet,
        vpiTimeNet, vpiStructNet, vpiPackedArrayNet}),
     vpiLoad, Mode::Iterate,
     S({vpiAssignStmt, vpiContAssign, vpiForce, vpiPort, vpiPrimTerm,
        vpiDelayTerm, vpiContAssignBit}),
     Order::None);
+add("37.16; 37.46", S({vpiNet, vpiBitNet}), vpiLoad, Mode::Iterate,
+    S({vpiAssignStmt, vpiContAssign, vpiForce, vpiPort, vpiPrimTerm,
+       vpiDelayTerm, vpiContAssignBit, vpiPartSelect, vpiIndexedPartSelect}), Order::None);
 add("37.45", S({vpiDelayTerm}), vpiLoad, Mode::Iterate,
     S({vpiAssignStmt, vpiContAssign, vpiForce, vpiPort, vpiPrimTerm,
        vpiDelayTerm, vpiContAssignBit}),
@@ -3171,10 +3204,10 @@ add("37.6", S({vpiInterface}), vpiProcess, Mode::Iterate,
 add("37.9", S({vpiProgram}), vpiProcess, Mode::Iterate,
     S({vpiAlways, vpiInitial, vpiFinal}), Order::None);
 add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), vpiVariables,
-    Mode::Iterate, S({vpiIntegerVar,     vpiNamedEvent,
+    Mode::Iterate, S({vpiIntegerVar,
                       vpiRealVar,        vpiReg,
                       vpiRegBit,         vpiTimeVar,
-                      vpiRegArray,       vpiNamedEventArray,
+                      vpiRegArray,
                       vpiLongIntVar,     vpiShortIntVar,
                       vpiIntVar,         vpiShortRealVar,
                       vpiByteVar,        vpiClassVar,
@@ -3186,10 +3219,10 @@ add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), vpiVariables,
 add("37.12; 37.85",
     S({vpiBegin, vpiFor, vpiFork, vpiFunction, vpiNamedBegin, vpiNamedFork,
        vpiTask, vpiGenScope, vpiClassTypespec, vpiClockingBlock, vpiClassDefn}),
-    vpiVariables, Mode::Iterate, S({vpiIntegerVar,     vpiNamedEvent,
+    vpiVariables, Mode::Iterate, S({vpiIntegerVar,
                                     vpiRealVar,        vpiReg,
                                     vpiRegBit,         vpiTimeVar,
-                                    vpiRegArray,       vpiNamedEventArray,
+                                    vpiRegArray,
                                     vpiLongIntVar,     vpiShortIntVar,
                                     vpiIntVar,         vpiShortRealVar,
                                     vpiByteVar,        vpiClassVar,
@@ -3832,7 +3865,10 @@ add("37.43", S({vpiFrame}), vpiStmt, Mode::Handle,
        vpiContinue,
        vpiReturnStmt,
        vpiImmediateAssume,
-       vpiImmediateCover}),
+       vpiImmediateCover,
+       vpiFuncCall,
+       vpiMethodFuncCall,
+       vpiSysFuncCall}),
     Order::None);
 add("37.12", S({vpiFunction, vpiTask}), vpiStmt, Mode::Handle,
     S({vpiAssignStmt,
@@ -3872,7 +3908,10 @@ add("37.12", S({vpiFunction, vpiTask}), vpiStmt, Mode::Handle,
        vpiContinue,
        vpiReturnStmt,
        vpiImmediateAssume,
-       vpiImmediateCover}),
+       vpiImmediateCover,
+       vpiFuncCall,
+       vpiMethodFuncCall,
+       vpiSysFuncCall}),
     Order::None, true);
 add("37.12", S({vpiBegin, vpiNamedBegin, vpiFork, vpiNamedFork}), vpiStmt,
     Mode::Iterate,
@@ -3913,7 +3952,10 @@ add("37.12", S({vpiBegin, vpiNamedBegin, vpiFork, vpiNamedFork}), vpiStmt,
        vpiContinue,
        vpiReturnStmt,
        vpiImmediateAssume,
-       vpiImmediateCover}),
+       vpiImmediateCover,
+       vpiFuncCall,
+       vpiMethodFuncCall,
+       vpiSysFuncCall}),
     Order::None, true);
 add("37.50", S({vpiAssert, vpiAssume, vpiCover}), vpiStmt, Mode::Handle,
     S({vpiAssignStmt,
@@ -3953,7 +3995,10 @@ add("37.50", S({vpiAssert, vpiAssume, vpiCover}), vpiStmt, Mode::Handle,
        vpiContinue,
        vpiReturnStmt,
        vpiImmediateAssume,
-       vpiImmediateCover}),
+       vpiImmediateCover,
+       vpiFuncCall,
+       vpiMethodFuncCall,
+       vpiSysFuncCall}),
     Order::None, true);
 add("37.43", S({0}), vpiFrame, Mode::Handle, S({vpiFrame}), Order::None);
 add("37.43; 37.44", S({vpiThread}), vpiFrame, Mode::Handle, S({vpiFrame}),
@@ -4009,23 +4054,29 @@ add("37.6", S({vpiInterface}), vpiInstanceArray, Mode::Handle,
 add("37.9", S({vpiProgram}), vpiInstanceArray, Mode::Handle,
     S({vpiProgramArray}), Order::None);
 add("37.16",
-    S({vpiNet, vpiNetBit, vpiNetArray, vpiUnionNet, vpiShortRealNet, vpiRealNet,
-       vpiByteNet, vpiShortIntNet, vpiIntNet, vpiLongIntNet, vpiBitNet,
+    S({vpiNetBit, vpiNetArray, vpiUnionNet, vpiShortRealNet, vpiRealNet,
+       vpiByteNet, vpiShortIntNet, vpiIntNet, vpiLongIntNet,
        vpiInterconnectNet, vpiInterconnectArray, vpiEnumNet, vpiIntegerNet,
        vpiTimeNet, vpiStructNet, vpiPackedArrayNet}),
     vpiLocalDriver, Mode::Iterate,
     S({vpiContAssign, vpiForce, vpiPort, vpiPrimTerm, vpiDelayTerm,
        vpiContAssignBit}),
     Order::None);
+add("37.16", S({vpiNet, vpiBitNet}), vpiLocalDriver, Mode::Iterate,
+    S({vpiContAssign, vpiForce, vpiPort, vpiPrimTerm, vpiDelayTerm,
+       vpiContAssignBit, vpiPartSelect, vpiIndexedPartSelect}), Order::None);
 add("37.16",
-    S({vpiNet, vpiNetBit, vpiNetArray, vpiUnionNet, vpiShortRealNet, vpiRealNet,
-       vpiByteNet, vpiShortIntNet, vpiIntNet, vpiLongIntNet, vpiBitNet,
+    S({vpiNetBit, vpiNetArray, vpiUnionNet, vpiShortRealNet, vpiRealNet,
+       vpiByteNet, vpiShortIntNet, vpiIntNet, vpiLongIntNet,
        vpiInterconnectNet, vpiInterconnectArray, vpiEnumNet, vpiIntegerNet,
        vpiTimeNet, vpiStructNet, vpiPackedArrayNet}),
     vpiLocalLoad, Mode::Iterate,
     S({vpiAssignStmt, vpiContAssign, vpiForce, vpiPort, vpiPrimTerm,
        vpiDelayTerm, vpiContAssignBit}),
     Order::None);
+add("37.16", S({vpiNet, vpiBitNet}), vpiLocalLoad, Mode::Iterate,
+    S({vpiAssignStmt, vpiContAssign, vpiForce, vpiPort, vpiPrimTerm,
+       vpiDelayTerm, vpiContAssignBit, vpiPartSelect, vpiIndexedPartSelect}), Order::None);
 add("37.45", S({vpiDelayDevice}), vpiOutTerm, Mode::Handle, S({vpiDelayTerm}),
     Order::None);
 add("37.37", S({vpiInterModPath}), vpiPorts, Mode::Iterate,
@@ -4220,7 +4271,9 @@ add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}),
     vpiTypeParameter, Mode::Iterate, S({vpiTypeParameter}), Order::None);
 add("37.33", S({vpiClassVar}), vpiClassObj, Mode::Handle, S({vpiClassObj}),
     Order::None);
-add("37.31", S({vpiClassDefn, vpiExtends}), vpiClassTypespec, Mode::Handle,
+add("37.31", S({vpiExtends}), vpiClassTypespec, Mode::Handle,
+    S({vpiClassTypespec}), Order::None);
+add("37.31", S({vpiClassDefn}), vpiClassTypespec, Mode::Iterate,
     S({vpiClassTypespec}), Order::None);
 add("37.33", S({vpiClassVar, vpiClassObj}), vpiClassTypespec, Mode::Handle,
     S({vpiClassTypespec}), Order::None);
@@ -4266,7 +4319,7 @@ add("37.34", S({0}), vpiConstraint, Mode::Iterate, S({vpiConstraint}),
 add("37.33", S({vpiClassObj}), vpiConstraint, Mode::Iterate, S({vpiConstraint}),
     Order::None);
 add("37.32", S({vpiClassTypespec}), vpiConstraint, Mode::Iterate,
-    S({vpiConstraint}), Order::None);
+    S({vpiConstraint}), Order::Declaration);
 add("37.31", S({vpiClassDefn}), vpiConstraint, Mode::Iterate,
     S({vpiConstraint}), Order::Declaration);
 add("37.12",
@@ -4703,7 +4756,10 @@ add("37.44", S({vpiThread}), vpiOrigin, Mode::Handle,
        vpiContinue,
        vpiReturnStmt,
        vpiImmediateAssume,
-       vpiImmediateCover}),
+       vpiImmediateCover,
+       vpiFuncCall,
+       vpiMethodFuncCall,
+       vpiSysFuncCall}),
     Order::None);
 add("37.42; 37.61",
     S({vpiFuncCall,
@@ -4959,7 +5015,7 @@ add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}), vpiTypedef,
        vpiStructTypespec,      vpiUnionTypespec,     vpiBitTypespec,
        vpiLogicTypespec,       vpiArrayTypespec,     vpiVoidTypespec,
        vpiPackedArrayTypespec, vpiSequenceTypespec,  vpiPropertyTypespec,
-       vpiEventTypespec,       vpiInterfaceTypespec}),
+       vpiEventTypespec,       vpiInterfaceTypespec, vpiTypeParameter}),
     Order::None);
 add("37.12; 37.85",
     S({vpiBegin, vpiFor, vpiFork, vpiFunction, vpiNamedBegin, vpiNamedFork,
@@ -4972,7 +5028,7 @@ add("37.12; 37.85",
        vpiStructTypespec,      vpiUnionTypespec,     vpiBitTypespec,
        vpiLogicTypespec,       vpiArrayTypespec,     vpiVoidTypespec,
        vpiPackedArrayTypespec, vpiSequenceTypespec,  vpiPropertyTypespec,
-       vpiEventTypespec,       vpiInterfaceTypespec}),
+       vpiEventTypespec,       vpiInterfaceTypespec, vpiTypeParameter}),
     Order::None);
 add("37.12",
     S({vpiBegin, vpiFor, vpiFork, vpiFunction, vpiModule, vpiNamedBegin,
@@ -5546,3 +5602,10 @@ add("37.24", S({vpiInterconnectNet}), vpiMember, Mode::Iterate,
     Order::Declaration);
 // Hand-maintained GoogleTest oracle for IEEE 1800-2023 clauses 37.5-37.50.
 // This is test source, not an obelisk-tblgen output or build artifact.
+
+// 37.10 details2-3 apply to retained source expression occurrences.
+add("37.10", S({vpiConstant, vpiOperation, vpiBitSelect, vpiPartSelect, vpiIndexedPartSelect}),
+    vpiModule, Mode::Handle, S({vpiModule}), Order::None);
+add("37.10", S({vpiConstant, vpiOperation, vpiBitSelect, vpiPartSelect, vpiIndexedPartSelect}),
+    vpiInstance, Mode::Handle, S({vpiPackage, vpiModule, vpiInterface, vpiProgram}),
+    Order::None);

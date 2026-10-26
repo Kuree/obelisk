@@ -54,7 +54,7 @@ _Static_assert(sizeof(obelisk_rt_random_layout_v1) == 40,
                "managed random layout size changed");
 _Static_assert(sizeof(obelisk_rt_byte_range_v1) == 16,
                "byte range size changed");
-_Static_assert(sizeof(obelisk_rt_class_descriptor_v1) == SMOKE_PTR(120, 96),
+_Static_assert(sizeof(obelisk_rt_class_descriptor_v1) == SMOKE_PTR(136, 112),
                "managed class descriptor size changed");
 _Static_assert(offsetof(obelisk_rt_class_descriptor_v1, base) == 32,
                "managed class base offset changed");

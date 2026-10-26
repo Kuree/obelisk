@@ -6,6 +6,7 @@
 #include "obelisk/Reflection/VPIObjectModel.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/ErrorHandling.h"
 
 namespace obelisk::sim {
@@ -60,9 +61,46 @@ bool isVPIVisibleCodeUnit(SimCodeUnitDeclOp codeUnit) {
          isVPIVisibleEntryKind(codeUnit.getCodeUnitKind());
 }
 
+std::optional<EntryKind> vpiCallableSourceKind(SimCodeUnitDeclOp codeUnit) {
+  if (!codeUnit)
+    return std::nullopt;
+  if (codeUnit.getCodeUnitKind() == EntryKind::Function &&
+      dpi::has<dpi::Import>(codeUnit) && dpi::has<dpi::Task>(codeUnit))
+    return EntryKind::Task;
+  if (codeUnit.getCodeUnitKind() == EntryKind::Task ||
+      codeUnit.getCodeUnitKind() == EntryKind::Function)
+    return codeUnit.getCodeUnitKind();
+  return std::nullopt;
+}
+
 bool areEquivalentVPIRefTypes(VPITypeSemanticsAttr left,
                               VPITypeSemanticsAttr right) {
   return equivalentRefType(left, right);
+}
+
+VPITypeSemanticsAttr stripVPITypedefAliases(VPITypeSemanticsAttr type) {
+  if (!type)
+    return {};
+  llvm::SmallVector<mlir::Attribute> children;
+  bool changed = bool(type.getTypedefAliases());
+  for (mlir::Attribute child : type.getChildren()) {
+    auto canonical =
+        stripVPITypedefAliases(mlir::cast<VPITypeSemanticsAttr>(child));
+    changed |= canonical != child;
+    children.push_back(canonical);
+  }
+  if (!changed)
+    return type;
+  return VPITypeSemanticsAttr::get(
+      type.getContext(), type.getKind(), type.getIsSigned(),
+      type.getIsFourState(), type.getName(), type.getSymbol(),
+      type.getModport(), type.getRange(),
+      mlir::ArrayAttr::get(type.getContext(), children), type.getChildNames(),
+      type.getIsTagged(), type.getIsSoft(), type.getBitWidth(),
+      type.getSelectableWidth(), type.getBitstreamWidth(), type.getTagBits(),
+      type.getQueueBound(), type.getWildcardIndex(), type.getChildOrdinals(),
+      type.getChildPackedOffsets(), type.getChildRandTypes(),
+      mlir::ArrayAttr{}, type.getProjected());
 }
 
 uint32_t vpiKindForCodeUnit(SimCodeUnitDeclOp codeUnit) {
@@ -95,6 +133,20 @@ uint32_t vpiKindForScope(SimScopeDeclOp scope) {
           : (scope.getId() == 0
                  ? 0
                  : static_cast<uint16_t>(reflection::VPIObjectKind::Module)));
+}
+
+uint32_t vpiKindForClassMember(VPITypeSemanticsAttr type) {
+  VPITypeSemanticsAttr element = type;
+  bool array = false;
+  while (element && element.getKind() == VPITypeKind::UnpackedArray) {
+    array = true;
+    if (element.getChildren().size() != 1)
+      break;
+    element = mlir::dyn_cast<VPITypeSemanticsAttr>(element.getChildren()[0]);
+  }
+  if (array && element && element.getKind() == VPITypeKind::Event)
+    return static_cast<uint32_t>(reflection::VPIObjectKind::NamedEventArray);
+  return vpiKindForStorage(type);
 }
 
 uint32_t vpiKindForStorage(VPITypeSemanticsAttr type) {
@@ -257,6 +309,35 @@ uint32_t vpiKindForNet(VPITypeSemanticsAttr type) {
     return static_cast<uint16_t>(VPIKind::Net);
   }
   llvm_unreachable("unhandled VPI semantic type kind");
+}
+
+bool isVPIOriginalBuiltinTypeDefault(VPITypeSemanticsAttr type) {
+  if (!type || type.getName() || type.getSymbol() || type.getModport() ||
+      !type.getChildren().empty() ||
+      (type.getTypedefAliases() && !type.getTypedefAliases().empty()))
+    return false;
+  switch (type.getKind()) {
+  case VPITypeKind::Bit:
+  case VPITypeKind::Logic:
+  case VPITypeKind::Reg:
+    return type.getRange().size() == 2 && type.getRange()[0] == 0 &&
+           type.getRange()[1] == 0;
+  case VPITypeKind::Byte:
+  case VPITypeKind::ShortInt:
+  case VPITypeKind::Int:
+  case VPITypeKind::LongInt:
+  case VPITypeKind::Integer:
+  case VPITypeKind::Time:
+  case VPITypeKind::ShortReal:
+  case VPITypeKind::Real:
+  case VPITypeKind::Realtime:
+  case VPITypeKind::String:
+  case VPITypeKind::Chandle:
+  case VPITypeKind::Void:
+    return true;
+  default:
+    return false;
+  }
 }
 
 std::optional<uint32_t> vpiKindForTypespec(VPITypeSemanticsAttr type) {

@@ -510,10 +510,13 @@ obelisk_rt_status validateAction(obelisk_rt_process_instance_v1 &instance,
       return OBELISK_RT_INVALID_ARGUMENT;
     return OBELISK_RT_OK;
   case OBELISK_RT_FRAGMENT_TASK_CALL:
-    if (action.flags != 0 || action.suspend_kind != OBELISK_RT_SUSPEND_NONE ||
+    if ((action.flags & ~OBELISK_RT_ACTION_VPI_CALL_SITE) != 0 ||
+        action.suspend_kind != OBELISK_RT_SUSPEND_NONE ||
         action.continuation == 0 || action.payload == 0 ||
         action.payload > std::numeric_limits<uintptr_t>::max() ||
-        action.auxiliary != 0)
+        ((action.flags & OBELISK_RT_ACTION_VPI_CALL_SITE)
+             ? (!action.auxiliary || action.auxiliary > INT64_MAX)
+             : action.auxiliary != 0))
       return OBELISK_RT_INVALID_ARGUMENT;
     break;
   case OBELISK_RT_FRAGMENT_PROCESS_SUSPEND:

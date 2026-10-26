@@ -20,6 +20,7 @@ struct PreparedLocal {
   bool patternVariable = false;
   bool net = false;
   bool argumentRef = false;
+  mlir::Operation *source = nullptr;
 };
 
 struct PreparedConstant {

@@ -11,6 +11,7 @@
 #include "StrengthFormat.h"
 #include "TimedUpdateQueue.h"
 #include "obelisk/Coverage/CoverageDatabase.h"
+#include "obelisk/Reflection/DesignReflection.h"
 #include "obelisk/Runtime/EvalNBAQueue.h"
 #include "obelisk/Runtime/ReadySet.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -636,13 +637,19 @@ struct NativeReadyPublicationBatch {
   std::unordered_set<uint64_t> queued;
 };
 
+struct ProcessCallerDepths {
+  size_t controlDepth = 0;
+  uint64_t vpiFrameDepth = 0;
+};
+
 struct ScheduledProcess {
   obelisk_rt_process_instance_v1 *instance = nullptr;
   std::vector<obelisk_rt_process_instance_v1 *> callers;
   // Control-stack size immediately before each corresponding task call.
   // This identifies the caller continuation to restore when a live task
   // activation is disabled from another logical process.
-  std::vector<size_t> callerControlDepths;
+  // Capture both stacks before the callee activation starts.
+  std::vector<ProcessCallerDepths> callerDepths;
   std::vector<uint64_t> controls;
   uint64_t token = 0;
   uint64_t parent = 0;
@@ -714,6 +721,29 @@ struct SignalValueSnapshot {
   bool value = false;
   bool unknown = false;
 };
+
+// Read-only VPI access to an existing automatic allocation. Validation checks
+// the entire requested extent without copying it. Neither function retains the
+// allocation, changes scheduler status, nor supplies executable out-of-range
+// fallback bits. The caller keeps an active GC lane while consuming managed
+// words copied from a successful read.
+obelisk_rt_status obelisk_rt_vpi_automatic_validate(obelisk_rt_context *context,
+                                                    uint64_t reference,
+                                                    uint64_t bitWidth) noexcept;
+obelisk_rt_status
+obelisk_rt_vpi_automatic_read(obelisk_rt_context *context, uint64_t reference,
+                              uint64_t bitOffset, uint64_t bitWidth,
+                              uint8_t *outValue, uint8_t *outUnknown) noexcept;
+
+// Query-only access to a complete stable state reference, including design
+// and static roots. Invalid extents never use executable fallback bits.
+obelisk_rt_status obelisk_rt_vpi_state_validate(obelisk_rt_context *context,
+                                                uint64_t reference,
+                                                uint64_t bitWidth) noexcept;
+obelisk_rt_status
+obelisk_rt_vpi_state_read(obelisk_rt_context *context, uint64_t reference,
+                          uint64_t bitOffset, uint64_t bitWidth,
+                          uint8_t *outValue, uint8_t *outUnknown) noexcept;
 
 struct NativeAutomaticState {
   struct CandidateRoot {
@@ -1021,6 +1051,8 @@ struct DesignActivation {
   uint64_t scratchSize = 0;
   uint32_t scheduleRank = UINT32_MAX;
   size_t controlDepth = 0;
+  uint64_t vpiFrameDepth = 0;
+  uint64_t vpiSourceCallID = 0;
 };
 
 struct ScheduledDesignTask {
@@ -1063,6 +1095,7 @@ struct ScheduledDesignTask {
   bool prioritySignal = false;
   bool explicitlySuspended = false;
   bool computedObserverWaitRegistered = false;
+  uint64_t vpiSourceCallID = 0;
 };
 
 /// The scheduler rank that orders a queued process or design task within its
@@ -1537,6 +1570,8 @@ struct ControlActivation {
   uint64_t memberships = 0;
   uint64_t owner = 0;
   uint32_t continuation = 0;
+  // Recorded before the corresponding procedural scope frame is entered.
+  uint64_t vpiFrameDepth = 0;
 };
 
 struct DpiScopeHandle {
@@ -1719,6 +1754,67 @@ struct DesignDatabaseCache {
   uint64_t semanticTypeEdgeCount = 0;
   uint64_t semanticRootBindings = 0;
   uint64_t semanticRootBindingCount = 0;
+  uint64_t classTypeBindings = 0;
+  uint64_t classTypeBindingCount = 0;
+  uint64_t semanticClassBindings = 0;
+  uint64_t semanticClassBindingCount = 0;
+  uint64_t classMemberBindings = 0;
+  uint64_t classMemberBindingCount = 0;
+  uint64_t modportBindings = 0;
+  uint64_t modportBindingCount = 0;
+  uint64_t mailboxElementBindings = 0;
+  uint64_t mailboxElementBindingCount = 0;
+  uint64_t boxTypeBindings = 0;
+  uint64_t boxTypeBindingCount = 0;
+  uint64_t valueElementBindings = 0;
+  uint64_t valueElementBindingCount = 0;
+  uint64_t eventBindings = 0;
+  uint64_t eventBindingCount = 0;
+  uint64_t eventArrayStorageBindings = 0;
+  uint64_t eventArrayStorageBindingCount = 0;
+  uint64_t threadOriginBindings = 0;
+  uint64_t threadOriginBindingCount = 0;
+  uint64_t callSiteBindings = 0;
+  uint64_t callSiteBindingCount = 0;
+  uint64_t frameLocalBindings = 0;
+  uint64_t frameLocalBindingCount = 0;
+  uint64_t callDispatchBindings = 0;
+  uint64_t callDispatchBindingCount = 0;
+  uint64_t classDispatchMethodBindings = 0;
+  uint64_t classDispatchMethodBindingCount = 0;
+  uint64_t classDispatchParentBindings = 0;
+  uint64_t classDispatchParentBindingCount = 0;
+  uint64_t interfaceCallables = 0;
+  uint64_t interfaceCallableCount = 0;
+  uint64_t interfaceInstances = 0;
+  uint64_t interfaceInstanceCount = 0;
+  uint64_t interfaceCallableBindings = 0;
+  uint64_t interfaceCallableBindingCount = 0;
+  uint64_t interfaceCallBindings = 0;
+  uint64_t interfaceCallBindingCount = 0;
+  uint64_t callableSignatureBindings = 0;
+  uint64_t callableSignatureBindingCount = 0;
+  uint64_t codeUnitScopeBindings = 0;
+  uint64_t codeUnitScopeBindingCount = 0;
+  uint64_t initializerBindings = 0;
+  uint64_t initializerBindingCount = 0;
+  uint64_t expressionRootBindings = 0;
+  uint64_t expressionRootBindingCount = 0;
+  uint64_t expressionTemplates = 0;
+  uint64_t expressionTemplateCount = 0;
+  uint64_t expressionNodes = 0;
+  uint64_t expressionNodeCount = 0;
+  uint64_t expressionOperands = 0;
+  uint64_t expressionOperandCount = 0;
+  uint64_t expressionLeaves = 0;
+  uint64_t expressionLeafCount = 0;
+  uint64_t expressionBoundMembers = 0;
+  uint64_t expressionBoundMemberCount = 0;
+  uint64_t expressionLeafShapes = 0;
+  uint64_t expressionLeafShapeCount = 0;
+  uint64_t terminalDriverBindings = 0;
+  uint64_t terminalDriverBindingCount = 0;
+
   uint64_t relationIndices = 0;
   uint64_t relationIndexCount = 0;
   uint64_t relationIndexDimensions = 0;
@@ -1749,6 +1845,8 @@ struct DesignDatabaseCache {
   uint64_t definitionSpecializationCount = 0;
   uint64_t definitionSpecializationBindings = 0;
   uint64_t definitionSpecializationBindingCount = 0;
+  uint64_t definitionParameterValues = 0;
+  uint64_t definitionParameterValueCount = 0;
   uint64_t definitionMemberEndpoints = 0;
   uint64_t definitionMemberEndpointCount = 0;
   uint64_t definitionMemberInstanceRelations = 0;
@@ -1775,6 +1873,30 @@ struct VPIRelationRange {
   uint64_t count = 0;
 };
 
+// Immutable declaration metadata. The VPI handle supplies a live receiver for
+// instance members; static members refer to independent design storage/events.
+struct VPIClassMemberBinding {
+  uint64_t classID = 0;
+  uint64_t byteOffset = UINT64_MAX;
+  // Preserve the lexical ClassDefn or canonical specialization that owns this
+  // declaration separately from the runtime class's canonical specialization.
+  obelisk_rt_design_cursor_v1 ownerScope{};
+  obelisk_rt_design_cursor_v1 ownerTypespec{};
+  obelisk_rt_design_cursor_v1 backingStorage{};
+  uint64_t staticEventID = UINT64_MAX;
+  bool isStatic = false;
+  bool isMethod = false;
+  const uint8_t *name = nullptr;
+  uint64_t nameSize = 0;
+};
+
+// Exact source identity for a modport within one physical interface instance.
+struct VPIModportBinding {
+  obelisk_rt_design_cursor_v1 scope{};
+  const uint8_t *name = nullptr;
+  uint64_t nameSize = 0;
+};
+
 struct FunctionalCoverageValue {
   uint64_t id = 0;
   uint64_t bitWidth = 0;
@@ -1795,6 +1917,62 @@ struct VPIFixedPropertyValue {
   const uint8_t *stringData = nullptr;
   uint64_t stringSize = 0;
 };
+
+struct VPITypeDefaultInfo {
+  obelisk_rt_design_cursor_v1 semantic{};
+  const uint8_t *file = nullptr;
+  uint64_t fileSize = 0;
+  uint32_t line = 0;
+};
+obelisk_rt_status
+obelisk_rt_cached_vpi_type_default(const obelisk_rt_context *,
+                                   obelisk_rt_design_cursor_v1,
+                                   VPITypeDefaultInfo *) noexcept;
+
+struct VPIExpressionInfo {
+  uint32_t kind = 0, code = 0, operandCount = 0;
+  uint64_t bitWidth = 0;
+  obelisk_rt_design_cursor_v1 semantic{};
+  bool constantSelect = false;
+  bool sourceOnly = false;
+};
+obelisk_rt_status
+obelisk_rt_cached_vpi_expression(const obelisk_rt_context *,
+                                 obelisk_rt_design_cursor_v1,
+                                 VPIExpressionInfo *) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_expression_operand(
+    const obelisk_rt_context *, obelisk_rt_design_cursor_v1, uint32_t,
+    obelisk_rt_design_cursor_v1 *, uint32_t *) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_expression_operand_identifier(
+    const obelisk_rt_context *, obelisk_rt_design_cursor_v1, uint32_t,
+    const uint8_t **, uint64_t *) noexcept;
+// Merge retained physical Uses with exact statement/port/terminal Uses derived
+// from recipe leaf bindings. No reverse records are duplicated per instance.
+obelisk_rt_status obelisk_rt_cached_vpi_expression_use_ranges(
+    const obelisk_rt_context *, obelisk_rt_design_cursor_v1,
+    std::vector<VPIRelationRange> &) noexcept;
+
+// A zero selection denotes a whole-declaration use. Nonzero cursors retain
+// exact source selection syntax; the VPI layer filters their current spans.
+struct VPISelectedUseCandidate {
+  VPIRelationRange owners;
+  obelisk_rt_design_cursor_v1 selection;
+};
+obelisk_rt_status obelisk_rt_cached_vpi_selected_use_candidates(
+    const obelisk_rt_context *, obelisk_rt_design_cursor_v1,
+    uint32_t selectedKind, std::vector<VPISelectedUseCandidate> &) noexcept;
+
+// Existing source connections, enumerated only for cold Driver/Load queries.
+// The role expression may be a shared recipe or an ordinary declaration. Peer
+// is the opposite assignment side, used only for independently proved bit maps.
+struct VPINetConnectionCandidate {
+  obelisk_rt_design_cursor_v1 owner{}, expression{}, peer{}, module{};
+  uint32_t ownerKind = 0, expressionKind = 0, peerKind = 0;
+  bool addressOnly = false;
+};
+obelisk_rt_status obelisk_rt_cached_vpi_net_connection_candidates(
+    const obelisk_rt_context *, bool drivers,
+    std::vector<VPINetConnectionCandidate> &) noexcept;
 
 struct VPIFrozenValue {
   uint32_t kindAndFlags = 0;
@@ -1931,8 +2109,7 @@ struct FunctionalCoverageTypeKey {
 namespace obelisk::coverage::detail {
 template <> struct IndexKey<::FunctionalCoverageTypeKey> {
   template <typename Bytes>
-  static void append(Bytes &bytes,
-                     const ::FunctionalCoverageTypeKey &key) {
+  static void append(Bytes &bytes, const ::FunctionalCoverageTypeKey &key) {
     IndexKey<uint64_t>::append(bytes, key.typeID);
     IndexKey<Digest>::append(bytes, key.configuration);
   }
@@ -2472,6 +2649,10 @@ struct obelisk_rt_context {
   uint64_t nextNativeProcessToken = 1;
   uint32_t nextNativeAutomaticID = 1;
   uint64_t nextDesignTaskID = 1;
+  // process class objects outlive the execution represented by their tokens.
+  // Keep their shared dynamic-object identities with the scheduler tombstones,
+  // independently of VPI sessions and without retaining managed objects.
+  std::unordered_map<uint64_t, uint64_t> processObjectIdentities;
   uint64_t nextProcessInsertionSequence = 1;
   uint64_t nextWaitSequence = 1;
   uint64_t activeDesignTaskID = 0;
@@ -3066,6 +3247,16 @@ obelisk_rt_design_signal_wait_blocked(const ScheduledDesignTask &task) {
 
 ManagedHeap *obelisk_rt_managed_heap_create(obelisk_rt_context *context);
 void obelisk_rt_managed_heap_destroy(ManagedHeap *heap) noexcept;
+// Reserve a nonzero identity in the same context-local namespace as managed
+// objects. This does not allocate or root an object and needs no active lane.
+obelisk_rt_status obelisk_rt_managed_identity_reserve(
+    obelisk_rt_context *context, uint64_t *outIdentity) noexcept;
+// IEEE 1800-2023 9.7 and 37.33: map an existing process class object to a
+// stable identity shared with the managed-object namespace. Finished/killed
+// process objects remain valid through the scheduler's existing tombstones.
+obelisk_rt_status obelisk_rt_process_object_identity(
+    obelisk_rt_context *context, uint64_t logicalProcess,
+    uint64_t *outIdentity) noexcept;
 /// Collections the heap made at designated collection points.
 uint64_t obelisk_rt_managed_heap_designated_collections(ManagedHeap *heap);
 /// Whether a schedule has designated the heap's collection points.
@@ -3078,8 +3269,8 @@ bool obelisk_rt_managed_heap_collections_polled(ManagedHeap *heap);
 bool obelisk_rt_managed_heap_collection_requested(ManagedHeap *heap);
 /// Reclaim pressure that is due between two activations. Does nothing while
 /// this thread runs a managed activation.
-obelisk_rt_status
-obelisk_rt_managed_heap_collect_between_activations(obelisk_rt_context *context);
+obelisk_rt_status obelisk_rt_managed_heap_collect_between_activations(
+    obelisk_rt_context *context);
 obelisk_rt_status
 obelisk_rt_managed_execution_enter(obelisk_rt_context *context,
                                    obelisk_rt_gc_lane_v1 **outLane,
@@ -3155,6 +3346,113 @@ struct ManagedObjectLease {
   }
   ~ManagedObjectLease() { obelisk_rt_managed_object_release(this); }
 };
+// IEEE 1800-2023 37.33: mailboxes and semaphores are class objects even
+// though their implementation uses managed container storage. Inspect an
+// already-acquired lease so a caller never reacquires the same ticket lock.
+enum class BuiltinClassKind : uint32_t {
+  None = OBELISK_RT_BUILTIN_CLASS_NONE,
+  Mailbox = OBELISK_RT_BUILTIN_CLASS_MAILBOX,
+  Semaphore = OBELISK_RT_BUILTIN_CLASS_SEMAPHORE
+};
+BuiltinClassKind
+obelisk_rt_builtin_class_kind(const ManagedObjectLease &lease) noexcept;
+
+// Classification reads only immutable metadata and never takes an object
+// ticket lock. The caller must keep the object live in an active GC lane.
+BuiltinClassKind
+obelisk_rt_builtin_class_kind_unlocked(obelisk_rt_object_v1 *object) noexcept;
+BuiltinClassKind obelisk_rt_builtin_container_kind(const uint8_t *object,
+                                                   uint64_t extent) noexcept;
+// Resolve a direct builtin or a user class's private direct builtin payload.
+// The returned payload borrows the caller's active GC lifetime; no root is
+// added.
+obelisk_rt_status
+obelisk_rt_builtin_class_payload(obelisk_rt_object_v1 *object,
+                                 BuiltinClassKind expected,
+                                 obelisk_rt_object_v1 **outPayload);
+
+// Copies mailbox messages in FIFO order, with each value plane followed by
+// its unknown plane when the element is four-state. The caller must keep its
+// GC lane active and root traced copied values before reaching a safepoint.
+// No lease for mailbox may be held while calling this helper.
+obelisk_rt_status obelisk_rt_mailbox_snapshot(
+    obelisk_rt_object_v1 *mailbox,
+    const obelisk_rt_element_type_v1 **outElement,
+    std::vector<uint8_t> &outValues);
+
+// Snapshot exact live threads still blocked on a named event. Event IDs are
+// executable event identities; UINT64_MAX is the language null event.
+obelisk_rt_status
+obelisk_rt_named_event_waiters(obelisk_rt_context *context, uint64_t eventID,
+                               std::vector<uint64_t> &outProcesses);
+
+// The outermost activation defines a thread's source origin, independently
+// of the currently executing task/function or its lexical containment.
+obelisk_rt_status
+obelisk_rt_logical_process_origin(obelisk_rt_context *context,
+                                  uint64_t logicalProcess,
+                                  uint64_t *outCodeUnit) noexcept;
+
+// Copies a sequential value container without changing its contents. Mailbox
+// identities are excluded; callers preserve class references instead. The
+// active lane must remain entered until copied managed words are inspected.
+obelisk_rt_status
+obelisk_rt_container_snapshot(obelisk_rt_object_v1 *container,
+                              uint32_t *outKind,
+                              const obelisk_rt_element_type_v1 **outElement,
+                              std::vector<uint8_t> &outValues);
+
+// Copy the complete value/unknown planes of a one-element boxed array. The
+// caller holds an active lane until conversion of any copied managed words.
+// Type ID zero denotes an unbound legacy box, not an inferred source type.
+obelisk_rt_status
+obelisk_rt_box_snapshot(obelisk_rt_object_v1 *box, uint64_t *outTypeID,
+                        const obelisk_rt_element_type_v1 **outElement,
+                        std::vector<uint8_t> &outPlanes);
+// Copies one sequential-container element under the same owner/buffer access
+// as its size and descriptor. A missing index requests metadata only; an index
+// outside the current size returns EOF. Mailboxes and associative arrays are
+// excluded. Callers keep their lane entered while inspecting managed words.
+struct VPIContainerElementSnapshot {
+  uint32_t kind = 0;
+  uint64_t size = 0;
+  const obelisk_rt_element_type_v1 *element = nullptr;
+  std::vector<uint8_t> value;
+};
+obelisk_rt_status
+obelisk_rt_container_element_snapshot(obelisk_rt_object_v1 *container,
+                                      std::optional<uint64_t> index,
+                                      VPIContainerElementSnapshot *outSnapshot);
+
+// Sparse associative snapshots preserve exact stored keys and value planes.
+// Managed key words remain weak; callers keep their lane active until copying
+// the referenced values. Entries are returned in the runtime's index order,
+// without publishing or allocating its managed ordering cache.
+struct VPIAssocSnapshotEntry {
+  uint64_t keyWidth = 0;
+  // Context-local equality encoding, independent of live key allocations.
+  // Aggregate/container keys use the runtime's canonical key serializer.
+  std::vector<uint8_t> identity;
+  std::vector<uint8_t> key;
+  std::vector<uint8_t> value;
+};
+struct VPIAssocSnapshot {
+  uint32_t keyKind = 0;
+  uint64_t keyWidth = 0;
+  const obelisk_rt_element_type_v1 *keyElement = nullptr;
+  const obelisk_rt_element_type_v1 *element = nullptr;
+  std::vector<VPIAssocSnapshotEntry> entries;
+};
+obelisk_rt_status obelisk_rt_assoc_snapshot(obelisk_rt_object_v1 *array,
+                                            VPIAssocSnapshot *outSnapshot);
+
+// Returns logical process tokens, including the native-process tag. The
+// caller holds an active lane and no lease for object; the helper does not
+// change wait readiness or scheduler state and promises no iteration order.
+obelisk_rt_status obelisk_rt_builtin_class_waiters(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *object,
+    std::vector<uint64_t> &outProcesses);
+
 obelisk_rt_status obelisk_rt_managed_allocate(obelisk_rt_gc_lane_v1 *lane,
                                               obelisk_rt_managed_kind_v1 kind,
                                               uint64_t extent,
@@ -3743,9 +4041,199 @@ obelisk_rt_status obelisk_rt_cached_design_type_child(
 obelisk_rt_status obelisk_rt_cached_design_semantic_root(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 object,
     obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+// Canonical specialization bindings preserve the lexical semantic identity.
+obelisk_rt_status obelisk_rt_cached_vpi_class_typespec(
+    const obelisk_rt_context *context, uint64_t classID,
+    obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+// A virtual-interface value is its physical scope ID; zero denotes null.
+obelisk_rt_status
+obelisk_rt_cached_vpi_scope(const obelisk_rt_context *context, uint64_t scopeID,
+                            obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+// A named-event array leaf selects a private storage cell without creating
+// another public VPI identity. The offset is in bits relative to storage.
+struct VPIEventCellBinding {
+  obelisk_rt_design_cursor_v1 storage{};
+  uint64_t bitOffset = 0;
+};
+obelisk_rt_status obelisk_rt_cached_vpi_event_array_cell(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 event,
+    VPIEventCellBinding *outBinding) noexcept;
+
+// Stable source identities used by explicit frame events. Cursor provenance is
+// returned separately because call-as-statement aliases share a public kind
+// with expression occurrences. No native code passes packed image-table
+// references.
+// Immutable automatic declaration inventory. A successful lookup never
+// implies that any activation has initialized or bound executable storage.
+struct VPIFrameLocalBinding {
+  uint64_t id = 0;
+  obelisk_rt_design_cursor_v1 declaration{};
+  uint64_t lexicalCodeUnitID = 0;
+  obelisk_rt_design_cursor_v1 scope{};
+  uint32_t ordinal = 0;
+};
+obelisk_rt_status
+obelisk_rt_cached_vpi_frame_local(const obelisk_rt_context *context,
+                                  uint64_t id,
+                                  VPIFrameLocalBinding *outBinding) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_frame_locals(
+    const obelisk_rt_context *context, uint64_t lexicalCodeUnitID,
+    obelisk_rt_design_cursor_v1 scope,
+    std::vector<VPIFrameLocalBinding> &outBindings) noexcept;
+
+obelisk_rt_status obelisk_rt_cached_vpi_initializer(
+    const obelisk_rt_context *context, uint64_t codeUnitID,
+    obelisk_rt_design_cursor_v1 *outSource) noexcept;
+
+obelisk_rt_status
+obelisk_rt_cached_vpi_call(const obelisk_rt_context *context, uint64_t callID,
+                           obelisk_rt_design_cursor_v1 *outCursor,
+                           uint64_t *outOwnerCodeUnitID,
+                           bool *outIsStatement) noexcept;
+obelisk_rt_status
+obelisk_rt_cached_vpi_statement(const obelisk_rt_context *context,
+                                uint64_t statementID,
+                                obelisk_rt_design_cursor_v1 *outCursor,
+                                uint64_t *outOwnerCodeUnitID) noexcept;
+// Resolve the executable call transport independently of the public source
+// callable kind. A mapped DPI task has a Function transport and Task scope.
+obelisk_rt_status
+obelisk_rt_cached_vpi_code_unit_transport(const obelisk_rt_context *context,
+                                          uint64_t codeUnitID,
+                                          bool *outIsTask) noexcept;
+obelisk_rt_status
+obelisk_rt_cached_vpi_code_unit_scope(const obelisk_rt_context *context,
+                                      uint64_t codeUnitID,
+                                      obelisk_rt_design_cursor_v1 *outCursor,
+                                      uint64_t *outLexicalCodeUnitID) noexcept;
+obelisk_rt_status
+obelisk_rt_cached_vpi_call_target(const obelisk_rt_context *context,
+                                  uint64_t callID,
+                                  uint64_t calleeCodeUnitID) noexcept;
+// Resolve the exact net and its retained nettype resolution function.
+obelisk_rt_status obelisk_rt_cached_vpi_net_resolution(
+    const obelisk_rt_context *context, uint64_t netID,
+    obelisk_rt_design_cursor_v1 *outNet,
+    obelisk_rt_design_cursor_v1 *outFunction) noexcept;
+obelisk_rt_status
+obelisk_rt_cached_vpi_resolution_target(const obelisk_rt_context *context,
+                                        uint64_t netID,
+                                        uint64_t calleeCodeUnitID) noexcept;
+// OriginKind: 0 code-unit scope, 1 call, 2 scoped statement, 3 resolution net.
+obelisk_rt_status obelisk_rt_cached_vpi_frame_origin(
+    const obelisk_rt_context *context, uint32_t originKind, uint64_t originID,
+    obelisk_rt_design_cursor_v1 *outCursor, bool *outIsStatement) noexcept;
+
+// Remove activations belonging to a returned, disabled, or killed scope.
+// Scheduler callers hold the context mutex; this helper is also safe to call
+// recursively from ordinary execution. A zero target depth removes the root.
+// Scoped provenance for C-to-SystemVerilog dispatch. These runtime-only
+// boundaries do not themselves create an observable activation.
+obelisk_rt_status
+obelisk_rt_vpi_export_begin(obelisk_rt_context *context,
+                            const obelisk_rt_export_descriptor_v1 *descriptor,
+                            uint64_t *outToken);
+obelisk_rt_status obelisk_rt_vpi_export_task_enter(obelisk_rt_context *context,
+                                                   uint64_t executor);
+obelisk_rt_status obelisk_rt_vpi_export_end(obelisk_rt_context *context,
+                                            uint64_t token);
+obelisk_rt_status
+obelisk_rt_cached_vpi_export_target(const obelisk_rt_context *context,
+                                    uint64_t codeUnitID, uint64_t scopeID,
+                                    bool isTask) noexcept;
+obelisk_rt_status
+obelisk_rt_vpi_frame_unwind_process(obelisk_rt_context *context,
+                                    uint64_t logicalProcess, uint64_t depth);
+obelisk_rt_status obelisk_rt_vpi_pending_call(obelisk_rt_context *context,
+                                              uint64_t *outCallID);
+obelisk_rt_status
+obelisk_rt_vpi_bind_native_callsite(obelisk_rt_context *context,
+                                    obelisk_rt_process_instance_v1 *callee,
+                                    uint64_t callID, uint64_t preparedCallID);
+obelisk_rt_status
+obelisk_rt_vpi_activation_callsite(obelisk_rt_context *context,
+                                   uint64_t *outCallID);
+obelisk_rt_status
+obelisk_rt_vpi_frame_depth_process(obelisk_rt_context *context,
+                                   uint64_t logicalProcess, uint64_t *outDepth);
+
+// Returns the immutable source statement for an exact executable code unit,
+// or EOF when this image has no retained thread-origin binding.
+obelisk_rt_status obelisk_rt_cached_vpi_thread_origin(
+    const obelisk_rt_context *context, uint64_t codeUnitID,
+    obelisk_rt_design_cursor_v1 *outStatement) noexcept;
+// Returns EOF when the source event uses a mutable cell or has no executable
+// binding in this image. A successful lookup may return event identity zero.
+obelisk_rt_status
+obelisk_rt_cached_vpi_event_binding(const obelisk_rt_context *context,
+                                    obelisk_rt_design_cursor_v1 event,
+                                    uint64_t *outEventID) noexcept;
+
+obelisk_rt_status
+obelisk_rt_cached_vpi_modport_binding(const obelisk_rt_context *context,
+                                      obelisk_rt_design_cursor_v1 modport,
+                                      VPIModportBinding *outBinding) noexcept;
+obelisk_rt_status
+obelisk_rt_cached_vpi_modport(const obelisk_rt_context *context,
+                              obelisk_rt_design_cursor_v1 scope,
+                              const uint8_t *name, uint64_t nameSize,
+                              obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+// Return the immutable normalized storage type for a node in a canonical
+// mailbox's effective element DAG. Legacy images without bindings return EOF.
+// Exact layout ownership stays separate from source object identity. Box
+// descriptors are rows in their own validated table, never packed VPI objects.
+struct VPIValueLayoutOwner {
+  obelisk::reflection::ValueLayoutOwnerKind kind =
+      obelisk::reflection::ValueLayoutOwnerKind::ReflectedObject;
+  uint32_t index = 0;
+};
+struct VPIBoxTypeBinding {
+  VPIValueLayoutOwner layout;
+  obelisk_rt_design_cursor_v1 semantic{};
+  obelisk_rt_design_cursor_v1 physical{};
+};
+obelisk_rt_status obelisk_rt_cached_vpi_value_layout_owner(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 owner,
+    VPIValueLayoutOwner *outOwner) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_value_element_type(
+    const obelisk_rt_context *context, VPIValueLayoutOwner owner,
+    obelisk_rt_design_cursor_v1 semantic,
+    obelisk_rt_design_cursor_v1 *outType) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_value_element_type(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 owner,
+    obelisk_rt_design_cursor_v1 semantic,
+    obelisk_rt_design_cursor_v1 *outType) noexcept;
+// Validate a runtime element against exact reflected semantic/storage graphs.
+// Source signedness and descriptor IDs are independent of physical shape.
+obelisk_rt_status
+obelisk_rt_vpi_element_matches(const obelisk_rt_context *context,
+                               VPIValueLayoutOwner owner,
+                               obelisk_rt_design_cursor_v1 semantic,
+                               const obelisk_rt_element_type_v1 *element);
+
+obelisk_rt_status
+obelisk_rt_cached_vpi_box_type(const obelisk_rt_context *context, uint64_t id,
+                               VPIBoxTypeBinding *outType) noexcept;
+
+obelisk_rt_status obelisk_rt_cached_vpi_mailbox_element_type(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 typespec,
+    obelisk_rt_design_cursor_v1 semantic,
+    obelisk_rt_design_cursor_v1 *outType) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_class_member(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 member,
+    VPIClassMemberBinding *outBinding) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_semantic_class_typespec(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 semantic,
+    obelisk_rt_design_cursor_v1 *outCursor) noexcept;
 obelisk_rt_status obelisk_rt_cached_design_semantic_type_info(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     obelisk_rt_design_semantic_type_info_v1 *outInfo) noexcept;
+// Return an integral/real semantic width, including nested packed dimensions
+// and enum bases. EOF denotes a semantic kind without a fixed packed width.
+obelisk_rt_status
+obelisk_rt_cached_design_semantic_bit_width(const obelisk_rt_context *context,
+                                            obelisk_rt_design_cursor_v1 cursor,
+                                            uint64_t *outWidth) noexcept;
 obelisk_rt_status obelisk_rt_cached_design_semantic_type_edge(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     uint64_t index, obelisk_rt_design_semantic_type_edge_v1 *outEdge) noexcept;
@@ -3780,6 +4268,11 @@ obelisk_rt_status obelisk_rt_cached_vpi_type(const obelisk_rt_context *context,
 obelisk_rt_status obelisk_rt_cached_vpi_fixed_property(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     uint32_t selector, VPIFixedPropertyValue *outValue) noexcept;
+// Exact instance context for a shared declaration; EOF for physical records.
+obelisk_rt_status obelisk_rt_cached_vpi_definition_member_scope(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+    obelisk_rt_design_cursor_v1 *outScope) noexcept;
+
 obelisk_rt_status
 obelisk_rt_cached_vpi_frozen_value(const obelisk_rt_context *context,
                                    obelisk_rt_design_cursor_v1 cursor,
@@ -3833,5 +4326,16 @@ obelisk_rt_cached_vpi_statement_is_scope(const obelisk_rt_context *context,
 obelisk_rt_status obelisk_rt_cached_vpi_statement_is_protected(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
     bool *outIsProtected) noexcept;
+
+// Exact output contribution. Missing binding returns EOF. Selected bit offsets
+// are checked against the physical Driver span; UINT64_MAX means no high bank.
+struct VPITerminalDriverBinding {
+  uint64_t lowStateOffset = 0;
+  uint64_t highStateOffset = UINT64_MAX;
+};
+obelisk_rt_status
+obelisk_rt_cached_vpi_terminal_driver(const obelisk_rt_context *,
+                                      obelisk_rt_design_cursor_v1 terminal,
+                                      VPITerminalDriverBinding *) noexcept;
 
 #endif // OBELISK_RUNTIME_LIB_RUNTIMEINTERNAL_H

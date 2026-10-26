@@ -101,10 +101,14 @@ def SimVPIObjectRefNet : I32EnumAttrCase<"Net", 2, "net">;
 def SimVPIObjectRefNetIdentity
     : I32EnumAttrCase<"NetIdentity", 3, "net_identity">;
 def SimVPIObjectRefPort : I32EnumAttrCase<"Port", 4, "port">;
+def SimVPIObjectRefSymbol : I32EnumAttrCase<"Symbol", 5, "symbol">;
+def SimVPIObjectRefDefinitionMember
+    : I32EnumAttrCase<"DefinitionMember", 6, "definition_member">;
 def SimVPIObjectRefKind : I32EnumAttr<
     "VPIObjectRefKind", "stable VPI relation endpoint identity", [
       SimVPIObjectRefStatement, SimVPIObjectRefStorage, SimVPIObjectRefNet,
-      SimVPIObjectRefNetIdentity, SimVPIObjectRefPort
+      SimVPIObjectRefNetIdentity, SimVPIObjectRefPort, SimVPIObjectRefSymbol,
+      SimVPIObjectRefDefinitionMember
     ]> {
   let cppNamespace = "::obelisk::sim";
 }
@@ -130,10 +134,13 @@ def SimVPIObjectBackingCodeUnit
     : I32EnumAttrCase<"CodeUnit", 2, "code_unit">;
 def SimVPIObjectBackingNet
     : I32EnumAttrCase<"Net", 3, "net">;
+def SimVPIObjectBackingStorage
+    : I32EnumAttrCase<"Storage", 4, "storage">;
 def SimVPIObjectBackingKind : I32EnumAttr<
     "VPIObjectBackingKind", "physical descriptor backing a VPI anchor", [
       SimVPIObjectBackingScope, SimVPIObjectBackingClass,
-      SimVPIObjectBackingCodeUnit, SimVPIObjectBackingNet
+      SimVPIObjectBackingCodeUnit, SimVPIObjectBackingNet,
+      SimVPIObjectBackingStorage
     ]> {
   let cppNamespace = "::obelisk::sim";
 }
@@ -641,10 +648,17 @@ def SimVPITypespecInterface
     : I32EnumAttrCase<"Interface", 1, "interface">;
 def SimVPITypespecAnonymousEnum
     : I32EnumAttrCase<"AnonymousEnum", 2, "anonymous_enum">;
+def SimVPITypespecClassSpecialization
+    : I32EnumAttrCase<"ClassSpecialization", 3, "class_specialization">;
+def SimVPITypespecBuiltinClass
+    : I32EnumAttrCase<"BuiltinClass", 4, "builtin_class">;
+def SimVPITypespecSourceDefault
+    : I32EnumAttrCase<"SourceDefault", 5, "source_default">;
 def SimVPITypespecOrigin
     : I32EnumAttr<"VPITypespecOrigin", "VPI typespec inventory origin", [
         SimVPITypespecTypedef, SimVPITypespecInterface,
-        SimVPITypespecAnonymousEnum
+        SimVPITypespecAnonymousEnum, SimVPITypespecClassSpecialization,
+        SimVPITypespecBuiltinClass, SimVPITypespecSourceDefault
       ]> {
   let cppNamespace = "::obelisk::sim";
 }

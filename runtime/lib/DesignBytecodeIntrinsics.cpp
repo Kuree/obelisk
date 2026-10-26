@@ -858,6 +858,24 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         obelisk_rt_v1_mailbox_num(readManaged(inputRegister(0)), &count);
     return status == OBELISK_RT_OK ? sentinel(0, count) : status;
   }
+  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_BIND: {
+    auto id = scalar(0);
+    Layout reference = layoutAt(image, frame.function, inputRegister(1));
+    const uint8_t *address = frame.data + reference.offset;
+    uint64_t stable = 0;
+    if (!id ||
+        read32(address) !=
+            (kAutomaticHandleKind | OBELISK_RT_DESCRIPTOR_STORAGE) ||
+        !encodeCanonicalHandle(address, stable))
+      return OBELISK_RT_INVALID_BYTECODE;
+    return obelisk_rt_v1_vpi_frame_bind(context, *id, stable);
+  }
+  case OBELISK_RT_INTRINSIC_V1_BOX_BIND_TYPE: {
+    auto id = scalar(1);
+    return id ? obelisk_rt_v1_box_bind_type(context,
+                                            readManaged(inputRegister(0)), *id)
+              : OBELISK_RT_INVALID_BYTECODE;
+  }
   case OBELISK_RT_INTRINSIC_V1_BOX_IS_TYPE: {
     auto typeID = scalar(1);
     return typeID ? sentinel(0, obelisk_rt_v1_box_is_type(
@@ -4510,6 +4528,15 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                                          signature.flags & ~(UINT32_C(1) << 31),
                                          activation, signature.flags >> 31);
   }
+  case OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE_SELECTED: {
+    auto target = scalar(0), activation = scalar(1), all = scalar(2);
+    if (!target || !activation || !all || *all > 1)
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t selected = 0;
+    auto status = obelisk_rt_v1_control_disable_selected(
+        context, *target, *activation, static_cast<uint32_t>(*all), &selected);
+    return status == OBELISK_RT_OK ? sentinel(0, selected) : status;
+  }
   case OBELISK_RT_INTRINSIC_V1_CONTROL_ESCAPE_PENDING:
     if (!context)
       return OBELISK_RT_INVALID_ARGUMENT;
@@ -6449,6 +6476,55 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     obelisk_rt_status status =
         obelisk_rt_v1_file_rewind(context, static_cast<uint32_t>(*descriptor));
     return sentinel(0, status == OBELISK_RT_OK ? 0 : UINT32_MAX);
+  }
+  case OBELISK_RT_INTRINSIC_V1_VPI_RESOLUTION_PREPARE: {
+    auto net = scalar(0);
+    if (!net)
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t ticket = 0;
+    auto status = obelisk_rt_v1_vpi_resolution_prepare(context, *net, &ticket);
+    return status == OBELISK_RT_OK ? sentinel(0, ticket) : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_VPI_CALL_PREPARE: {
+    auto call = scalar(0);
+    if (!call)
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t ticket = 0;
+    auto status = obelisk_rt_v1_vpi_call_prepare(context, *call, &ticket);
+    return status == OBELISK_RT_OK ? sentinel(0, ticket) : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER_PREPARED: {
+    auto unit = scalar(0), task = scalar(1);
+    if (!unit || !task || *task > 1)
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t activation = 0;
+    auto status = obelisk_rt_v1_vpi_frame_enter_prepared(
+        context, *unit, static_cast<uint32_t>(*task), &activation);
+    return status == OBELISK_RT_OK ? sentinel(0, activation) : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER: {
+    auto unit = scalar(0), kind = scalar(1), origin = scalar(2);
+    if (!unit || !kind || !origin || (*kind != 0 && *kind != 2))
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t activation = 0;
+    auto status = obelisk_rt_v1_vpi_frame_enter(
+        context, *unit, static_cast<uint32_t>(*kind), *origin, &activation);
+    return status == OBELISK_RT_OK ? sentinel(0, activation) : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_CHECKPOINT: {
+    auto statement = scalar(0);
+    return statement ? obelisk_rt_v1_vpi_frame_checkpoint(context, *statement)
+                     : OBELISK_RT_INVALID_BYTECODE;
+  }
+  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_LEAVE: {
+    auto activation = scalar(0);
+    return activation ? obelisk_rt_v1_vpi_frame_leave(context, *activation)
+                      : OBELISK_RT_INVALID_BYTECODE;
+  }
+  case OBELISK_RT_INTRINSIC_V1_VPI_CALL_FINISH: {
+    auto ticket = scalar(0);
+    return ticket ? obelisk_rt_v1_vpi_call_finish(context, *ticket)
+                  : OBELISK_RT_INVALID_BYTECODE;
   }
   case OBELISK_RT_INTRINSIC_V1_VPI_ROOT: {
     if (!context || !context->execution)

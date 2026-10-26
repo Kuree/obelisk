@@ -204,6 +204,8 @@ public:
     if (auto allocation = dyn_cast<sim::SimClassAllocOp>(op)) {
       fact.dynamicClass = dispatch.lookup(
           cast<sim::ClassHandleType>(allocation.getResult().getType()));
+    } else if (isa<sim::SimClassBuiltinUpcastOp>(op)) {
+      fact = operands.front()->getValue();
     } else if (isa<sim::SimClassCopyOp>(op)) {
       // LRM 8.12: a shallow copy retains the dynamic class of its source.
       fact = operands[1]->getValue();
@@ -311,8 +313,12 @@ createDirectCall(IRRewriter &rewriter, Operation *operation,
                               adjusted};
   llvm::append_range(operands, arguments);
   auto callee = implementation->symbol;
-  return sim::SimCallOp::create(rewriter, operation->getLoc(), resultTypes,
-                                callee, operands, ArrayAttr{}, ArrayAttr{});
+  auto direct =
+      sim::SimCallOp::create(rewriter, operation->getLoc(), resultTypes, callee,
+                             operands, ArrayAttr{}, ArrayAttr{});
+  if (auto site = sim::get<sim::metadata::VpiCallSite>(operation))
+    sim::set<sim::metadata::VpiCallSite>(direct, site);
+  return direct;
 }
 
 LogicalResult createGuardedDirectCall(IRRewriter &rewriter,
@@ -387,9 +393,13 @@ createDirectTaskCall(IRRewriter &rewriter, sim::SimClassVirtualTaskCallOp call,
   uint64_t argumentCount = operands.size();
   llvm::append_range(operands, call.getContinuationOperands());
   auto callee = implementation->symbol;
-  return sim::SimTaskCallOp::create(rewriter, call.getLoc(), callee, operands,
-                                    rewriter.getI64IntegerAttr(argumentCount),
-                                    call.getSiteAttr(), call.getContinuation());
+  auto direct =
+      sim::SimTaskCallOp::create(rewriter, call.getLoc(), callee, operands,
+                                 rewriter.getI64IntegerAttr(argumentCount),
+                                 call.getSiteAttr(), call.getContinuation());
+  if (auto site = sim::get<sim::metadata::VpiCallSite>(call))
+    sim::set<sim::metadata::VpiCallSite>(direct, site);
+  return direct;
 }
 
 LogicalResult createGuardedDirectTaskCall(
@@ -614,6 +624,8 @@ void DevirtualizeFunctionCallsPass::runOnOperation() {
     auto replacement = sim::SimCallOp::create(
         rewriter, call.getLoc(), call.getResultTypes(), target->symbol,
         operands, ArrayAttr{}, ArrayAttr{});
+    if (auto site = sim::get<sim::metadata::VpiCallSite>(call))
+      sim::set<sim::metadata::VpiCallSite>(replacement, site);
     rewriter.replaceOp(call, replacement.getResults());
     ++directCalls;
   }

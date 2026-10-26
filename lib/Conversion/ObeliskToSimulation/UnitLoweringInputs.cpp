@@ -18,6 +18,16 @@ namespace obelisk {
 
 namespace simlowering {
 
+const UnitLoweringInputs::VPIStatement *
+UnitLoweringInputs::getVPIStatement(sim::SimDesignOp design,
+                                    uint64_t id) const {
+  auto owner = vpiStatements.find(design);
+  if (owner == vpiStatements.end())
+    return nullptr;
+  auto found = owner->second.find(id);
+  return found == owner->second.end() ? nullptr : &found->second;
+}
+
 UnitLoweringInputs::UnitLoweringInputs(Operation *module)
     : semanticTypes(module), lockedSymbols(symbols) {
   ScopedSemanticTypeIndex semanticTypeScope(semanticTypes);
@@ -25,6 +35,11 @@ UnitLoweringInputs::UnitLoweringInputs(Operation *module)
   module->walk<WalkOrder::PreOrder>([&](Operation *operation) {
     if (auto design = dyn_cast<sim::SimDesignOp>(operation))
       symbols.getSymbolTable(design);
+    if (auto statement = dyn_cast<sim::SimStatementDeclOp>(operation))
+      if (auto owner = statement.getCodeUnitId())
+        vpiStatements[statement->getParentOp()].try_emplace(
+            statement.getId(),
+            VPIStatement{*owner, statement.getIsScope().value_or(false)});
     if (auto scope = dyn_cast<sim::SimScopeDeclOp>(operation)) {
       auto design = dyn_cast<sim::SimDesignOp>(scope->getParentOp());
       auto hierarchy = scope.getHierarchicalName();

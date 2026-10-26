@@ -1,3 +1,4 @@
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=VPI
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
 // randcase (IEEE 1800-2017 18.16) evaluates every weight once, draws from the
@@ -70,3 +71,13 @@ module {
 // CHECK: ^[[ITEM1]]:
 // CHECK-NOT: arith.cmpi ult
 // CHECK: cf.br ^[[MERGE]]
+
+// VPI: simulation.statement.decl [[CASE:[0-9]+]] in [[UNIT:[0-9]+]] scope [[SCOPE:[0-9]+]] type 5 {vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 650 : i32, value = 8 : i32>]>}
+// VPI: simulation.vpi_thread_origin_binding [[UNIT]] origin [[CASE]]
+// VPI: simulation.statement.decl [[FIRST:[0-9]+]] in [[UNIT]] scope [[SCOPE]] type 6 parent [[CASE]]
+// VPI: simulation.vpi_statement_relation.decl statement [[CASE]] type 5 selector 6 ordinal 0 modes 2 to [[FIRST]]
+// VPI: simulation.statement.decl [[LEFT:[0-9]+]] in [[UNIT]] scope [[SCOPE]] type 3 parent [[FIRST]]
+// VPI: simulation.vpi_statement_relation.decl statement [[FIRST]] type 6 selector 104 ordinal 0 modes 1 to [[LEFT]]
+// VPI: simulation.statement.decl [[SECOND:[0-9]+]] in [[UNIT]] scope [[SCOPE]] type 6 parent [[CASE]]
+// VPI: simulation.vpi_statement_relation.decl statement [[CASE]] type 5 selector 6 ordinal 1 modes 2 to [[SECOND]]
+// VPI: simulation.statement.decl [[RIGHT:[0-9]+]] in [[UNIT]] scope [[SCOPE]] type 3 parent [[SECOND]]

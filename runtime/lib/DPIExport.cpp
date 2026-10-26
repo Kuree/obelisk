@@ -418,6 +418,19 @@ extern "C" OBELISK_RT_FEATURE_TEXT obelisk_rt_status obelisk_rt_v1_export_call(
                      (OBELISK_RT_IMPORT_CONTEXT | OBELISK_RT_IMPORT_TASK)) !=
                         (OBELISK_RT_IMPORT_CONTEXT | OBELISK_RT_IMPORT_TASK))
           return fail(OBELISK_RT_FATAL);
+        uint64_t vpiExport = 0;
+        status = obelisk_rt_vpi_export_begin(context, descriptor, &vpiExport);
+        if (status != OBELISK_RT_OK)
+          return fail(status);
+        struct ExportFrameGuard {
+          obelisk_rt_context *context;
+          uint64_t token;
+          bool active = true;
+          ~ExportFrameGuard() {
+            if (active)
+              (void)obelisk_rt_vpi_export_end(context, token);
+          }
+        } exportFrame{context, vpiExport};
         if (task || (!requireBytecode && descriptor->native_entry)) {
           status = descriptor->native_entry(context, convertedInputs.data(),
                                             inputCount, convertedOutputs.data(),
@@ -429,6 +442,10 @@ extern "C" OBELISK_RT_FEATURE_TEXT obelisk_rt_status obelisk_rt_v1_export_call(
         } else {
           status = OBELISK_RT_TIER_UNAVAILABLE;
         }
+        auto frameStatus = obelisk_rt_vpi_export_end(context, vpiExport);
+        exportFrame.active = false;
+        if (status == OBELISK_RT_OK)
+          status = frameStatus;
         if (status == OBELISK_RT_DPI_DISABLE_UNSUPPORTED) {
           call->disabledState = true;
           return status;

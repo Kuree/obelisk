@@ -775,6 +775,8 @@ private:
   /// Records a read through a constant `net.extract` view of `net`.
   void recordNetViewSensitivity(::mlir::Value view, ::mlir::Value net);
   void recordImplicitEventActivationLocal(::mlir::Value reference);
+  void bindVPILocal(::mlir::FlatSymbolRefAttr declaration,
+                    ::mlir::Value reference, ::mlir::Location location);
   /// Records a read of every source property of `object`'s class and its
   /// bases, which a method called on it may read.
   void recordObjectPropertyReads(::mlir::Value object,
@@ -942,6 +944,14 @@ private:
                                bool clockingBlockOnly = false) const;
   void emitBranch(::mlir::Block *destination);
   void emitControlLeaves(size_t first, ::mlir::Location location);
+  bool hasVPIFrameInstrumentation() const;
+  void registerVPIObservedRef(::mlir::Value reference);
+  void enterVPIRootFrame();
+  bool enterVPIStatementFrame(::mlir::Operation *statement);
+  void emitVPIFrameLeaves(size_t first, ::mlir::Location location);
+  ::mlir::SmallVector<::mlir::Value> getVPIObservedRefs(size_t first = 0) const;
+  void emitVPICheckpoint(::mlir::Operation *statement);
+
   ::mlir::InFlightDiagnostic unsupported(::mlir::Operation *op);
   void recordImplicitWrite(::mlir::Value value);
   /// A view of bits [offset, offset + width) of a packed declaration whose
@@ -1103,6 +1113,7 @@ private:
   ::llvm::DenseMap<uint64_t, std::array<::mlir::Value, 2>> strengthNodeLvalues;
   ::llvm::StringMap<::mlir::Value> localDefaults;
   ::llvm::StringSet<> automaticLocals;
+  ::llvm::StringMap<::mlir::FlatSymbolRefAttr> vpiLocalDeclarations;
   ::llvm::StringMap<::mlir::Value> copyOutDestinations;
   ::llvm::StringMap<::mlir::Value> iteratorIndices;
   bool virtualInterfaceInventoryReady = false;
@@ -1226,6 +1237,7 @@ private:
     ::mlir::Block *continueTarget;
     ::mlir::SmallVector<::mlir::Value> continueOperands;
     size_t controlDepth;
+    size_t vpiFrameDepth;
   };
   ::mlir::SmallVector<LoopTargets> loopTargets;
   /// The single emission of a production on a cycle of its randsequence's
@@ -1306,12 +1318,18 @@ private:
       randSequenceProductionReturns;
   ::mlir::SmallVector<::llvm::DenseMap<::mlir::Operation *, ::mlir::Value>>
       randSequenceResultReferences;
+  struct VPIFrameScope {
+    ::mlir::Value activation;
+    ::mlir::SmallVector<::mlir::Value> observedRefs;
+  };
+  ::mlir::SmallVector<VPIFrameScope> vpiFrameScopes;
   struct ControlScope {
     std::string path;
     uint64_t targetID;
     ::mlir::Value activation;
     ::mlir::Block *exit;
     std::optional<uint64_t> coverageBlockEventTargetID;
+    size_t vpiFrameDepth;
   };
   ::mlir::SmallVector<ControlScope> controlScopes;
   ::llvm::StringMap<uint64_t> inheritedControlIDs;

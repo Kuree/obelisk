@@ -64,6 +64,77 @@ static obelisk_rt_status resolveCheckedNativePackedRangeUnlocked(
                                                 : OBELISK_RT_INVALID_HANDLE;
 }
 
+obelisk_rt_status obelisk_rt_vpi_state_validate(obelisk_rt_context *context,
+                                                uint64_t reference,
+                                                uint64_t bitWidth) noexcept {
+  if (!context || !bitWidth || bitWidth > UINT64_MAX - 7)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  obelisk_rt_stable_handle_v1 decoded{};
+  if (!obelisk_rt_stable_handle_decode(reference, &decoded))
+    return OBELISK_RT_INVALID_HANDLE;
+  if (decoded.kind == OBELISK_RT_STABLE_HANDLE_AUTOMATIC)
+    return obelisk_rt_vpi_automatic_validate(context, reference, bitWidth);
+  OBELISK_RT_TRY {
+    ContextMutexLock lock(context);
+    if (!context->execution)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    uint64_t root = 0, width = 0;
+    int64_t coordinate = 0;
+    auto status = resolveCheckedNativePackedRangeUnlocked(
+        context, reference, context->execution->state_bit_count, root, width,
+        coordinate);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (coordinate < 0 || uint64_t(coordinate) > width ||
+        bitWidth > width - uint64_t(coordinate))
+      return OBELISK_RT_INVALID_ARGUMENT;
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+}
+
+obelisk_rt_status
+obelisk_rt_vpi_state_read(obelisk_rt_context *context, uint64_t reference,
+                          uint64_t bitOffset, uint64_t bitWidth,
+                          uint8_t *outValue, uint8_t *outUnknown) noexcept {
+  if (!context || !outValue || !outUnknown || bitOffset > INT64_MAX ||
+      !bitWidth || bitWidth > UINT64_MAX - 7)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  const uint64_t bytes = (bitWidth + 7) / 8;
+  if (bytes > SIZE_MAX)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  std::memset(outValue, 0, bytes);
+  std::memset(outUnknown, 0, bytes);
+  OBELISK_RT_TRY {
+    ContextMutexLock lock(context);
+    reference = obelisk_rt_stable_handle_offset(reference, bitOffset);
+    auto status = obelisk_rt_vpi_state_validate(context, reference, bitWidth);
+    if (status != OBELISK_RT_OK)
+      return status;
+    obelisk_rt_stable_handle_v1 decoded{};
+    obelisk_rt_stable_handle_decode(reference, &decoded);
+    if (decoded.kind == OBELISK_RT_STABLE_HANDLE_AUTOMATIC)
+      return obelisk_rt_vpi_automatic_read(context, reference, 0, bitWidth,
+                                           outValue, outUnknown);
+    const uint64_t bits = context->execution->state_bit_count;
+    const uint8_t *value =
+        context->nativeStateValue
+            ? context->nativeStateValue
+            : reinterpret_cast<const uint8_t *>(context->stateValue.data());
+    const uint8_t *unknown =
+        context->nativeStateUnknown
+            ? context->nativeStateUnknown
+            : reinterpret_cast<const uint8_t *>(context->stateUnknown.data());
+    status = obelisk_rt_v1_native_state_load_plane(
+        context, value, bits, reference, bitWidth, 0, 0, outValue);
+    if (status == OBELISK_RT_OK)
+      status = obelisk_rt_v1_native_state_load_plane(
+          context, unknown, bits, reference, bitWidth, 1, 0, outUnknown);
+    return status;
+  }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+}
+
 void releaseOwnedNativeStates(obelisk_rt_context *context,
                               obelisk_rt_process_instance_v1 *instance) {
   if (!context || !instance)

@@ -540,6 +540,10 @@ void declareNativeRuntimeABI(ModuleOp module) {
                    managedPointer, managedI64,     managedPointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_size", managedI64,
                            {managedPointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_vpi_frame_bind", managedI32,
+                           {managedPointer, managedI64, managedI64});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_box_bind_type", managedI32,
+                           {managedPointer, managedPointer, managedI64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_box_is_type", managedI32,
                            {managedPointer, managedI64});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_read_checked",

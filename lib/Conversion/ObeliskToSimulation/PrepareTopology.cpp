@@ -6,7 +6,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "PrepareTopology.h"
+#include "PrepareExpressions.h"
 #include "PrepareRandomFunctions.h"
+#include "obelisk/Dialect/ForeachLoopMetadata.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
 #include "Detail.h"
@@ -14,11 +16,14 @@
 #include "obelisk/Dialect/Simulation/SimulationVPI.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
 
+#include "mlir/IR/AttrTypeSubElements.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Threading.h"
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringSet.h"
 
 #include <algorithm>
@@ -30,6 +35,22 @@ using namespace mlir;
 
 namespace obelisk::simlowering {
 namespace {
+
+static int32_t vpiDriveStrength(semantic::SVDriveStrength strength) {
+  switch (strength) {
+  case semantic::SVDriveStrength::Supply:
+    return 0x80; // vpiSupplyDrive
+  case semantic::SVDriveStrength::Strong:
+    return 0x40; // vpiStrongDrive
+  case semantic::SVDriveStrength::Pull:
+    return 0x20; // vpiPullDrive
+  case semantic::SVDriveStrength::Weak:
+    return 0x08; // vpiWeakDrive
+  case semantic::SVDriveStrength::HighZ:
+    return 0x01; // vpiHiZ
+  }
+  llvm_unreachable("unknown SystemVerilog drive strength");
+}
 
 static sim::Strength lowerChargeStrength(semantic::SVChargeStrength strength) {
   switch (strength) {
@@ -895,13 +916,16 @@ bool isNestedInCodeUnit(Operation *op) {
   return false;
 }
 
-FailureOr<llvm::StringMap<DescriptorInfo>>
-materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
-                             semantic::SVRootSymbolOp semanticRoot,
-                             const PreparedPortAliases &portAliases,
-                             const PreparedScopeDeclarations &scopes,
-                             const PreparedClassDeclarations &classes,
-                             uint64_t designPrecisionFs, OpBuilder &builder) {
+FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
+    ModuleOp module, sim::SimDesignOp design,
+    semantic::SVRootSymbolOp semanticRoot,
+    const PreparedPortAliases &portAliases,
+    const PreparedScopeDeclarations &scopes,
+    const PreparedClassDeclarations &classes, uint64_t designPrecisionFs,
+    bool preserveVPIMethodBindings, bool preserveVPIBoxBindings,
+    PreparedProceduralTypes &proceduralTypes,
+    llvm::DenseMap<Operation *, FlatSymbolRefAttr> &primitiveTerminals,
+    OpBuilder &builder) {
   OpBuilder::InsertionGuard insertionGuard(builder);
   builder.setInsertionPointToEnd(&design.getBody().front());
   llvm::StringMap<DescriptorInfo> descriptors;
@@ -944,6 +968,20 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
                     name == "rtranif1";
     return isSwitch ? VPIKind::Switch : VPIKind::Gate;
   };
+  auto primitiveTerminalDirection =
+      [](semantic::SVPrimitiveInstanceSymbolOp primitive, size_t index,
+         Operation *terminal) {
+        auto name = primitive->getAttrOfType<StringAttr>("primitive_name");
+        StringRef spelling = name ? name.getValue() : StringRef{};
+        bool bidirectional = spelling == "tran" || spelling == "rtran" ||
+                             spelling == "tranif0" || spelling == "tranif1" ||
+                             spelling == "rtranif0" || spelling == "rtranif1";
+        if (bidirectional && index < 2)
+          return uint32_t{3}; // vpiInout
+        return isa<semantic::SVAssignmentExpressionOp>(terminal)
+                   ? uint32_t{2}
+                   : uint32_t{1}; // vpiOutput / vpiInput
+      };
   auto instanceLeafKind = [&](Operation *leaf) -> std::optional<VPIKind> {
     if (auto primitive =
             dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(leaf)) {
@@ -1220,10 +1258,18 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   });
   auto sourceAnchorKind = [&](Operation *operation) -> std::optional<VPIKind> {
     if (!isa<semantic::SVCompilationUnitSymbolOp, semantic::SVPackageSymbolOp,
-             semantic::SVClassTypeOp, semantic::SVSubroutineSymbolOp,
-             semantic::SVPropertySymbolOp, semantic::SVSequenceSymbolOp,
-             semantic::SVClockingBlockSymbolOp, semantic::SVVariableSymbolOp,
-             semantic::SVParameterSymbolOp, semantic::SVInstanceArraySymbolOp,
+             semantic::SVClassTypeOp, semantic::SVGenericClassDefSymbolOp,
+             semantic::SVSourceClassDefinitionSymbolOp,
+             semantic::SVSubroutineSymbolOp,
+             semantic::SVSourceClassMethodSymbolOp,
+             semantic::SVSourceClassConstraintSymbolOp,
+             semantic::SVConstraintBlockSymbolOp, semantic::SVPropertySymbolOp,
+             semantic::SVSequenceSymbolOp, semantic::SVClockingBlockSymbolOp,
+             semantic::SVModportSymbolOp, semantic::SVVariableSymbolOp,
+             semantic::SVParameterSymbolOp, semantic::SVTypeParameterSymbolOp,
+             semantic::SVSourceTypeParameterSymbolOp,
+             semantic::SVSourceValueParameterSymbolOp,
+             semantic::SVInstanceArraySymbolOp,
              semantic::SVGenerateBlockArraySymbolOp,
              semantic::SVPrimitiveInstanceSymbolOp,
              semantic::SVGenerateBlockSymbolOp,
@@ -1244,39 +1290,120 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     if (isa<semantic::SVCompilationUnitSymbolOp, semantic::SVPackageSymbolOp>(
             operation))
       return VPIKind::Package;
-    if (auto parameter = dyn_cast<semantic::SVParameterSymbolOp>(operation)) {
-      // Package and compilation-unit parameters are one elaborated immutable
-      // declaration. Instance parameters require definition/specialization
-      // sharing and are intentionally emitted by a later producer rather than
-      // duplicated per elaborated body. This first production slice supports
-      // every fixed packed value, including arbitrary-width four-state data.
-      Operation *owner = parameter->getParentOp();
+    if (auto method =
+            dyn_cast<semantic::SVSourceClassMethodSymbolOp>(operation))
+      return method.getSubroutineKind() == semantic::SVSubroutineKind::Task
+                 ? VPIKind::Task
+                 : VPIKind::Function;
+    if (isa<semantic::SVSourceClassConstraintSymbolOp>(operation))
+      return VPIKind::Constraint;
+    if (isa<semantic::SVSourceTypeParameterSymbolOp,
+            semantic::SVSourceValueParameterSymbolOp>(operation)) {
+      Operation *owner = operation->getParentOp();
+      if (!isa_and_nonnull<semantic::SVGenericClassDefSymbolOp,
+                           semantic::SVSourceClassDefinitionSymbolOp>(owner))
+        return std::nullopt;
+      if (auto package =
+              dyn_cast<semantic::SVPackageSymbolOp>(owner->getParentOp());
+          package && getDebugName(package) == "std" &&
+          (getDebugName(owner) == "mailbox" ||
+           getDebugName(owner) == "semaphore" ||
+           getDebugName(owner) == "process"))
+        return std::nullopt;
+      return isa<semantic::SVSourceTypeParameterSymbolOp>(operation)
+                 ? VPIKind::TypeParameter
+                 : VPIKind::Parameter;
+    }
+    if (isa<semantic::SVParameterSymbolOp, semantic::SVTypeParameterSymbolOp>(
+            operation)) {
+      // Package, generate-scope, and class parameters are immutable
+      // declarations. Class specializations retain their own resolved
+      // type/value; a generic definition must not borrow one specialization's
+      // parameter payload.
+      Operation *owner = operation->getParentOp();
       while (
           owner &&
           !isa<semantic::SVCompilationUnitSymbolOp, semantic::SVPackageSymbolOp,
-               semantic::SVClassTypeOp, semantic::SVInstanceBodySymbolOp>(
-              owner))
+               semantic::SVClassTypeOp, semantic::SVGenerateBlockSymbolOp,
+               semantic::SVInstanceBodySymbolOp>(owner))
         owner = owner->getParentOp();
       if (!isa_and_nonnull<semantic::SVCompilationUnitSymbolOp,
-                           semantic::SVPackageSymbolOp>(owner))
+                           semantic::SVPackageSymbolOp, semantic::SVClassTypeOp,
+                           semantic::SVGenerateBlockSymbolOp>(owner))
         return std::nullopt;
-      FailureOr<Type> normalized = getNormalizedSemanticType(parameter);
+      // An implicit genvar localparam is already an ordinary ParameterSymbol
+      // of its elaborated generate block (27.4). Preserve that exact scope;
+      // an inactive branch must never hoist its declarations into the parent.
+      for (Operation *ancestor = owner; ancestor;
+           ancestor = ancestor->getParentOp())
+        if (isa<semantic::SVGenerateBlockSymbolOp>(ancestor))
+          if (auto uninstantiated =
+                  ancestor->getAttrOfType<BoolAttr>("is_uninstantiated");
+              uninstantiated && uninstantiated.getValue())
+            return std::nullopt;
+      if (auto classType = dyn_cast<semantic::SVClassTypeOp>(owner);
+          classType && (classType.getIsUninstantiated() ||
+                        !classes.symbols.count(classType)))
+        return std::nullopt;
+      if (isa<semantic::SVTypeParameterSymbolOp>(operation))
+        return VPIKind::TypeParameter;
+      FailureOr<Type> normalized = getNormalizedSemanticType(operation);
       if (failed(normalized) || !sim::getPackedScalarType(*normalized))
         return std::nullopt;
       return VPIKind::Parameter;
     }
-    if (isa<semantic::SVClassTypeOp>(operation))
+    // Builtin classes have typespecs but no lexical class definitions
+    // (37.32 detail 13). Match the standard package and its declarations,
+    // using the same source identity as builtin type normalization.
+    if (isa<semantic::SVGenericClassDefSymbolOp, semantic::SVClassTypeOp>(
+            operation))
+      if (auto package =
+              dyn_cast<semantic::SVPackageSymbolOp>(operation->getParentOp());
+          package && getDebugName(package) == "std") {
+        StringRef name = getDebugName(operation);
+        if (name == "semaphore" || name == "mailbox" || name == "process")
+          return std::nullopt;
+      }
+    if (auto generic = dyn_cast<semantic::SVGenericClassDefSymbolOp>(operation))
+      return generic.getLexicalDefinitionAttr()
+                 ? std::nullopt
+                 : std::optional(VPIKind::ClassDefn);
+    if (isa<semantic::SVSourceClassDefinitionSymbolOp>(operation))
       return VPIKind::ClassDefn;
-    if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(operation))
+    if (auto classType = dyn_cast<semantic::SVClassTypeOp>(operation)) {
+      // A generic declaration has one lexical class definition. Its
+      // elaborated class types are specializations of that definition, not
+      // additional source declarations (IEEE 1800-2023 37.32).
+      if (isa<semantic::SVGenericClassDefSymbolOp>(classType->getParentOp()) ||
+          classType.getLexicalDefinitionAttr() ||
+          classType.getIsUninstantiated())
+        return std::nullopt;
+      return VPIKind::ClassDefn;
+    }
+    if (isa<semantic::SVConstraintBlockSymbolOp>(operation)) {
+      // Only declarations directly owned by this class belong to its
+      // constraint inventory. Inherited constraints are reached through
+      // extends, and inline randomize constraints have no declaration here.
+      auto owner = dyn_cast<semantic::SVClassTypeOp>(operation->getParentOp());
+      if (!owner || owner.getIsUninstantiated() || !classes.symbols.count(owner))
+        return std::nullopt;
+      return VPIKind::Constraint;
+    }
+    if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(operation)) {
+      if (subroutine.getIsBuiltin().value_or(false))
+        return std::nullopt;
       return subroutine.getSubroutineKind() == semantic::SVSubroutineKind::Task
                  ? VPIKind::Task
                  : VPIKind::Function;
+    }
     if (isa<semantic::SVPropertySymbolOp>(operation))
       return VPIKind::PropertyDecl;
     if (isa<semantic::SVSequenceSymbolOp>(operation))
       return VPIKind::SequenceDecl;
     if (isa<semantic::SVClockingBlockSymbolOp>(operation))
       return VPIKind::ClockingBlock;
+    if (isa<semantic::SVModportSymbolOp>(operation))
+      return VPIKind::Modport;
     if (isa<semantic::SVVariableSymbolOp>(operation)) {
       if (namedEventArrayRanges.count(operation))
         return VPIKind::NamedEventArray;
@@ -1340,8 +1467,23 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     anchorKinds[operation] = *kind;
   });
   llvm::DenseMap<Operation *, FlatSymbolRefAttr> anchorSymbols;
+  llvm::StringMap<FlatSymbolRefAttr> builtinPrimitiveDefinitions;
   llvm::DenseMap<Operation *, uint64_t> anchorInventoryIds;
   llvm::DenseMap<Operation *, sim::SimVPIObjectAnchorOp> anchorDeclarations;
+  llvm::DenseMap<Operation *, SmallVector<sim::SimVPIObjectAnchorOp>>
+      parameterViews;
+  SmallVector<Operation *> parameterViewSources;
+  auto addParameterView = [&](Operation *source,
+                              sim::SimVPIObjectAnchorOp view) {
+    auto [entry, inserted] = parameterViews.try_emplace(source);
+    if (inserted)
+      parameterViewSources.push_back(source);
+    entry->second.push_back(view);
+    for (Operation *child : getChildren(source))
+      if (auto unavailable =
+              dyn_cast<semantic::SVSourceUnsupportedDefaultOp>(child))
+        view.setUnavailableDefaultAttr(unavailable.getSyntaxAttr());
+  };
   // Parameter payloads read only the frozen semantic inventory and construct
   // immutable attributes. Keep this work off the serial declaration path:
   // workers own separate result slots and never mutate IR or symbol tables.
@@ -1353,7 +1495,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   SmallVector<ParameterPayload> parameterPayloads(anchorSources.size());
   SmallVector<size_t> parameterIndices;
   for (auto [index, source] : llvm::enumerate(anchorSources))
-    if (isa<semantic::SVParameterSymbolOp>(source))
+    if (isa<semantic::SVParameterSymbolOp,
+            semantic::SVTypeParameterSymbolOp>(source))
       parameterIndices.push_back(index);
   if (failed(failableParallelForEach(
           module.getContext(), parameterIndices, [&](size_t index) {
@@ -1367,11 +1510,17 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
             FailureOr<sim::VPITypeSemanticsAttr> converted =
                 makeVPITypeSemantics(semanticType.getValue(),
                                      getSemanticLocation(source), {}, source);
-            FailureOr<sim::FrozenConstantAttr> frozen =
-                freezeSemanticConstant(source);
-            if (failed(converted) || failed(frozen))
+            if (failed(converted))
               return failure();
-            parameterPayloads[index] = {*converted, *frozen};
+            sim::FrozenConstantAttr value;
+            if (isa<semantic::SVParameterSymbolOp>(source)) {
+              FailureOr<sim::FrozenConstantAttr> frozen =
+                  freezeSemanticConstant(source);
+              if (failed(frozen))
+                return failure();
+              value = *frozen;
+            }
+            parameterPayloads[index] = {*converted, value};
             return success();
           })))
     return failure();
@@ -1383,9 +1532,81 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         FlatSymbolRefAttr::get(builder.getContext(), symbolName);
     anchorInventoryIds[source] = inventoryId;
   }
+  llvm::DenseMap<Operation *, FlatSymbolRefAttr> classTypespecSymbols;
+  llvm::DenseMap<Operation *, FlatSymbolRefAttr> classDefinitionSymbols;
+  SymbolTableCollection lexicalClassSymbols;
+  auto hasSeparateLexicalClass = [](semantic::SVClassTypeOp classType) {
+    return classType.getLexicalDefinitionAttr() ||
+           isa<semantic::SVGenericClassDefSymbolOp>(classType->getParentOp());
+  };
+  for (semantic::SVClassTypeOp classType : classes.sources) {
+    StringAttr runtimeSymbol = classes.symbols.lookup(classType);
+    classTypespecSymbols[classType] = FlatSymbolRefAttr::get(
+        builder.getContext(),
+        (runtimeSymbol.getValue() + "_vpi_typespec").str());
+    Operation *definition = classType;
+    if (auto reference = classType.getLexicalDefinitionAttr())
+      definition = lexicalClassSymbols.lookupSymbolIn(module, reference);
+    else if (isa<semantic::SVGenericClassDefSymbolOp>(classType->getParentOp()))
+      definition = classType->getParentOp();
+    classDefinitionSymbols[classType] = anchorSymbols.lookup(definition);
+  }
+  auto driverProperties = [&](Operation *source) -> sim::VPIPropertySetAttr {
+    int32_t defaultStrength = 0;
+    std::optional<semantic::SVDriveStrength> strength0, strength1;
+    bool ignore0 = false, ignore1 = false;
+    if (auto assignment =
+            dyn_cast<semantic::SVContinuousAssignSymbolOp>(source)) {
+      defaultStrength = 64; // IEEE 10.3: strong0 and strong1.
+      strength0 = assignment.getDriveStrength0();
+      strength1 = assignment.getDriveStrength1();
+    } else if (auto net = dyn_cast<semantic::SVNetSymbolOp>(source)) {
+      defaultStrength = 64; // A net declaration assignment is continuous.
+      strength0 = net.getDriveStrength0();
+      strength1 = net.getDriveStrength1();
+    } else if (auto primitive =
+                   dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(source)) {
+      if (primitive->hasAttr("udp_metadata"))
+        return {};
+      auto name = primitive->getAttrOfType<StringAttr>("primitive_name");
+      const auto *subtype = name ? reflection::findVPIBuiltinPrimitive(
+                                       std::string_view(name.getValue()))
+                                 : nullptr;
+      if (!subtype || !subtype->defaultDriveStrength)
+        return {};
+      defaultStrength = subtype->defaultDriveStrength;
+      strength0 = primitive.getDriveStrength0();
+      strength1 = primitive.getDriveStrength1();
+      // IEEE 28.10 ignores the unused pull-source polarity. Keep the same
+      // canonical pull value as executable driver lowering for that polarity.
+      ignore0 = subtype->value == 25;
+      ignore1 = subtype->value == 26;
+    } else {
+      return {};
+    }
+    SmallVector<Attribute> properties;
+    auto add = [&](uint32_t selector,
+                   std::optional<semantic::SVDriveStrength> strength,
+                   bool ignored) {
+      if (ignored || !strength ||
+          vpiDriveStrength(*strength) == defaultStrength)
+        return;
+      properties.push_back(sim::VPIPropertyAttr::get(
+          builder.getContext(), builder.getI32IntegerAttr(selector),
+          builder.getI32IntegerAttr(vpiDriveStrength(*strength))));
+    };
+    add(31, strength0, ignore0);
+    add(32, strength1, ignore1);
+    if (properties.empty())
+      return {};
+    return sim::VPIPropertySetAttr::get(builder.getContext(),
+                                        builder.getArrayAttr(properties));
+  };
   llvm::DenseMap<Operation *, uint64_t> nextAnchorOrdinal;
   auto identityProperties = [&](Operation *source, VPIKind sourceKind) {
     SmallVector<Attribute> properties;
+    if (auto strengths = driverProperties(source))
+      llvm::append_range(properties, strengths.getProperties());
     auto addBoolean = [&](uint32_t selector, bool value) {
       if (!value)
         return;
@@ -1417,11 +1638,75 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(source))
       isAutomatic = subroutine.getDefaultLifetime() ==
                     semantic::SVVariableLifetime::Automatic;
+    if (auto method = dyn_cast<semantic::SVSourceClassMethodSymbolOp>(source))
+      isAutomatic = method.getDefaultLifetime() ==
+                    semantic::SVVariableLifetime::Automatic;
     // Named event anchors preserve the declaration lifetime even when no
     // activation frame currently exists.
     if (auto variable = dyn_cast<semantic::SVVariableSymbolOp>(source))
       isAutomatic = variable.getLifetime() ==
                     semantic::SVVariableLifetime::Automatic;
+    auto addMethodProperties = [&](semantic::SVVisibility visibility,
+                                   bool isMethod) {
+      int32_t value = 1; // vpiPublicVis
+      switch (visibility) {
+      case semantic::SVVisibility::Public:
+        break;
+      case semantic::SVVisibility::Protected:
+        value = 2;
+        break;
+      case semantic::SVVisibility::Local:
+        value = 3;
+        break;
+      }
+      properties.push_back(sim::VPIPropertyAttr::get(
+          builder.getContext(), builder.getI32IntegerAttr(620),
+          builder.getI32IntegerAttr(value)));
+      addBoolean(645, isMethod);
+    };
+    if (auto definition =
+            dyn_cast<semantic::SVSourceClassDefinitionSymbolOp>(source))
+      properties.push_back(sim::VPIPropertyAttr::get(
+          builder.getContext(), builder.getI32IntegerAttr(635),
+          builder.getBoolAttr(definition.getIsAbstract())));
+    if (auto method = dyn_cast<semantic::SVSourceClassMethodSymbolOp>(source)) {
+      addMethodProperties(method.getMemberVisibility(), true);
+      BoolAttr virtuality = method.getSourceVirtualityAttr();
+      if (!virtuality &&
+          (method.getIsDeclaredVirtualAttr() || method.getIsPureAttr()))
+        virtuality = builder.getBoolAttr(true);
+      if (!virtuality &&
+          (method.getIsStaticAttr() || method.getIsConstructorAttr()))
+        virtuality = builder.getBoolAttr(false);
+      if (virtuality)
+        properties.push_back(sim::VPIPropertyAttr::get(
+            builder.getContext(), builder.getI32IntegerAttr(635), virtuality));
+    }
+    if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(source)) {
+      addMethodProperties(subroutine.getMemberVisibility(),
+                          isa<semantic::SVClassTypeOp>(source->getParentOp()));
+      properties.push_back(sim::VPIPropertyAttr::get(
+          builder.getContext(), builder.getI32IntegerAttr(635),
+          builder.getBoolAttr(
+              static_cast<bool>(subroutine.getIsVirtualAttr()))));
+      // IEEE 37.41 detail 6 defines these exact DPI access modes. Ordinary
+      // extern class prototypes are not interface tf declarations.
+      int32_t access = subroutine.getDpiExportCIdentifierAttr() ? 3
+                       : subroutine.getIsDpiImportAttr()        ? 4
+                                                                : 0;
+      if (access)
+        properties.push_back(sim::VPIPropertyAttr::get(
+            builder.getContext(), builder.getI32IntegerAttr(604),
+            builder.getI32IntegerAttr(access)));
+    }
+    if (auto parameter =
+            dyn_cast<semantic::SVSourceValueParameterSymbolOp>(source))
+      addBoolean(70, static_cast<bool>(parameter.getIsLocalParamAttr()));
+    if (auto constraint = dyn_cast<semantic::SVConstraintBlockSymbolOp>(source))
+      isAutomatic = !constraint.getIsStatic().value_or(false);
+    if (auto constraint =
+            dyn_cast<semantic::SVSourceClassConstraintSymbolOp>(source))
+      isAutomatic = !constraint.getIsStaticAttr();
     if (sourceKind == VPIKind::Module) {
       addBoolean(7, top);                     // vpiTopModule
       addBoolean(8, cell && cell.getValue()); // vpiCellInstance
@@ -1452,11 +1737,34 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     addBoolean(50, isAutomatic);  // vpiAutomatic
     if (auto parameter = dyn_cast<semantic::SVParameterSymbolOp>(source))
       addBoolean(70, static_cast<bool>(parameter.getIsLocalParamAttr()));
+    if (auto parameter = dyn_cast<semantic::SVTypeParameterSymbolOp>(source))
+      addBoolean(70, static_cast<bool>(parameter.getIsLocalParamAttr()));
+    if (auto parameter =
+            dyn_cast<semantic::SVSourceTypeParameterSymbolOp>(source))
+      addBoolean(70, static_cast<bool>(parameter.getIsLocalParamAttr()));
+    if (auto constraint = dyn_cast<semantic::SVConstraintBlockSymbolOp>(source))
+      properties.push_back(sim::VPIPropertyAttr::get(
+          builder.getContext(), builder.getI32IntegerAttr(604), // vpiAccessType
+          builder.getI32IntegerAttr(constraint.getOutOfBlockIndex() != 0
+                                       ? 2  // vpiExternAcc
+                                       : 0)));
+    if (auto constraint =
+            dyn_cast<semantic::SVSourceClassConstraintSymbolOp>(source))
+      properties.push_back(sim::VPIPropertyAttr::get(
+          builder.getContext(), builder.getI32IntegerAttr(604),
+          builder.getI32IntegerAttr(
+              constraint.getHasExternalDefinition() ? 2 : 0)));
+    if (sourceKind == VPIKind::Constraint)
+      addString(2, builder.getStringAttr(getDebugName(source)));
     addBoolean(600, top); // vpiTop
     addBoolean(602, isa<semantic::SVCompilationUnitSymbolOp>(source));
 
     if (properties.empty())
       return sim::VPIPropertySetAttr{};
+    llvm::sort(properties, [](Attribute lhs, Attribute rhs) {
+      return cast<sim::VPIPropertyAttr>(lhs).getSelector().getInt() <
+             cast<sim::VPIPropertyAttr>(rhs).getSelector().getInt();
+    });
     return sim::VPIPropertySetAttr::get(builder.getContext(),
                                         builder.getArrayAttr(properties));
   };
@@ -1553,24 +1861,9 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     addInteger(27, chargeStrength); // vpiChargeStrength
     bool declarationAssignment = !getNetInitializerExpressions(net).empty();
     if (declarationAssignment) {
-      auto driveStrength = [](semantic::SVDriveStrength strength) -> int32_t {
-        switch (strength) {
-        case semantic::SVDriveStrength::Supply:
-          return 0x80; // vpiSupplyDrive
-        case semantic::SVDriveStrength::Strong:
-          return 0x40; // vpiStrongDrive
-        case semantic::SVDriveStrength::Pull:
-          return 0x20; // vpiPullDrive
-        case semantic::SVDriveStrength::Weak:
-          return 0x08; // vpiWeakDrive
-        case semantic::SVDriveStrength::HighZ:
-          return 0x01; // vpiHiZ
-        }
-        llvm_unreachable("unknown SystemVerilog drive strength");
-      };
-      addInteger(31, driveStrength(net.getDriveStrength0().value_or(
+      addInteger(31, vpiDriveStrength(net.getDriveStrength0().value_or(
                          semantic::SVDriveStrength::Strong)));
-      addInteger(32, driveStrength(net.getDriveStrength1().value_or(
+      addInteger(32, vpiDriveStrength(net.getDriveStrength1().value_or(
                          semantic::SVDriveStrength::Strong)));
     }
     addBoolean(43, declarationAssignment);
@@ -1580,9 +1873,12 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   };
   for (auto [inventoryId, source] : llvm::enumerate(anchorSources)) {
     Operation *parent = source->getParentOp();
-    while (parent && !anchorSymbols.count(parent))
+    while (parent && !anchorSymbols.count(parent) &&
+           !classTypespecSymbols.count(parent))
       parent = parent->getParentOp();
     FlatSymbolRefAttr parentSymbol = anchorSymbols.lookup(parent);
+    if (!parentSymbol)
+      parentSymbol = classTypespecSymbols.lookup(parent);
     uint64_t ordinal = nextAnchorOrdinal[parent]++;
     uint64_t scopeId = scopes.lookup(source);
 
@@ -1667,16 +1963,19 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     UnitAttr hasExplicitParameterRange;
     if (isa<semantic::SVPrimitiveInstanceSymbolOp>(source)) {
       SmallVector<Operation *> terminals = getChildren(source);
-      uint64_t count = llvm::count_if(terminals, [](Operation *terminal) {
-        return !isa<semantic::SVAssignmentExpressionOp>(terminal);
-      });
+      auto primitive = cast<semantic::SVPrimitiveInstanceSymbolOp>(source);
+      uint64_t count = 0;
+      for (auto [index, terminal] : llvm::enumerate(terminals))
+        count += primitiveTerminalDirection(primitive, index, terminal) == 1;
       primitiveInputCount = builder.getI64IntegerAttr(count);
     }
-    if (auto parameter = dyn_cast<semantic::SVParameterSymbolOp>(source)) {
+    if (isa<semantic::SVParameterSymbolOp,
+            semantic::SVTypeParameterSymbolOp>(source)) {
       anchorVPIType = parameterPayloads[inventoryId].type;
       immutableValue = parameterPayloads[inventoryId].value;
-      if (parameter.getHasExplicitRangeAttr())
-        hasExplicitParameterRange = builder.getUnitAttr();
+      if (auto parameter = dyn_cast<semantic::SVParameterSymbolOp>(source))
+        if (parameter.getHasExplicitRangeAttr())
+          hasExplicitParameterRange = builder.getUnitAttr();
     }
     sim::SimVPIObjectAnchorOp anchor = sim::SimVPIObjectAnchorOp::create(
         builder, getSemanticLocation(source),
@@ -1690,8 +1989,51 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         memberIndices.empty() ? DenseI64ArrayAttr{}
                               : builder.getDenseI64ArrayAttr(memberIndices),
         primitiveInputCount, anchorVPIType, immutableValue,
-        hasExplicitParameterRange);
+        hasExplicitParameterRange,
+        preserveVPIMethodBindings ? classes.methodSymbols.lookup(source)
+                                  : FlatSymbolRefAttr{},
+        UnitAttr{}, StringAttr{}, UnitAttr{});
+    if (auto primitive =
+            dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(source);
+        primitive && !primitive->hasAttr("udp_metadata")) {
+      auto name = primitive->getAttrOfType<StringAttr>("primitive_name");
+      const auto *subtype = name ? reflection::findVPIBuiltinPrimitive(
+                                       std::string_view(name.getValue()))
+                                 : nullptr;
+      if (!subtype || subtype->objectKind != anchor.getVpiKind()) {
+        primitive.emitOpError("has no exact built-in VPI primitive definition");
+        invalid = true;
+        continue;
+      }
+      auto &definition = builtinPrimitiveDefinitions[name.getValue()];
+      if (!definition) {
+        std::string symbol = (Twine("__obelisk_vpi_primitive_definition_") +
+                              Twine(subtype->value))
+                                 .str();
+        auto declared = sim::SimVPIDefinitionDeclOp::create(
+            builder, getSemanticLocation(source), symbol, subtype->objectKind,
+            name.getValue(), LocationAttr{},
+            builder.getI32IntegerAttr(subtype->value));
+        definition = FlatSymbolRefAttr::get(declared);
+      }
+      sim::SimVPIDefinitionBindingOp::create(
+          builder, getSemanticLocation(source), FlatSymbolRefAttr::get(anchor),
+          definition);
+    }
+    if (isa<semantic::SVSourceTypeParameterSymbolOp>(source))
+      anchor.setUnresolvedTypeParameterAttr(builder.getUnitAttr());
+    if (isa<semantic::SVSourceValueParameterSymbolOp>(source))
+      anchor.setUnresolvedValueParameterAttr(builder.getUnitAttr());
+    if (isa<semantic::SVSourceTypeParameterSymbolOp,
+            semantic::SVSourceValueParameterSymbolOp,
+            semantic::SVTypeParameterSymbolOp, semantic::SVParameterSymbolOp>(
+            source))
+      addParameterView(source, anchor);
     anchorDeclarations[source] = anchor;
+    if (anchorVPIType)
+      if (auto identity = source->getAttrOfType<IntegerAttr>(
+              vpiSourceTypeIdentityAttrName))
+        sim::set<sim::metadata::VpiSourceTypeIdentity>(anchor, identity);
     if (isa<semantic::SVPackageSymbolOp, semantic::SVCompilationUnitSymbolOp>(
             source))
       if (auto definitionLoc =
@@ -1707,10 +2049,79 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   // vpiPort connection objects emitted below. Preserve their invariant
   // identity once, then share effective type sets across all instances with
   // the same elaborated specialization.
+  // Source defaults belong to the declaration, independently of each instance's
+  // effective specialization. Normalize references to declaration positions
+  // before comparing instances; per-instance symbol spellings are not identity.
+  auto originalDefaultKey = [&](Operation *parameter) -> FailureOr<ArrayAttr> {
+    SmallVector<Operation *> pending;
+    for (Operation *child : getChildren(parameter))
+      if (isa<semantic::SVSourceParameterActualOp>(parameter) ||
+          isa<semantic::SVSourceValueDefaultOp, semantic::SVSourceTypeDefaultOp,
+              semantic::SVSourceTypeReferenceDefaultOp,
+              semantic::SVSourceUnsupportedDefaultOp>(child))
+        pending.push_back(child);
+    SmallVector<Attribute> nodes;
+    SymbolTableCollection symbols;
+    while (!pending.empty()) {
+      Operation *node = pending.pop_back_val();
+      NamedAttrList key;
+      key.set("kind", builder.getStringAttr(node->getName().getStringRef()));
+      if (isa<semantic::SVSourceParameterReferenceOp,
+              semantic::SVSourceTypeReferenceDefaultOp>(node)) {
+        auto reference = node->getAttrOfType<FlatSymbolRefAttr>("parameter");
+        Operation *target = symbols.lookupNearestSymbolFrom(node, reference);
+        if (!target || target->getParentOp() != parameter->getParentOp())
+          return node->emitError("original default requires an exact "
+                                 "same-definition parameter reference"),
+                 failure();
+        uint64_t ordinal = 0;
+        bool found = false;
+        for (Operation &sibling : parameter->getBlock()->getOperations()) {
+          if (!isa<semantic::SVParameterSymbolOp,
+                   semantic::SVTypeParameterSymbolOp>(sibling))
+            continue;
+          if (&sibling == target) {
+            found = true;
+            break;
+          }
+          ++ordinal;
+        }
+        if (!found)
+          return node->emitError("original default reference has no "
+                                 "declaration position"),
+                 failure();
+        key.set("parameter_ordinal", builder.getI64IntegerAttr(ordinal));
+      } else if (isa<semantic::SVIntegerLiteralOp>(node)) {
+        auto frozen = freezeSemanticConstant(node);
+        if (failed(frozen))
+          return failure();
+        key.set("value", *frozen);
+        key.set("semantic_type", node->getAttr("semantic_type"));
+      } else if (isa<semantic::SVSourceUnaryExpressionOp,
+                     semantic::SVSourceBinaryExpressionOp>(node)) {
+        key.set("operator_kind", node->getAttr("operator_kind"));
+      } else if (isa<semantic::SVSourceTypeDefaultOp>(node)) {
+        key.set("semantic_type", node->getAttr("semantic_type"));
+      } else if (isa<semantic::SVSourceUnsupportedDefaultOp>(node)) {
+        key.set("syntax", node->getAttr("syntax"));
+      }
+      auto children = getChildren(node);
+      key.set("operand_count", builder.getI64IntegerAttr(children.size()));
+      nodes.push_back(key.getDictionary(builder.getContext()));
+      for (Operation *child : llvm::reverse(children))
+        pending.push_back(child);
+    }
+    return builder.getArrayAttr(nodes);
+  };
   struct DefinitionMemberSignature {
     std::string name;
     Location location;
     sim::VPIIODirection direction = sim::VPIIODirection::Undefined;
+    VPIKind kind = VPIKind::IODecl;
+    bool localParam = false;
+    bool explicitRange = false;
+    bool unavailableDefault = false;
+    ArrayAttr originalDefault;
   };
   struct DefinitionMemberPlan {
     bool initialized = false;
@@ -1722,11 +2133,45 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     semantic::SVInstanceBodySymbolOp body;
     sim::SimScopeDeclOp scope;
     FlatSymbolRefAttr definition;
+    SmallVector<Operation *> members;
   };
   llvm::StringMap<DefinitionMemberPlan> definitionMemberPlans;
   SmallVector<DefinitionInstancePlan> definitionInstancePlans;
   uint64_t nextDefinitionMemberId = 0;
   uint64_t nextDefinitionSpecializationId = 0;
+  // The packed-value slice must not change declaration shape across instances
+  // when an untyped parameter specializes to an unsupported value category.
+  llvm::DenseMap<Attribute, llvm::DenseSet<uint64_t>> unsupportedParameters;
+  semanticRoot.walk<WalkOrder::PreOrder>(
+      [&](semantic::SVInstanceBodySymbolOp body) {
+        if (isCompileTimeOnlyInstanceMember(body))
+          return;
+        uint64_t scopeId = scopes.lookup(body);
+        if (scopeId >= scopes.declarations.size())
+          return;
+        sim::SimScopeDeclOp scope = scopes.declarations[scopeId];
+        auto definition = scope.getVpiDefinitionAttr();
+        if (!definition)
+          return;
+        uint64_t parameterOrdinal = 0;
+        for (Operation &child : body.getBody().front()) {
+          if (!isa<semantic::SVParameterSymbolOp,
+                   semantic::SVTypeParameterSymbolOp>(child))
+            continue;
+          if (isa<semantic::SVParameterSymbolOp>(child)) {
+            auto type = getNormalizedSemanticType(&child);
+            if (failed(type)) {
+              invalid = true;
+              return;
+            }
+            if (!sim::getPackedScalarType(*type))
+              unsupportedParameters[definition].insert(parameterOrdinal);
+          }
+          ++parameterOrdinal;
+        }
+      });
+  if (invalid)
+    return failure();
   semanticRoot.walk<WalkOrder::PreOrder>(
       [&](semantic::SVInstanceBodySymbolOp body) {
         if (isCompileTimeOnlyInstanceMember(body))
@@ -1736,14 +2181,39 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           return;
         sim::SimScopeDeclOp scope = scopes.declarations[scopeId];
         FlatSymbolRefAttr definition = scope.getVpiDefinitionAttr();
-        if (!definition || sim::vpiKindForScope(scope) !=
-                               static_cast<uint32_t>(VPIKind::Module))
+        uint32_t scopeKind = sim::vpiKindForScope(scope);
+        if (!definition ||
+            (scopeKind != static_cast<uint32_t>(VPIKind::Module) &&
+             scopeKind != static_cast<uint32_t>(VPIKind::Interface)))
           return;
 
         SmallVector<DefinitionMemberSignature> signatures;
+        SmallVector<Operation *> members;
+        uint64_t parameterOrdinal = 0;
         for (Operation &child : body.getBody().front()) {
-          sim::VPIIODirection direction = sim::VPIIODirection::Undefined;
-          if (auto port = dyn_cast<semantic::SVPortSymbolOp>(child)) {
+          DefinitionMemberSignature signature{{}, getSemanticLocation(&child)};
+          auto &direction = signature.direction;
+          if (isa<semantic::SVParameterSymbolOp,
+                  semantic::SVTypeParameterSymbolOp>(child)) {
+            signature.kind = isa<semantic::SVTypeParameterSymbolOp>(child)
+                                 ? VPIKind::TypeParameter
+                                 : VPIKind::Parameter;
+            uint64_t sourceOrdinal = parameterOrdinal++;
+            if (signature.kind == VPIKind::Parameter &&
+                unsupportedParameters[definition].contains(sourceOrdinal))
+              continue;
+            signature.localParam = child.hasAttr("is_local_param");
+            signature.explicitRange = child.hasAttr("has_explicit_range");
+            auto originalDefault = originalDefaultKey(&child);
+            if (failed(originalDefault)) {
+              invalid = true;
+              return;
+            }
+            signature.originalDefault = *originalDefault;
+            signature.unavailableDefault = !originalDefault->empty();
+          } else if (scopeKind != static_cast<uint32_t>(VPIKind::Module)) {
+            continue;
+          } else if (auto port = dyn_cast<semantic::SVPortSymbolOp>(child)) {
             switch (port.getDirection()) {
             case semantic::SVArgumentDirection::In:
               direction = sim::VPIIODirection::Input;
@@ -1773,8 +2243,10 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           // declarations in the source definition's VPI object graph.
           if (name.empty())
             continue;
-          signatures.push_back(
-              {name.str(), getSemanticLocation(&child), direction});
+          signature.name = name.str();
+          signature.location = getSemanticLocation(&child);
+          signatures.push_back(signature);
+          members.push_back(&child);
         }
 
         DefinitionMemberPlan &plan =
@@ -1790,40 +2262,57 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
                 builder, signature.location, builder.getStringAttr(symbol),
                 definition,
                 builder.getI32IntegerAttr(
-                    static_cast<uint32_t>(VPIKind::IODecl)),
+                    static_cast<uint32_t>(signature.kind)),
                 builder.getI32IntegerAttr(static_cast<uint32_t>(ordinal)),
                 builder.getStringAttr(signature.name),
-                sim::VPIIODirectionAttr::get(builder.getContext(),
-                                             signature.direction));
+                signature.kind == VPIKind::IODecl
+                    ? sim::VPIIODirectionAttr::get(builder.getContext(),
+                                                   signature.direction)
+                    : sim::VPIIODirectionAttr{},
+                signature.localParam ? builder.getUnitAttr() : UnitAttr{},
+                signature.explicitRange ? builder.getUnitAttr() : UnitAttr{},
+                signature.unavailableDefault ? builder.getUnitAttr()
+                                             : UnitAttr{},
+                UnitAttr{}, UnitAttr{}, UnitAttr{}, UnitAttr{}, UnitAttr{},
+                UnitAttr{});
             plan.memberSymbols.push_back(FlatSymbolRefAttr::get(declaration));
           }
         } else if (plan.signatures.size() != signatures.size()) {
           emitError(getSemanticLocation(body))
-              << "instances of one definition disagree on IO declaration "
+              << "instances of one definition disagree on declaration "
                  "count";
           invalid = true;
           return;
         } else {
           for (auto [expected, actual] :
                llvm::zip_equal(plan.signatures, signatures)) {
-            if (expected.name != actual.name ||
-                expected.direction != actual.direction) {
+            if (expected.name != actual.name || expected.kind != actual.kind ||
+                expected.direction != actual.direction ||
+                expected.localParam != actual.localParam ||
+                expected.explicitRange != actual.explicitRange ||
+                expected.unavailableDefault != actual.unavailableDefault ||
+                expected.originalDefault != actual.originalDefault) {
               emitError(getSemanticLocation(body))
-                  << "instances of one definition disagree on IO declaration "
+                  << "instances of one definition disagree on declaration "
                      "identity";
               invalid = true;
               return;
             }
           }
         }
-        if (!signatures.empty())
-          definitionInstancePlans.push_back({body, scope, definition});
+        if (!signatures.empty() ||
+            llvm::any_of(getChildren(body), [](Operation *child) {
+              return isa<semantic::SVSourceParameterActualOp>(child);
+            }))
+          definitionInstancePlans.push_back(
+              {body, scope, definition, std::move(members)});
       });
   if (invalid)
     return failure();
 
-  // Continuous assignments and net aliases are scope-owned VPI statement
-  // objects even though continuous assignments also have an internal
+  // Continuous assignments, including net declaration assignments, and net
+  // aliases are scope-owned VPI statement objects even though assignments have
+  // an internal
   // executable code unit. Preserve their source identity independently of
   // that executable representation. The generated traversal model decides
   // whether the exact lexical scope may expose each statement kind.
@@ -1855,9 +2344,16 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   semanticRoot->walk<WalkOrder::PreOrder>(
       [&](Operation *source) {
         VPIKind statementKind;
+        Operation *netInitializer = nullptr;
         if (isa<semantic::SVContinuousAssignSymbolOp>(source))
           statementKind = VPIKind::ContAssign;
-        else if (isa<semantic::SVNetAliasSymbolOp>(source))
+        else if (isa<semantic::SVNetSymbolOp>(source)) {
+          auto initializers = getNetInitializerExpressions(source);
+          if (initializers.size() != 1)
+            return;
+          statementKind = VPIKind::ContAssign;
+          netInitializer = initializers.front();
+        } else if (isa<semantic::SVNetAliasSymbolOp>(source))
           statementKind = VPIKind::AliasStmt;
         else
           return;
@@ -1913,13 +2409,26 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         for (size_t statement = 0; statement != statementCount; ++statement) {
           uint64_t statementId = nextStatementId++;
           uint64_t ordinal = nextStatementOrdinal[owner][selector]++;
-          sim::SimStatementDeclOp::create(builder, location, statementId,
-                                          IntegerAttr{}, scopes.lookup(source),
-                                          selector, IntegerAttr{}, StringAttr{},
-                                          UnitAttr{}, UnitAttr{});
+          auto declaration = sim::SimStatementDeclOp::create(
+              builder, location, statementId, IntegerAttr{},
+              scopes.lookup(source), selector, IntegerAttr{}, StringAttr{},
+              UnitAttr{}, UnitAttr{});
+          SmallVector<Attribute> properties;
+          if (auto strengths = driverProperties(source))
+            llvm::append_range(properties, strengths.getProperties());
+          if (netInitializer)
+            properties.push_back(sim::VPIPropertyAttr::get(
+                builder.getContext(), builder.getI32IntegerAttr(43),
+                builder.getBoolAttr(true))); // vpiNetDeclAssign
+          if (!properties.empty())
+            declaration->setAttr(
+                "vpi_properties",
+                sim::VPIPropertySetAttr::get(builder.getContext(),
+                                             builder.getArrayAttr(properties)));
           if (statementKind == VPIKind::ContAssign)
             scopeOwnedStatementPlans.push_back(
-                {source, statementId, scopes.lookup(source), statementKind});
+                {source, statementId, scopes.lookup(source), statementKind,
+                 nullptr, netInitializer});
           else
             scopeOwnedStatementPlans.push_back(
                 {source, statementId, scopes.lookup(source), statementKind,
@@ -1988,6 +2497,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           sim::VPIObjectBackingAttr{}, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
           DenseI64ArrayAttr{}, builder.getDenseI64ArrayAttr(indices),
           IntegerAttr{}, sim::VPITypeSemanticsAttr{}, sim::FrozenConstantAttr{},
+          UnitAttr{}, FlatSymbolRefAttr{}, UnitAttr{}, StringAttr{},
           UnitAttr{});
       if (sim::VPIPropertySetAttr properties =
               identityProperties(source, VPIKind::NamedEvent))
@@ -1998,11 +2508,22 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     for (Operation *cursor = member; cursor; cursor = cursor->getParentOp()) {
       if (FlatSymbolRefAttr anchor = anchorSymbols.lookup(cursor))
         return anchor;
+      if (FlatSymbolRefAttr typespec = classTypespecSymbols.lookup(cursor))
+        return typespec;
       if (isa<semantic::SVStatementBlockSymbolOp>(cursor))
         return {};
     }
     return {};
   };
+  auto proceduralOwnerFor = [&](Operation *member) -> Operation * {
+    if (ownerAnchorFor(member))
+      return nullptr;
+    for (Operation *cursor = member; cursor; cursor = cursor->getParentOp())
+      if (isa<semantic::SVStatementBlockSymbolOp>(cursor))
+        return cursor;
+    return nullptr;
+  };
+  llvm::DenseSet<Attribute> pendingTypespecSymbols;
   semanticRoot->walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (isCompileTimeOnlyInstanceMember(op))
       return;
@@ -2220,6 +2741,23 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     return *layers;
   };
 
+  // Parameter payloads are prepared before typedef symbols are inventoried.
+  // Complete their declared type now so vpiTypespec preserves alias identity.
+  for (size_t index : parameterIndices) {
+    Operation *source = anchorSources[index];
+    if (!source->hasAttr(vpiTypedefLayersAttrName))
+      continue;
+    auto semanticType = source->getAttrOfType<TypeAttr>("semantic_type");
+    auto converted = makeVPITypeSemantics(
+        semanticType.getValue(), getSemanticLocation(source),
+        typedefLayersFor(source), source);
+    if (failed(converted)) {
+      invalid = true;
+      continue;
+    }
+    anchorDeclarations.lookup(source).setVpiTypeAttr(*converted);
+  }
+
   llvm::DenseMap<Attribute, semantic::SVPortConnectionOp>
       connectionsByFormalSymbol;
   for (semantic::SVPortConnectionOp connection : portAliases.connections)
@@ -2232,17 +2770,13 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   // type vector here into one specialization shared by equivalent instances.
   for (DefinitionInstancePlan &instance : definitionInstancePlans) {
     SmallVector<sim::VPITypeSemanticsAttr> effectiveTypes;
+    SmallVector<sim::FrozenConstantAttr> effectiveValues;
     SmallVector<Operation *> memberSources;
     effectiveTypes.reserve(definitionMemberPlans[instance.definition.getValue()]
                                .signatures.size());
     memberSources.reserve(definitionMemberPlans[instance.definition.getValue()]
                               .signatures.size());
-    for (Operation &child : instance.body.getBody().front()) {
-      if (!isa<semantic::SVPortSymbolOp, semantic::SVInterfacePortSymbolOp>(
-              child) ||
-          getDebugName(&child).empty())
-        continue;
-      Operation *member = &child;
+    for (Operation *member : instance.members) {
       sim::VPITypeSemanticsAttr effectiveType;
       if (auto semanticType =
               member->getAttrOfType<TypeAttr>("semantic_type")) {
@@ -2273,11 +2807,21 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
       }
       if (!effectiveType) {
         emitError(getSemanticLocation(member))
-            << "VPI IO declaration is missing semantic type metadata";
+            << "VPI definition member is missing semantic type metadata";
         invalid = true;
         break;
       }
+      sim::FrozenConstantAttr value;
+      if (isa<semantic::SVParameterSymbolOp>(member)) {
+        auto frozen = freezeSemanticConstant(member);
+        if (failed(frozen)) {
+          invalid = true;
+          break;
+        }
+        value = *frozen;
+      }
       effectiveTypes.push_back(effectiveType);
+      effectiveValues.push_back(value);
       memberSources.push_back(member);
     }
     if (invalid)
@@ -2286,9 +2830,13 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     DefinitionMemberPlan &plan =
         definitionMemberPlans[instance.definition.getValue()];
     SmallVector<Attribute> keyElements;
-    keyElements.reserve(effectiveTypes.size());
-    for (sim::VPITypeSemanticsAttr type : effectiveTypes)
+    keyElements.reserve(effectiveTypes.size() * 2);
+    for (auto [type, value] :
+         llvm::zip_equal(effectiveTypes, effectiveValues)) {
       keyElements.push_back(type);
+      keyElements.push_back(value ? Attribute(value)
+                                  : Attribute(builder.getUnitAttr()));
+    }
     ArrayAttr key = builder.getArrayAttr(keyElements);
     FlatSymbolRefAttr specialization = plan.specializations.lookup(key);
     if (!specialization) {
@@ -2300,20 +2848,388 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           builder.getStringAttr(symbol), instance.definition);
       specialization = FlatSymbolRefAttr::get(declaration);
       plan.specializations.try_emplace(key, specialization);
-      for (auto [member, type, source] :
-           llvm::zip_equal(plan.memberSymbols, effectiveTypes, memberSources)) {
+      for (auto [member, type, value, source] :
+           llvm::zip_equal(plan.memberSymbols, effectiveTypes, effectiveValues,
+                           memberSources)) {
         auto binding = sim::SimVPIDefinitionMemberSpecializationOp::create(
             builder, getSemanticLocation(instance.body), specialization, member,
-            type);
+            type, value);
         if (auto identity = source->getAttrOfType<IntegerAttr>(
                 vpiSourceTypeIdentityAttrName))
           sim::set<sim::metadata::VpiSourceTypeIdentity>(binding, identity);
       }
     }
     instance.scope.setVpiSpecializationAttr(specialization);
+    for (auto [source, member] :
+         llvm::zip_equal(instance.members, plan.memberSymbols))
+      if (isa<semantic::SVParameterSymbolOp, semantic::SVTypeParameterSymbolOp>(
+              source))
+        sim::set<sim::metadata::VpiDefinitionMember>(
+            source,
+            sim::VPIObjectRefAttr::get(builder.getContext(),
+                                       sim::VPIObjectRefKind::DefinitionMember,
+                                       instance.scope.getIdAttr(), member));
   }
   if (invalid)
     return failure();
+
+  // Preserve each definition's original defaults once. All effective
+  // instances were compared above; no selected specialization supplies syntax.
+  DenseSet<Attribute> defaultsMaterialized;
+  uint64_t nextSharedExpressionId = 0;
+  for (auto expression : design.getOps<sim::SimVPIExpressionDeclOp>())
+    nextSharedExpressionId =
+        std::max(nextSharedExpressionId, uint64_t(expression.getId()) + 1);
+  SymbolTableCollection defaultSymbols;
+  auto materializeOriginalValue =
+      [&](Operation *original, sim::SimVPIDefinitionMemberDeclOp member,
+          ArrayRef<Operation *> sourceMembers,
+          ArrayRef<FlatSymbolRefAttr> memberSymbols, size_t leafLimit,
+          reflection::VPIRelationKind rootSelector) -> LogicalResult {
+    struct DefaultNode {
+      Operation *source;
+      uint32_t parent;
+      uint32_t ordinal;
+      uint32_t code = 0;
+      FlatSymbolRefAttr reference;
+      sim::VPITypeSemanticsAttr semantic;
+      sim::FrozenConstantAttr frozen;
+    };
+    SmallVector<DefaultNode> nodes;
+    SmallVector<DefaultNode> pending{{original, UINT32_MAX, 0}};
+    bool supported = true;
+    while (!pending.empty()) {
+      DefaultNode node = pending.pop_back_val();
+      auto children = getChildren(node.source);
+      if (auto reference =
+              dyn_cast<semantic::SVSourceParameterReferenceOp>(node.source)) {
+        Operation *target = defaultSymbols.lookupNearestSymbolFrom(
+            reference, reference.getParameterAttr());
+        auto found = llvm::find(sourceMembers, target);
+        if (found == sourceMembers.end() ||
+            !isa_and_nonnull<semantic::SVParameterSymbolOp>(target) ||
+            size_t(found - sourceMembers.begin()) >= leafLimit ||
+            !children.empty()) {
+          supported = false;
+          break;
+        }
+        node.reference = memberSymbols[found - sourceMembers.begin()];
+      } else if (isa<semantic::SVIntegerLiteralOp>(node.source)) {
+        auto semantic = makeVPITypeSemantics(
+            node.source->getAttrOfType<TypeAttr>("semantic_type").getValue(),
+            getSemanticLocation(node.source), {}, node.source);
+        auto frozen = freezeSemanticConstant(node.source);
+        if (failed(semantic) || failed(frozen))
+          return failure();
+        node.semantic = *semantic;
+        node.frozen = *frozen;
+      } else {
+        const reflection::VPISourceOperatorDescriptor *operation = nullptr;
+        if (auto unary =
+                dyn_cast<semantic::SVSourceUnaryExpressionOp>(node.source)) {
+          auto name =
+              semantic::stringifySVUnaryOperator(unary.getOperatorKind());
+          operation = reflection::findVPISourceOperator(
+              std::string_view(name.data(), name.size()), 1);
+        } else if (auto binary = dyn_cast<semantic::SVSourceBinaryExpressionOp>(
+                       node.source)) {
+          auto name =
+              semantic::stringifySVBinaryOperator(binary.getOperatorKind());
+          operation = reflection::findVPISourceOperator(
+              std::string_view(name.data(), name.size()), 2);
+        } else if (isa<semantic::SVSourceConditionalExpressionOp>(node.source))
+          operation = reflection::findVPISourceOperator("conditional", 3);
+        if (!operation || children.size() != operation->arity) {
+          supported = false;
+          break;
+        }
+        node.code = operation->value;
+      }
+      if (nodes.size() >= UINT32_MAX)
+        return node.source->emitError("original default tree is too large"),
+               failure();
+      uint32_t parent = nodes.size();
+      nodes.push_back(node);
+      for (size_t ordinal = children.size(); ordinal != 0;)
+        pending.push_back({children[--ordinal], parent, uint32_t(ordinal)});
+    }
+    if (!supported)
+      return success();
+    SmallVector<uint64_t> ids(nodes.size(), 0);
+    for (auto [index, node] : llvm::enumerate(nodes)) {
+      if (node.reference)
+        continue;
+      for (;;) {
+        if (nextSharedExpressionId > uint64_t(INT64_MAX))
+          return node.source->emitError(
+                     "original default expression IDs exhausted"),
+                 failure();
+        ids[index] = nextSharedExpressionId++;
+        auto candidate = FlatSymbolRefAttr::get(
+            builder.getContext(),
+            "__obelisk_vpi_shared_default_" + std::to_string(ids[index]));
+        if (!defaultSymbols.lookupSymbolIn(design, candidate)) {
+          nodes[index].reference = candidate;
+          break;
+        }
+      }
+    }
+    if (member.getVpiKind() == uint32_t(VPIKind::ParamAssign)) {
+      member.removeUnavailableRhsAttr();
+      member.setHasOriginalRhsAttr(builder.getUnitAttr());
+    } else {
+      member.removeUnavailableDefaultAttr();
+      member.setHasOriginalDefaultAttr(builder.getUnitAttr());
+    }
+    for (auto [index, node] : llvm::enumerate(nodes)) {
+      auto owner = node.parent == UINT32_MAX ? FlatSymbolRefAttr::get(member)
+                                             : nodes[node.parent].reference;
+      uint32_t selector = uint32_t(
+          node.parent == UINT32_MAX ? rootSelector
+                                    : reflection::VPIRelationKind::OperandRel);
+      auto mode = node.parent == UINT32_MAX ? sim::VPIRelationMode::Handle
+                                            : sim::VPIRelationMode::Iterate;
+      auto ownerRef = sim::VPIObjectRefAttr::get(builder.getContext(), owner);
+      bool leaf = isa<semantic::SVSourceParameterReferenceOp>(node.source);
+      if (!leaf)
+        sim::SimVPIExpressionDeclOp::create(
+            builder, getSemanticLocation(node.source),
+            node.reference.getValue(), ids[index],
+            uint32_t(node.frozen ? VPIKind::Constant : VPIKind::Operation),
+            IntegerAttr{}, ownerRef, selector, mode, node.ordinal,
+            node.frozen ? TypeAttr::get(node.frozen.getType()) : TypeAttr{},
+            node.semantic, node.frozen,
+            node.code ? builder.getI32IntegerAttr(node.code) : IntegerAttr{},
+            IntegerAttr{}, !node.frozen, member.getDefinitionAttr());
+      auto relation = sim::SimVPIRelationDeclOp::create(
+          builder, getSemanticLocation(node.source), ownerRef, selector, mode,
+          node.ordinal,
+          sim::VPIObjectRefAttr::get(builder.getContext(), node.reference));
+      if (leaf && node.parent != UINT32_MAX) {
+        auto target =
+            defaultSymbols.lookupSymbolIn<sim::SimVPIDefinitionMemberDeclOp>(
+                design, node.reference);
+        sim::set<sim::metadata::VpiExpressionIdentifier>(
+            relation, target.getMemberNameAttr());
+      }
+    }
+    return success();
+  };
+  for (auto instance : definitionInstancePlans) {
+    if (!defaultsMaterialized.insert(instance.definition).second)
+      continue;
+    auto &definitionPlan =
+        definitionMemberPlans[instance.definition.getValue()];
+    for (auto [memberOrdinal, source] : llvm::enumerate(instance.members)) {
+      if (isa<semantic::SVTypeParameterSymbolOp>(source)) {
+        auto member =
+            defaultSymbols.lookupSymbolIn<sim::SimVPIDefinitionMemberDeclOp>(
+                design, definitionPlan.memberSymbols[memberOrdinal]);
+        bool retained = false;
+        for (Operation *child : getChildren(source)) {
+          if (auto reference =
+                  dyn_cast<semantic::SVSourceTypeReferenceDefaultOp>(child)) {
+            Operation *target = defaultSymbols.lookupNearestSymbolFrom(
+                reference, reference.getParameterAttr());
+            auto found = llvm::find(instance.members, target);
+            if (found == instance.members.end() ||
+                !isa_and_nonnull<semantic::SVTypeParameterSymbolOp>(target) ||
+                size_t(found - instance.members.begin()) >= memberOrdinal)
+              continue;
+            auto leaf =
+                definitionPlan.memberSymbols[found - instance.members.begin()];
+            sim::SimVPIRelationDeclOp::create(
+                builder, getSemanticLocation(reference),
+                sim::VPIObjectRefAttr::get(builder.getContext(),
+                                           FlatSymbolRefAttr::get(member)),
+                uint32_t(reflection::VPIRelationKind::ExprRel),
+                sim::VPIRelationMode::Handle, 0,
+                sim::VPIObjectRefAttr::get(builder.getContext(), leaf));
+            retained = true;
+          } else if (auto concrete =
+                         dyn_cast<semantic::SVSourceTypeDefaultOp>(child)) {
+            auto semantic = makeVPITypeSemantics(
+                concrete.getSemanticType(), getSemanticLocation(concrete),
+                typedefLayersFor(concrete), concrete);
+            if (failed(semantic))
+              return failure();
+            if (!sim::isVPIOriginalBuiltinTypeDefault(*semantic))
+              continue;
+            sim::SimVPIDefinitionTypeDefaultOp::create(
+                builder, getSemanticLocation(concrete),
+                FlatSymbolRefAttr::get(member), *semantic);
+            retained = true;
+          }
+        }
+        if (retained) {
+          member.removeUnavailableDefaultAttr();
+          member.setHasOriginalDefaultAttr(builder.getUnitAttr());
+        }
+        continue;
+      }
+      if (!isa<semantic::SVParameterSymbolOp>(source))
+        continue;
+      Operation *defaultSource = nullptr;
+      for (Operation *child : getChildren(source))
+        if (isa<semantic::SVSourceValueDefaultOp>(child))
+          defaultSource = child;
+      if (!defaultSource)
+        continue;
+      auto original = getChildren(defaultSource);
+      if (original.size() != 1)
+        continue;
+      auto member =
+          defaultSymbols.lookupSymbolIn<sim::SimVPIDefinitionMemberDeclOp>(
+              design, definitionPlan.memberSymbols[memberOrdinal]);
+      if (failed(materializeOriginalValue(
+              original.front(), member, instance.members,
+              definitionPlan.memberSymbols, memberOrdinal,
+              reflection::VPIRelationKind::ExprRel)))
+        return failure();
+    }
+  }
+
+  // Explicit actuals belong to the instantiating definition. Share their
+  // syntax once and retain only an exact contextual child endpoint per parent.
+  struct AssignmentPlan {
+    SmallVector<ArrayAttr> signatures;
+    SmallVector<FlatSymbolRefAttr> members;
+  };
+  DenseMap<Attribute, AssignmentPlan> assignmentPlans;
+  for (auto instance : definitionInstancePlans) {
+    uint32_t parentKind = sim::vpiKindForScope(instance.scope);
+    if (parentKind != uint32_t(VPIKind::Module) &&
+        parentKind != uint32_t(VPIKind::Interface))
+      continue;
+    auto &declarations = definitionMemberPlans[instance.definition.getValue()];
+    SmallVector<semantic::SVSourceParameterActualOp> actuals;
+    SmallVector<sim::VPIObjectRefAttr> targets;
+    SmallVector<ArrayAttr> signatures;
+    for (auto actual : instance.body.getBody()
+                           .front()
+                           .getOps<semantic::SVSourceParameterActualOp>()) {
+      Operation *target =
+          defaultSymbols.lookupSymbolIn(module, actual.getParameterAttr());
+      auto endpoint = target
+                          ? sim::get<sim::metadata::VpiDefinitionMember>(target)
+                          : sim::VPIObjectRefAttr{};
+      if (!endpoint)
+        continue; // An unsupported target declaration has no fabricated Lhs.
+      Operation *childBody = target->getParentOp();
+      Operation *childInstance = childBody->getParentOp();
+      if (!isa<semantic::SVInstanceBodySymbolOp>(childBody) ||
+          !isa<semantic::SVInstanceSymbolOp>(childInstance) ||
+          childInstance->getParentOp() != instance.body)
+        return actual.emitOpError(
+            "requires an exact direct child instance target");
+      uint64_t childOrdinal = 0, parameterOrdinal = 0;
+      for (Operation *sibling : getChildren(instance.body)) {
+        if (sibling == childInstance)
+          break;
+        childOrdinal += isa<semantic::SVInstanceSymbolOp>(sibling);
+      }
+      for (Operation *sibling : getChildren(childBody)) {
+        if (sibling == target)
+          break;
+        parameterOrdinal += isa<semantic::SVParameterSymbolOp,
+                                semantic::SVTypeParameterSymbolOp>(sibling);
+      }
+      auto original = originalDefaultKey(actual);
+      if (failed(original))
+        return failure();
+      signatures.push_back(builder.getArrayAttr(
+          {builder.getI64IntegerAttr(actual.getOrdinal()),
+           builder.getI64IntegerAttr(childOrdinal),
+           builder.getI64IntegerAttr(parameterOrdinal),
+           builder.getBoolAttr(bool(actual.getIsNamed())),
+           builder.getBoolAttr(bool(actual.getUseDefault())),
+           builder.getBoolAttr(isa<semantic::SVTypeParameterSymbolOp>(target)),
+           actual.getUnavailableRhsAttr()
+               ? Attribute(actual.getUnavailableRhsAttr())
+               : Attribute(builder.getUnitAttr()),
+           *original}));
+      actuals.push_back(actual);
+      targets.push_back(endpoint);
+    }
+    auto [entry, first] = assignmentPlans.try_emplace(instance.definition);
+    auto &plan = entry->second;
+    if (!first && plan.signatures != signatures)
+      return instance.body.emitOpError("instances of one definition disagree "
+                                       "on original parameter assignments");
+    if (first) {
+      plan.signatures = signatures;
+      for (auto [index, actual] : llvm::enumerate(actuals)) {
+        if (declarations.memberSymbols.size() + index > uint64_t(INT32_MAX))
+          return actual.emitOpError(
+              "parameter assignment member ordinal is not encodable");
+        auto name = "__obelisk_vpi_definition_member_" +
+                    std::to_string(nextDefinitionMemberId++);
+        auto member = sim::SimVPIDefinitionMemberDeclOp::create(
+            builder, getSemanticLocation(actual), builder.getStringAttr(name),
+            instance.definition,
+            builder.getI32IntegerAttr(uint32_t(VPIKind::ParamAssign)),
+            builder.getI32IntegerAttr(declarations.memberSymbols.size() +
+                                      index),
+            builder.getStringAttr(""), sim::VPIIODirectionAttr{}, UnitAttr{},
+            UnitAttr{}, UnitAttr{}, UnitAttr{},
+            actual.getIsNamed() ? builder.getUnitAttr() : UnitAttr{},
+            cast<BoolAttr>(signatures[index][5]).getValue()
+                ? builder.getUnitAttr()
+                : UnitAttr{},
+            actual.getUseDefault() ? builder.getUnitAttr() : UnitAttr{},
+            builder.getUnitAttr(), UnitAttr{});
+        plan.members.push_back(FlatSymbolRefAttr::get(member));
+        auto children = getChildren(actual);
+        if (children.size() != 1 || actual.getUseDefault() ||
+            actual.getUnavailableRhsAttr())
+          continue;
+        Operation *original = children.front();
+        if (auto type = dyn_cast<semantic::SVSourceTypeDefaultOp>(original)) {
+          auto semantic = makeVPITypeSemantics(type.getSemanticType(),
+                                               getSemanticLocation(type),
+                                               typedefLayersFor(type), type);
+          if (failed(semantic))
+            return failure();
+          if (!sim::isVPIOriginalBuiltinTypeDefault(*semantic))
+            continue;
+          sim::SimVPIDefinitionTypeDefaultOp::create(
+              builder, getSemanticLocation(type),
+              FlatSymbolRefAttr::get(member), *semantic);
+          member.removeUnavailableRhsAttr();
+          member.setHasOriginalRhsAttr(builder.getUnitAttr());
+        } else if (auto reference =
+                       dyn_cast<semantic::SVSourceTypeReferenceDefaultOp>(
+                           original)) {
+          auto target = defaultSymbols.lookupNearestSymbolFrom(
+              reference, reference.getParameterAttr());
+          auto found = llvm::find(instance.members, target);
+          if (found == instance.members.end() ||
+              !isa_and_nonnull<semantic::SVTypeParameterSymbolOp>(target))
+            continue;
+          sim::SimVPIRelationDeclOp::create(
+              builder, getSemanticLocation(reference),
+              sim::VPIObjectRefAttr::get(builder.getContext(),
+                                         FlatSymbolRefAttr::get(member)),
+              uint32_t(reflection::VPIRelationKind::RhsRel),
+              sim::VPIRelationMode::Handle, 0,
+              sim::VPIObjectRefAttr::get(
+                  builder.getContext(),
+                  declarations
+                      .memberSymbols[found - instance.members.begin()]));
+          member.removeUnavailableRhsAttr();
+          member.setHasOriginalRhsAttr(builder.getUnitAttr());
+        } else if (failed(materializeOriginalValue(
+                       original, member, instance.members,
+                       declarations.memberSymbols, instance.members.size(),
+                       reflection::VPIRelationKind::RhsRel)))
+          return failure();
+      }
+    }
+    for (auto [member, target] : llvm::zip_equal(plan.members, targets))
+      sim::SimVPIDefinitionMemberInstanceBindingOp::create(
+          builder, getSemanticLocation(instance.body),
+          instance.scope.getIdAttr(), member, target);
+  }
 
   std::function<FailureOr<sim::VPITypeSemanticsAttr>(Operation *,
                                                      sim::VPITypeSemanticsAttr)>
@@ -2417,6 +3333,9 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           {builder.getStringAttr("source-type"), identity});
     Attribute owner = ownerAnchorFor(operation);
     if (!owner)
+      if (Operation *block = proceduralOwnerFor(operation))
+        owner = getSemanticSymbolReference(block, true);
+    if (!owner)
       owner = builder.getUnitAttr();
     return builder.getArrayAttr(
         {builder.getStringAttr("lexical-owner"), owner,
@@ -2443,19 +3362,824 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
       continue;
     }
     FlatSymbolRefAttr owner = ownerAnchorFor(alias);
-    if (!owner)
+    Operation *block = owner ? nullptr : proceduralOwnerFor(alias);
+    if (!owner && !block)
       continue;
     auto sourceTypeIdentity =
         alias->getAttrOfType<IntegerAttr>(vpiSourceTypeIdentityAttrName);
-    sim::SimVPITypespecDeclOp declaration = sim::SimVPITypespecDeclOp::create(
-        builder, getSemanticLocation(alias),
-        aliasSymbols.lookup(alias).getValue(), nextTypespecId++,
-        scopes.lookup(alias), owner.getValue(), hierarchy, debug, *target,
-        sim::VPITypespecOrigin::Typedef, sourceTypeIdentity);
+    FlatSymbolRefAttr symbol = aliasSymbols.lookup(alias);
+    if (block) {
+      proceduralTypes.typespecs.push_back(
+          {alias, block, symbol, nextTypespecId++, scopes.lookup(alias),
+           hierarchy.str(), debug.str(), *target,
+           sim::VPITypespecOrigin::Typedef, sourceTypeIdentity});
+      pendingTypespecSymbols.insert(symbol);
+    } else {
+      sim::SimVPITypespecDeclOp::create(
+          builder, getSemanticLocation(alias), symbol.getValue(),
+          nextTypespecId++, scopes.lookup(alias), owner, hierarchy, debug,
+          *target, sim::VPITypespecOrigin::Typedef, sourceTypeIdentity,
+          TypeAttr{}, IntegerAttr{});
+    }
     if (target->getKind() == sim::VPITypeKind::Enum)
-      enumTypespecsByIdentity.try_emplace(
-          getEnumIdentity(alias, *target),
-          FlatSymbolRefAttr::get(declaration.getSymNameAttr()));
+      enumTypespecsByIdentity.try_emplace(getEnumIdentity(alias, *target),
+                                          symbol);
+  }
+
+  auto classPropertyFacts = [&](Operation *source, uint32_t kind) {
+    SmallVector<Attribute> properties;
+    auto add = [&](uint32_t selector, Attribute value) {
+      if (reflection::findVPIProperty(kind, selector))
+        properties.push_back(sim::VPIPropertyAttr::get(
+            builder.getContext(), builder.getI32IntegerAttr(selector), value));
+    };
+    auto lifetime =
+        source->getAttrOfType<semantic::SVVariableLifetimeAttr>("lifetime");
+    auto visibility =
+        source->getAttrOfType<semantic::SVVisibilityAttr>("member_visibility");
+    auto random = source->getAttrOfType<semantic::SVRandModeAttr>("rand_mode");
+    add(2, builder.getStringAttr(getDebugName(source)));
+    if (lifetime)
+      add(50, builder.getBoolAttr(lifetime.getValue() ==
+                                  semantic::SVVariableLifetime::Automatic));
+    if (random) {
+      int32_t value = 1;
+      switch (random.getValue()) {
+      case semantic::SVRandMode::None:
+        break;
+      case semantic::SVRandMode::Rand:
+        value = 2;
+        break;
+      case semantic::SVRandMode::RandC:
+        value = 3;
+        break;
+      }
+      add(610, builder.getI32IntegerAttr(value));
+    }
+    auto constant = source->getAttr("is_const");
+    add(612, builder.getBoolAttr(isa_and_nonnull<UnitAttr>(constant) ||
+                                 (isa_and_nonnull<BoolAttr>(constant) &&
+                                  cast<BoolAttr>(constant).getValue())));
+    if (visibility) {
+      int32_t value = 1;
+      switch (visibility.getValue()) {
+      case semantic::SVVisibility::Public:
+        break;
+      case semantic::SVVisibility::Protected:
+        value = 2;
+        break;
+      case semantic::SVVisibility::Local:
+        value = 3;
+        break;
+      }
+      add(620, builder.getI32IntegerAttr(value));
+    }
+    return sim::VPIPropertySetAttr::get(builder.getContext(),
+                                        builder.getArrayAttr(properties));
+  };
+
+  // Original generic declarations have their own type graph. Only exact
+  // concrete source types are materialized here; an unresolved T property has
+  // no IEEE variable kind until specialization and is never guessed from an
+  // arbitrary instance of the generic class.
+  SymbolTableCollection sourceTypeSymbols;
+  DenseMap<Operation *, sim::VPITypeSemanticsAttr> lexicalDeclaredTypes;
+  DenseMap<Operation *, FlatSymbolRefAttr> lexicalUnresolvedAliases;
+  module.walk([&](Operation *definition) {
+    if (!isa<semantic::SVGenericClassDefSymbolOp,
+             semantic::SVSourceClassDefinitionSymbolOp>(definition))
+      return;
+    FlatSymbolRefAttr owner = anchorSymbols.lookup(definition);
+    if (!owner)
+      return;
+    for (Operation *source : getChildren(definition)) {
+      if (!isa<semantic::SVSourceClassPropertySymbolOp,
+               semantic::SVSourceClassTypeAliasSymbolOp>(source))
+        continue;
+      Operation *declared = getChildren(source).front();
+      sim::VPITypeSemanticsAttr target;
+      Operation *referencedDeclaration = nullptr;
+      if (auto concrete =
+              dyn_cast<semantic::SVSourceDeclaredTypeOp>(declared)) {
+        auto converted = makeVPITypeSemantics(concrete.getSemanticType(),
+                                              getSemanticLocation(concrete),
+                                              ArrayAttr{}, concrete);
+        if (failed(converted)) {
+          invalid = true;
+          continue;
+        }
+        target = *converted;
+      } else if (auto reference =
+                     dyn_cast<semantic::SVSourceDeclaredTypeReferenceOp>(
+                         declared)) {
+        Operation *declaration = sourceTypeSymbols.lookupNearestSymbolFrom(
+            reference, reference.getDeclarationAttr());
+        referencedDeclaration = declaration;
+        target = lexicalDeclaredTypes.lookup(declaration);
+      }
+      if (!target) {
+        if (!isa<semantic::SVSourceClassTypeAliasSymbolOp>(source))
+          continue;
+        FlatSymbolRefAttr unresolved =
+            lexicalUnresolvedAliases.lookup(referencedDeclaration);
+        if (!unresolved &&
+            isa_and_nonnull<semantic::SVSourceTypeParameterSymbolOp>(
+                referencedDeclaration))
+          unresolved = anchorSymbols.lookup(referencedDeclaration);
+        if (!unresolved)
+          continue;
+        std::string name =
+            "__obelisk_vpi_source_typedef_" + std::to_string(nextTypespecId);
+        auto alias = sim::SimVPIUnresolvedTypeAliasDeclOp::create(
+            builder, getSemanticLocation(source), name, nextTypespecId++,
+            scopes.lookup(source), owner.getValue(), unresolved.getValue(),
+            getHierarchyName(source), getDebugName(source));
+        lexicalUnresolvedAliases[source] =
+            FlatSymbolRefAttr::get(alias.getSymNameAttr());
+        continue;
+      }
+      if (isa<semantic::SVSourceClassTypeAliasSymbolOp>(source)) {
+        std::string name =
+            "__obelisk_vpi_source_typedef_" + std::to_string(nextTypespecId);
+        FlatSymbolRefAttr symbol =
+            FlatSymbolRefAttr::get(builder.getContext(), name);
+        SmallVector<Attribute> aliases{symbol};
+        if (ArrayAttr previous = target.getTypedefAliases())
+          llvm::append_range(aliases, previous);
+        target = sim::VPITypeSemanticsAttr::get(
+            builder.getContext(), target.getKind(), target.getIsSigned(),
+            target.getIsFourState(), target.getName(), target.getSymbol(),
+            target.getModport(), target.getRange(), target.getChildren(),
+            target.getChildNames(), target.getIsTagged(), target.getIsSoft(),
+            target.getBitWidth(), target.getSelectableWidth(),
+            target.getBitstreamWidth(), target.getTagBits(),
+            target.getQueueBound(), target.getWildcardIndex(),
+            target.getChildOrdinals(), target.getChildPackedOffsets(),
+            target.getChildRandTypes(), builder.getArrayAttr(aliases),
+            target.getProjected());
+        auto declaration = sim::SimVPITypespecDeclOp::create(
+            builder, getSemanticLocation(source), name, nextTypespecId++,
+            scopes.lookup(source), owner, getHierarchyName(source),
+            getDebugName(source), target, sim::VPITypespecOrigin::Typedef,
+            IntegerAttr{}, TypeAttr{}, IntegerAttr{});
+        (void)declaration;
+        lexicalDeclaredTypes[source] = target;
+      } else {
+        std::string name = "__obelisk_vpi_class_member_" +
+                           std::to_string(nextSyntheticInventoryId);
+        auto property = sim::SimVPIClassMemberDeclOp::create(
+            builder, getSemanticLocation(source), builder.getStringAttr(name),
+            builder.getI64IntegerAttr(nextSyntheticInventoryId++),
+            builder.getI64IntegerAttr(scopes.lookup(source)), owner,
+            FlatSymbolRefAttr{},
+            builder.getStringAttr(getHierarchyName(source)),
+            builder.getStringAttr(getDebugName(source)), target, IntegerAttr{},
+            IntegerAttr{});
+        property->setAttr(
+            "vpi_properties",
+            classPropertyFacts(source, sim::vpiKindForClassMember(target)));
+      }
+    }
+  });
+
+  // Class declarations and their fully resolved types have independent VPI
+  // identities. The latter are shared by every variable of that class type,
+  // including variables whose current value is null.
+  auto isBuiltinVPIClass = [](sim::VPITypeKind kind) {
+    return kind == sim::VPITypeKind::Process ||
+           kind == sim::VPITypeKind::Semaphore ||
+           kind == sim::VPITypeKind::Mailbox;
+  };
+  // Keep source identities separate from declared typedef spellings. The
+  // original standard package owns builtin typespecs, including specializations
+  // observed only through a variable, field, parameter, or aggregate child.
+  llvm::DenseMap<Attribute, Operation *> builtinClassSources;
+  bool hasStandardPackage = false;
+  module.walk([&](semantic::SVPackageSymbolOp package) {
+    hasStandardPackage |= getDebugName(package) == "std";
+  });
+  module.walk([&](semantic::SVClassTypeOp source) {
+    if (source.getIsUninstantiated())
+      return;
+    Operation *parent = source->getParentOp();
+    if (isa<semantic::SVGenericClassDefSymbolOp>(parent))
+      parent = parent->getParentOp();
+    auto package = dyn_cast<semantic::SVPackageSymbolOp>(parent);
+    StringRef name = getDebugName(source);
+    if (!package || getDebugName(package) != "std" ||
+        (name != "process" && name != "semaphore" && name != "mailbox"))
+      return;
+    auto semantic = makeVPITypeSemantics(
+        source.getSemanticType(), getSemanticLocation(source), {}, source);
+    if (failed(semantic) || !isBuiltinVPIClass(semantic->getKind())) {
+      emitError(getSemanticLocation(source))
+          << "standard builtin class has no exact VPI semantic type";
+      invalid = true;
+      return;
+    }
+    builtinClassSources.try_emplace(sim::stripVPITypedefAliases(*semantic),
+                                    source);
+  });
+  llvm::DenseMap<Attribute, FlatSymbolRefAttr> builtinClassTypespecs;
+  auto internBuiltinTypespec = [&](sim::VPITypeSemanticsAttr semantic,
+                                   Operation *use,
+                                   bool requireSource) -> FlatSymbolRefAttr {
+    auto canonical = sim::stripVPITypedefAliases(semantic);
+    if (auto found = builtinClassTypespecs.find(canonical);
+        found != builtinClassTypespecs.end())
+      return found->second;
+    Operation *source = builtinClassSources.lookup(canonical);
+    FlatSymbolRefAttr owner =
+        source ? ownerAnchorFor(source->getParentOp()) : FlatSymbolRefAttr{};
+    if (!source || !owner) {
+      // Legacy authored normalized IR may contain builtin types without the
+      // source std package. Retain its existing semantic-only representation;
+      // normal frontend inventory must provide the exact standard declaration.
+      if (requireSource || hasStandardPackage) {
+        emitError(getSemanticLocation(use))
+            << "VPI builtin class has no preserved source type or package";
+        invalid = true;
+      }
+      return {};
+    }
+    std::string symbolName =
+        "__obelisk_vpi_builtin_class_" + std::to_string(nextTypespecId);
+    auto declaration = sim::SimVPITypespecDeclOp::create(
+        builder, getSemanticLocation(source), symbolName, nextTypespecId++,
+        scopes.lookup(source), owner, getHierarchyName(source),
+        getDebugName(source), canonical, sim::VPITypespecOrigin::BuiltinClass,
+        IntegerAttr{}, TypeAttr{}, IntegerAttr{});
+    if (canonical.getKind() == sim::VPITypeKind::Mailbox) {
+      // Reuse the exact layout already normalized for the retained source
+      // specialization. The semantic root deliberately strips typedef aliases;
+      // storage offsets and tracing instead come from the executable type.
+      auto normalized = getNormalizedSemanticType(source);
+      auto mailbox = succeeded(normalized)
+                         ? dyn_cast<sim::MailboxType>(*normalized)
+                         : sim::MailboxType{};
+      if (!mailbox) {
+        emitError(getSemanticLocation(source))
+            << "canonical mailbox has no normalized source message layout";
+        invalid = true;
+        return {};
+      }
+      declaration.setMessageTypeAttr(TypeAttr::get(mailbox.getElementType()));
+    }
+    auto reference = FlatSymbolRefAttr::get(declaration.getSymNameAttr());
+    builtinClassTypespecs[canonical] = reference;
+    // Builtin specializations retain their own effective formal parameters.
+    // In particular mailbox::T denotes the actual source type assignment,
+    // including typedef spelling (37.28 detail 2); the canonical class identity
+    // above deliberately has a separate alias-free semantic root.
+    uint64_t ordinal = 0;
+    for (Operation *child : getChildren(source)) {
+      auto parameter = dyn_cast<semantic::SVTypeParameterSymbolOp>(child);
+      if (!parameter)
+        continue;
+      auto type = parameter.getSemanticType();
+      auto payload =
+          type ? makeVPITypeSemantics(*type, getSemanticLocation(parameter),
+                                      typedefLayersFor(parameter), parameter)
+               : FailureOr<sim::VPITypeSemanticsAttr>(failure());
+      if (failed(payload)) {
+        parameter.emitOpError(
+            "builtin type parameter has no preserved effective source type");
+        invalid = true;
+        continue;
+      }
+      std::string parameterName =
+          "__obelisk_vpi_anchor_" + std::to_string(nextSyntheticInventoryId);
+      auto anchor = sim::SimVPIObjectAnchorOp::create(
+          builder, getSemanticLocation(parameter), parameterName,
+          nextSyntheticInventoryId++,
+          static_cast<uint32_t>(VPIKind::TypeParameter), scopes.lookup(source),
+          reference, ordinal++,
+          builder.getStringAttr(getHierarchyName(parameter)),
+          builder.getStringAttr(getDebugName(parameter)), UnitAttr{},
+          sim::VPIObjectBackingAttr{}, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
+          DenseI64ArrayAttr{}, DenseI64ArrayAttr{}, IntegerAttr{}, *payload,
+          sim::FrozenConstantAttr{}, UnitAttr{}, FlatSymbolRefAttr{},
+          UnitAttr{}, StringAttr{}, UnitAttr{});
+      if (auto identity = parameter->getAttrOfType<IntegerAttr>(
+              vpiSourceTypeIdentityAttrName))
+        sim::set<sim::metadata::VpiSourceTypeIdentity>(anchor, identity);
+      if (sim::VPIPropertySetAttr properties =
+              identityProperties(parameter, VPIKind::TypeParameter))
+        anchor->setAttr("vpi_properties", properties);
+    }
+    return reference;
+  };
+  llvm::DenseMap<Operation *, FlatSymbolRefAttr> builtinBaseTypespecs;
+  for (semantic::SVClassTypeOp classType : classes.sources) {
+    auto builtin = classType->getAttrOfType<TypeAttr>(builtinBaseTypeAttrName);
+    if (!builtin)
+      continue;
+    auto target = makeVPITypeSemantics(
+        builtin.getValue(), getSemanticLocation(classType), {}, classType);
+    if (failed(target)) {
+      invalid = true;
+      continue;
+    }
+    builtinBaseTypespecs[classType] =
+        internBuiltinTypespec(*target, classType, /*requireSource=*/true);
+  }
+  for (semantic::SVClassTypeOp classType : classes.sources) {
+    FlatSymbolRefAttr owner = classDefinitionSymbols.lookup(classType);
+    if (!owner) {
+      emitError(getSemanticLocation(classType))
+          << "VPI class specialization is missing its lexical definition";
+      invalid = true;
+      continue;
+    }
+    FailureOr<sim::VPITypeSemanticsAttr> target = makeVPITypeSemantics(
+        classType.getSemanticType(), getSemanticLocation(classType), {},
+        classType);
+    if (failed(target)) {
+      invalid = true;
+      continue;
+    }
+    sim::SimVPITypespecDeclOp::create(
+        builder, getSemanticLocation(classType),
+        classTypespecSymbols.lookup(classType).getValue(), nextTypespecId++,
+        scopes.lookup(classType), owner, getHierarchyName(classType),
+        getDebugName(classType), *target,
+        sim::VPITypespecOrigin::ClassSpecialization, IntegerAttr{}, TypeAttr{},
+        IntegerAttr{});
+  }
+  // Nonparameterized declarations still have separate lexical and resolved
+  // member views. The executable method belongs to the canonical view so its
+  // IO declarations and body remain reachable from live class objects.
+  for (semantic::SVClassTypeOp classType : classes.sources) {
+    if (hasSeparateLexicalClass(classType))
+      continue;
+    uint64_t ordinal = 0;
+    for (Operation *child : getChildren(classType)) {
+      semantic::SVSubroutineSymbolOp method = getClassMethod(child);
+      Operation *source = method ? method.getOperation() : child;
+      bool parameter = isa<semantic::SVParameterSymbolOp,
+                           semantic::SVTypeParameterSymbolOp>(source);
+      bool constraint = isa<semantic::SVConstraintBlockSymbolOp>(source);
+      sim::SimVPIObjectAnchorOp lexical = anchorDeclarations.lookup(source);
+      if (!lexical ||
+          (!parameter && !constraint && !classes.methodSymbols.count(method)))
+        continue;
+      auto specialized =
+          cast<sim::SimVPIObjectAnchorOp>(builder.clone(*lexical));
+      std::string symbolName =
+          "__obelisk_vpi_anchor_" + std::to_string(nextSyntheticInventoryId);
+      specialized.setSymNameAttr(builder.getStringAttr(symbolName));
+      specialized.setInventoryIdAttr(
+          builder.getI64IntegerAttr(nextSyntheticInventoryId++));
+      specialized.setParentAttr(classTypespecSymbols.lookup(classType));
+      specialized.setOwnerOrdinalAttr(builder.getI64IntegerAttr(ordinal++));
+      if (parameter)
+        addParameterView(source, specialized);
+      if (method)
+        sim::set<sim::metadata::VpiAnchor>(
+            method, FlatSymbolRefAttr::get(specialized.getSymNameAttr()));
+    }
+  }
+  // Each declaration view owns its original default independently of its
+  // elaborated value. Exact sibling views remap symbolic parameter references;
+  // no specialization supplies the unresolved lexical definition's payload.
+  auto parameterTarget = [&](Operation *reference, FlatSymbolRefAttr symbol,
+                             FlatSymbolRefAttr viewOwner) -> FlatSymbolRefAttr {
+    Operation *source = SymbolTable::lookupNearestSymbolFrom(reference, symbol);
+    auto found = parameterViews.find(source);
+    if (found == parameterViews.end())
+      return {};
+    for (auto view : found->second)
+      if (view.getParentAttr() == viewOwner)
+        return FlatSymbolRefAttr::get(view.getSymNameAttr());
+    return {};
+  };
+  auto sourceRelation = [&](Operation *source, FlatSymbolRefAttr from,
+                            uint32_t selector, sim::VPIRelationMode mode,
+                            uint64_t ordinal, FlatSymbolRefAttr to) {
+    sim::SimVPIRelationDeclOp::create(
+        builder, getSemanticLocation(source),
+        sim::VPIObjectRefAttr::get(builder.getContext(), from), selector, mode,
+        ordinal, sim::VPIObjectRefAttr::get(builder.getContext(), to));
+  };
+  auto expression =
+      [&](auto &&self, Operation *node, FlatSymbolRefAttr parent,
+          uint64_t ordinal, uint64_t scopeID,
+          FlatSymbolRefAttr viewOwner) -> FailureOr<FlatSymbolRefAttr> {
+    if (auto reference =
+            dyn_cast<semantic::SVSourceParameterReferenceOp>(node)) {
+      auto target =
+          parameterTarget(reference, reference.getParameterAttr(), viewOwner);
+      if (!target)
+        return reference.emitOpError(
+                   "original value reference has no exact parameter view"),
+               failure();
+      return target;
+    }
+    VPIKind kind;
+    const reflection::VPISourceOperatorDescriptor *operation = nullptr;
+    sim::VPITypeSemanticsAttr type;
+    sim::FrozenConstantAttr value;
+    if (auto unary = dyn_cast<semantic::SVSourceUnaryExpressionOp>(node)) {
+      kind = VPIKind::Operation;
+      auto name = semantic::stringifySVUnaryOperator(unary.getOperatorKind());
+      operation = reflection::findVPISourceOperator(
+          std::string_view(name.data(), name.size()), 1);
+    } else if (auto binary =
+                   dyn_cast<semantic::SVSourceBinaryExpressionOp>(node)) {
+      kind = VPIKind::Operation;
+      auto name = semantic::stringifySVBinaryOperator(binary.getOperatorKind());
+      operation = reflection::findVPISourceOperator(
+          std::string_view(name.data(), name.size()), 2);
+    } else if (isa<semantic::SVSourceConditionalExpressionOp>(node)) {
+      kind = VPIKind::Operation;
+      operation = reflection::findVPISourceOperator("conditional", 3);
+    } else if (isa<semantic::SVIntegerLiteralOp>(node)) {
+      kind = VPIKind::Constant;
+      auto semantic = makeVPITypeSemantics(
+          node->getAttrOfType<TypeAttr>("semantic_type").getValue(),
+          getSemanticLocation(node), {}, node);
+      auto frozen = freezeSemanticConstant(node);
+      if (failed(semantic) || failed(frozen))
+        return failure();
+      type = *semantic;
+      value = *frozen;
+    } else {
+      return node->emitOpError("unsupported typed source default expression"),
+             failure();
+    }
+    if (kind == VPIKind::Operation && !operation)
+      return node->emitOpError(
+                 "source default has no exact VPI operator encoding"),
+             failure();
+    std::string symbolName =
+        "__obelisk_vpi_expression_" + std::to_string(nextSyntheticInventoryId);
+    auto anchor = sim::SimVPIObjectAnchorOp::create(
+        builder, getSemanticLocation(node), symbolName,
+        nextSyntheticInventoryId++, static_cast<uint32_t>(kind), scopeID,
+        parent, ordinal, builder.getStringAttr(""), builder.getStringAttr(""),
+        UnitAttr{}, sim::VPIObjectBackingAttr{}, DenseI64ArrayAttr{},
+        DenseI64ArrayAttr{}, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
+        IntegerAttr{}, type, value, UnitAttr{}, FlatSymbolRefAttr{}, UnitAttr{},
+        StringAttr{}, UnitAttr{});
+    auto reference = FlatSymbolRefAttr::get(anchor.getSymNameAttr());
+    if (kind == VPIKind::Operation || kind == VPIKind::Constant) {
+      auto property = sim::VPIPropertyAttr::get(
+          builder.getContext(),
+          builder.getI32IntegerAttr(kind == VPIKind::Operation ? 39 : 40),
+          builder.getI32IntegerAttr(operation ? operation->value : 7));
+      anchor->setAttr("vpi_properties", sim::VPIPropertySetAttr::get(
+                                            builder.getContext(),
+                                            builder.getArrayAttr({property})));
+    }
+    if (operation) {
+      uint64_t ownedOrdinal = 0;
+      for (auto [index, child] : llvm::enumerate(getChildren(node))) {
+        // Shared Parameter leaves have a source operand position but do
+        // not consume an ordinal in this operation's owned inventory.
+        auto operand =
+            self(self, child, reference, ownedOrdinal, scopeID, viewOwner);
+        if (!isa<semantic::SVSourceParameterReferenceOp>(child))
+          ++ownedOrdinal;
+        if (failed(operand))
+          return failure();
+        sourceRelation(
+            node, reference,
+            static_cast<uint32_t>(reflection::VPIRelationKind::OperandRel),
+            sim::VPIRelationMode::Iterate, index, *operand);
+      }
+    }
+    return reference;
+  };
+  for (Operation *source : parameterViewSources) {
+    for (auto owner : parameterViews.lookup(source)) {
+      FlatSymbolRefAttr ownerRef =
+          FlatSymbolRefAttr::get(owner.getSymNameAttr());
+      for (Operation *child : getChildren(source)) {
+        FlatSymbolRefAttr target;
+        if (auto reference =
+                dyn_cast<semantic::SVSourceTypeReferenceDefaultOp>(child)) {
+          target = parameterTarget(reference, reference.getParameterAttr(),
+                                   owner.getParentAttr());
+          if (!target) {
+            reference.emitOpError(
+                "original type reference has no exact parameter view");
+            invalid = true;
+            continue;
+          }
+        } else if (auto concrete =
+                       dyn_cast<semantic::SVSourceTypeDefaultOp>(child)) {
+          auto semantic = makeVPITypeSemantics(
+              concrete.getSemanticType(), getSemanticLocation(concrete),
+              typedefLayersFor(concrete), concrete);
+          if (failed(semantic)) {
+            invalid = true;
+            continue;
+          }
+          std::string symbolName =
+              "__obelisk_vpi_source_default_" + std::to_string(nextTypespecId);
+          auto typespec = sim::SimVPITypespecDeclOp::create(
+              builder, getSemanticLocation(concrete), symbolName,
+              nextTypespecId++, owner.getEnclosingScopeId(), ownerRef, "", "",
+              *semantic, sim::VPITypespecOrigin::SourceDefault, IntegerAttr{},
+              TypeAttr{}, IntegerAttr{});
+          target = FlatSymbolRefAttr::get(typespec.getSymNameAttr());
+        } else if (auto value =
+                       dyn_cast<semantic::SVSourceValueDefaultOp>(child)) {
+          auto result =
+              expression(expression, &value.getBody().front().front(), ownerRef,
+                         0, owner.getEnclosingScopeId(), owner.getParentAttr());
+          if (failed(result)) {
+            invalid = true;
+            continue;
+          }
+          target = *result;
+        }
+        if (target)
+          sourceRelation(
+              child, ownerRef,
+              static_cast<uint32_t>(reflection::VPIRelationKind::ExprRel),
+              sim::VPIRelationMode::Handle, 0, target);
+      }
+    }
+  }
+
+  auto emitClassRelation = [&](Location location, FlatSymbolRefAttr source,
+                               uint32_t selector, sim::VPIRelationMode mode,
+                               uint64_t ordinal, FlatSymbolRefAttr target) {
+    sim::SimVPIRelationDeclOp::create(
+        builder, location,
+        sim::VPIObjectRefAttr::get(builder.getContext(), source), selector,
+        mode, ordinal,
+        sim::VPIObjectRefAttr::get(builder.getContext(), target));
+  };
+  llvm::DenseSet<std::pair<Attribute, Attribute>> derivedDefinitions;
+  llvm::DenseMap<Attribute, uint64_t> nextDerivedOrdinal;
+  llvm::DenseSet<Attribute> sourceExtendsDefinitions;
+  llvm::DenseMap<Attribute, Attribute> lexicalBaseDefinitions;
+  SmallVector<semantic::SVSourceClassExtendsOp> sourceExtends;
+  module.walk([&](semantic::SVSourceClassExtendsOp clause) {
+    sourceExtends.push_back(clause);
+  });
+  for (auto clause : sourceExtends) {
+    Operation *source = clause->getParentOp();
+    if (auto type = dyn_cast<semantic::SVClassTypeOp>(source);
+        type && hasSeparateLexicalClass(type))
+      continue;
+    FlatSymbolRefAttr owner = anchorSymbols.lookup(source);
+    if (!owner) {
+      emitError(getSemanticLocation(clause))
+          << "source extends has no exact lexical class owner";
+      invalid = true;
+      continue;
+    }
+    Operation *base = clause.getBaseDefinitionAttr()
+                          ? lexicalClassSymbols.lookupSymbolIn(
+                                module, clause.getBaseDefinitionAttr())
+                          : nullptr;
+    FlatSymbolRefAttr definition =
+        base ? anchorSymbols.lookup(base) : FlatSymbolRefAttr{};
+    // Preserve the existing resolved builtin path when it has an exact
+    // canonical standard-class typespec. Source-only dependent builtin forms
+    // remain explicitly unavailable instead of inventing a class definition.
+    if (!definition && isa<semantic::SVClassTypeOp>(source) &&
+        builtinBaseTypespecs.count(source))
+      continue;
+    sourceExtendsDefinitions.insert(owner);
+    FlatSymbolRefAttr lexicalType;
+    if (definition) {
+      lexicalBaseDefinitions[owner] = definition;
+      std::string name =
+          "__obelisk_vpi_lexical_class_" + std::to_string(nextTypespecId);
+      auto declaration = sim::SimVPILexicalClassTypespecDeclOp::create(
+          builder, getSemanticLocation(clause), builder.getStringAttr(name),
+          builder.getI64IntegerAttr(nextTypespecId++),
+          builder.getI64IntegerAttr(scopes.lookup(source)), owner, definition,
+          builder.getStringAttr(getDebugName(base)),
+          clause.getParameterArgumentsAttr());
+      lexicalType = FlatSymbolRefAttr::get(declaration.getSymNameAttr());
+      if (!clause.getParameterArgumentsAttr()) {
+        llvm::DenseMap<Operation *, semantic::SVSourceClassParameterActualOp>
+            actuals;
+        for (Operation *child : getChildren(clause)) {
+          auto actual = cast<semantic::SVSourceClassParameterActualOp>(child);
+          Operation *formal = lexicalClassSymbols.lookupSymbolIn(
+              module, actual.getParameterAttr());
+          actuals[formal] = actual;
+        }
+        uint64_t ordinal = 0;
+        for (Operation *parameter : getChildren(base)) {
+          if (!isa<semantic::SVSourceValueParameterSymbolOp,
+                   semantic::SVSourceTypeParameterSymbolOp,
+                   semantic::SVParameterSymbolOp,
+                   semantic::SVTypeParameterSymbolOp>(parameter))
+            continue;
+          Attribute local = parameter->getAttr("is_local_param");
+          if (isa_and_nonnull<UnitAttr>(local) ||
+              (isa_and_nonnull<BoolAttr>(local) &&
+               cast<BoolAttr>(local).getValue()))
+            continue;
+          auto formal = anchorSymbols.lookup(parameter);
+          if (!formal) {
+            emitError(getSemanticLocation(parameter))
+                << "source class parameter has no exact lexical declaration";
+            invalid = true;
+            continue;
+          }
+          std::string assignmentName = "__obelisk_vpi_class_actual_" +
+                                       std::to_string(nextSyntheticInventoryId);
+          auto actual = actuals.lookup(parameter);
+          auto assignment = sim::SimVPIClassParameterAssignDeclOp::create(
+              builder,
+              getSemanticLocation(actual ? actual.getOperation()
+                                         : clause.getOperation()),
+              builder.getStringAttr(assignmentName),
+              builder.getI64IntegerAttr(nextSyntheticInventoryId++),
+              builder.getI64IntegerAttr(scopes.lookup(source)), lexicalType,
+              formal, builder.getI64IntegerAttr(ordinal++), FlatSymbolRefAttr{},
+              actual ? actual.getUnavailableRhsAttr() : StringAttr{},
+              actual ? actual.getIsNamedAttr() : UnitAttr{});
+          if (!actual || actual.getUseDefaultAttr() ||
+              actual.getUnavailableRhsAttr())
+            continue;
+          Operation *value = &actual.getBody().front().front();
+          FlatSymbolRefAttr target;
+          auto assignmentRef =
+              FlatSymbolRefAttr::get(assignment.getSymNameAttr());
+          if (auto reference =
+                  dyn_cast<semantic::SVSourceTypeReferenceDefaultOp>(value)) {
+            target =
+                parameterTarget(reference, reference.getParameterAttr(), owner);
+            if (!target) {
+              reference.emitOpError(
+                  "class type actual has no exact derived parameter view");
+              invalid = true;
+            }
+          } else if (auto concrete =
+                         dyn_cast<semantic::SVSourceTypeDefaultOp>(value)) {
+            auto semantic = makeVPITypeSemantics(
+                concrete.getSemanticType(), getSemanticLocation(concrete),
+                typedefLayersFor(concrete), concrete);
+            if (failed(semantic)) {
+              invalid = true;
+              continue;
+            }
+            std::string typeName =
+                "__obelisk_vpi_source_actual_" + std::to_string(nextTypespecId);
+            auto type = sim::SimVPITypespecDeclOp::create(
+                builder, getSemanticLocation(concrete), typeName,
+                nextTypespecId++, scopes.lookup(source), assignmentRef, "", "",
+                *semantic, sim::VPITypespecOrigin::SourceDefault, IntegerAttr{},
+                TypeAttr{}, IntegerAttr{});
+            target = FlatSymbolRefAttr::get(type.getSymNameAttr());
+          } else {
+            auto result = expression(expression, value, assignmentRef, 0,
+                                     scopes.lookup(source), owner);
+            if (failed(result))
+              invalid = true;
+            else
+              target = *result;
+          }
+          if (target)
+            assignment.setRhsAttr(target);
+        }
+      }
+    }
+    std::string name =
+        "__obelisk_vpi_extends_" + std::to_string(nextSyntheticInventoryId);
+    StringAttr unavailable =
+        definition ? StringAttr{} : clause.getUnavailableBaseAttr();
+    if (!definition && !unavailable)
+      unavailable = builder.getStringAttr(getDebugName(base));
+    sim::SimVPIClassExtendsDeclOp::create(
+        builder, getSemanticLocation(clause), builder.getStringAttr(name),
+        builder.getI64IntegerAttr(nextSyntheticInventoryId++),
+        builder.getI64IntegerAttr(scopes.lookup(source)), owner, lexicalType,
+        unavailable, clause.getConstructorArgumentsAttr());
+  }
+  // Older authored source IR may encode a nonparameterized base solely by
+  // its exact class handle. Include those declaration edges when walking an
+  // unused generic descendant, without choosing a generic specialization.
+  for (semantic::SVClassTypeOp type : classes.sources) {
+    if (hasSeparateLexicalClass(type))
+      continue;
+    auto baseType = dyn_cast_or_null<semantic::ClassHandleType>(
+        type.getBaseClass().value_or(Type{}));
+    auto base = baseType ? classes.semanticClasses.lookup(
+                               baseType.getClassName().getLeafReference())
+                         : semantic::SVClassTypeOp{};
+    if (!base || hasSeparateLexicalClass(base))
+      continue;
+    auto owner = classDefinitionSymbols.lookup(type);
+    auto definition = classDefinitionSymbols.lookup(base);
+    if (owner && definition)
+      lexicalBaseDefinitions.try_emplace(owner, definition);
+  }
+  // The source graph exists even when no specialization was materialized.
+  // Preserve transitive lexical descendants in deterministic declaration order.
+  for (auto clause : sourceExtends) {
+    FlatSymbolRefAttr definition = anchorSymbols.lookup(clause->getParentOp());
+    Attribute ancestor = lexicalBaseDefinitions.lookup(definition);
+    llvm::DenseSet<Attribute> visited;
+    while (ancestor) {
+      if (!visited.insert(ancestor).second) {
+        emitError(getSemanticLocation(clause))
+            << "source class inheritance contains a cycle";
+        invalid = true;
+        break;
+      }
+      if (derivedDefinitions.insert({ancestor, definition}).second)
+        emitClassRelation(getSemanticLocation(clause),
+                          cast<FlatSymbolRefAttr>(ancestor), 727,
+                          sim::VPIRelationMode::Iterate,
+                          nextDerivedOrdinal[ancestor]++, definition);
+      ancestor = lexicalBaseDefinitions.lookup(ancestor);
+    }
+  }
+  for (semantic::SVClassTypeOp classType : classes.sources) {
+    auto builtin = classType->getAttrOfType<TypeAttr>(builtinBaseTypeAttrName);
+    auto baseType = dyn_cast_or_null<semantic::ClassHandleType>(
+        builtin ? builtin.getValue()
+                : classType.getBaseClass().value_or(Type{}));
+    if (!baseType)
+      continue;
+    semantic::SVClassTypeOp baseClass =
+        builtin ? semantic::SVClassTypeOp{}
+                : classes.semanticClasses.lookup(
+                      baseType.getClassName().getLeafReference());
+    FlatSymbolRefAttr baseTypespec =
+        builtin ? builtinBaseTypespecs.lookup(classType)
+                : classTypespecSymbols.lookup(baseClass);
+    FlatSymbolRefAttr definition = classDefinitionSymbols.lookup(classType);
+    FlatSymbolRefAttr baseDefinition = classDefinitionSymbols.lookup(baseClass);
+    if (!baseTypespec || !definition || (!builtin && !baseDefinition)) {
+      emitError(getSemanticLocation(classType))
+          << "VPI class inheritance cannot resolve its base class identity";
+      invalid = true;
+      continue;
+    }
+    emitClassRelation(getSemanticLocation(classType),
+                      classTypespecSymbols.lookup(classType), 677,
+                      sim::VPIRelationMode::Handle, 0, baseTypespec);
+    // Unlike the specialization inventory, 37.31 does not restrict derived
+    // definitions to immediate inheritance. Walk the ancestry of each
+    // concrete type and deduplicate definitions reached by multiple generic
+    // specializations.
+    llvm::SmallPtrSet<Operation *, 8> ancestors;
+    for (semantic::SVClassTypeOp ancestor = baseClass; ancestor;) {
+      if (!ancestors.insert(ancestor).second) {
+        emitError(getSemanticLocation(classType))
+            << "VPI class inheritance contains a cycle";
+        invalid = true;
+        break;
+      }
+      FlatSymbolRefAttr ancestorDefinition =
+          classDefinitionSymbols.lookup(ancestor);
+      if (!ancestorDefinition) {
+        emitError(getSemanticLocation(classType))
+            << "VPI class inheritance cannot resolve an ancestor definition";
+        invalid = true;
+        break;
+      }
+      if (derivedDefinitions.insert({ancestorDefinition, definition}).second)
+        emitClassRelation(getSemanticLocation(classType), ancestorDefinition,
+                          727, sim::VPIRelationMode::Iterate,
+                          nextDerivedOrdinal[ancestorDefinition]++, definition);
+      auto ancestorBase = dyn_cast_or_null<semantic::ClassHandleType>(
+          ancestor.getBaseClass().value_or(Type{}));
+      ancestor = ancestorBase
+                     ? classes.semanticClasses.lookup(
+                           ancestorBase.getClassName().getLeafReference())
+                     : semantic::SVClassTypeOp{};
+    }
+
+    // A nonparameterized class typespec may also represent the lexical
+    // construct. Parameterized lexical extends expressions need their own
+    // unresolved source typespec, rather than one chosen specialization.
+    if (sourceExtendsDefinitions.contains(definition) ||
+        hasSeparateLexicalClass(classType) ||
+        (baseClass && hasSeparateLexicalClass(baseClass)))
+      continue;
+    std::string symbolName =
+        "__obelisk_vpi_anchor_" + std::to_string(nextSyntheticInventoryId);
+    auto extends = sim::SimVPIObjectAnchorOp::create(
+        builder, getSemanticLocation(classType), symbolName,
+        nextSyntheticInventoryId++, static_cast<uint32_t>(VPIKind::Extends),
+        scopes.lookup(classType), definition, nextAnchorOrdinal[classType]++,
+        builder.getStringAttr(
+            (getHierarchyName(classType) + "::extends").str()),
+        builder.getStringAttr("extends"), UnitAttr{},
+        sim::VPIObjectBackingAttr{}, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
+        DenseI64ArrayAttr{}, DenseI64ArrayAttr{}, IntegerAttr{},
+        sim::VPITypeSemanticsAttr{}, sim::FrozenConstantAttr{}, UnitAttr{},
+        FlatSymbolRefAttr{}, UnitAttr{}, StringAttr{}, UnitAttr{});
+    FlatSymbolRefAttr extendsRef =
+        FlatSymbolRefAttr::get(extends.getSymNameAttr());
+    emitClassRelation(getSemanticLocation(classType), definition, 677,
+                      sim::VPIRelationMode::Handle, 0, extendsRef);
+    emitClassRelation(getSemanticLocation(classType), extendsRef, 652,
+                      sim::VPIRelationMode::Handle, 0, definition);
+    emitClassRelation(getSemanticLocation(classType), extendsRef, 630,
+                      sim::VPIRelationMode::Handle, 0, baseTypespec);
   }
 
   struct InterfaceTypespec {
@@ -2587,8 +4311,9 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     sim::SimVPITypespecDeclOp::create(
         builder, getSemanticLocation(entry.representative),
         symbolName.getValue(), nextTypespecId++,
-        scopes.lookup(entry.representative), owner.getValue(), identity, debug,
-        *target, sim::VPITypespecOrigin::Interface, IntegerAttr{});
+        scopes.lookup(entry.representative), owner, identity, debug, *target,
+        sim::VPITypespecOrigin::Interface, IntegerAttr{}, TypeAttr{},
+        IntegerAttr{});
   }
 
   // Materialize a standalone enum typespec when no typedef declaration names
@@ -2599,15 +4324,14 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     sim::VPITypeSemanticsAttr type;
     Attribute identity;
     FlatSymbolRefAttr owner;
+    Operation *block;
     StringAttr constant;
   };
   SmallVector<EnumValueInventory> enumValues;
   module.walk([&](semantic::SVEnumValueSymbolOp enumValue) {
-    // Statement-backed lexical ownership is materialized in the next chunk.
-    // Until then, omit the whole local enum inventory rather than emitting a
-    // dangling constant or collapsing its vpiTypedef ownership outward.
     FlatSymbolRefAttr owner = ownerAnchorFor(enumValue);
-    if (!owner)
+    Operation *block = owner ? nullptr : proceduralOwnerFor(enumValue);
+    if (!owner && !block)
       return;
     auto semanticType = enumValue->getAttrOfType<TypeAttr>("semantic_type");
     auto constant = enumValue->getAttrOfType<StringAttr>("constant_value");
@@ -2640,7 +4364,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     if (!enumTypespecsByIdentity.count(identity) &&
         !enumValue->getAttrOfType<IntegerAttr>(vpiSourceTypeIdentityAttrName))
       return;
-    enumValues.push_back({enumValue, *target, identity, owner, constant});
+    enumValues.push_back(
+        {enumValue, *target, identity, owner, block, constant});
   });
 
   llvm::DenseMap<Attribute, size_t> anonymousEnumRepresentatives;
@@ -2678,10 +4403,19 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         "__obelisk_vpi_enum_typespec_" + std::to_string(nextTypespecId);
     FlatSymbolRefAttr symbol =
         FlatSymbolRefAttr::get(builder.getContext(), symbolName);
-    sim::SimVPITypespecDeclOp::create(
-        builder, getSemanticLocation(enumValue), symbolName, nextTypespecId++,
-        scopes.lookup(enumValue), inventory.owner.getValue(), hierarchy, name,
-        target, sim::VPITypespecOrigin::AnonymousEnum, sourceTypeIdentity);
+    if (inventory.block) {
+      proceduralTypes.typespecs.push_back(
+          {enumValue, inventory.block, symbol, nextTypespecId++,
+           scopes.lookup(enumValue), hierarchy.str(), name.str(), target,
+           sim::VPITypespecOrigin::AnonymousEnum, sourceTypeIdentity});
+      pendingTypespecSymbols.insert(symbol);
+    } else {
+      sim::SimVPITypespecDeclOp::create(
+          builder, getSemanticLocation(enumValue), symbolName, nextTypespecId++,
+          scopes.lookup(enumValue), inventory.owner, hierarchy, name, target,
+          sim::VPITypespecOrigin::AnonymousEnum, sourceTypeIdentity, TypeAttr{},
+          IntegerAttr{});
+    }
     enumTypespecsByIdentity[identity] = symbol;
   }
 
@@ -2698,10 +4432,21 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
       invalid = true;
       continue;
     }
-    sim::SimVPIEnumConstDeclOp::create(
-        builder, getSemanticLocation(enumValue), nextEnumConstId++,
-        nextEnumOrdinal[inventory.identity]++, typespec.getValue(), name,
-        inventory.constant.getValue());
+    auto frozen = freezeSemanticConstant(enumValue);
+    if (failed(frozen)) {
+      invalid = true;
+      continue;
+    }
+    if (pendingTypespecSymbols.contains(typespec)) {
+      proceduralTypes.constants.push_back(
+          {enumValue, nextEnumConstId++, nextEnumOrdinal[inventory.identity]++,
+           typespec, name.str(), inventory.constant.getValue().str(), *frozen});
+    } else {
+      sim::SimVPIEnumConstDeclOp::create(
+          builder, getSemanticLocation(enumValue), nextEnumConstId++,
+          nextEnumOrdinal[inventory.identity]++, typespec.getValue(), name,
+          inventory.constant.getValue(), *frozen);
+    }
   }
 
   auto retainVPITypeForPersistentOwner =
@@ -2858,7 +4603,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
               sim::VPIObjectBackingAttr{}, builder.getDenseI64ArrayAttr(bounds),
               builder.getDenseI64ArrayAttr(packed), DenseI64ArrayAttr{},
               DenseI64ArrayAttr{}, IntegerAttr{}, sim::VPITypeSemanticsAttr{},
-              sim::FrozenConstantAttr{}, UnitAttr{});
+              sim::FrozenConstantAttr{}, UnitAttr{}, FlatSymbolRefAttr{},
+              UnitAttr{}, StringAttr{}, UnitAttr{});
           anchor->setAttr("vpi_properties",
                           netProperties(cast<semantic::SVNetSymbolOp>(op)));
           return anchor;
@@ -2944,6 +4690,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
               DenseI64ArrayAttr{}, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
               builder.getDenseI64ArrayAttr(indices), IntegerAttr{},
               sim::VPITypeSemanticsAttr{}, sim::FrozenConstantAttr{},
+              UnitAttr{}, FlatSymbolRefAttr{}, UnitAttr{}, StringAttr{},
               UnitAttr{});
         }
         return;
@@ -3184,7 +4931,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           lexicalOwnerSymbol, nextAnchorOrdinal[lexicalOwner]++, hierarchy,
           debug, UnitAttr{}, backing, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
           DenseI64ArrayAttr{}, DenseI64ArrayAttr{}, IntegerAttr{},
-          sim::VPITypeSemanticsAttr{}, sim::FrozenConstantAttr{}, UnitAttr{});
+          sim::VPITypeSemanticsAttr{}, sim::FrozenConstantAttr{}, UnitAttr{},
+          FlatSymbolRefAttr{}, UnitAttr{}, StringAttr{}, UnitAttr{});
       anchor->setAttr("vpi_properties", netProperties(net));
     }
     if (net.getNetKind() == semantic::SVNetKind::UserDefined) {
@@ -3207,6 +4955,145 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   for (Operation *op : designObjects)
     if (!portAliases.aliases.count(getHierarchyName(op)))
       emitDescriptor(op);
+
+  // Standalone named events have an executable event identity without an
+  // allocated storage cell. Preserve that identity separately from the source
+  // anchor's inventory ID; those namespaces are unrelated.
+  {
+    for (Operation *source : designObjects) {
+      FlatSymbolRefAttr anchor = anchorSymbols.lookup(source);
+      auto descriptor = descriptors.find(getHierarchyName(source));
+      if (!anchor || !scalarNamedEvents.contains(source) ||
+          descriptor == descriptors.end())
+        continue;
+      if (descriptor->second.kind == DescriptorInfo::Kind::Storage) {
+        anchorDeclarations.lookup(source).setBackingAttr(
+            sim::VPIObjectBackingAttr::get(
+                builder.getContext(), sim::VPIObjectBackingKind::Storage,
+                builder.getI64IntegerAttr(descriptor->second.id),
+                FlatSymbolRefAttr{}));
+      } else if (descriptor->second.kind == DescriptorInfo::Kind::Event) {
+        sim::SimVPIEventBindingOp::create(
+            builder, getSemanticLocation(source), anchor,
+            builder.getI64IntegerAttr(descriptor->second.id));
+      }
+    }
+  }
+
+  // Source properties are immutable declarations, even though the same field
+  // is backed by distinct storage in every live receiver. Keep that binding
+  // symbolic until native class layout is known to the bytecode serializer.
+  SymbolTable classSymbols(design);
+  for (semantic::SVClassTypeOp classType : classes.sources) {
+    for (Operation *child : getChildren(classType)) {
+      auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(child);
+      if (!property || property.getIsCompilerGenerated().value_or(false))
+        continue;
+      FlatSymbolRefAttr fieldRef = classes.fieldSymbols.lookup(property);
+      if (!fieldRef)
+        continue;
+      auto field = dyn_cast_or_null<sim::SimClassFieldDeclOp>(
+          classSymbols.lookup(fieldRef.getValue()));
+      // Slang may materialize inherited embedded-covergroup declarations in
+      // a derived scope. They retain their base field identity and are reached
+      // through vpiExtends, not redeclared as properties of the derived class.
+      if (!field || field.getOwnerAttr().getValue() !=
+                        classes.symbols.lookup(classType).getValue())
+        continue;
+      auto semanticType = property.getSemanticType();
+      if (!semanticType) {
+        property.emitError("VPI class property is missing its semantic type");
+        invalid = true;
+        continue;
+      }
+      FailureOr<sim::VPITypeSemanticsAttr> vpiType = makeVPITypeSemantics(
+          *semanticType, getSemanticLocation(property),
+          typedefLayersFor(property), property);
+      if (failed(vpiType)) {
+        invalid = true;
+        continue;
+      }
+      IntegerAttr storageID, eventID;
+      if (field.getIsStatic()) {
+        auto descriptor = descriptors.find(getHierarchyName(property));
+        if (descriptor == descriptors.end() ||
+            (descriptor->second.kind != DescriptorInfo::Kind::Storage &&
+             descriptor->second.kind != DescriptorInfo::Kind::Event)) {
+          property.emitError("VPI static class property has no design backing");
+          invalid = true;
+          continue;
+        }
+        IntegerAttr id = builder.getI64IntegerAttr(descriptor->second.id);
+        if (descriptor->second.kind == DescriptorInfo::Kind::Storage)
+          storageID = id;
+        else
+          eventID = id;
+      }
+      auto emitMember = [&](FlatSymbolRefAttr owner) {
+        std::string symbolName =
+            "__obelisk_vpi_class_member_" +
+            std::to_string(nextSyntheticInventoryId);
+        auto declaration = sim::SimVPIClassMemberDeclOp::create(
+            builder, getSemanticLocation(property), symbolName,
+            nextSyntheticInventoryId++, scopes.lookup(property),
+            owner.getValue(), fieldRef, getHierarchyName(property),
+            getDebugName(property), *vpiType, storageID, eventID);
+        declaration->setAttr(
+            "vpi_properties",
+            classPropertyFacts(property, sim::vpiKindForClassMember(*vpiType)));
+        retainVPISourceTypeIdentity(property, declaration, *vpiType);
+      };
+      emitMember(classTypespecSymbols.lookup(classType));
+      if (!hasSeparateLexicalClass(classType))
+        emitMember(classDefinitionSymbols.lookup(classType));
+    }
+  }
+
+  if (preserveVPIBoxBindings) {
+    SmallVector<Operation *> boxedArguments;
+    semanticRoot.walk([&](semantic::SVCallExpressionOp call) {
+      if (call.getCalleeName() != "put" && call.getCalleeName() != "try_put")
+        return;
+      auto children = getChildren(call);
+      if (children.size() != 2)
+        return;
+      auto receiver = getNormalizedSemanticType(children.front());
+      auto mailbox = succeeded(receiver) ? dyn_cast<sim::MailboxType>(*receiver)
+                                         : sim::MailboxType{};
+      if (mailbox && isa<sim::BoxType>(mailbox.getElementType()))
+        boxedArguments.push_back(children[1]);
+    });
+    DenseMap<std::pair<Type, Attribute>, FlatSymbolRefAttr> boxTypes;
+    uint64_t nextBoxTypeID = 1;
+    for (Operation *source : boxedArguments) {
+      auto sourceType = source->getAttrOfType<TypeAttr>("semantic_type");
+      auto normalized = getNormalizedSemanticType(source);
+      if (!sourceType || failed(normalized)) {
+        source->emitError("boxed VPI value has no exact source storage type");
+        invalid = true;
+        continue;
+      }
+      auto semantic = makeVPITypeSemantics(sourceType.getValue(),
+                                           getSemanticLocation(source),
+                                           typedefLayersFor(source), source);
+      if (failed(semantic)) {
+        invalid = true;
+        continue;
+      }
+      auto key = std::make_pair(*normalized, Attribute(*semantic));
+      auto [found, inserted] = boxTypes.try_emplace(key, FlatSymbolRefAttr{});
+      if (inserted) {
+        const uint64_t id = nextBoxTypeID++;
+        auto descriptor = sim::SimVPIBoxTypeDeclOp::create(
+            builder, getSemanticLocation(source),
+            "__obelisk_vpi_box_type_" + std::to_string(id), id, *normalized,
+            *semantic);
+        retainVPISourceTypeIdentity(source, descriptor, *semantic);
+        found->second = FlatSymbolRefAttr::get(descriptor);
+      }
+      sim::set<sim::metadata::VpiBoxType>(source, found->second);
+    }
+  }
 
   // A static constraint block has one mode bit shared by every instance of
   // its declaring class (IEEE 1800-2017 18.5.11). Keep that bit in flattened
@@ -3543,11 +5430,13 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     DefinitionMemberPlan &plan =
         definitionMemberPlans[instance.definition.getValue()];
     uint32_t ordinal = 0;
-    for (Operation &child : instance.body.getBody().front()) {
+    for (Operation *sourceMember : instance.members) {
+      Operation &child = *sourceMember;
       if (!isa<semantic::SVPortSymbolOp, semantic::SVInterfacePortSymbolOp>(
-              child) ||
-          getDebugName(&child).empty())
+              child)) {
+        ++ordinal;
         continue;
+      }
       if (ordinal >= plan.memberSymbols.size())
         break;
       if (plan.signatures[ordinal].direction != sim::VPIIODirection::Ref) {
@@ -3602,7 +5491,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
 
   uint64_t nextPortId = 0;
   SmallVector<std::pair<sim::SimPortDeclOp, semantic::SVPortConnectionOp>>
-      declaredNetPorts;
+      declaredNetPorts, declaredPorts;
   llvm::StringSet<> emittedPorts;
   auto hasInterconnectLeaves = [&](StringRef root) {
     std::string prefix = (root + Twine("[")).str();
@@ -3703,6 +5592,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
             ? builder.getStringAttr(*connection.getFormalName())
             : StringAttr{},
         *formalVPIType);
+    declaredPorts.emplace_back(declaration, connection);
     if (source->second.kind == DescriptorInfo::Kind::Net)
       declaredNetPorts.emplace_back(declaration, connection);
     cov::mark<cov::SourceAuthored>(declaration);
@@ -3878,25 +5768,110 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           builder, getSemanticLocation(connection), source,
           static_cast<uint32_t>(reflection::VPIRelationKind::LowConnRel),
           sim::VPIRelationMode::Handle, 0, low->second.reference);
-    Operation *actual = getPortActualLValue(connection);
-    FailureOr<StaticStorageView> view =
-        actual ? getStaticStorageView(actual)
-               : FailureOr<StaticStorageView>(failure());
-    if (failed(view) || !view->identity)
-      continue;
-    auto high = declaredNets.find(view->path);
-    if (high != declaredNets.end() &&
-        (declaredLow || low->second.backingNetId == high->second.backingNetId))
-      sim::SimVPIRelationDeclOp::create(
-          builder, getSemanticLocation(connection), source,
-          static_cast<uint32_t>(reflection::VPIRelationKind::HighConnRel),
-          sim::VPIRelationMode::Handle, 0, high->second.reference);
   }
 
-  // Preserve direct whole-object operands of scope-owned statements as cold
-  // immutable relation inventory. Selects and computed expressions require a
-  // distinct occurrence identity and are intentionally left for the compact
-  // expression table instead of being misrepresented as their root storage.
+  struct ReverseRelation {
+    sim::VPIObjectRefAttr source;
+    uint32_t selector;
+    sim::VPIObjectRefAttr target;
+    Location location;
+  };
+  SmallVector<ReverseRelation> reverseRelations;
+
+  // Both variable and net ports retain the exact higher-side expression.
+  // Electrical collapse does not decide the identity of the declaration that
+  // appeared in source; named variables and independently resolved nets are
+  // equally valid connections (37.14). Computed connections use shared
+  // expression recipes with distinct occurrence identities in the instantiating
+  // scope.
+  // Cast Typespecs use the same exact alias remapping as declarations. Freeze
+  // these before connection expressions are materialized; procedural uses
+  // consume the same metadata later, after local inventory is assigned.
+  llvm::DenseSet<Attribute> castAliases = pendingTypespecSymbols;
+  for (auto declaration : design.getOps<sim::SimVPITypespecDeclOp>())
+    castAliases.insert(FlatSymbolRefAttr::get(declaration.getSymNameAttr()));
+  semanticRoot->walk([&](semantic::SVConversionExpressionOp conversion) {
+    auto implicit = conversion->getAttrOfType<BoolAttr>("is_implicit");
+    auto sourceType = conversion->getAttrOfType<TypeAttr>("semantic_type");
+    if (!implicit || implicit.getValue() || !sourceType ||
+        !conversion->hasAttr(vpiTypedefLayersAttrName))
+      return;
+    Type scalar = sourceType.getValue();
+    for (;;) {
+      if (auto array = dyn_cast<semantic::RangedPackedArrayType>(scalar))
+        scalar = array.getElementType();
+      else if (auto array = dyn_cast<semantic::PackedArrayType>(scalar))
+        scalar = array.getElementType();
+      else
+        break;
+    }
+    if (!isa<semantic::IntegralType, semantic::LogicType>(scalar))
+      return;
+    auto converted = makeVPITypeSemantics(
+        sourceType.getValue(), getSemanticLocation(conversion),
+        typedefLayersFor(conversion), conversion);
+    if (failed(converted)) {
+      invalid = true;
+      return;
+    }
+    bool complete = true;
+    AttrTypeWalker aliases;
+    aliases.addWalk([&](sim::VPITypeSemanticsAttr current) {
+      if (auto names = current.getTypedefAliases())
+        for (Attribute name : names)
+          complete &= castAliases.contains(name);
+    });
+    aliases.walk(*converted);
+    if (complete)
+      sim::set<sim::metadata::VpiDeclaredType>(conversion, *converted);
+  });
+  VPIExpressionMaterializer expressions(design, descriptors, builder);
+  const auto *highConnection = reflection::findVPITraversal(
+      static_cast<uint32_t>(VPIKind::Port),
+      static_cast<uint32_t>(reflection::VPIRelationKind::HighConnRel),
+      reflection::VPITraversalMode::Handle);
+  for (auto [port, connection] : declaredPorts) {
+    Operation *actual = getPortActualLValue(connection);
+    if (!actual)
+      continue;
+    auto instance = scopeDeclarationsById.find(port.getScopeId());
+    if (instance == scopeDeclarationsById.end() ||
+        !instance->second.getParent())
+      continue;
+    auto source = sim::VPIObjectRefAttr::get(
+        builder.getContext(), sim::VPIObjectRefKind::Port, port.getIdAttr());
+    auto resolved = expressions.resolve(
+        actual, source, static_cast<uint32_t>(VPIKind::Port),
+        *instance->second.getParent(),
+        static_cast<uint32_t>(reflection::VPIRelationKind::HighConnRel));
+    if (failed(resolved)) {
+      invalid = true;
+      continue;
+    }
+    auto high = *resolved;
+    if (!high || !highConnection ||
+        !reflection::vpiObjectSetContains(highConnection->targets, high->kind))
+      continue;
+    sim::SimVPIRelationDeclOp::create(
+        builder, getSemanticLocation(connection), source,
+        static_cast<uint32_t>(reflection::VPIRelationKind::HighConnRel),
+        sim::VPIRelationMode::Handle, 0, high->reference);
+    for (auto selector : {reflection::VPIRelationKind::PortInstRel,
+                          reflection::VPIRelationKind::UseRel}) {
+      auto *edge = reflection::findVPITraversal(
+          high->kind, static_cast<uint32_t>(selector),
+          reflection::VPITraversalMode::Iterate);
+      if (!edge || !reflection::vpiObjectSetContains(
+                       edge->targets, static_cast<uint32_t>(VPIKind::Port)))
+        continue;
+      reverseRelations.push_back({high->reference,
+                                  static_cast<uint32_t>(selector), source,
+                                  getSemanticLocation(connection)});
+    }
+  }
+
+  // Whole-declaration endpoints retain direct connectivity relations. Selected
+  // and computed source expressions use the shared occurrence graph below.
   struct DirectEndpoint {
     sim::VPIObjectRefAttr reference;
     const DescriptorInfo *descriptor;
@@ -3962,11 +5937,13 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     DefinitionMemberPlan &plan =
         definitionMemberPlans[instance.definition.getValue()];
     uint32_t ordinal = 0;
-    for (Operation &child : instance.body.getBody().front()) {
+    for (Operation *sourceMember : instance.members) {
+      Operation &child = *sourceMember;
       if (!isa<semantic::SVPortSymbolOp, semantic::SVInterfacePortSymbolOp>(
-              child) ||
-          getDebugName(&child).empty())
+              child)) {
+        ++ordinal;
         continue;
+      }
       if (ordinal >= plan.memberSymbols.size()) {
         emitError(getSemanticLocation(&child))
             << "VPI definition member endpoint ordinal is out of range";
@@ -4041,13 +6018,6 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   auto selectorValue = [](reflection::VPIRelationKind relation) {
     return static_cast<uint32_t>(relation);
   };
-  struct ReverseRelation {
-    sim::VPIObjectRefAttr source;
-    uint32_t selector;
-    sim::VPIObjectRefAttr target;
-    Location location;
-  };
-  SmallVector<ReverseRelation> reverseRelations;
   auto addReverse = [&](const DirectEndpoint &source, uint32_t selector,
                         const ScopeOwnedStatementPlan &target) {
     const auto *edge = reflection::findVPITraversal(
@@ -4099,7 +6069,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
 
   for (const ScopeOwnedStatementPlan &plan : scopeOwnedStatementPlans) {
     SmallVector<Operation *> lhsRhs;
-    if (plan.kind == VPIKind::AliasStmt) {
+    bool netInitializer = isa<semantic::SVNetSymbolOp>(plan.source);
+    if (plan.kind == VPIKind::AliasStmt || netInitializer) {
       lhsRhs = {plan.lhs, plan.rhs};
     } else {
       SmallVector<Operation *> children = getChildren(plan.source);
@@ -4114,27 +6085,50 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     if (lhsRhs.size() != 2)
       continue;
 
-    std::optional<DirectEndpoint> lhs = directEndpoint(lhsRhs[0]);
+    std::optional<DirectEndpoint> lhs =
+        netInitializer ? directEndpointForPath(getHierarchyName(plan.source))
+                       : directEndpoint(lhsRhs[0]);
     std::optional<DirectEndpoint> rhs = directEndpoint(lhsRhs[1]);
     sim::VPIObjectRefAttr statement = statementReference(plan.statementId);
-    auto emitForward = [&](std::optional<DirectEndpoint> target,
-                           reflection::VPIRelationKind selector) {
-      if (!target)
-        return;
+    auto emitRelation = [&](sim::VPIObjectRefAttr target, uint32_t targetKind,
+                            reflection::VPIRelationKind selector) {
       uint32_t selectorNumber = selectorValue(selector);
       const auto *edge = reflection::findVPITraversal(
           static_cast<uint32_t>(plan.kind), selectorNumber,
           reflection::VPITraversalMode::Handle);
       if (!edge || edge->statementContainment ||
           edge->automaticRelation != reflection::VPIAutomaticRelation::None ||
-          !reflection::vpiObjectSetContains(edge->targets, target->vpiKind))
+          !reflection::vpiObjectSetContains(edge->targets, targetKind))
         return;
       sim::SimVPIRelationDeclOp::create(
           builder, getSemanticLocation(plan.source), statement, selectorNumber,
-          sim::VPIRelationMode::Handle, 0, target->reference);
+          sim::VPIRelationMode::Handle, 0, target);
     };
-    emitForward(lhs, reflection::VPIRelationKind::LhsRel);
-    emitForward(rhs, reflection::VPIRelationKind::RhsRel);
+    auto emitForward = [&](Operation *expression,
+                           reflection::VPIRelationKind selector) {
+      uint32_t selectorNumber = selectorValue(selector);
+      auto resolved = expressions.resolve(expression, statement,
+                                          static_cast<uint32_t>(plan.kind),
+                                          plan.scopeId, selectorNumber);
+      if (failed(resolved)) {
+        invalid = true;
+        return;
+      }
+      auto target = *resolved;
+      if (!target)
+        return;
+      emitRelation(target->reference, target->kind, selector);
+    };
+    if (netInitializer) {
+      // The left side is the declaration itself, not a fabricated source
+      // expression or a substitute for its retained declaration identity.
+      if (lhs)
+        emitRelation(lhs->reference, lhs->vpiKind,
+                     reflection::VPIRelationKind::LhsRel);
+    } else {
+      emitForward(lhsRhs[0], reflection::VPIRelationKind::LhsRel);
+    }
+    emitForward(lhsRhs[1], reflection::VPIRelationKind::RhsRel);
 
     if (plan.kind == VPIKind::AliasStmt)
       continue;
@@ -4185,16 +6179,125 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
                  plan);
     }
   }
+  // A terminal is an occurrence, even when two terminals name the same net.
+  // Preserve source order and the assignment wrapper's lvalue identity;
+  // selected and compound expressions use their own occurrence graph.
+  for (Operation *source : anchorSources) {
+    auto primitive = dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(source);
+    if (!primitive)
+      continue;
+    auto parent = anchorDeclarations.lookup(source);
+    if (!parent)
+      continue;
+    auto primitiveModule = moduleInstanceScope(parent.getEnclosingScopeId());
+    auto terminalSources = getChildren(source);
+    for (auto terminalItem : llvm::enumerate(terminalSources)) {
+      size_t index = terminalItem.index();
+      Operation *terminalSource = terminalItem.value();
+      uint32_t direction =
+          primitiveTerminalDirection(primitive, index, terminalSource);
+      Operation *expression = terminalSource;
+      if (isa<semantic::SVAssignmentExpressionOp>(terminalSource)) {
+        auto children = getChildren(terminalSource);
+        if (children.empty())
+          continue;
+        expression = children.front();
+      }
+      std::string symbol =
+          "__obelisk_vpi_terminal_" + std::to_string(nextSyntheticInventoryId);
+      auto terminal = sim::SimVPIObjectAnchorOp::create(
+          builder, getSemanticLocation(terminalSource),
+          builder.getStringAttr(symbol), nextSyntheticInventoryId++,
+          static_cast<uint32_t>(VPIKind::PrimTerm),
+          parent.getEnclosingScopeId(),
+          FlatSymbolRefAttr::get(parent.getSymNameAttr()), index,
+          builder.getStringAttr(""), builder.getStringAttr(""), UnitAttr{},
+          sim::VPIObjectBackingAttr{}, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
+          DenseI64ArrayAttr{}, DenseI64ArrayAttr{}, IntegerAttr{},
+          sim::VPITypeSemanticsAttr{}, sim::FrozenConstantAttr{}, UnitAttr{},
+          FlatSymbolRefAttr{}, UnitAttr{}, StringAttr{}, UnitAttr{});
+      if (direction == 2 &&
+          (parent.getVpiKind() == static_cast<uint32_t>(VPIKind::Gate) ||
+           parent.getVpiKind() == static_cast<uint32_t>(VPIKind::Udp)))
+        primitiveTerminals[terminalSource] =
+            FlatSymbolRefAttr::get(terminal.getSymNameAttr());
+      SmallVector<Attribute> properties;
+      for (auto [selector, value] :
+           {std::pair<uint32_t, uint32_t>{20, direction}})
+        properties.push_back(sim::VPIPropertyAttr::get(
+            builder.getContext(), builder.getI32IntegerAttr(selector),
+            builder.getI32IntegerAttr(value)));
+      terminal->setAttr(
+          "vpi_properties",
+          sim::VPIPropertySetAttr::get(builder.getContext(),
+                                       builder.getArrayAttr(properties)));
+      auto terminalRef = sim::VPIObjectRefAttr::get(
+          builder.getContext(), sim::VPIObjectRefKind::Symbol, {},
+          FlatSymbolRefAttr::get(terminal.getSymNameAttr()));
+      auto resolved = expressions.resolve(
+          expression, terminalRef, static_cast<uint32_t>(VPIKind::PrimTerm),
+          parent.getEnclosingScopeId(),
+          selectorValue(reflection::VPIRelationKind::ExprRel));
+      if (failed(resolved)) {
+        invalid = true;
+        continue;
+      }
+      if (auto target = *resolved)
+        sim::SimVPIRelationDeclOp::create(
+            builder, getSemanticLocation(terminalSource), terminalRef,
+            selectorValue(reflection::VPIRelationKind::ExprRel),
+            sim::VPIRelationMode::Handle, 0, target->reference);
+      auto endpoint = directEndpoint(expression);
+      if (!endpoint)
+        continue;
+      auto reverse = [&](const DirectEndpoint &spelling, uint32_t selector) {
+        const auto *edge = reflection::findVPITraversal(
+            spelling.vpiKind, selector, reflection::VPITraversalMode::Iterate);
+        if (edge &&
+            reflection::vpiObjectSetContains(
+                edge->targets, static_cast<uint32_t>(VPIKind::PrimTerm)))
+          reverseRelations.push_back({spelling.reference, selector, terminalRef,
+                                      getSemanticLocation(terminalSource)});
+      };
+      forPhysicalNetSpelling(*endpoint, [&](const DirectEndpoint &spelling) {
+        auto width = sim::getPackedWidth(spelling.type);
+        if (spelling.descriptor->kind == DescriptorInfo::Kind::Net &&
+            (!width || *width != 1))
+          return; // 37.16: terminal connectivity is scalar/bit-select only.
+        reverse(spelling, static_cast<uint32_t>(VPIKind::PrimTerm));
+        bool local = primitiveModule &&
+                     moduleInstanceScope(spelling.scopeId) == primitiveModule;
+        if (direction != 1) {
+          reverse(spelling,
+                  selectorValue(reflection::VPIRelationKind::DriverRel));
+          if (local && spelling.descriptor->kind == DescriptorInfo::Kind::Net)
+            reverse(spelling,
+                    selectorValue(reflection::VPIRelationKind::LocalDriverRel));
+        }
+        if (direction != 2) {
+          reverse(spelling,
+                  selectorValue(reflection::VPIRelationKind::LoadRel));
+          if (local && spelling.descriptor->kind == DescriptorInfo::Kind::Net)
+            reverse(spelling,
+                    selectorValue(reflection::VPIRelationKind::LocalLoadRel));
+        }
+      });
+      reverse(*endpoint, selectorValue(reflection::VPIRelationKind::UseRel));
+    }
+  }
   llvm::sort(reverseRelations, [](const ReverseRelation &left,
                                   const ReverseRelation &right) {
-    uint64_t leftSource = left.source.getId().getValue().getZExtValue();
-    uint64_t rightSource = right.source.getId().getValue().getZExtValue();
-    uint64_t leftTarget = left.target.getId().getValue().getZExtValue();
-    uint64_t rightTarget = right.target.getId().getValue().getZExtValue();
-    return std::make_tuple(left.source.getKind(), leftSource, left.selector,
-                           leftTarget) <
-           std::make_tuple(right.source.getKind(), rightSource, right.selector,
-                           rightTarget);
+    auto targetKey = [](sim::VPIObjectRefAttr reference) {
+      return std::tuple(
+          reference.getKind(),
+          reference.getId() ? reference.getId().getValue().getZExtValue() : 0,
+          reference.getSymbol() ? reference.getSymbol().getValue()
+                                : StringRef{});
+    };
+    return std::make_tuple(targetKey(left.source), left.selector,
+                           targetKey(left.target)) <
+           std::make_tuple(targetKey(right.source), right.selector,
+                           targetKey(right.target));
   });
   reverseRelations.erase(std::unique(reverseRelations.begin(),
                                      reverseRelations.end(),
@@ -4219,6 +6322,103 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         builder, relation.location, relation.source, relation.selector,
         sim::VPIRelationMode::Iterate, ordinal++, relation.target);
   }
+  // Freeze procedural declarations with the same typedef remapping as
+  // static inventory. Their exact callable/statement scopes are assigned
+  // after statement inventory; no display-name reconstruction is needed.
+  if (preserveVPIMethodBindings) {
+    llvm::DenseSet<Attribute> materializedAliases = pendingTypespecSymbols;
+    for (auto declaration : design.getOps<sim::SimVPITypespecDeclOp>())
+      materializedAliases.insert(
+          FlatSymbolRefAttr::get(declaration.getSymNameAttr()));
+    // A process's block symbols are siblings of its executable declaration.
+    // Resolve actual declaration statements instead of requiring the variable
+    // symbol itself to be physically nested in the code-unit operation.
+    llvm::DenseSet<Operation *> proceduralDeclarations;
+    SymbolTableCollection declarationSymbols;
+    semanticRoot->walk([&](semantic::SVVariableDeclStatementOp declaration) {
+      if (!isNestedInCodeUnit(declaration))
+        return;
+      if (auto variable = dyn_cast_or_null<semantic::SVVariableSymbolOp>(
+              declarationSymbols.lookupSymbolIn(
+                  module, declaration.getReferencedSymbolAttr())))
+        proceduralDeclarations.insert(variable);
+    });
+    semanticRoot->walk([&](semantic::SVForeachLoopStatementOp loop) {
+      if (!isNestedInCodeUnit(loop) ||
+          llvm::any_of(loop.getLoopDimensions(), [](Attribute attribute) {
+            return !cast<DictionaryAttr>(attribute)
+                        .getAs<BoolAttr>(foreach_metadata::hasStaticRange)
+                        .getValue();
+          }))
+        return;
+      for (Attribute attribute : loop.getLoopDimensions()) {
+        auto reference = cast<DictionaryAttr>(attribute).getAs<SymbolRefAttr>(
+            foreach_metadata::iteratorSymbol);
+        if (reference)
+          if (auto iterator = dyn_cast_or_null<semantic::SVIteratorSymbolOp>(
+                  declarationSymbols.lookupSymbolIn(module, reference)))
+            proceduralDeclarations.insert(iterator);
+      }
+    });
+    semanticRoot->walk([&](Operation *source) {
+      if (!isa<semantic::SVVariableSymbolOp, semantic::SVFormalArgumentSymbolOp,
+               semantic::SVIteratorSymbolOp>(source) ||
+          (!isNestedInCodeUnit(source) &&
+           !proceduralDeclarations.contains(source)))
+        return;
+      auto type = source->getAttrOfType<TypeAttr>("semantic_type");
+      if (!type)
+        return;
+      auto converted =
+          makeVPITypeSemantics(type.getValue(), getSemanticLocation(source),
+                               typedefLayersFor(source), source);
+      if (failed(converted)) {
+        invalid = true;
+        return;
+      }
+      bool complete = true;
+      AttrTypeWalker aliases;
+      aliases.addWalk([&](sim::VPITypeSemanticsAttr current) {
+        if (auto names = current.getTypedefAliases())
+          for (Attribute name : names)
+            complete &= materializedAliases.contains(name);
+        if (current.getKind() == sim::VPITypeKind::Enum &&
+            !current.getTypedefAliases())
+          complete &= enumTypespecsByIdentity.count(
+                          getEnumIdentity(source, current)) != 0;
+      });
+      aliases.walk(*converted);
+      // Block-owned types are frozen here and assigned their exact statement
+      // owner after statement inventory. No alias layer is erased.
+      if (complete)
+        sim::set<sim::metadata::VpiDeclaredType>(source, *converted);
+    });
+  }
+  // Gather first, then emit: creating declarations inside the IR walk would
+  // invalidate its operation iterator. AttrTypeWalker memoizes the attribute
+  // DAG, so shared nested semantic types are visited once in deterministic
+  // declaration/attribute/child order.
+  SmallVector<std::pair<sim::VPITypeSemanticsAttr, Operation *>>
+      observedBuiltins;
+  Operation *observedOwner = nullptr;
+  AttrTypeWalker semanticWalker;
+  semanticWalker.addWalk([&](sim::VPITypeSemanticsAttr type) {
+    if (isBuiltinVPIClass(type.getKind()))
+      observedBuiltins.emplace_back(type, observedOwner);
+  });
+  design.walk([&](Operation *operation) {
+    observedOwner = operation;
+    for (NamedAttribute attribute : operation->getAttrs())
+      semanticWalker.walk(attribute.getValue());
+  });
+  semanticRoot->walk([&](Operation *source) {
+    if (auto declared = sim::get<sim::metadata::VpiDeclaredType>(source)) {
+      observedOwner = source;
+      semanticWalker.walk(declared);
+    }
+  });
+  for (auto [semantic, owner] : observedBuiltins)
+    internBuiltinTypespec(semantic, owner, /*requireSource=*/false);
   if (invalid)
     return failure();
   return descriptors;

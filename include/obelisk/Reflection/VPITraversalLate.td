@@ -107,7 +107,8 @@ def LateSimpleUseTargets : VPIObjectSet<"LateSimpleUseTargets",
    NamedFork, NullStmt, Release, Repeat, RepeatControl, SysTaskCall, TaskCall,
    Wait, While, MethodTaskCall, ImmediateAssert, ImmediateAssume,
    ImmediateCover, DoWhile, OrderedWait, WaitFork, DisableFork, ExpectStmt,
-   ForeachStmt, ReturnStmt, Break, Continue]>;
+   ForeachStmt, ReturnStmt, Break, Continue, FuncCall, MethodFuncCall,
+   SysFuncCall]>;
 def LateBitSelectSource : VPIObjectSet<"LateBitSelectSource", [BitSelect]>;
 
 def LateIndexedPartSelectSource : VPIObjectSet<
@@ -196,7 +197,7 @@ def LateForeachLoopTargets : VPIObjectSet<"LateForeachLoopTargets",
    ByteVar, ClassVar, StringVar, EnumVar, StructVar, UnionVar, BitVar,
    ChandleVar, RegArray, PackedArrayVar, Operation]>;
 def LateForeachIndexedTargets : VPIObjectSet<"LateForeachIndexedTargets",
-  [RegArray, PackedArrayVar, StringVar]>;
+  [RegArray, PackedArrayVar, BitVar, Reg, StringVar]>;
 def LateAliasSource : VPIObjectSet<"LateAliasSource", [AliasStmt]>;
 def LateDisableSource : VPIObjectSet<"LateDisableSource", [Disable]>;
 def LateDisableTargets : VPIObjectSet<"LateDisableTargets",

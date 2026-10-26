@@ -443,6 +443,19 @@ validateManagedSlots(obelisk_rt_context *context,
                      return;
                    }
                    auto *object = heapStringObject(*slot);
+                   if (kind == OBELISK_RT_MANAGED_SLOT_MAILBOX ||
+                       kind == OBELISK_RT_MANAGED_SLOT_SEMAPHORE) {
+                     BuiltinClassKind expected =
+                         kind == OBELISK_RT_MANAGED_SLOT_MAILBOX
+                             ? BuiltinClassKind::Mailbox
+                             : BuiltinClassKind::Semaphore;
+                     if (!obelisk_rt_managed_object_belongs_to(context,
+                                                               object) ||
+                         obelisk_rt_builtin_class_kind_unlocked(object) !=
+                             expected)
+                       status = OBELISK_RT_INVALID_HANDLE;
+                     return;
+                   }
                    obelisk_rt_managed_kind_v1 expected;
                    switch (kind) {
                    case OBELISK_RT_MANAGED_SLOT_CLASS:
@@ -937,6 +950,7 @@ obelisk_rt_status initializeContainer(obelisk_rt_gc_lane_v1 *lane,
           header->capacity = initialize->capacity;
           header->bound = initialize->bound;
           header->epoch = 1;
+          header->boxTypeID = 0;
           header->referenceBuffer = nullptr;
           header->referenceCount = 0;
           header->referenceCapacity = 0;
@@ -1020,6 +1034,7 @@ initializeAssoc(obelisk_rt_gc_lane_v1 *lane,
           header->kind = OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY;
           header->element = initialize->element;
           header->epoch = 1;
+          header->boxTypeID = 0;
           header->keyKind = initialize->keyKind;
           header->keyWidth = initialize->keyWidth;
           header->keyElement = initialize->keyElement;
@@ -4148,6 +4163,9 @@ obelisk_rt_status cloneContainerImpl(obelisk_rt_gc_lane_v1 *lane,
             return OBELISK_RT_OK;
           });
   }
+  if (status == OBELISK_RT_OK && snapshot.boxTypeID)
+    status = obelisk_rt_v1_box_bind_type(obelisk_rt_managed_lane_context(lane),
+                                         result, snapshot.boxTypeID);
   if (providerPushed) {
     obelisk_rt_status popStatus = obelisk_rt_managed_roots_pop(lane, &provider);
     if (status == OBELISK_RT_OK)
@@ -4816,9 +4834,18 @@ static obelisk_rt_status internElementType(
     slotKind = OBELISK_RT_MANAGED_SLOT_STRING;
   else if (elementKind == OBELISK_RT_ELEMENT_CONTAINER_HANDLE)
     slotKind = OBELISK_RT_MANAGED_SLOT_CONTAINER;
+  bool builtinHandle =
+      elementKind == OBELISK_RT_ELEMENT_CONTAINER_HANDLE &&
+      traceSlotCount == 1 && traceSlots[0].offset == 0 &&
+      traceSlots[0].reserved == 0 &&
+      (traceSlots[0].kind == OBELISK_RT_MANAGED_SLOT_MAILBOX ||
+       traceSlots[0].kind == OBELISK_RT_MANAGED_SLOT_SEMAPHORE);
+  if (builtinHandle)
+    slotKind = 0;
   if (slotKind && traceSlotCount != 0)
     return OBELISK_RT_INVALID_ARGUMENT;
-  if (elementKind != OBELISK_RT_ELEMENT_AGGREGATE && traceSlotCount != 0)
+  if (elementKind != OBELISK_RT_ELEMENT_AGGREGATE && traceSlotCount != 0 &&
+      !builtinHandle)
     return OBELISK_RT_INVALID_ARGUMENT;
   OBELISK_RT_TRY {
     owned->entries.reserve(
@@ -4996,6 +5023,304 @@ extern "C" obelisk_rt_status obelisk_rt_v1_container_create_typed_pattern(
       outContainer);
 }
 
+BuiltinClassKind obelisk_rt_builtin_container_kind(const uint8_t *object,
+                                                   uint64_t extent) noexcept {
+  if (!object)
+    return BuiltinClassKind::None;
+  if (extent == sizeof(SemaphoreHeader) &&
+      reinterpret_cast<const SemaphoreHeader *>(object)->descriptor ==
+          &semaphoreDescriptorToken)
+    return BuiltinClassKind::Semaphore;
+  if (extent == sizeof(ContainerHeader)) {
+    const auto *header = reinterpret_cast<const ContainerHeader *>(object);
+    if (header->descriptor == &containerDescriptorToken &&
+        header->kind == OBELISK_RT_CONTAINER_QUEUE && header->isMailbox == 1)
+      return BuiltinClassKind::Mailbox;
+  }
+  return BuiltinClassKind::None;
+}
+
+BuiltinClassKind
+obelisk_rt_builtin_class_kind(const ManagedObjectLease &lease) noexcept {
+  return lease.metadata && lease.object
+             ? obelisk_rt_builtin_class_kind_unlocked(
+                   reinterpret_cast<obelisk_rt_object_v1 *>(lease.object))
+             : BuiltinClassKind::None;
+}
+
+obelisk_rt_status
+obelisk_rt_builtin_class_payload(obelisk_rt_object_v1 *object,
+                                 BuiltinClassKind expected,
+                                 obelisk_rt_object_v1 **outPayload) {
+  if (!outPayload)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outPayload = nullptr;
+  if (!object || expected == BuiltinClassKind::None)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (obelisk_rt_builtin_class_kind_unlocked(object) != expected)
+    return OBELISK_RT_INVALID_HANDLE;
+  if (obelisk_rt_managed_object_kind(object) == OBELISK_RT_MANAGED_CONTAINER) {
+    *outPayload = object;
+    return OBELISK_RT_OK;
+  }
+  const auto *descriptor = obelisk_rt_managed_object_class_descriptor(object);
+  while (descriptor &&
+         descriptor->builtin_base_kind == OBELISK_RT_BUILTIN_CLASS_NONE)
+    descriptor = descriptor->base;
+  if (!descriptor)
+    return OBELISK_RT_INVALID_HANDLE;
+  struct ReadPayload {
+    uint64_t offset;
+    obelisk_rt_managed_word_v1 word;
+  } read{descriptor->builtin_base_offset, 0};
+  obelisk_rt_status status = obelisk_rt_managed_object_access(
+      object, OBELISK_RT_MANAGED_CLASS,
+      [](void *opaque, uint8_t *bytes, uint64_t extent) {
+        auto &read = *static_cast<ReadPayload *>(opaque);
+        if (read.offset > extent || sizeof(read.word) > extent - read.offset)
+          return OBELISK_RT_INVALID_HANDLE;
+        std::memcpy(&read.word, bytes + read.offset, sizeof(read.word));
+        return OBELISK_RT_OK;
+      },
+      &read);
+  if (status != OBELISK_RT_OK)
+    return status;
+  auto *payload = obelisk_rt_object_from_managed_word(read.word);
+  if (read.word != obelisk_rt_managed_word_from_object(payload) || !payload ||
+      obelisk_rt_managed_object_kind(payload) != OBELISK_RT_MANAGED_CONTAINER ||
+      !obelisk_rt_managed_object_belongs_to(
+          obelisk_rt_managed_object_context(object), payload) ||
+      obelisk_rt_builtin_class_kind_unlocked(payload) != expected)
+    return OBELISK_RT_INVALID_HANDLE;
+  *outPayload = payload;
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status
+obelisk_rt_mailbox_snapshot(obelisk_rt_object_v1 *mailbox,
+                            const obelisk_rt_element_type_v1 **outElement,
+                            std::vector<uint8_t> &outValues) {
+
+  outValues.clear();
+  if (!outElement)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outElement = nullptr;
+  obelisk_rt_object_v1 *payload = nullptr;
+  obelisk_rt_status payloadStatus = obelisk_rt_builtin_class_payload(
+      mailbox, BuiltinClassKind::Mailbox, &payload);
+  if (payloadStatus != OBELISK_RT_OK)
+    return obelisk_rt_managed_object_kind(mailbox) ==
+                   OBELISK_RT_MANAGED_CONTAINER
+               ? OBELISK_RT_INVALID_ARGUMENT
+               : payloadStatus;
+
+  mailbox = payload;
+  ContainerHeader snapshot{};
+  obelisk_rt_status status = snapshotHeader(mailbox, snapshot);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (snapshot.kind != OBELISK_RT_CONTAINER_QUEUE || !snapshot.isMailbox)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  std::vector<uint8_t> values;
+  status = snapshotValues(mailbox, snapshot, values);
+  if (status == OBELISK_RT_OK) {
+    *outElement = snapshot.element;
+    outValues = std::move(values);
+  }
+  return status;
+}
+
+obelisk_rt_status
+obelisk_rt_container_snapshot(obelisk_rt_object_v1 *container,
+                              uint32_t *outKind,
+                              const obelisk_rt_element_type_v1 **outElement,
+                              std::vector<uint8_t> &outValues) {
+  outValues.clear();
+  if (outKind)
+    *outKind = 0;
+  if (outElement)
+    *outElement = nullptr;
+  if (!outKind || !outElement)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContainerHeader snapshot{};
+  auto status = snapshotHeader(container, snapshot);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (snapshot.isMailbox ||
+      (snapshot.kind != OBELISK_RT_CONTAINER_DYNAMIC_ARRAY &&
+       snapshot.kind != OBELISK_RT_CONTAINER_QUEUE))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  std::vector<uint8_t> values;
+  status = snapshotValues(container, snapshot, values);
+  if (status == OBELISK_RT_OK) {
+    *outKind = snapshot.kind;
+    *outElement = snapshot.element;
+    outValues = std::move(values);
+  }
+  return status;
+}
+
+// The snapshot captures the bound source identity and complete value planes
+// at one epoch. Binding increments that epoch, just like a value mutation.
+obelisk_rt_status
+obelisk_rt_box_snapshot(obelisk_rt_object_v1 *box, uint64_t *outTypeID,
+                        const obelisk_rt_element_type_v1 **outElement,
+                        std::vector<uint8_t> &outPlanes) {
+  outPlanes.clear();
+  if (outTypeID)
+    *outTypeID = 0;
+  if (outElement)
+    *outElement = nullptr;
+  if (!outTypeID || !outElement)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContainerHeader snapshot{};
+  auto status = snapshotHeader(box, snapshot);
+  if (status != OBELISK_RT_OK)
+    return status;
+  auto isBox = [&] {
+    return snapshot.kind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY &&
+           !snapshot.isMailbox && snapshot.size == 1;
+  };
+  if (!isBox())
+    return OBELISK_RT_INVALID_ARGUMENT;
+  std::vector<uint8_t> values;
+  status = snapshotValues(box, snapshot, values);
+  if (status != OBELISK_RT_OK)
+    return status;
+  // snapshotValues can retry after a concurrent resize; validate the final
+  // header that was copied under the same access as the returned planes.
+  if (!isBox())
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outTypeID = snapshot.boxTypeID;
+  *outElement = snapshot.element;
+  outPlanes = std::move(values);
+  return OBELISK_RT_OK;
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_box_bind_type(obelisk_rt_context *context,
+                            obelisk_rt_object_v1 *box, uint64_t id) {
+  if (!context || !box || !id)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  if (!obelisk_rt_managed_object_belongs_to(context, box))
+    return OBELISK_RT_INVALID_HANDLE;
+  ManagedExecutionScope managed(context);
+  if (managed.getStatus() != OBELISK_RT_OK)
+    return managed.getStatus();
+  VPIBoxTypeBinding type;
+  auto status = obelisk_rt_cached_vpi_box_type(context, id, &type);
+  if (status != OBELISK_RT_OK)
+    return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
+  ContainerHeader snapshot{};
+  status = snapshotHeader(box, snapshot);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (snapshot.kind != OBELISK_RT_CONTAINER_DYNAMIC_ARRAY ||
+      snapshot.isMailbox || snapshot.size != 1)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  status = obelisk_rt_vpi_element_matches(context, type.layout, type.semantic,
+                                          snapshot.element);
+  if (status != OBELISK_RT_OK)
+    return status;
+  struct Bind {
+    uint64_t id;
+    const obelisk_rt_element_type_v1 *element;
+  } bind{id, snapshot.element};
+  return obelisk_rt_managed_object_access(
+      box, OBELISK_RT_MANAGED_CONTAINER,
+      [](void *opaque, uint8_t *bytes, uint64_t extent) -> obelisk_rt_status {
+        if (extent != sizeof(ContainerHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto &header = *reinterpret_cast<ContainerHeader *>(bytes);
+        const auto &bind = *static_cast<Bind *>(opaque);
+        if (header.descriptor != &containerDescriptorToken ||
+            header.kind != OBELISK_RT_CONTAINER_DYNAMIC_ARRAY ||
+            header.isMailbox || header.size != 1 ||
+            header.element != bind.element)
+          return OBELISK_RT_INVALID_ARGUMENT;
+        if (header.boxTypeID)
+          return header.boxTypeID == bind.id ? OBELISK_RT_OK
+                                             : OBELISK_RT_INVALID_ARGUMENT;
+        header.boxTypeID = bind.id;
+        ++header.epoch;
+        return OBELISK_RT_OK;
+      },
+      &bind);
+}
+
+obelisk_rt_status obelisk_rt_container_element_snapshot(
+    obelisk_rt_object_v1 *container, std::optional<uint64_t> index,
+    VPIContainerElementSnapshot *outSnapshot) {
+  if (!outSnapshot)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outSnapshot = {};
+  OBELISK_RT_TRY {
+    for (;;) {
+      ContainerHeader snapshot{};
+      auto status = snapshotHeader(container, snapshot);
+      if (status != OBELISK_RT_OK)
+        return status;
+      if (snapshot.isMailbox ||
+          (snapshot.kind != OBELISK_RT_CONTAINER_DYNAMIC_ARRAY &&
+           snapshot.kind != OBELISK_RT_CONTAINER_QUEUE))
+        return OBELISK_RT_INVALID_ARGUMENT;
+      uint64_t stride = elementStride(snapshot.element);
+      if (stride == 0 || stride > SIZE_MAX)
+        return OBELISK_RT_OUT_OF_RESOURCES;
+      VPIContainerElementSnapshot result;
+      result.kind = snapshot.kind;
+      result.size = snapshot.size;
+      result.element = snapshot.element;
+      if (index && *index < snapshot.size)
+        result.value.resize(static_cast<size_t>(stride));
+      struct Copy {
+        ContainerHeader snapshot;
+        std::optional<uint64_t> index;
+        std::vector<uint8_t> *value;
+        bool retry = false;
+      } copy{snapshot, index, &result.value};
+      status = obelisk_rt_managed_object_access(
+          container, OBELISK_RT_MANAGED_CONTAINER,
+          [](void *opaque, uint8_t *object,
+             uint64_t extent) -> obelisk_rt_status {
+            auto &copy = *static_cast<Copy *>(opaque);
+            if (extent != sizeof(ContainerHeader))
+              return OBELISK_RT_INVALID_HANDLE;
+            auto &current = *reinterpret_cast<ContainerHeader *>(object);
+            if (current.epoch != copy.snapshot.epoch ||
+                current.size != copy.snapshot.size ||
+                current.buffer != copy.snapshot.buffer) {
+              copy.retry = true;
+              return OBELISK_RT_OK;
+            }
+            if (!copy.index)
+              return OBELISK_RT_OK;
+            if (*copy.index >= current.size)
+              return OBELISK_RT_EOF;
+            const uint64_t stride = elementStride(current.element);
+            return accessBuffer(current.buffer, [&](uint8_t *data,
+                                                    uint64_t size) {
+              if (stride == 0 || current.capacity > size / stride)
+                return OBELISK_RT_INVALID_HANDLE;
+              std::memcpy(copy.value->data(),
+                          data + physicalIndex(current, *copy.index) * stride,
+                          static_cast<size_t>(stride));
+              return OBELISK_RT_OK;
+            });
+          },
+          &copy);
+      if (status != OBELISK_RT_OK)
+        return status;
+      if (copy.retry)
+        continue;
+      *outSnapshot = std::move(result);
+      return OBELISK_RT_OK;
+    }
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
+}
+
 extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_create_typed(
     obelisk_rt_gc_lane_v1 *lane, uint64_t typeID, uint32_t elementKind,
     uint32_t elementFlags, uint64_t valueSize, uint64_t alignment,
@@ -5049,6 +5374,11 @@ obelisk_rt_v1_semaphore_create(obelisk_rt_gc_lane_v1 *lane, int32_t keys,
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_semaphore_put(obelisk_rt_object_v1 *semaphore, int32_t keys) {
+  obelisk_rt_status payloadStatus = obelisk_rt_builtin_class_payload(
+      semaphore, BuiltinClassKind::Semaphore, &semaphore);
+  if (payloadStatus != OBELISK_RT_OK)
+    return payloadStatus;
+
   if (!semaphore || keys < 0)
     return OBELISK_RT_INVALID_ARGUMENT;
   struct Put {
@@ -5074,9 +5404,15 @@ obelisk_rt_v1_semaphore_put(obelisk_rt_object_v1 *semaphore, int32_t keys) {
 obelisk_rt_status
 obelisk_rt_semaphore_try_get_raw(obelisk_rt_object_v1 *semaphore, int32_t keys,
                                  uint32_t *outSuccess) {
+
   if (!semaphore || !outSuccess)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outSuccess = 0;
+  obelisk_rt_status payloadStatus = obelisk_rt_builtin_class_payload(
+      semaphore, BuiltinClassKind::Semaphore, &semaphore);
+  if (payloadStatus != OBELISK_RT_OK)
+    return payloadStatus;
+
   if (keys < 0)
     return OBELISK_RT_INVALID_ARGUMENT;
   struct Get {
@@ -5104,7 +5440,13 @@ obelisk_rt_semaphore_try_get_raw(obelisk_rt_object_v1 *semaphore, int32_t keys,
 obelisk_rt_status
 obelisk_rt_semaphore_keys_ready(obelisk_rt_object_v1 *semaphore, int32_t keys,
                                 bool &ready) {
+
   ready = false;
+  obelisk_rt_status payloadStatus = obelisk_rt_builtin_class_payload(
+      semaphore, BuiltinClassKind::Semaphore, &semaphore);
+  if (payloadStatus != OBELISK_RT_OK)
+    return payloadStatus;
+
   if (!semaphore || keys < 0)
     return OBELISK_RT_INVALID_ARGUMENT;
   struct Ready {
@@ -5782,15 +6124,31 @@ obelisk_rt_v1_mailbox_try_put(obelisk_rt_gc_lane_v1 *lane,
                               const void *unknown, uint32_t *outSuccess) {
   if (!outSuccess)
     return OBELISK_RT_INVALID_ARGUMENT;
-  return queuePushImpl(lane, mailbox, 0, value, unknown, outSuccess);
+  *outSuccess = 0;
+
+  ScopedManagedRoot receiverRoot(lane, &mailbox);
+  if (receiverRoot.getStatus() != OBELISK_RT_OK)
+    return receiverRoot.getStatus();
+  obelisk_rt_object_v1 *payload = nullptr;
+  obelisk_rt_status payloadStatus = obelisk_rt_builtin_class_payload(
+      mailbox, BuiltinClassKind::Mailbox, &payload);
+  if (payloadStatus != OBELISK_RT_OK)
+    return payloadStatus;
+
+  return queuePushImpl(lane, payload, 0, value, unknown, outSuccess);
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_try_put_checked(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *mailbox,
     const void *value, uint64_t valueSize, const void *unknown,
     uint64_t unknownSize, uint32_t *outSuccess) {
+  obelisk_rt_object_v1 *payload = nullptr;
+  obelisk_rt_status payloadStatus = obelisk_rt_builtin_class_payload(
+      mailbox, BuiltinClassKind::Mailbox, &payload);
+  if (payloadStatus != OBELISK_RT_OK)
+    return payloadStatus;
   ContainerHeader snapshot;
-  obelisk_rt_status status = snapshotHeader(mailbox, snapshot);
+  obelisk_rt_status status = snapshotHeader(payload, snapshot);
   if (status != OBELISK_RT_OK)
     return status;
   bool fourState =
@@ -5805,9 +6163,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_try_put_checked(
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_mailbox_num(obelisk_rt_object_v1 *mailbox, uint32_t *outCount) {
+
   if (!outCount)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outCount = 0;
+  obelisk_rt_status payloadStatus = obelisk_rt_builtin_class_payload(
+      mailbox, BuiltinClassKind::Mailbox, &mailbox);
+  if (payloadStatus != OBELISK_RT_OK)
+    return payloadStatus;
+
   ContainerHeader snapshot;
   obelisk_rt_status status = snapshotHeader(mailbox, snapshot);
   if (status != OBELISK_RT_OK || snapshot.kind != OBELISK_RT_CONTAINER_QUEUE)
@@ -5821,7 +6185,13 @@ obelisk_rt_v1_mailbox_num(obelisk_rt_object_v1 *mailbox, uint32_t *outCount) {
 obelisk_rt_status obelisk_rt_mailbox_wait_ready(obelisk_rt_object_v1 *mailbox,
                                                 uint32_t predicate,
                                                 bool &ready) {
+
   ready = false;
+  obelisk_rt_status payloadStatus = obelisk_rt_builtin_class_payload(
+      mailbox, BuiltinClassKind::Mailbox, &mailbox);
+  if (payloadStatus != OBELISK_RT_OK)
+    return payloadStatus;
+
   ContainerHeader snapshot;
   obelisk_rt_status status = snapshotHeader(mailbox, snapshot);
   if (status != OBELISK_RT_OK || snapshot.kind != OBELISK_RT_CONTAINER_QUEUE)
@@ -5907,9 +6277,15 @@ obelisk_rt_v1_queue_pop(obelisk_rt_object_v1 *queue, uint32_t front,
 extern "C" obelisk_rt_status
 obelisk_rt_v1_mailbox_try_peek(obelisk_rt_object_v1 *mailbox, void *outValue,
                                void *outUnknown, uint32_t *outPresent) {
+
   if (!outValue || !outPresent)
     return OBELISK_RT_INVALID_ARGUMENT;
   *outPresent = 0;
+  obelisk_rt_status payloadStatus = obelisk_rt_builtin_class_payload(
+      mailbox, BuiltinClassKind::Mailbox, &mailbox);
+  if (payloadStatus != OBELISK_RT_OK)
+    return payloadStatus;
+
   ContainerHeader snapshot;
   obelisk_rt_status status = snapshotHeader(mailbox, snapshot);
   if (status != OBELISK_RT_OK || snapshot.kind != OBELISK_RT_CONTAINER_QUEUE)
@@ -5958,6 +6334,11 @@ static obelisk_rt_status
 verifyMailboxOutputBuffers(obelisk_rt_object_v1 *mailbox, void *outValue,
                            uint64_t valueSize, void *outUnknown,
                            uint64_t unknownSize) {
+  obelisk_rt_status payloadStatus = obelisk_rt_builtin_class_payload(
+      mailbox, BuiltinClassKind::Mailbox, &mailbox);
+  if (payloadStatus != OBELISK_RT_OK)
+    return payloadStatus;
+
   ContainerHeader snapshot;
   obelisk_rt_status status = snapshotHeader(mailbox, snapshot);
   if (status != OBELISK_RT_OK)
@@ -5986,6 +6367,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_try_peek_checked(
 extern "C" obelisk_rt_status
 obelisk_rt_v1_mailbox_try_get(obelisk_rt_object_v1 *mailbox, void *outValue,
                               void *outUnknown, uint32_t *outPresent) {
+  obelisk_rt_status payloadStatus = obelisk_rt_builtin_class_payload(
+      mailbox, BuiltinClassKind::Mailbox, &mailbox);
+  if (payloadStatus != OBELISK_RT_OK)
+    return payloadStatus;
+
   return obelisk_rt_v1_queue_pop(mailbox, 1, outValue, outUnknown, outPresent);
 }
 
@@ -6871,6 +7257,176 @@ static obelisk_rt_status compareAssocSlotWithKey(const ContainerHeader &header,
       key.wideIntegral.size(), header.keyWidth,
       header.keyKind == OBELISK_RT_ASSOC_KEY_SIGNED);
   return OBELISK_RT_OK;
+}
+
+obelisk_rt_status obelisk_rt_assoc_snapshot(obelisk_rt_object_v1 *array,
+                                            VPIAssocSnapshot *outSnapshot) {
+  if (!outSnapshot)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outSnapshot = {};
+  ContainerHeader snapshot{};
+  auto status = snapshotHeader(array, snapshot);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (snapshot.kind != OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  struct Entry {
+    VPIAssocSnapshotEntry value;
+    std::vector<uint8_t> order;
+    uint64_t integral = 0;
+  };
+  struct Copy {
+    VPIAssocSnapshot result;
+    std::vector<Entry> entries;
+  } copy;
+  OBELISK_RT_TRY {
+    status = obelisk_rt_managed_object_access(
+        array, OBELISK_RT_MANAGED_CONTAINER,
+        [](void *opaque, uint8_t *object,
+           uint64_t extent) -> obelisk_rt_status {
+          auto &copy = *static_cast<Copy *>(opaque);
+          if (extent != sizeof(ContainerHeader))
+            return OBELISK_RT_INVALID_HANDLE;
+          const auto &header = *reinterpret_cast<ContainerHeader *>(object);
+          if (header.descriptor != &containerDescriptorToken ||
+              header.kind != OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
+            return OBELISK_RT_INVALID_HANDLE;
+          copy.result.keyKind = header.keyKind;
+          copy.result.keyWidth = header.keyWidth;
+          copy.result.keyElement = header.keyElement;
+          copy.result.element = header.element;
+          if (header.size > SIZE_MAX)
+            return OBELISK_RT_OUT_OF_RESOURCES;
+          copy.entries.reserve(static_cast<size_t>(header.size));
+          if (!header.size)
+            return OBELISK_RT_OK;
+          const uint64_t stride = assocSlotStride(header.element);
+          const uint64_t valueSize = elementStride(header.element);
+          uint64_t capacityBytes = 0;
+          if (valueSize > SIZE_MAX ||
+              !multiplyFits(header.capacity, stride, capacityBytes))
+            return OBELISK_RT_OUT_OF_RESOURCES;
+          return accessBuffer(header.buffer, [&](uint8_t *data,
+                                                 uint64_t extent) {
+            if (extent < capacityBytes)
+              return OBELISK_RT_INVALID_HANDLE;
+            for (uint64_t index = 0; index != header.capacity; ++index) {
+              const auto &slot =
+                  *reinterpret_cast<AssocSlot *>(data + index * stride);
+              if (slot.hash == emptyAssocHash)
+                continue;
+              Entry entry;
+              entry.integral = slot.integral;
+              entry.value.keyWidth = header.keyWidth;
+              const auto *value =
+                  data + index * stride + assocValueOffset(header.element);
+              entry.value.value.assign(value, value + valueSize);
+              auto word = [&](uint64_t bits) {
+                entry.value.key.resize(sizeof(bits));
+                std::memcpy(entry.value.key.data(), &bits, sizeof(bits));
+              };
+              obelisk_rt_status status = OBELISK_RT_OK;
+              switch (header.keyKind) {
+              case OBELISK_RT_ASSOC_KEY_STRING: {
+                word(slot.string);
+                StringView view;
+                status = readString(slot.string, view);
+                if (status != OBELISK_RT_OK)
+                  return status;
+                entry.order.assign(view.bytes, view.bytes + view.size);
+                break;
+              }
+              case OBELISK_RT_ASSOC_KEY_CLASS:
+                word(obelisk_rt_managed_word_from_object(slot.object));
+                break;
+              case OBELISK_RT_ASSOC_KEY_PROCESS:
+                word(slot.integral);
+                break;
+              case OBELISK_RT_ASSOC_KEY_WILDCARD: {
+                NormalizedAssocKey key;
+                status = normalizeWildcardAssocObject(
+                    obelisk_rt_managed_object_context(slot.object), slot.object,
+                    key);
+                if (status != OBELISK_RT_OK)
+                  return status;
+                if (key.wideIntegral.size() < 24)
+                  return OBELISK_RT_INVALID_HANDLE;
+                std::memcpy(&entry.value.keyWidth, key.wideIntegral.data() + 8,
+                            sizeof(uint64_t));
+                entry.value.key.assign(key.wideIntegral.begin() + 24,
+                                       key.wideIntegral.end());
+                entry.order = std::move(key.wideIntegral);
+                break;
+              }
+              case OBELISK_RT_ASSOC_KEY_ELEMENT: {
+                obelisk_rt_assoc_key_v1 key{};
+                status = readAssocKeyBox(slot.object, entry.value.key, key);
+                if (status == OBELISK_RT_OK)
+                  status =
+                      serializeAssocKeyBox(header, slot.object, entry.order, 0);
+                if (status != OBELISK_RT_OK)
+                  return status;
+                break;
+              }
+              case OBELISK_RT_ASSOC_KEY_SIGNED:
+              case OBELISK_RT_ASSOC_KEY_UNSIGNED:
+                if (header.keyWidth <= 64) {
+                  word(slot.integral);
+                  entry.value.key.resize((header.keyWidth + 7) / 8);
+                } else {
+                  StringView view;
+                  status = readIntegralSlot(header, slot, view);
+                  if (status != OBELISK_RT_OK)
+                    return status;
+                  entry.value.key.assign(view.bytes, view.bytes + view.size);
+                }
+                break;
+              default:
+                return OBELISK_RT_INVALID_HANDLE;
+              }
+              status = serializeStoredAssocKey(header, slot,
+                                               entry.value.identity, 0);
+              if (status != OBELISK_RT_OK)
+                return status;
+              copy.entries.push_back(std::move(entry));
+            }
+            return copy.entries.size() == header.size
+                       ? OBELISK_RT_OK
+                       : OBELISK_RT_INVALID_HANDLE;
+          });
+        },
+        &copy);
+    if (status != OBELISK_RT_OK)
+      return status;
+    // Only independent host buffers are read by this comparator. No runtime
+    // lock, allocation, or fallible managed lookup is hidden inside std::sort.
+    std::sort(copy.entries.begin(), copy.entries.end(),
+              [&](const Entry &left, const Entry &right) {
+                switch (copy.result.keyKind) {
+                case OBELISK_RT_ASSOC_KEY_STRING:
+                case OBELISK_RT_ASSOC_KEY_ELEMENT:
+                  return compareAssocKeyBytes(left.order, right.order) < 0;
+                case OBELISK_RT_ASSOC_KEY_WILDCARD:
+                  return compareWildcardAssocKeys(left.order, right.order) < 0;
+                case OBELISK_RT_ASSOC_KEY_CLASS:
+                case OBELISK_RT_ASSOC_KEY_PROCESS:
+                  return left.integral < right.integral;
+                default:
+                  return compareIntegralBytes(
+                             left.value.key.data(), right.value.key.data(),
+                             left.value.key.size(), copy.result.keyWidth,
+                             copy.result.keyKind ==
+                                 OBELISK_RT_ASSOC_KEY_SIGNED) < 0;
+                }
+              });
+    copy.result.entries.reserve(copy.entries.size());
+    for (auto &entry : copy.entries)
+      copy.result.entries.push_back(std::move(entry.value));
+    *outSnapshot = std::move(copy.result);
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
 }
 
 using AllocateOrderBuffer = obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,

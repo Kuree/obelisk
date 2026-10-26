@@ -53,6 +53,10 @@ FailureOr<uint64_t> Encoder::classID(SymbolRefAttr symbol,
 
 std::optional<LogicalResult>
 Encoder::encodeClassOperation(FunctionPlan &plan, Operation *operation) {
+  if (auto op = dyn_cast<sim::SimClassBuiltinUpcastOp>(operation)) {
+    emit({Bitcast, 0, reg(plan, op.getResult()), reg(plan, op.getObject())});
+    return success();
+  }
   if (isa<sim::SimClassNullOp>(operation)) {
     uint32_t destination = reg(plan, operation->getResult(0));
     emit({Constant, 0, destination, 0, 0, 0, 0,

@@ -120,6 +120,8 @@ enum {
   OBELISK_RT_MANAGED_SLOT_STRING = 2,
   OBELISK_RT_MANAGED_SLOT_CONTAINER = 3,
   OBELISK_RT_MANAGED_SLOT_REFERENCE_PATH = 4,
+  OBELISK_RT_MANAGED_SLOT_MAILBOX = 5,
+  OBELISK_RT_MANAGED_SLOT_SEMAPHORE = 6,
   // The low bits of a candidate slot kind are an
   // OBELISK_RT_MANAGED_ROOT_KIND_* mask. Candidate slots belong to an
   // overlapping source union and may contain ordinary bits; they are traced
@@ -259,6 +261,13 @@ typedef struct obelisk_rt_byte_range_v1 {
 #define OBELISK_RT_CLASS_FINAL (UINT32_C(1) << 2)
 #define OBELISK_RT_CLASS_WEAK_WRAPPER (UINT32_C(1) << 3)
 
+typedef uint32_t obelisk_rt_builtin_class_kind_v1;
+enum {
+  OBELISK_RT_BUILTIN_CLASS_NONE = 0,
+  OBELISK_RT_BUILTIN_CLASS_MAILBOX = 1,
+  OBELISK_RT_BUILTIN_CLASS_SEMAPHORE = 2
+};
+
 typedef struct obelisk_rt_class_descriptor_v1 {
   uint32_t version;
   uint32_t flags;
@@ -282,6 +291,12 @@ typedef struct obelisk_rt_class_descriptor_v1 {
   // descriptors list their own ranges.
   const obelisk_rt_byte_range_v1 *copy_resets;
   uint64_t copy_reset_count;
+  // A direct builtin superclass is implemented by an own strong payload
+  // field. User subclasses inherit this metadata through base. Upcasts keep
+  // the outer object identity; builtin operations resolve this private field.
+  obelisk_rt_builtin_class_kind_v1 builtin_base_kind;
+  uint32_t builtin_base_reserved;
+  uint64_t builtin_base_offset;
 } obelisk_rt_class_descriptor_v1;
 
 // Compiler-emitted erased element metadata. Four-state storage places an
@@ -1005,7 +1020,8 @@ enum {
   OBELISK_RT_DB_PROCESS_CONTROL = 58,
   // Reinterpret the payload of an IEEE real as an equal-width two-state
   // integer, or vice versa. Integer register padding is not part of the
-  // payload.
+  // payload. Also converts a class handle to its mailbox or semaphore base
+  // view, preserving its managed word after checking builtin ancestry.
   OBELISK_RT_DB_BITCAST = 59,
   // Integral modular exponentiation. The destination and base widths match;
   // the exponent retains its independent SystemVerilog packed width.
@@ -1251,6 +1267,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_CLOCKING_OUTPUT_TRACK = UINT32_C(0x0001024d),
   OBELISK_RT_INTRINSIC_V1_CLOCKING_OUTPUT_CURRENT = UINT32_C(0x0001024e),
   OBELISK_RT_INTRINSIC_V1_PROGRAM_OWNED = UINT32_C(0x0001024f),
+  OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE_SELECTED = UINT32_C(0x00010250),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -1286,6 +1303,8 @@ enum {
   OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM = UINT32_C(0x00010464),
   OBELISK_RT_INTRINSIC_V1_AGGREGATE_EXPORT_BITSTREAM = UINT32_C(0x00010465),
   OBELISK_RT_INTRINSIC_V1_AGGREGATE_IMPORT_BITSTREAM = UINT32_C(0x00010466),
+  OBELISK_RT_INTRINSIC_V1_VPI_FRAME_BIND = UINT32_C(0x00011016),
+  OBELISK_RT_INTRINSIC_V1_BOX_BIND_TYPE = UINT32_C(0x00010418),
   OBELISK_RT_INTRINSIC_V1_BOX_IS_TYPE = UINT32_C(0x00010417),
   OBELISK_RT_INTRINSIC_V1_STRING_LITERAL = UINT32_C(0x00010420),
   OBELISK_RT_INTRINSIC_V1_STRING_FROM_PACKED = UINT32_C(0x00010421),
@@ -1399,7 +1418,14 @@ enum {
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD_AT = UINT32_C(0x00011007),
   OBELISK_RT_INTRINSIC_V1_VPI_NAME = UINT32_C(0x00011008),
   OBELISK_RT_INTRINSIC_V1_VPI_TYPE_INFO = UINT32_C(0x00011009),
-  OBELISK_RT_INTRINSIC_V1_VPI_TYPE_CHILD = UINT32_C(0x0001100a)
+  OBELISK_RT_INTRINSIC_V1_VPI_TYPE_CHILD = UINT32_C(0x0001100a),
+  OBELISK_RT_INTRINSIC_V1_VPI_CALL_PREPARE = UINT32_C(0x00011010),
+  OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER_PREPARED = UINT32_C(0x00011011),
+  OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER = UINT32_C(0x00011012),
+  OBELISK_RT_INTRINSIC_V1_VPI_FRAME_CHECKPOINT = UINT32_C(0x00011013),
+  OBELISK_RT_INTRINSIC_V1_VPI_FRAME_LEAVE = UINT32_C(0x00011014),
+  OBELISK_RT_INTRINSIC_V1_VPI_CALL_FINISH = UINT32_C(0x00011015),
+  OBELISK_RT_INTRINSIC_V1_VPI_RESOLUTION_PREPARE = UINT32_C(0x00011017)
 };
 
 // Versioned, target-independent plan consumed by fixed aggregate bit-stream
@@ -1654,15 +1680,45 @@ enum {
   // direction is ref. Its execution-facing input/output bits remain available
   // to the scheduler and waveform backends.
   OBELISK_RT_DESIGN_CAP_PORT_REF = UINT32_C(1) << 7,
-  // The same record-kind-specific bit marks a process, function, or generic
-  // interconnect net whose lexical VPI owner is supplied by generated
-  // relations instead of its physical executable scope. These kinds cannot be
-  // typespec records.
+  // The same record-kind-specific bit marks a process, function, generic
+  // interconnect net, class-static backing storage, or event-array storage
+  // whose lexical VPI owner is supplied by generated relations or an exact
+  // backing binding instead of
+  // its physical executable scope. These kinds cannot be typespec records.
   OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR = UINT32_C(1) << 7,
   // The same record-kind-specific bit marks a value parameter that directly
   // declares a packed range. Built-in and typedef-provided ranges do not set
   // it, as required by IEEE 1800-2023 37.28 detail 5.
   OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE = UINT32_C(1) << 7,
+  // Static-only lexical type parameters have no effective semantic payload.
+  // Their exact ClassDefn owner and source declaration remain authoritative.
+  OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER = UINT32_C(1) << 8,
+  // A present original parameter default has no supported expression graph.
+  // Distinct from an absent default; a vpiExpr relation cannot coexist.
+  OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT = UINT32_C(1) << 9,
+  // Lexical generic value declaration: no specialization has supplied a value.
+  OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER = 1u << 10,
+  // Concrete lexical class property with exact source type but no executable
+  // field/storage binding. Values are unavailable until specialization.
+  OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY = UINT32_C(1) << 11,
+  // Named typedef of an unresolved lexical class type parameter. This object
+  // acts as a typespec, not a parameter declaration with an effective value.
+  OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS = UINT32_C(1) << 12,
+  // Immutable automatic declaration; its value belongs to a live VPI frame.
+  OBELISK_RT_DESIGN_CAP_FRAME_LOCAL = UINT32_C(1) << 13,
+  // Definition-backed vpiIODecl views use these record-kind-specific bits
+  // for the exact IEEE direction, including vpiRef and undefined.
+  OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC = UINT32_C(1) << 14,
+  // Present source inheritance forms without a supported relation graph.
+  OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_BASE = UINT32_C(1) << 15,
+  OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CONSTRUCTOR_ARGUMENTS = UINT32_C(1) << 16,
+  OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETERS = UINT32_C(1) << 17,
+  // ParamAssign whose Rhs is the exact Lhs declaration's original Expr.
+  OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT = UINT32_C(1) << 18,
+  // ParamAssign with an explicit source actual, never an effective value.
+  OBELISK_RT_DESIGN_CAP_EXPLICIT_CLASS_PARAMETER_ASSIGNMENT = UINT32_C(1) << 19,
+  // Explicit actual is present but its original RHS form is unsupported.
+  OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETER_RHS = UINT32_C(1) << 20,
   // Definition-backed vpiIODecl views use these record-kind-specific bits
   // for the exact IEEE direction, including vpiRef and undefined.
   OBELISK_RT_DESIGN_CAP_IO_DIRECTION_SHIFT = 8,
@@ -1873,6 +1929,8 @@ typedef struct obelisk_rt_fragment_action_v1 {
 // to identify payload/auxiliary as a checked frame-relative offset and size.
 #define OBELISK_RT_FRAGMENT_FLAGS_NONE UINT32_C(0)
 #define OBELISK_RT_ACTION_FRAME_WAIT_RECORD (UINT32_C(1) << 0)
+// TASK_CALL only: auxiliary carries its exact prepared source CallID.
+#define OBELISK_RT_ACTION_VPI_CALL_SITE (UINT32_C(1) << 6)
 #define OBELISK_RT_ACTION_RESUME_REGION_VALID (UINT32_C(1) << 1)
 #define OBELISK_RT_ACTION_RESUME_REGION_SHIFT 2u
 #define OBELISK_RT_ACTION_RESUME_REGION_MASK                                   \
@@ -3003,6 +3061,13 @@ obelisk_rt_v1_semaphore_try_get(obelisk_rt_object_v1 *semaphore, int32_t keys,
                                 uint32_t *out_success);
 uint64_t obelisk_rt_v1_container_size(obelisk_rt_object_v1 *container);
 uint32_t obelisk_rt_v1_box_is_type(obelisk_rt_object_v1 *box, uint64_t type_id);
+// Bind the exact reflection descriptor of a one-element boxed array. The ID
+// belongs to this context's validated design image, independently of executable
+// element type IDs. A conflicting existing binding is rejected.
+obelisk_rt_status obelisk_rt_v1_box_bind_type(obelisk_rt_context *context,
+                                              obelisk_rt_object_v1 *box,
+                                              uint64_t descriptor_id);
+
 obelisk_rt_status obelisk_rt_v1_container_read(obelisk_rt_object_v1 *container,
                                                int64_t index, void *out_value,
                                                void *out_unknown);
@@ -3363,6 +3428,67 @@ obelisk_rt_status
 obelisk_rt_v1_vpi_start_simulation(obelisk_rt_context *context);
 obelisk_rt_status obelisk_rt_v1_vpi_end_simulation(obelisk_rt_context *context);
 void obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context);
+
+// IEEE 1800-2023 37.43: exact procedural activations. Generated code uses
+// stable source IDs, resolved through the validated design image. Suspension
+// preserves the activation stack; returning or disabling a scope removes it.
+enum {
+  OBELISK_RT_VPI_FRAME_CODE_UNIT_SCOPE = 0,
+  OBELISK_RT_VPI_FRAME_CALL = 1,
+  OBELISK_RT_VPI_FRAME_STATEMENT_SCOPE = 2,
+  OBELISK_RT_VPI_FRAME_NET_RESOLUTION = 3,
+  OBELISK_RT_VPI_FRAME_DPI_EXPORT = 4
+};
+obelisk_rt_status obelisk_rt_v1_vpi_frame_enter(obelisk_rt_context *context,
+                                                uint64_t code_unit_id,
+                                                uint32_t origin_kind,
+                                                uint64_t origin_id,
+                                                uint64_t *out_activation);
+// Bracket one exact source call. Preparation does not create an activation;
+// the callee consumes it only after its root control boundary has been entered.
+obelisk_rt_status obelisk_rt_v1_vpi_call_prepare(obelisk_rt_context *context,
+                                                 uint64_t call_id,
+                                                 uint64_t *out_ticket);
+// A user-defined resolution function is activated by an exact net, not an SV
+// call occurrence. It consumes this ticket through frame_enter_prepared with
+// is_task zero and completes through call_finish like any synchronous call.
+obelisk_rt_status
+obelisk_rt_v1_vpi_resolution_prepare(obelisk_rt_context *context,
+                                     uint64_t net_id, uint64_t *out_ticket);
+// A generated DPI export bridge prepares its exact public callable scope.
+// The runtime accepts it only during the matching validated export dispatch.
+obelisk_rt_status obelisk_rt_v1_vpi_export_prepare(obelisk_rt_context *context,
+                                                   uint64_t code_unit_id,
+                                                   uint64_t *out_ticket);
+obelisk_rt_status
+obelisk_rt_v1_vpi_frame_enter_prepared(obelisk_rt_context *context,
+                                       uint64_t code_unit_id, uint32_t is_task,
+                                       uint64_t *out_activation);
+obelisk_rt_status obelisk_rt_v1_vpi_call_finish(obelisk_rt_context *context,
+                                                uint64_t ticket);
+// Bind an existing automatic state reference to one immutable local declaration
+// in the current exact activation. This neither allocates nor initializes it.
+obelisk_rt_status obelisk_rt_v1_vpi_frame_bind(obelisk_rt_context *context,
+                                               uint64_t local_id,
+                                               uint64_t automatic_reference);
+// Observe a ref/const-ref formal's actual ArgumentRef location. The binding
+// retains no state allocation or managed root. managed has the same 0/1/2
+// meanings as argument_ref_load; a zero global-state payload is valid.
+obelisk_rt_status obelisk_rt_v1_vpi_frame_bind_alias(
+    obelisk_rt_context *context, uint64_t local_id, obelisk_rt_object_v1 *owner,
+    uint64_t payload, uint32_t managed);
+// A positive source statement ID must belong to the current lexical owner.
+// Zero explicitly marks the current statement unavailable; a later positive
+// checkpoint restores exact identity. This differs from pre-statement absence.
+obelisk_rt_status
+obelisk_rt_v1_vpi_frame_checkpoint(obelisk_rt_context *context,
+                                   uint64_t statement_id);
+obelisk_rt_status obelisk_rt_v1_vpi_frame_leave(obelisk_rt_context *context,
+                                                uint64_t activation);
+obelisk_rt_status obelisk_rt_v1_vpi_frame_depth(obelisk_rt_context *context,
+                                                uint64_t *out_depth);
+obelisk_rt_status obelisk_rt_v1_vpi_frame_unwind(obelisk_rt_context *context,
+                                                 uint64_t depth);
 
 // Generated single-threaded schedule ABI.  The plan is immutable; mutable
 // generated storage is reached through `mutable_state` and may be installed in
@@ -3976,6 +4102,12 @@ obelisk_rt_status obelisk_rt_v1_control_disable(obelisk_rt_context *context,
                                                 uint64_t target_id,
                                                 uint64_t activation,
                                                 uint32_t all_activations);
+// Disable with the same scheduling semantics and return the exact outermost
+// affected activation in the current logical process. Zero means the current
+// process was unaffected. The returned token is a value, not a live control.
+obelisk_rt_status obelisk_rt_v1_control_disable_selected(
+    obelisk_rt_context *context, uint64_t target_id, uint64_t activation,
+    uint32_t all_activations, uint64_t *out_selected);
 // Consume the escape request produced when a disable in a task selected a
 // named block owned by an older task activation in the same logical process.
 uint32_t obelisk_rt_v1_control_escape_pending(obelisk_rt_context *context);
@@ -4900,7 +5032,8 @@ struct obelisk_rt_random_state_v1 {
 #define OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM UINT32_C(32)
 // Function arguments subdivide the constraints into priority stages. Higher
 // stages ignore lower-stage constraints and become state for later stages.
-// Requires EXACT_UNIFORM; failed later stages commit no assignment or RNG state.
+// Requires EXACT_UNIFORM; failed later stages commit no assignment or RNG
+// state.
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY UINT32_C(64)
 // Exact weighted target projections with arbitrary-precision unsigned masses.
 // Requires a compiled sampling plan and stateful sampling. Dist records use

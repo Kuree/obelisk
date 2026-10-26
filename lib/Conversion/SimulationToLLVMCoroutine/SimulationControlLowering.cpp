@@ -2,7 +2,9 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include <type_traits>
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -303,6 +305,96 @@ public:
   }
 };
 
+class VPIFrameObservationEndConversion final
+    : public OpConversionPattern<sim::SimVPIFrameObservationEndOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimVPIFrameObservationEndOp operation, OneToNOpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    // Reference ownership planning has consumed the exact borrow endpoints.
+    rewriter.eraseOp(operation);
+    return success();
+  }
+};
+
+template <typename Op>
+class VPIFrameConversion final : public OpConversionPattern<Op> {
+public:
+  using OpConversionPattern<Op>::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(Op operation,
+                  typename OpConversionPattern<Op>::OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getRuntimeContext().size() != 1)
+      return failure();
+    Location location = operation.getLoc();
+    Type i32 = rewriter.getI32Type(), i64 = rewriter.getI64Type();
+    Value context = adaptor.getRuntimeContext().front();
+    SmallVector<Value> arguments{context};
+    StringRef function;
+    auto integer = [&](uint64_t value, bool narrow = false) {
+      return llvmConstant(rewriter, location, narrow ? i32 : i64, value);
+    };
+    if constexpr (std::is_same_v<Op, sim::SimVPICallPrepareOp>) {
+      auto id = native::get<native::VpiCallId>(operation);
+      if (!id)
+        return rewriter.notifyMatchFailure(operation,
+                                           "missing verified VPI call ID");
+      function = "obelisk_rt_v1_vpi_call_prepare";
+      arguments.push_back(integer(id.getInt()));
+    } else if constexpr (std::is_same_v<Op, sim::SimVPIFrameEnterForeignOp>) {
+      function = "obelisk_rt_v1_vpi_frame_enter_prepared";
+      arguments.push_back(integer(operation.getCodeUnitId()));
+      arguments.push_back(integer(0, true));
+    } else if constexpr (std::is_same_v<Op, sim::SimVPIResolutionPrepareOp>) {
+      function = "obelisk_rt_v1_vpi_resolution_prepare";
+      arguments.push_back(integer(operation.getNetId()));
+    } else if constexpr (std::is_same_v<Op, sim::SimVPIFrameEnterPreparedOp>) {
+      function = "obelisk_rt_v1_vpi_frame_enter_prepared";
+      arguments.push_back(integer(operation.getCodeUnitId()));
+      arguments.push_back(integer(operation.getIsTask(), true));
+    } else if constexpr (std::is_same_v<Op, sim::SimVPIFrameEnterOp>) {
+      function = "obelisk_rt_v1_vpi_frame_enter";
+      arguments.push_back(integer(operation.getCodeUnitId()));
+      arguments.push_back(integer(operation.getStatementId() ? 2 : 0, true));
+      arguments.push_back(integer(
+          operation.getStatementId().value_or(operation.getCodeUnitId())));
+    } else if constexpr (std::is_same_v<Op, sim::SimVPIFrameCheckpointOp>) {
+      function = "obelisk_rt_v1_vpi_frame_checkpoint";
+      arguments.push_back(integer(operation.getStatementId()));
+    } else if constexpr (std::is_same_v<Op, sim::SimVPIFrameLeaveOp>) {
+      if (adaptor.getActivation().size() != 1)
+        return failure();
+      function = "obelisk_rt_v1_vpi_frame_leave";
+      arguments.push_back(adaptor.getActivation().front());
+      // Ownership planning has already consumed the observation endpoints.
+    } else if constexpr (std::is_same_v<Op, sim::SimVPICallFinishOp>) {
+      if (adaptor.getTicket().size() != 1)
+        return failure();
+      function = "obelisk_rt_v1_vpi_call_finish";
+      arguments.push_back(adaptor.getTicket().front());
+    }
+    Value output;
+    if (operation->getNumResults()) {
+      output = entryAlloca(rewriter, location, i64, 1, 8);
+      LLVM::StoreOp::create(rewriter, location, integer(0), output, 8);
+      arguments.push_back(output);
+    }
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(), function), arguments)
+            .getResult();
+    reportRuntimeControlStatus(rewriter, location, context, status);
+    if (output)
+      rewriter.replaceOpWithNewOp<LLVM::LoadOp>(operation, i64, output, 8);
+    else
+      rewriter.eraseOp(operation);
+    return success();
+  }
+};
+
 class ControlEnterConversion final
     : public OpConversionPattern<sim::SimControlEnterOp> {
 public:
@@ -386,6 +478,56 @@ public:
             .getResult();
     reportRuntimeControlStatus(rewriter, location, context, status);
     rewriter.eraseOp(operation);
+    return success();
+  }
+};
+
+class ControlDisableSelectedConversion final
+    : public OpConversionPattern<sim::SimControlDisableSelectedOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimControlDisableSelectedOp operation,
+                  OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location location = operation.getLoc();
+    Value context = loadCurrentRuntimeContext(rewriter, location);
+    Type i64 = rewriter.getI64Type();
+    Value out = entryAlloca(rewriter, location, i64, 1, 8);
+    LLVM::StoreOp::create(rewriter, location,
+                          llvmConstant(rewriter, location, i64, 0), out, 8);
+    Value activation = adaptor.getActivation().empty()
+                           ? llvmConstant(rewriter, location, i64, 0)
+                           : adaptor.getActivation().front();
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_control_disable_selected"),
+            ValueRange{
+                context,
+                llvmConstant(rewriter, location, i64, operation.getTargetId()),
+                activation,
+                llvmConstant(rewriter, location, rewriter.getI32Type(),
+                             operation.getHierarchical() ? 1 : 0),
+                out})
+            .getResult();
+    reportRuntimeControlStatus(rewriter, location, context, status);
+    rewriter.replaceOpWithNewOp<LLVM::LoadOp>(operation, i64, out, 8);
+    return success();
+  }
+};
+
+class ControlMatchConversion final
+    : public OpConversionPattern<sim::SimControlMatchOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimControlMatchOp operation, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    rewriter.replaceOpWithNewOp<arith::CmpIOp>(
+        operation, arith::CmpIPredicate::eq, adaptor.getSelected().front(),
+        adaptor.getActivation().front());
     return success();
   }
 };
@@ -697,17 +839,26 @@ public:
 void populateControlToLLVMConversionPatterns(RewritePatternSet &patterns,
                                              TypeConverter &converter) {
   MLIRContext *context = patterns.getContext();
-  patterns.add<DisableChildrenConversion, ControlEnterConversion,
-               ControlLeaveConversion, ControlDisableConversion,
-               ControlEscapePendingConversion, VirtualInterfaceNullConversion,
-               ChandleNullConversion, ChandleEqualConversion,
-               VirtualInterfaceBindConversion, VirtualInterfaceCastConversion,
-               VirtualInterfaceScopeConversion, VirtualInterfaceEqualConversion,
-               ProcessNullConversion, ProcessCurrentConversion,
-               ProcessEqualConversion, ProcessStatusConversion,
-               ProcessRandomStateConversion, ProcessSetRandomStateConversion,
-               MonitorRegisterConversion, MonitorControlConversion,
-               MonitorCurrentConversion>(converter, context);
+  patterns.add<
+      VPIFrameObservationEndConversion,
+      VPIFrameConversion<sim::SimVPICallPrepareOp>,
+      VPIFrameConversion<sim::SimVPIResolutionPrepareOp>,
+      VPIFrameConversion<sim::SimVPIFrameEnterPreparedOp>,
+      VPIFrameConversion<sim::SimVPIFrameEnterForeignOp>,
+      VPIFrameConversion<sim::SimVPIFrameEnterOp>,
+      VPIFrameConversion<sim::SimVPIFrameCheckpointOp>,
+      VPIFrameConversion<sim::SimVPIFrameLeaveOp>,
+      VPIFrameConversion<sim::SimVPICallFinishOp>, DisableChildrenConversion,
+      ControlEnterConversion, ControlLeaveConversion, ControlDisableConversion,
+      ControlDisableSelectedConversion, ControlMatchConversion,
+      ControlEscapePendingConversion, VirtualInterfaceNullConversion,
+      ChandleNullConversion, ChandleEqualConversion,
+      VirtualInterfaceBindConversion, VirtualInterfaceCastConversion,
+      VirtualInterfaceScopeConversion, VirtualInterfaceEqualConversion,
+      ProcessNullConversion, ProcessCurrentConversion, ProcessEqualConversion,
+      ProcessStatusConversion, ProcessRandomStateConversion,
+      ProcessSetRandomStateConversion, MonitorRegisterConversion,
+      MonitorControlConversion, MonitorCurrentConversion>(converter, context);
   patterns.add<OnceConversion<sim::SimStaticOnceOp>>(
       converter, context, "obelisk_rt_v1_static_once");
   patterns.add<OnceConversion<sim::SimDeferredOnceOp>>(

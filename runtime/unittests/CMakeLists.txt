@@ -45,6 +45,7 @@ add_executable(ObeliskRuntimeTests
   RuntimeTest.cpp
   VCDTest.cpp
   VPIObjectModelTest.cpp
+  VPIAutomaticStateTest.cpp
   $<TARGET_OBJECTS:ObeliskRuntimeCAPISmoke>
 )
 if(UNIX AND NOT APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
@@ -97,6 +98,7 @@ set_target_properties(ObeliskRuntimeTests PROPERTIES
 )
 
 add_executable(ObeliskProcessRuntimeTests
+  DPIExportReentryTest.cpp
   ProcessTest.cpp
   TableProcessTest.cpp
 )

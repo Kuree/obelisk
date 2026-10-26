@@ -181,7 +181,10 @@ public:
     function.walk([&](Operation *op) {
       // Callable kill/resume executes synchronously or unwinds the bytecode
       // call stack; neither re-enters this function through a canonical frame.
-      if (isSuspensionTerminator(op) &&
+      // Control boundaries execute their body synchronously, but the resume
+      // edge is a real scheduler entry after a hierarchical disable. Values
+      // used there require the same explicit continuation lanes.
+      if ((isSuspensionTerminator(op) || isa<sim::SimControlBoundaryOp>(op)) &&
           !(function.getEntryKind() == sim::EntryKind::Function &&
             isa<sim::SimProcessControlOp>(op)))
         suspensions.push_back(op);
@@ -382,6 +385,11 @@ public:
       for (Value value : orderedValues) {
         if (!liveOut.contains(value) || alreadyForwarded.contains(value) ||
             !dominance.dominates(value, suspension))
+          continue;
+        // The body's ordinary edge does not suspend. Only values live at
+        // the registered exit need a saved continuation lane.
+        if (isa<sim::SimControlBoundaryOp>(suspension) &&
+            !liveness->getLiveIn(continuation).contains(value))
           continue;
         // IEEE 1800-2017 31.7 condition evaluators are sampled only as part
         // of the matching clock occurrence. Their observer token is a static

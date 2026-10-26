@@ -184,38 +184,16 @@ PreparedUnits::resolveVirtualInterfaceCallees(
                    receiverMembers[receiverMembers.size() - 1])
                    .getInterface();
   StringRef selectedModport = interface.getModport().getValue();
-  auto topInstance = [](Operation *operation) {
-    semantic::SVInstanceSymbolOp result;
-    for (Operation *parent = operation; parent; parent = parent->getParentOp())
-      if (auto instance = dyn_cast<semantic::SVInstanceSymbolOp>(parent))
-        result = instance;
-    return result;
-  };
-  semantic::SVInstanceSymbolOp callerDesign = topInstance(call);
-  const SmallVector<unsigned> *candidateIndices = nullptr;
-  if (callerDesign) {
-    auto methodCandidates =
-        virtualInterfaceCalleeIndex.find(call.getCalleeName());
-    if (methodCandidates == virtualInterfaceCalleeIndex.end())
-      return {};
-    auto designCandidates =
-        methodCandidates->second.find(getHierarchyName(callerDesign));
-    if (designCandidates == methodCandidates->second.end())
-      return {};
-    auto identityCandidates = designCandidates->second.find(identity);
-    if (identityCandidates == designCandidates->second.end())
-      return {};
-    candidateIndices = &identityCandidates->second;
-  } else {
-    auto methodCandidates =
-        globalVirtualInterfaceCalleeIndex.find(call.getCalleeName());
-    if (methodCandidates == globalVirtualInterfaceCalleeIndex.end())
-      return {};
-    auto identityCandidates = methodCandidates->second.find(identity);
-    if (identityCandidates == methodCandidates->second.end())
-      return {};
-    candidateIndices = &identityCandidates->second;
-  }
+  // IEEE 1800-2023 25.9: compatibility depends on the exact nominal type
+  // and parameters, not on the top-level instance containing the caller.
+  auto methodCandidates =
+      virtualInterfaceCalleeIndex.find(call.getCalleeName());
+  if (methodCandidates == virtualInterfaceCalleeIndex.end())
+    return {};
+  auto identityCandidates = methodCandidates->second.find(identity);
+  if (identityCandidates == methodCandidates->second.end())
+    return {};
+  const SmallVector<unsigned> *candidateIndices = &identityCandidates->second;
   SmallVector<const PreparedVirtualInterfaceCallee *> result;
   for (unsigned index : *candidateIndices) {
     const PreparedVirtualInterfaceCallee &candidate =
@@ -342,22 +320,18 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
     if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(source)) {
       if (subroutine.getIsInterfaceExtern().value_or(false))
         interfaceExterns.push_back(subroutine);
-      auto body =
-          subroutine->getParentOfType<semantic::SVInstanceBodySymbolOp>();
+      // Only immediate interface members participate in virtual-interface
+      // dispatch; methods of a nested class have a different receiver ABI.
+      auto body = dyn_cast_or_null<semantic::SVInstanceBodySymbolOp>(
+          subroutine->getParentOp());
       if (body && !body->hasAttr("is_virtual_interface_type_instance") &&
           !subroutine.getIsInterfaceExtern().value_or(false)) {
         auto identity =
             body->getAttrOfType<SymbolRefAttr>("virtual_interface_identity");
-        semantic::SVInstanceSymbolOp top;
-        for (Operation *parent = subroutine; parent;
-             parent = parent->getParentOp())
-          if (auto instance = dyn_cast<semantic::SVInstanceSymbolOp>(parent))
-            top = instance;
-        if (identity && top)
+        if (identity)
           result.virtualInterfaceCallees.push_back(
               {source, source, identity,
-               subroutine.getName().value_or("").str(),
-               getHierarchyName(top).str(), false});
+               subroutine.getName().value_or("").str(), false});
       }
     }
     if (!isa<semantic::SVPortConnectionOp, semantic::SVVariableSymbolOp,
@@ -475,29 +449,22 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
     auto identity =
         body ? body->getAttrOfType<SymbolRefAttr>("virtual_interface_identity")
              : SymbolRefAttr{};
-    semantic::SVInstanceSymbolOp top;
-    for (Operation *parent = prototype; parent; parent = parent->getParentOp())
-      if (auto instance = dyn_cast<semantic::SVInstanceSymbolOp>(parent))
-        top = instance;
-    if (!identity || !top) {
+    if (!identity) {
       emitError(getSemanticLocation(prototype))
           << "modport-exported interface extern has no interface identity";
       return failure();
     }
     std::string method = stub.getName().value_or("").str();
-    std::string design = getHierarchyName(top).str();
     bool duplicate =
         llvm::any_of(result.virtualInterfaceCallees,
                      [&](const PreparedVirtualInterfaceCallee &candidate) {
                        return candidate.dispatchSource == stub.getOperation() &&
                               candidate.interfaceIdentity == identity &&
-                              candidate.method == method &&
-                              candidate.design == design;
+                              candidate.method == method;
                      });
     if (!duplicate)
       result.virtualInterfaceCallees.push_back(PreparedVirtualInterfaceCallee{
-          source, stub.getOperation(), identity, std::move(method),
-          std::move(design), true});
+          source, stub.getOperation(), identity, std::move(method), true});
     return success();
   };
 
@@ -611,19 +578,15 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
   for (auto [index, candidate] :
        llvm::enumerate(result.virtualInterfaceCallees)) {
     result
-        .virtualInterfaceCalleeIndex[candidate.method][candidate.design]
+        .virtualInterfaceCalleeIndex[candidate.method]
                                     [candidate.interfaceIdentity]
-        .push_back(index);
-    result
-        .globalVirtualInterfaceCalleeIndex[candidate.method]
-                                          [candidate.interfaceIdentity]
         .push_back(index);
   }
   for (auto [index, lhsRecord] :
        llvm::enumerate(result.virtualInterfaceCallees)) {
     const SmallVector<unsigned> &candidateIndices =
-        result.globalVirtualInterfaceCalleeIndex[lhsRecord.method]
-                                                [lhsRecord.interfaceIdentity];
+        result.virtualInterfaceCalleeIndex[lhsRecord.method]
+                                          [lhsRecord.interfaceIdentity];
     // Each candidate appears in exactly one group and groups retain insertion
     // order. Compare every member with the first normalized ABI once instead
     // of performing a quadratic all-pairs scan.
@@ -1315,7 +1278,8 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
         scopes.lookup(unit.source), unit.entryKind,
         builder.getStringAttr(unit.hierarchy),
         builder.getStringAttr(getDebugName(unit.source)),
-        (isa<semantic::SVPortConnectionOp>(unit.source) ||
+        (isa<semantic::SVPortConnectionOp, semantic::SVVariableSymbolOp,
+             semantic::SVClassPropertySymbolOp>(unit.source) ||
          !sim::isVPIVisibleEntryKind(unit.entryKind))
             ? builder.getUnitAttr()
             : UnitAttr{});

@@ -76,7 +76,7 @@ TEST(VPIObjectModel, RefObjectTypespecRequiresNetVariableOrPartSelectActual) {
   EXPECT_FALSE(hasRefObjectTypespecActual(vpiParameter));
 }
 
-constexpr size_t kExpectedTraversalCount = 1894;
+constexpr size_t kExpectedTraversalCount = 1914;
 static_assert(sizeof(vpiTraversals) / sizeof(vpiTraversals[0]) ==
               kExpectedTraversalCount);
 constexpr size_t kExpectedPropertyCount = 2337;
@@ -856,6 +856,10 @@ TEST(VPIObjectModel, AutomaticRelationsAreExplicitStructuralEdges) {
         << keyName(edge.sourceType, edge.selector, edge.mode);
   }
 
+  for (int kind : {vpiModule, vpiInterface})
+    EXPECT_EQ(
+        requireTraversal(kind, vpiParamAssign, Mode::Iterate).automaticRelation,
+        Automatic::DirectChild);
   EXPECT_EQ(
       requireTraversal(vpiModule, vpiProcess, Mode::Iterate).automaticRelation,
       Automatic::DirectChild);
@@ -866,6 +870,23 @@ TEST(VPIObjectModel, AutomaticRelationsAreExplicitStructuralEdges) {
                 .automaticRelation,
             Automatic::DirectChild);
   EXPECT_EQ(requireTraversal(vpiClassDefn, vpiMethods, Mode::Iterate)
+                .automaticRelation,
+            Automatic::DirectChild);
+  EXPECT_EQ(requireTraversal(vpiClassTypespec, vpiMethods, Mode::Iterate)
+                .automaticRelation,
+            Automatic::DirectChild);
+  for (uint32_t owner : {vpiClassDefn, vpiClassTypespec}) {
+    const auto &edge = requireTraversal(owner, vpiConstraint, Mode::Iterate);
+    EXPECT_EQ(edge.automaticRelation, Automatic::DirectChild);
+    EXPECT_EQ(edge.order, Order::Declaration);
+  }
+  EXPECT_EQ(requireTraversal(vpiClassDefn, vpiParameter, Mode::Iterate)
+                .automaticRelation,
+            Automatic::DirectChild);
+  EXPECT_EQ(requireTraversal(vpiClassTypespec, vpiParameter, Mode::Iterate)
+                .automaticRelation,
+            Automatic::None);
+  EXPECT_EQ(requireTraversal(vpiPackage, vpiParameter, Mode::Iterate)
                 .automaticRelation,
             Automatic::DirectChild);
   EXPECT_EQ(
@@ -1464,6 +1485,73 @@ TEST(VPIObjectModel, SymbolicStringPropertiesExactlyMatchLrm) {
   EXPECT_EQ(actual, expected);
 }
 
+TEST(VPIObjectModel, PrimitiveTypesMatchLrmConstantsAndSourceSpellings) {
+  struct Entry {
+    uint32_t value;
+    const char *name;
+    const char *source;
+    uint32_t kind;
+    uint32_t defaultStrength;
+  };
+  const Entry expected[] = {
+      {vpiAndPrim, "vpiAndPrim", "and", vpiGate, vpiStrongDrive},
+      {vpiNandPrim, "vpiNandPrim", "nand", vpiGate, vpiStrongDrive},
+      {vpiNorPrim, "vpiNorPrim", "nor", vpiGate, vpiStrongDrive},
+      {vpiOrPrim, "vpiOrPrim", "or", vpiGate, vpiStrongDrive},
+      {vpiXorPrim, "vpiXorPrim", "xor", vpiGate, vpiStrongDrive},
+      {vpiXnorPrim, "vpiXnorPrim", "xnor", vpiGate, vpiStrongDrive},
+      {vpiBufPrim, "vpiBufPrim", "buf", vpiGate, vpiStrongDrive},
+      {vpiNotPrim, "vpiNotPrim", "not", vpiGate, vpiStrongDrive},
+      {vpiBufif0Prim, "vpiBufif0Prim", "bufif0", vpiGate, vpiStrongDrive},
+      {vpiBufif1Prim, "vpiBufif1Prim", "bufif1", vpiGate, vpiStrongDrive},
+      {vpiNotif0Prim, "vpiNotif0Prim", "notif0", vpiGate, vpiStrongDrive},
+      {vpiNotif1Prim, "vpiNotif1Prim", "notif1", vpiGate, vpiStrongDrive},
+      {vpiNmosPrim, "vpiNmosPrim", "nmos", vpiSwitch, 0},
+      {vpiPmosPrim, "vpiPmosPrim", "pmos", vpiSwitch, 0},
+      {vpiCmosPrim, "vpiCmosPrim", "cmos", vpiSwitch, 0},
+      {vpiRnmosPrim, "vpiRnmosPrim", "rnmos", vpiSwitch, 0},
+      {vpiRpmosPrim, "vpiRpmosPrim", "rpmos", vpiSwitch, 0},
+      {vpiRcmosPrim, "vpiRcmosPrim", "rcmos", vpiSwitch, 0},
+      {vpiRtranPrim, "vpiRtranPrim", "rtran", vpiSwitch, 0},
+      {vpiRtranif0Prim, "vpiRtranif0Prim", "rtranif0", vpiSwitch, 0},
+      {vpiRtranif1Prim, "vpiRtranif1Prim", "rtranif1", vpiSwitch, 0},
+      {vpiTranPrim, "vpiTranPrim", "tran", vpiSwitch, 0},
+      {vpiTranif0Prim, "vpiTranif0Prim", "tranif0", vpiSwitch, 0},
+      {vpiTranif1Prim, "vpiTranif1Prim", "tranif1", vpiSwitch, 0},
+      {vpiPullupPrim, "vpiPullupPrim", "pullup", vpiGate, vpiPullDrive},
+      {vpiPulldownPrim, "vpiPulldownPrim", "pulldown", vpiGate, vpiPullDrive},
+      {vpiSeqPrim, "vpiSeqPrim", "", vpiUdp, 0},
+      {vpiCombPrim, "vpiCombPrim", "", vpiUdp, 0},
+  };
+  for (const auto &entry : expected) {
+    SCOPED_TRACE(entry.name);
+    const auto *value = findVPIIntegerPropertyValue(vpiPrimType, entry.value);
+    ASSERT_NE(value, nullptr);
+    EXPECT_STREQ(value->symbolicName, entry.name);
+    VPIObjectModelImageIntegerPropertyValue image{};
+    ASSERT_TRUE(findVPIObjectModelImageIntegerPropertyValue(
+        vpiObjectModelImage, vpiPrimType, entry.value, image));
+    EXPECT_STREQ(reinterpret_cast<const char *>(image.symbolicName),
+                 entry.name);
+    const auto *primitive = findVPIBuiltinPrimitive(entry.value);
+    if (entry.kind == vpiUdp) {
+      EXPECT_EQ(primitive, nullptr);
+      continue;
+    }
+    ASSERT_NE(primitive, nullptr);
+    EXPECT_EQ(primitive->objectKind, entry.kind);
+    EXPECT_EQ(primitive->defaultDriveStrength, entry.defaultStrength);
+    EXPECT_STREQ(primitive->sourceName, entry.source);
+    EXPECT_EQ(findVPIBuiltinPrimitive(entry.source), primitive);
+  }
+  for (uint32_t invalid : {0u, 29u, UINT32_MAX}) {
+    EXPECT_EQ(findVPIIntegerPropertyValue(vpiPrimType, invalid), nullptr);
+    EXPECT_EQ(findVPIBuiltinPrimitive(invalid), nullptr);
+  }
+  EXPECT_EQ(findVPIBuiltinPrimitive("AND"), nullptr);
+  EXPECT_EQ(findVPIBuiltinPrimitive("user_udp"), nullptr);
+}
+
 TEST(VPIObjectModel, AlwaysTypeNumericDomainMatchesLrmConstants) {
   struct Entry {
     uint32_t value;
@@ -1488,6 +1576,121 @@ TEST(VPIObjectModel, AlwaysTypeNumericDomainMatchesLrmConstants) {
   EXPECT_TRUE(hasVPIIntegerPropertyDomain(vpiAlwaysType));
   EXPECT_EQ(findVPIIntegerPropertyValue(vpiAlwaysType, vpiAlwaysLatch + 1),
             nullptr);
+}
+
+TEST(VPIObjectModel, OperatorSymbolicDomainMatchesLrmConstants) {
+  struct Entry {
+    uint32_t value;
+    const char *name;
+  };
+  const Entry entries[] = {
+      {vpiMinusOp, "vpiMinusOp"},
+      {vpiPlusOp, "vpiPlusOp"},
+      {vpiNotOp, "vpiNotOp"},
+      {vpiBitNegOp, "vpiBitNegOp"},
+      {vpiUnaryAndOp, "vpiUnaryAndOp"},
+      {vpiUnaryNandOp, "vpiUnaryNandOp"},
+      {vpiUnaryOrOp, "vpiUnaryOrOp"},
+      {vpiUnaryNorOp, "vpiUnaryNorOp"},
+      {vpiUnaryXorOp, "vpiUnaryXorOp"},
+      {vpiUnaryXNorOp, "vpiUnaryXNorOp"},
+      {vpiSubOp, "vpiSubOp"},
+      {vpiDivOp, "vpiDivOp"},
+      {vpiModOp, "vpiModOp"},
+      {vpiEqOp, "vpiEqOp"},
+      {vpiNeqOp, "vpiNeqOp"},
+      {vpiCaseEqOp, "vpiCaseEqOp"},
+      {vpiCaseNeqOp, "vpiCaseNeqOp"},
+      {vpiGtOp, "vpiGtOp"},
+      {vpiGeOp, "vpiGeOp"},
+      {vpiLtOp, "vpiLtOp"},
+      {vpiLeOp, "vpiLeOp"},
+      {vpiLShiftOp, "vpiLShiftOp"},
+      {vpiRShiftOp, "vpiRShiftOp"},
+      {vpiAddOp, "vpiAddOp"},
+      {vpiMultOp, "vpiMultOp"},
+      {vpiLogAndOp, "vpiLogAndOp"},
+      {vpiLogOrOp, "vpiLogOrOp"},
+      {vpiBitAndOp, "vpiBitAndOp"},
+      {vpiBitOrOp, "vpiBitOrOp"},
+      {vpiBitXorOp, "vpiBitXorOp"},
+      {vpiBitXNorOp, "vpiBitXNorOp"},
+      {vpiConditionOp, "vpiConditionOp"},
+      {vpiConcatOp, "vpiConcatOp"},
+      {vpiMultiConcatOp, "vpiMultiConcatOp"},
+      {vpiEventOrOp, "vpiEventOrOp"},
+      {vpiNullOp, "vpiNullOp"},
+      {vpiListOp, "vpiListOp"},
+      {vpiMinTypMaxOp, "vpiMinTypMaxOp"},
+      {vpiPosedgeOp, "vpiPosedgeOp"},
+      {vpiNegedgeOp, "vpiNegedgeOp"},
+      {vpiArithLShiftOp, "vpiArithLShiftOp"},
+      {vpiArithRShiftOp, "vpiArithRShiftOp"},
+      {vpiPowerOp, "vpiPowerOp"},
+      {vpiImplyOp, "vpiImplyOp"},
+      {vpiNonOverlapImplyOp, "vpiNonOverlapImplyOp"},
+      {vpiOverlapImplyOp, "vpiOverlapImplyOp"},
+      {vpiUnaryCycleDelayOp, "vpiUnaryCycleDelayOp"},
+      {vpiCycleDelayOp, "vpiCycleDelayOp"},
+      {vpiIntersectOp, "vpiIntersectOp"},
+      {vpiFirstMatchOp, "vpiFirstMatchOp"},
+      {vpiThroughoutOp, "vpiThroughoutOp"},
+      {vpiWithinOp, "vpiWithinOp"},
+      {vpiRepeatOp, "vpiRepeatOp"},
+      {vpiConsecutiveRepeatOp, "vpiConsecutiveRepeatOp"},
+      {vpiGotoRepeatOp, "vpiGotoRepeatOp"},
+      {vpiPostIncOp, "vpiPostIncOp"},
+      {vpiPreIncOp, "vpiPreIncOp"},
+      {vpiPostDecOp, "vpiPostDecOp"},
+      {vpiPreDecOp, "vpiPreDecOp"},
+      {vpiMatchOp, "vpiMatchOp"},
+      {vpiCastOp, "vpiCastOp"},
+      {vpiIffOp, "vpiIffOp"},
+      {vpiWildEqOp, "vpiWildEqOp"},
+      {vpiWildNeqOp, "vpiWildNeqOp"},
+      {vpiStreamLROp, "vpiStreamLROp"},
+      {vpiStreamRLOp, "vpiStreamRLOp"},
+      {vpiMatchedOp, "vpiMatchedOp"},
+      {vpiTriggeredOp, "vpiTriggeredOp"},
+      {vpiAssignmentPatternOp, "vpiAssignmentPatternOp"},
+      {vpiMultiAssignmentPatternOp, "vpiMultiAssignmentPatternOp"},
+      {vpiIfOp, "vpiIfOp"},
+      {vpiIfElseOp, "vpiIfElseOp"},
+      {vpiCompAndOp, "vpiCompAndOp"},
+      {vpiCompOrOp, "vpiCompOrOp"},
+      {vpiTypeOp, "vpiTypeOp"},
+      {vpiAssignmentOp, "vpiAssignmentOp"},
+      {vpiAcceptOnOp, "vpiAcceptOnOp"},
+      {vpiRejectOnOp, "vpiRejectOnOp"},
+      {vpiSyncAcceptOnOp, "vpiSyncAcceptOnOp"},
+      {vpiSyncRejectOnOp, "vpiSyncRejectOnOp"},
+      {vpiOverlapFollowedByOp, "vpiOverlapFollowedByOp"},
+      {vpiNonOverlapFollowedByOp, "vpiNonOverlapFollowedByOp"},
+      {vpiNexttimeOp, "vpiNexttimeOp"},
+      {vpiAlwaysOp, "vpiAlwaysOp"},
+      {vpiEventuallyOp, "vpiEventuallyOp"},
+      {vpiUntilOp, "vpiUntilOp"},
+      {vpiUntilWithOp, "vpiUntilWithOp"},
+      {vpiImpliesOp, "vpiImpliesOp"},
+      {vpiInsideOp, "vpiInsideOp"},
+  };
+  for (const auto &expected : entries) {
+    const auto *actual = findVPIIntegerPropertyValue(vpiOpType, expected.value);
+    ASSERT_NE(actual, nullptr) << expected.value;
+    EXPECT_STREQ(actual->symbolicName, expected.name);
+    VPIObjectModelImageIntegerPropertyValue image{};
+    ASSERT_TRUE(findVPIObjectModelImageIntegerPropertyValue(
+        vpiObjectModelImage, vpiOpType, expected.value, image));
+    ASSERT_NE(image.symbolicName, nullptr);
+    EXPECT_STREQ(reinterpret_cast<const char *>(image.symbolicName),
+                 expected.name);
+  }
+  for (uint32_t invalid : {0u, 44u, 45u, 46u, 47u, 48u, 49u, 96u, UINT32_MAX}) {
+    EXPECT_EQ(findVPIIntegerPropertyValue(vpiOpType, invalid), nullptr);
+    VPIObjectModelImageIntegerPropertyValue image{};
+    EXPECT_FALSE(findVPIObjectModelImageIntegerPropertyValue(
+        vpiObjectModelImage, vpiOpType, invalid, image));
+  }
 }
 
 TEST(VPIObjectModel, NetTypeSymbolicDomainMatchesLrmConstants) {
@@ -1631,6 +1834,17 @@ TEST(VPIObjectModel, RuntimeExportsCanonicalImmutableModelImage) {
   ASSERT_NE(symbol, nullptr);
   EXPECT_EQ(reinterpret_cast<Accessor>(symbol)(), model);
 #endif
+}
+
+TEST(VPIObjectModel, LexicalInheritanceHasImmutableImageIdentities) {
+  EXPECT_TRUE(
+      vpiObjectSetContains(VPIObjectSetID::StaticImageObjects, vpiExtends));
+  EXPECT_TRUE(
+      vpiObjectSetContains(VPIObjectSetID::StaticImageObjects, vpiParamAssign));
+  EXPECT_TRUE(vpiObjectSetContains(VPIObjectSetID::StaticImageObjects,
+                                   vpiClassTypespec));
+  EXPECT_FALSE(
+      vpiObjectSetContains(VPIObjectSetID::StaticImageObjects, vpiClassObj));
 }
 
 TEST(VPIObjectModel, ObjectRepresentationsExhaustivelyMatchIndependentOracle) {
@@ -2089,15 +2303,45 @@ TEST(VPIObjectModel, UniversalPropertiesCoverEveryConcreteObject) {
 TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
   for (const VPIPropertyDescriptor &descriptor : vpiProperties) {
     PropertyRealization expected = PropertyRealization::Derived;
+    if (descriptor.property == vpiName || descriptor.property == vpiAutomatic ||
+        descriptor.property == vpiVisibility ||
+        descriptor.property == vpiRandType ||
+        descriptor.property == vpiConstantVariable ||
+        descriptor.property == vpiVirtual ||
+        descriptor.property == vpiAccessType)
+      expected = PropertyRealization::OptionalImage;
     if (descriptor.property == vpiIsProtected ||
         descriptor.property == vpiDefFile ||
         descriptor.property == vpiDefLineNo ||
         descriptor.property == vpiAlwaysType ||
-        descriptor.property == vpiLocalParam)
+        descriptor.property == vpiCaseType ||
+        descriptor.property == vpiLocalParam ||
+        descriptor.property == vpiQualifier)
+      expected = PropertyRealization::FixedImage;
+    if (descriptor.sourceType == vpiFunction && descriptor.property == vpiSize)
+      expected = PropertyRealization::FixedImage;
+    if (descriptor.sourceType == vpiPrimTerm &&
+        descriptor.property == vpiDirection)
+      expected = PropertyRealization::FixedImage;
+    if (descriptor.property == vpiConnByName &&
+        descriptor.sourceType == vpiParamAssign)
+      expected = PropertyRealization::FixedImage;
+    if ((descriptor.property == vpiConstType &&
+         descriptor.sourceType == vpiConstant) ||
+        (descriptor.property == vpiOpType &&
+         (descriptor.sourceType == vpiOperation ||
+          descriptor.sourceType == vpiAssignment)) ||
+        (descriptor.property == vpiBlocking &&
+         descriptor.sourceType == vpiAssignment))
       expected = PropertyRealization::FixedImage;
     if ((descriptor.property == vpiTopModule ||
          descriptor.property == vpiCellInstance) &&
         descriptor.sourceType == vpiModule)
+      expected = PropertyRealization::FixedImage;
+    if ((descriptor.sourceType == vpiTask ||
+         descriptor.sourceType == vpiFunction) &&
+        (descriptor.property == vpiMethod ||
+         descriptor.property == vpiVisibility))
       expected = PropertyRealization::FixedImage;
     if (descriptor.property == vpiDefName &&
         descriptor.sourceType == vpiPackage)
@@ -2113,6 +2357,11 @@ TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
                                descriptor.property == vpiDefFile ||
                                descriptor.property == vpiDefLineNo))
       expected = PropertyRealization::DefinitionImage;
+    if ((descriptor.sourceType == vpiGate ||
+         descriptor.sourceType == vpiSwitch) &&
+        (descriptor.property == vpiDefName ||
+         descriptor.property == vpiPrimType))
+      expected = PropertyRealization::DefinitionImage;
     if (instance &&
         (descriptor.property == vpiAutomatic || descriptor.property == vpiTop ||
          descriptor.property == vpiUnit))
@@ -2120,8 +2369,12 @@ TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
     if ((descriptor.sourceType == vpiTask ||
          descriptor.sourceType == vpiFunction ||
          descriptor.sourceType == vpiNamedEvent ||
-         descriptor.sourceType == vpiNamedEventArray) &&
+         descriptor.sourceType == vpiNamedEventArray ||
+         descriptor.sourceType == vpiConstraint) &&
         descriptor.property == vpiAutomatic)
+      expected = PropertyRealization::FixedImage;
+    if (descriptor.sourceType == vpiConstraint &&
+        descriptor.property == vpiAccessType)
       expected = PropertyRealization::FixedImage;
     if (descriptor.property == vpiNetType ||
         descriptor.property == vpiExplicitScalared ||
@@ -2136,6 +2389,14 @@ TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
                       descriptor.property == vpiNetDeclAssign ||
                       descriptor.property == vpiStrength0 ||
                       descriptor.property == vpiStrength1))
+      expected = PropertyRealization::FixedImage;
+    if ((descriptor.sourceType == vpiGate ||
+         descriptor.sourceType == vpiContAssign) &&
+        (descriptor.property == vpiStrength0 ||
+         descriptor.property == vpiStrength1))
+      expected = PropertyRealization::FixedImage;
+    if (descriptor.sourceType == vpiContAssign &&
+        descriptor.property == vpiNetDeclAssign)
       expected = PropertyRealization::FixedImage;
     if (netSource && descriptor.property == vpiResolvedNetType)
       expected = PropertyRealization::IndexedImage;
@@ -2294,7 +2555,8 @@ TEST(VPIObjectModel, PortPropertiesHaveExactLrmApplicability) {
 TEST(VPIObjectModel, CompactImageExactlyMatchesTheLrmTraversalGraph) {
   ASSERT_TRUE(validateVPIObjectModelImage(vpiObjectModelImage,
                                           sizeof(vpiObjectModelImage)));
-  EXPECT_LT(sizeof(vpiObjectModelImage), 48u * 1024u);
+  // Include the complete Annex M operator domain and its symbolic spellings.
+  EXPECT_LT(sizeof(vpiObjectModelImage), 52u * 1024u);
   EXPECT_EQ(readVPIObjectModelImage32(vpiObjectModelImage, 60),
             kExpectedTraversalCount);
   EXPECT_EQ(readVPIObjectModelImage32(vpiObjectModelImage, 68),
@@ -3223,6 +3485,12 @@ TEST(VPIObjectModel, RootTraversalsHaveExactSpecialTargetsAndOrders) {
 // relationships.  These negative cases prevent a generic Scope/Array family
 // from leaking into a relation with a narrower LRM node.
 TEST(VPIObjectModel, InstanceScopeAndArrayRelationsDoNotLeak) {
+  for (uint32_t owner : {vpiModule, vpiPackage, vpiClassDefn,
+                         vpiClassTypespec, vpiClassObj, vpiPropertyDecl,
+                         vpiSequenceDecl})
+    expectContains(owner, vpiVariables, Mode::Iterate,
+                   {vpiIntVar, vpiRegArray, vpiVirtualInterfaceVar},
+                   {vpiNamedEvent, vpiNamedEventArray, vpiParameter});
   expectTargetsExactly(vpiModport, vpiInterface, Mode::Handle, {vpiInterface});
   expectTargetsExactly(vpiInterfaceTfDecl, vpiTask, Mode::Iterate, {vpiTask});
   expectTargetsExactly(vpiInterfaceTfDecl, vpiFunction, Mode::Iterate,
@@ -3276,6 +3544,13 @@ TEST(VPIObjectModel, EarlyDiagramEnclosuresExpandWithoutFamilyLeakage) {
 // relations.  In particular, a virtual interface cannot accept an arbitrary
 // concrete typespec merely because both are declarations.
 TEST(VPIObjectModel, TypeRelationsPreserveLrmNarrowing) {
+  // 37.25 details 6 and 11: typedef aliases retain the public kind of an
+  // unresolved type parameter while remaining in the typedef inventory.
+  for (uint32_t owner : {vpiModule, vpiPackage, vpiClassDefn})
+    expectContains(owner, vpiTypedef, Mode::Iterate,
+                   {vpiTypeParameter, vpiIntTypespec}, {vpiParameter});
+  expectContains(vpiTypeParameter, vpiTypedefAlias, Mode::Handle,
+                 {vpiTypeParameter}, {vpiParameter});
   expectTargetsExactly(vpiVirtualInterfaceVar, vpiTypespec, Mode::Handle,
                        {vpiInterfaceTypespec});
   expectContains(vpiVirtualInterfaceVar, vpiExpr, Mode::Handle,
@@ -3461,12 +3736,17 @@ TEST(VPIObjectModel, SpecialExpressionRelationsAddOnlyTheirNamedNodes) {
 }
 
 TEST(VPIObjectModel, ClassClassObjectAndClockingIterationsDoNotInventOrder) {
-  for (uint32_t selector : {vpiDerivedClasses, vpiInstance, vpiMethods})
+  for (uint32_t selector :
+       {vpiDerivedClasses, vpiInstance, vpiMethods, vpiClassTypespec})
     expectNoOrder(vpiClassDefn, selector, Mode::Iterate);
   EXPECT_EQ(requireTraversal(vpiClassDefn, vpiConstraint, Mode::Iterate).order,
             Order::Declaration);
-  for (uint32_t selector : {vpiMethods, vpiConstraint})
-    expectNoOrder(vpiClassTypespec, selector, Mode::Iterate);
+  EXPECT_EQ(requireTraversal(vpiClassTypespec, vpiConstraint, Mode::Iterate)
+                .order,
+            Order::Declaration);
+  expectNoOrder(vpiClassTypespec, vpiMethods, Mode::Iterate);
+  EXPECT_EQ(findVPITraversal(vpiClassDefn, vpiClassTypespec, Mode::Handle),
+            nullptr);
   for (uint32_t selector : {vpiVariables, vpiWaitingProcesses, vpiMessages,
                             vpiMethods, vpiConstraint, vpiParameter})
     expectNoOrder(vpiClassObj, selector, Mode::Iterate);
@@ -3557,8 +3837,9 @@ TEST(VPIObjectModel, StatementRelationsKeepHandleAndIterationSemantics) {
   EXPECT_NE(findVPITraversal(vpiFor, vpiForInitStmt, Mode::Iterate), nullptr);
   EXPECT_NE(findVPITraversal(vpiFor, vpiForIncStmt, Mode::Handle), nullptr);
   EXPECT_NE(findVPITraversal(vpiFor, vpiForIncStmt, Mode::Iterate), nullptr);
-  expectTargetsExactly(vpiForeachStmt, vpiVariables, Mode::Iterate,
-                       {vpiRegArray, vpiPackedArrayVar, vpiStringVar});
+  expectTargetsExactly(
+      vpiForeachStmt, vpiVariables, Mode::Iterate,
+      {vpiRegArray, vpiPackedArrayVar, vpiBitVar, vpiReg, vpiStringVar});
   expectContains(vpiForeachStmt, vpiLoopVars, Mode::Iterate,
                  {vpiIntegerVar, vpiReg, vpiLongIntVar, vpiShortIntVar,
                   vpiIntVar, vpiByteVar, vpiEnumVar, vpiBitVar, vpiStringVar,
@@ -3582,4 +3863,47 @@ TEST(VPIObjectModel, RuntimeAndMetadataRelationsDoNotBecomeUniversal) {
   EXPECT_NE(findVPITraversal(vpiIterator, vpiUse, Mode::Handle), nullptr);
 }
 
+TEST(VPIObjectModel,
+     OriginalSourceOperatorsPreserveLanguageSpellingAndGrouping) {
+  const auto *add = findVPISourceOperator("add", 2);
+  ASSERT_NE(add, nullptr);
+  EXPECT_EQ(add->value, vpiAddOp);
+  EXPECT_STREQ(add->token, "+");
+  EXPECT_EQ(findVPISourceOperator("add", 1), nullptr);
+  EXPECT_EQ(findVPISourceOperator("logical_equivalence", 2), nullptr);
+  const auto *power = findVPISourceOperator(vpiPowerOp);
+  const auto *implication = findVPISourceOperator(vpiImplyOp);
+  ASSERT_NE(power, nullptr);
+  ASSERT_NE(implication, nullptr);
+  EXPECT_FALSE(power->rightAssociative);
+  EXPECT_TRUE(implication->rightAssociative);
+  const auto *conditional = findVPISourceOperator("conditional", 3);
+  ASSERT_NE(conditional, nullptr);
+  EXPECT_EQ(conditional->value, vpiConditionOp);
+  EXPECT_EQ(conditional->arity, 3u);
+  EXPECT_STREQ(conditional->token, "?:");
+  EXPECT_TRUE(conditional->rightAssociative);
+  EXPECT_GT(conditional->precedence, implication->precedence);
+  EXPECT_LT(conditional->precedence,
+            findVPISourceOperator(vpiLogOrOp)->precedence);
+  EXPECT_GT(power->precedence, add->precedence);
+  EXPECT_GT(add->precedence, implication->precedence);
+}
+
 } // namespace
+
+TEST(VPIObjectModel, ArrayVariablesAndPrefixParentsUseVariableKinds) {
+  using namespace obelisk::reflection;
+  const auto *elements =
+      findVPITraversal(vpiRegArray, vpiReg, VPITraversalMode::Iterate);
+  ASSERT_NE(elements, nullptr);
+  EXPECT_EQ(elements->order, VPITraversalOrder::Index);
+  for (uint32_t kind : {vpiIntVar, vpiStringVar, vpiStructVar, vpiRegArray})
+    EXPECT_TRUE(vpiObjectSetContains(elements->targets, kind));
+  const auto *parent =
+      findVPITraversal(vpiRegBit, vpiParent, VPITraversalMode::Handle);
+  ASSERT_NE(parent, nullptr);
+  // 37.17d26 includes a member-variable prefix and the largest packed array.
+  for (uint32_t kind : {vpiIntVar, vpiReg, vpiBitVar, vpiPackedArrayVar})
+    EXPECT_TRUE(vpiObjectSetContains(parent->targets, kind));
+}

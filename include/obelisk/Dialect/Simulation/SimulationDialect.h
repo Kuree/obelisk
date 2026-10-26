@@ -693,11 +693,23 @@ using GcPollFree = ObeliskSimulationDialect::GcPollFreeAttrHelper;
 using HierarchicalName = ObeliskSimulationDialect::HierarchicalNameAttrHelper;
 using Rematerialized = ObeliskSimulationDialect::RematerializedAttrHelper;
 using VpiAnchor = ObeliskSimulationDialect::VpiAnchorAttrHelper;
+using VpiDefinitionMember =
+    ObeliskSimulationDialect::VpiDefinitionMemberAttrHelper;
+using VpiExpressionIdentifier =
+    ObeliskSimulationDialect::VpiExpressionIdentifierAttrHelper;
+using VpiStatementId = ObeliskSimulationDialect::VpiStatementIdAttrHelper;
+using VpiCallSite = ObeliskSimulationDialect::VpiCallSiteAttrHelper;
+using VpiResolutionNet = ObeliskSimulationDialect::VpiResolutionNetAttrHelper;
+using VpiLocal = ObeliskSimulationDialect::VpiLocalAttrHelper;
+using VpiDeclaredType = ObeliskSimulationDialect::VpiDeclaredTypeAttrHelper;
+using VpiFrameInstrumentation =
+    ObeliskSimulationDialect::VpiFrameInstrumentationAttrHelper;
 using VpiAutomatic = ObeliskSimulationDialect::VpiAutomaticAttrHelper;
 using VpiCellInstance = ObeliskSimulationDialect::VpiCellInstanceAttrHelper;
 using VpiDefinitionName = ObeliskSimulationDialect::VpiDefinitionNameAttrHelper;
 using VpiIdentityDelegated =
     ObeliskSimulationDialect::VpiIdentityDelegatedAttrHelper;
+using VpiBoxType = ObeliskSimulationDialect::VpiBoxTypeAttrHelper;
 using VpiSourceTypeIdentity =
     ObeliskSimulationDialect::VpiSourceTypeIdentityAttrHelper;
 using VpiTop = ObeliskSimulationDialect::VpiTopAttrHelper;

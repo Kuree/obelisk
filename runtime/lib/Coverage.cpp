@@ -10108,6 +10108,13 @@ bool validateContainerFormal(
     return true;
   if (!obelisk_rt_managed_object_belongs_to(context, object))
     return false;
+  if (type->kind == obelisk::coverage::FunctionalContainerKind::Mailbox) {
+    obelisk_rt_object_v1 *payload = nullptr;
+    if (obelisk_rt_builtin_class_payload(object, BuiltinClassKind::Mailbox,
+                                         &payload) != OBELISK_RT_OK)
+      return false;
+    object = payload;
+  }
   const auto *element =
       obelisk_rt_managed_element_type_lookup(context, type->elementType);
   if (!element)

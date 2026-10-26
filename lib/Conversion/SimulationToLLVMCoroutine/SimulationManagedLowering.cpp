@@ -231,6 +231,20 @@ public:
   }
 };
 
+class ClassBuiltinUpcastConversion final
+    : public OpConversionPattern<sim::SimClassBuiltinUpcastOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimClassBuiltinUpcastOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getObject().size() != 1)
+      return failure();
+    rewriter.replaceOp(op, adaptor.getObject());
+    return success();
+  }
+};
+
 class ClassIsInstanceConversion final
     : public OpConversionPattern<sim::SimClassIsInstanceOp> {
 public:
@@ -962,17 +976,17 @@ void populateManagedToLLVMConversionPatterns(
     const llvm::DataLayout &dataLayout, uint64_t stateBitCount,
     const NativeClassLowering &classes) {
   MLIRContext *context = patterns.getContext();
-  patterns
-      .add<ClassNullConversion, ManagedNullConversion,
-           ManagedIdentityEqualConversion<sim::SimSemaphoreEqualOp>,
-           ManagedIdentityEqualConversion<sim::SimMailboxEqualOp>,
-           ManagedWatchNullConversion, ManagedIsNullConversion,
-           EventNullConversion, ClassAllocConversion, ClassCopyConversion,
-           ClassIsInstanceConversion, ClassIdConversion, ClassCastConversion,
-           ManagedWatchConversion, ClassRootBindConversion,
-           ManagedObjectOutputConversion<sim::SimWeakCreateOp>,
-           ManagedObjectOutputConversion<sim::SimWeakGetOp>,
-           WeakClearConversion, GCSafepointConversion>(converter, context);
+  patterns.add<ClassNullConversion, ManagedNullConversion,
+               ManagedIdentityEqualConversion<sim::SimSemaphoreEqualOp>,
+               ManagedIdentityEqualConversion<sim::SimMailboxEqualOp>,
+               ManagedWatchNullConversion, ManagedIsNullConversion,
+               EventNullConversion, ClassAllocConversion, ClassCopyConversion,
+               ClassBuiltinUpcastConversion, ClassIsInstanceConversion,
+               ClassIdConversion, ClassCastConversion, ManagedWatchConversion,
+               ClassRootBindConversion,
+               ManagedObjectOutputConversion<sim::SimWeakCreateOp>,
+               ManagedObjectOutputConversion<sim::SimWeakGetOp>,
+               WeakClearConversion, GCSafepointConversion>(converter, context);
   populateManagedContainerToLLVMConversionPatterns(patterns, converter,
                                                    dataLayout);
   populateManagedCoverageToLLVMConversionPatterns(patterns, converter,

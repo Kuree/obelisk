@@ -105,7 +105,7 @@ set(_obelisk_target_runtime_common_sources
     Format ManagedHeap Plusargs Process ProcessAllocation ProcessAOT
     ProcessNativeState ProcessNBA ProcessObservers ProcessSignals ProcessState
     ProcessTable ProcessTransitions ProcessValidation Random RandSolve RandSamplePlan RandReal RandSolveWide Runtime
-    Sampled StochasticQueue System VCD VPI)
+    Sampled StochasticQueue System VCD VPI VPIValueLayout)
 set(_obelisk_target_runtime_cold_tail_sources
     ScanFormat DynamicScanBytecode ContainerBitstream RecursiveBitstream
     ContainerBitstreamBytecode ClassBitstream ClassBitstreamBytecode DPIExport

@@ -1669,9 +1669,10 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     auto targetClass = dyn_cast<sim::ClassHandleType>(destinationType);
     Value source;
     if (isa<semantic::SVNullLiteralOp>(children[1])) {
-      if (targetClass)
-        source = sim::SimClassNullOp::create(
-            builder, getSemanticLocation(children[1]), destinationType);
+      if (targetClass ||
+          isa<sim::SemaphoreType, sim::MailboxType>(destinationType))
+        source = createDefaultValue(builder, getSemanticLocation(children[1]),
+                                    destinationType);
       else if (kind != semantic::SVDynamicCastKind::AlwaysFail) {
         emitError(location) << "$cast null source requires a class target";
         return failure();
@@ -1703,7 +1704,8 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       break;
     case semantic::SVDynamicCastKind::ClassRuntime: {
       if (!targetClass || !source ||
-          !isa<sim::ClassHandleType>(source.getType())) {
+          !isa<sim::ClassHandleType, sim::SemaphoreType, sim::MailboxType>(
+              source.getType())) {
         emitError(location) << "runtime class $cast has incompatible operands";
         return failure();
       }
@@ -1714,11 +1716,8 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
           FlatSymbolRefAttr::get(
               function.getContext(),
               targetClass.getClassName().getRootReference()));
-      Value sourceID = sim::SimClassIdOp::create(builder, location,
-                                                 builder.getI64Type(), source);
-      Value isNull =
-          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
-                                sourceID, constant(builder.getI64Type(), 0));
+      Value isNull = sim::SimManagedIsNullOp::create(
+          builder, location, builder.getI1Type(), source);
       succeeded = arith::OrIOp::create(builder, location, instance, isNull);
       conditionalStore = true;
       break;

@@ -103,7 +103,10 @@ def NativeDialect : Dialect {
     "::mlir::StringAttr":$file_scan_prefix_global,
     "::mlir::StringAttr":$aggregate_bitstream_plan_global,
     "::mlir::StringAttr":$container_pattern_plan_global,
-    "::mlir::IntegerAttr":$container_pattern_plan_size
+    "::mlir::IntegerAttr":$container_pattern_plan_size,
+    "::mlir::IntegerAttr":$box_type_id,
+    "::mlir::IntegerAttr":$vpi_local_id,
+    "::mlir::IntegerAttr":$vpi_call_id
   );
 }
 

@@ -105,9 +105,16 @@ static LogicalResult verifyVPIProperties(Operation *operation,
     if (descriptor->realization !=
             reflection::VPIPropertyRealization::FixedImage &&
         descriptor->realization !=
-            reflection::VPIPropertyRealization::DefinitionImage)
+            reflection::VPIPropertyRealization::DefinitionImage &&
+        descriptor->realization !=
+            reflection::VPIPropertyRealization::OptionalImage)
       return operation->emitOpError()
              << "VPI property " << selector << " is not a FixedImage property";
+    if (exactKind == uint32_t(reflection::VPIObjectKind::Function) &&
+        selector == 4 &&
+        !cast<IntegerAttr>(property.getValue()).getValue().isZero())
+      return operation->emitOpError(
+          "fixed function Size is reserved for source-proven void returns");
     if (selector == 74 && cast<BoolAttr>(property.getValue()).getValue() !=
                               operation->hasAttr("is_protected"))
       return operation->emitOpError(
@@ -311,27 +318,95 @@ LogicalResult SimVPIDefinitionDeclOp::verify() {
   case Kind::Module:
   case Kind::Interface:
   case Kind::Program:
+    if (getPrimitiveTypeAttr())
+      return emitOpError(
+          "only primitive definitions may specify a primitive type");
     return verifyDefinitionLocation(*this, getVpiKind(),
                                     getDefinitionLocAttr());
+  case Kind::Gate:
+  case Kind::Switch: {
+    if (!getPrimitiveTypeAttr())
+      return emitOpError("primitive definition requires a primitive type");
+    const auto *primitive =
+        reflection::findVPIBuiltinPrimitive(*getPrimitiveType());
+    if (!primitive || primitive->objectKind != getVpiKind() ||
+        primitive->sourceName != getDefinitionName())
+      return emitOpError(
+          "primitive type, object kind, and definition name must agree");
+    if (getDefinitionLocAttr())
+      return emitOpError(
+          "built-in primitive definitions have no source definition location");
+    return success();
+  }
   default:
-    return emitOpError(
-        "VPI definition kind must be a module, interface, or program");
+    return emitOpError("VPI definition kind must be a module, interface, "
+                       "program, gate, or switch");
   }
 }
 
+LogicalResult SimVPIDefinitionBindingOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  auto source = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+      *this, getSourceAttr());
+  auto definition = symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionDeclOp>(
+      *this, getDefinitionAttr());
+  if (!source || !definition)
+    return emitOpError("requires a primitive anchor and a shared definition");
+  using Kind = reflection::VPIObjectKind;
+  if ((source.getVpiKind() != static_cast<uint32_t>(Kind::Gate) &&
+       source.getVpiKind() != static_cast<uint32_t>(Kind::Switch)) ||
+      source.getBackingAttr() || source.getVpiKind() != definition.getVpiKind())
+    return emitOpError(
+        "primitive source and shared definition kinds must agree");
+  return success();
+}
+
 LogicalResult SimVPIDefinitionMemberDeclOp::verify() {
-  if (getMemberName().empty())
-    return emitOpError("requires a nonempty member name");
+  bool assignment = getVpiKind() == static_cast<uint32_t>(
+                                        reflection::VPIObjectKind::ParamAssign);
+  if (getMemberName().empty() != assignment)
+    return emitOpError(assignment ? "parameter assignment must be unnamed"
+                                  : "requires a nonempty member name");
   if (getMemberName().contains('\0'))
     return emitOpError("member name contains an embedded NUL");
   if (failed(verifyNonnegative(*this, getVpiKindAttr(), "VPI object kind")) ||
       failed(verifyNonnegative(*this, getOrdinalAttr(), "member ordinal")))
     return failure();
   using Kind = reflection::VPIObjectKind;
-  if (static_cast<Kind>(getVpiKind()) != Kind::IODecl)
-    return emitOpError("currently requires vpiIODecl member kind");
-  if (!getDirectionAttr())
-    return emitOpError("vpiIODecl member requires a direction");
+  Kind kind = static_cast<Kind>(getVpiKind());
+  if (assignment) {
+    if (getDirectionAttr() || getIsLocalParam() ||
+        getHasExplicitParameterRange() || getUnavailableDefault() ||
+        getHasOriginalDefault())
+      return emitOpError("parameter assignment cannot carry declaration facts");
+    if (getHasOriginalRhs() == getUnavailableRhs())
+      return emitOpError(
+          "parameter assignment requires exactly one RHS availability fact");
+    if (getParamAssignDefault() &&
+        (!getParamAssignByName() || !getUnavailableRhs()))
+      return emitOpError(
+          "empty named actual requires unavailable source-default RHS");
+    return success();
+  }
+  if (getParamAssignByName() || getParamAssignType() ||
+      getParamAssignDefault() || getUnavailableRhs() || getHasOriginalRhs())
+    return emitOpError("assignment facts require a ParamAssign member");
+  if (kind == Kind::IODecl) {
+    if (!getDirectionAttr())
+      return emitOpError("vpiIODecl member requires a direction");
+    if (getIsLocalParamAttr() || getHasExplicitParameterRangeAttr() ||
+        getUnavailableDefaultAttr() || getHasOriginalDefaultAttr())
+      return emitOpError("IO declaration cannot carry parameter facts");
+  } else if (kind == Kind::Parameter || kind == Kind::TypeParameter) {
+    if (getDirectionAttr())
+      return emitOpError("parameter declaration cannot carry an IO direction");
+    if (getHasOriginalDefaultAttr() && getUnavailableDefaultAttr())
+      return emitOpError("original default is exclusive with unavailability");
+    if (kind == Kind::TypeParameter && getHasExplicitParameterRangeAttr())
+      return emitOpError("type parameter cannot carry a value range");
+  } else {
+    return emitOpError("requires IODecl, Parameter, or TypeParameter kind");
+  }
   return success();
 }
 
@@ -341,14 +416,26 @@ LogicalResult SimVPIDefinitionMemberDeclOp::verifySymbolUses(
       *this, getDefinitionAttr());
   if (!definition)
     return emitOpError("references an unknown VPI definition");
+  if (definition.getPrimitiveTypeAttr())
+    return emitOpError("built-in primitive definitions cannot have members");
+  using Kind = reflection::VPIObjectKind;
+  if (getVpiKind() == uint32_t(Kind::ParamAssign) &&
+      definition.getVpiKind() != uint32_t(Kind::Module) &&
+      definition.getVpiKind() != uint32_t(Kind::Interface))
+    return emitOpError("shared parameter assignments require a module or "
+                       "interface definition");
   return success();
 }
 
 LogicalResult SimVPIDefinitionSpecializationDeclOp::verifySymbolUses(
     SymbolTableCollection &symbolTable) {
-  if (!symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionDeclOp>(
-          *this, getDefinitionAttr()))
+  auto definition = symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionDeclOp>(
+      *this, getDefinitionAttr());
+  if (!definition)
     return emitOpError("references an unknown VPI definition");
+  if (definition.getPrimitiveTypeAttr())
+    return emitOpError(
+        "built-in primitive definitions cannot have specializations");
   return success();
 }
 
@@ -367,6 +454,29 @@ LogicalResult SimVPIDefinitionMemberSpecializationOp::verifySymbolUses(
   if (specialization.getDefinitionAttr() != member.getDefinitionAttr())
     return emitOpError(
         "member and specialization reference different VPI definitions");
+  if (member.getVpiKind() == uint32_t(reflection::VPIObjectKind::ParamAssign))
+    return emitOpError(
+        "parameter assignments have no effective specialization type");
+  auto value = getImmutableValueAttr();
+  bool parameter = member.getVpiKind() ==
+                   static_cast<uint32_t>(reflection::VPIObjectKind::Parameter);
+  if (static_cast<bool>(value) != parameter)
+    return emitOpError("exactly value parameters require an immutable value");
+  if (value) {
+    auto width = getPackedWidth(value.getType());
+    if (!width || !*width)
+      return emitOpError("parameter requires a fixed packed immutable value");
+    if (member.getHasExplicitParameterRangeAttr() &&
+        getEffectiveType().getKind() != VPITypeKind::PackedArray)
+      return emitOpError(
+          "explicit parameter range requires a packed-array semantic root");
+    if (value.getIsSigned() != getEffectiveType().getIsSigned())
+      return emitOpError(
+          "parameter value and effective type signedness differ");
+    if (failed(verifyVPITypeSemantics([&] { return emitOpError(); },
+                                      value.getType(), getEffectiveType())))
+      return failure();
+  }
   return success();
 }
 
@@ -379,6 +489,9 @@ LogicalResult SimVPIDefinitionMemberInstanceBindingOp::verifySymbolUses(
 }
 
 LogicalResult SimVPIDefinitionMemberInstanceBindingOp::verify() {
+  if (getExprTarget().getKind() == VPIObjectRefKind::Symbol)
+    return emitOpError(
+        "expression endpoint must be whole storage or a declared net");
   return verifyNonnegative(*this, getScopeIdAttr(), "scope ID");
 }
 
@@ -483,9 +596,16 @@ LogicalResult SimStatementDeclOp::verify() {
   bool requiresScope =
       named || getVpiKind() == static_cast<uint16_t>(
                                    reflection::VPIObjectKind::ForeachStmt);
-  if (named != getName().has_value() || (getName() && getName()->empty()))
-    return emitOpError(named ? "named block requires a nonempty name"
-                             : "only named begin/fork may carry a name");
+  bool loopScope =
+      getIsScope() &&
+      (getVpiKind() == static_cast<uint32_t>(reflection::VPIObjectKind::For) ||
+       getVpiKind() ==
+           static_cast<uint32_t>(reflection::VPIObjectKind::ForeachStmt));
+  if ((named && !getName()) ||
+      (getName() && ((!named && !loopScope) || getName()->empty())))
+    return emitOpError(
+        named ? "named block requires a nonempty name"
+              : "only named begin/fork or loop scopes may carry a name");
   bool mayBeScope =
       (kind->families &
        reflection::vpiFamilyMask(reflection::VPIObjectFamily::Scope)) != 0;
@@ -496,6 +616,194 @@ LogicalResult SimStatementDeclOp::verify() {
         "named begin/fork and foreach statements must be marked is_scope");
   return verifyFixedReflection(*this, getVpiKind(), reflectionProperties(*this),
                                reflectionDefinitionLoc(*this));
+}
+
+LogicalResult SimVPILocalDeclOp::verify() {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("requires a simulation.design owner");
+  if (failed(verifyNonnegative(*this, getIdAttr(), "local declaration ID")) ||
+      failed(verifyNonnegative(*this, getCodeUnitIdAttr(), "code-unit ID")) ||
+      failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")) ||
+      failed(verifyNonnegative(*this, getOrdinalAttr(), "declaration ordinal")))
+    return failure();
+  if (!getId() || !getCodeUnitId())
+    return emitOpError("local declaration and code-unit IDs must be nonzero");
+  if (getStatementScopeIdAttr() &&
+      (failed(verifyNonnegative(*this, getStatementScopeIdAttr(),
+                                "statement scope ID")) ||
+       !*getStatementScopeId()))
+    return emitOpError("statement scope ID must be positive");
+  if (getHierarchicalName().empty() || getDebugName().empty() ||
+      getHierarchicalName().contains('\0') || getDebugName().contains('\0'))
+    return emitOpError("requires nonempty source names without NUL bytes");
+  auto emit = [&] { return emitOpError(); };
+  if (failed(verifyElementType(emit, getValueType())) ||
+      failed(verifyVPITypeSemantics(emit, getValueType(), getVpiType())))
+    return failure();
+  const uint32_t kind = vpiKindForClassMember(getVpiType());
+  const auto *edge = reflection::findVPITraversal(
+      static_cast<uint32_t>(reflection::VPIObjectKind::Frame),
+      static_cast<uint32_t>(reflection::VPIRelationKind::AutomaticsRel),
+      reflection::VPITraversalMode::Iterate);
+  if (!edge || !reflection::vpiObjectSetContains(edge->targets, kind))
+    return emitOpError("type is not a legal frame automatic declaration");
+  if (auto properties = reflectionProperties(*this))
+    for (Attribute attribute : properties.getProperties()) {
+      auto property = cast<VPIPropertyAttr>(attribute);
+      const uint64_t selector =
+          property.getSelector().getValue().getZExtValue();
+      if (selector == 2 && property.getValue() != getDebugNameAttr())
+        return emitOpError(
+            "vpiName must match the exact local declaration name");
+      if (selector == 50 &&
+          property.getValue() != BoolAttr::get(getContext(), true))
+        return emitOpError("frame local declarations must be automatic");
+    }
+  return verifyFixedReflection(*this, kind, reflectionProperties(*this),
+                               reflectionDefinitionLoc(*this));
+}
+
+LogicalResult SimVPICodeUnitScopeBindingOp::verify() {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("requires a simulation.design owner");
+  if (failed(verifyNonnegative(*this, getCodeUnitIdAttr(), "code-unit ID")))
+    return failure();
+  if (!getCodeUnitId())
+    return emitOpError("code-unit ID must be positive");
+  return success();
+}
+
+LogicalResult SimVPIForeachDeclOp::verify() {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("requires a simulation.design owner");
+  if (getStatementIdAttr().getValue().isNegative() || !getStatementId())
+    return emitOpError("foreach statement ID must be positive");
+  if (getCollection().getKind() != VPIObjectRefKind::Storage &&
+      getCollection().getKind() != VPIObjectRefKind::Symbol)
+    return emitOpError("collection must name a whole fixed-array variable");
+  if (getLoopVariables().empty() || getLoopVariables().size() > UINT32_MAX)
+    return emitOpError("requires a bounded nonempty index list");
+  for (Attribute index : getLoopVariables())
+    if (!isa<UnitAttr, FlatSymbolRefAttr>(index))
+      return emitOpError("index must be an exact local symbol or unit skip");
+  return success();
+}
+
+LogicalResult
+SimVPIForeachDeclOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  if (getCollection().getKind() == VPIObjectRefKind::Symbol &&
+      !symbols.lookupNearestSymbolFrom<SimVPILocalDeclOp>(
+          *this, getCollection().getSymbol()))
+    return emitOpError(
+        "symbolic collection must name an exact local declaration");
+  for (Attribute index : getLoopVariables())
+    if (auto reference = dyn_cast<FlatSymbolRefAttr>(index);
+        reference &&
+        !symbols.lookupNearestSymbolFrom<SimVPILocalDeclOp>(*this, reference))
+      return emitOpError("index must name an exact local declaration");
+  return success();
+}
+
+LogicalResult
+SimVPICodeUnitScopeBindingOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  auto anchor = symbols.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+      *this, getSourceAttr());
+  using Kind = reflection::VPIObjectKind;
+  if (!anchor || anchor.getBackingAttr() ||
+      (anchor.getVpiKind() != static_cast<uint32_t>(Kind::Task) &&
+       anchor.getVpiKind() != static_cast<uint32_t>(Kind::Function)))
+    return emitOpError("source must name an unbacked task or function anchor");
+  if (anchor.getDebugName().empty() || anchor.getDebugName().contains('\0'))
+    return emitOpError("mapped source callable requires a nonempty exact name "
+                       "without NUL bytes");
+  return success();
+}
+
+LogicalResult SimVPIInitializerBindingOp::verify() {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("requires a simulation.design owner");
+  if (failed(verifyNonnegative(*this, getCodeUnitIdAttr(), "code-unit ID")) ||
+      failed(verifyNonnegative(*this, getStorageIdAttr(), "storage ID")))
+    return failure();
+  if (!getCodeUnitId())
+    return emitOpError("code-unit ID must be positive");
+  return success();
+}
+
+LogicalResult SimVPIStaticLocalBindingOp::verify() {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("requires a simulation.design owner");
+  if (failed(verifyNonnegative(*this, getStorageIdAttr(), "storage ID")) ||
+      failed(verifyNonnegative(*this, getCodeUnitIdAttr(), "code-unit ID")) ||
+      failed(verifyNonnegative(*this, getOrdinalAttr(), "source ordinal")))
+    return failure();
+  if (!getCodeUnitId())
+    return emitOpError("code-unit ID must be positive");
+  if (auto statement = getStatementScopeIdAttr();
+      statement &&
+      (statement.getValue().isNegative() || statement.getValue().isZero()))
+    return emitOpError("statement scope ID must be positive");
+  return success();
+}
+
+LogicalResult SimVPICallDeclOp::verify() {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("requires a simulation.design owner");
+  if (failed(verifyNonnegative(*this, getIdAttr(), "call-site ID")) ||
+      failed(verifyNonnegative(*this, getCodeUnitIdAttr(), "code-unit ID")) ||
+      failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")) ||
+      failed(verifyNonnegative(*this, getVpiKindAttr(), "VPI call kind")))
+    return failure();
+  if (!getId() || !getCodeUnitId())
+    return emitOpError("call-site and code-unit IDs must be nonzero");
+  for (auto [attribute, name] :
+       {std::pair{getStatementIdAttr(), "statement ID"},
+        std::pair{getEnclosingStatementIdAttr(), "enclosing statement ID"},
+        std::pair{getCalleeCodeUnitIdAttr(), "callee code-unit ID"}})
+    if (attribute) {
+      if (failed(verifyNonnegative(*this, attribute, name)))
+        return failure();
+      if (attribute.getValue().isZero())
+        return emitOpError() << name << " must be positive";
+    }
+  using Kind = reflection::VPIObjectKind;
+  switch (static_cast<Kind>(getVpiKind())) {
+  case Kind::FuncCall:
+  case Kind::MethodFuncCall:
+  case Kind::SysFuncCall:
+  case Kind::TaskCall:
+  case Kind::MethodTaskCall:
+  case Kind::SysTaskCall:
+    break;
+  default:
+    return emitOpError("kind must identify an exact task/function call");
+  }
+  if (getName().empty() || getName().contains('\0'))
+    return emitOpError(
+        "requires the nonempty source callee name without NUL bytes");
+  if (getIsIndirect() &&
+      getVpiKind() != static_cast<uint32_t>(Kind::TaskCall) &&
+      getVpiKind() != static_cast<uint32_t>(Kind::FuncCall) &&
+      getVpiKind() != static_cast<uint32_t>(Kind::MethodTaskCall) &&
+      getVpiKind() != static_cast<uint32_t>(Kind::MethodFuncCall))
+    return emitOpError(
+        "only a user task/function call may use indirect dispatch");
+  if ((getVpiKind() == static_cast<uint32_t>(Kind::SysFuncCall) ||
+       getVpiKind() == static_cast<uint32_t>(Kind::SysTaskCall)) &&
+      getCalleeCodeUnitIdAttr())
+    return emitOpError("system call cannot name a source code-unit callee");
+  return success();
+}
+
+LogicalResult SimVPIThreadOriginBindingOp::verify() {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("requires a simulation.design owner");
+  if (failed(verifyNonnegative(*this, getCodeUnitIdAttr(), "code-unit ID")) ||
+      failed(verifyNonnegative(*this, getStatementIdAttr(), "statement ID")))
+    return failure();
+  if (!getCodeUnitId() || !getStatementId())
+    return emitOpError("code-unit and statement IDs must be nonzero");
+  return success();
 }
 
 LogicalResult SimStatementSiteDeclOp::verify() {
@@ -552,6 +860,87 @@ LogicalResult SimVPIRelationDeclOp::verify() {
   return success();
 }
 
+LogicalResult
+SimVPIRelationDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  for (auto [reference, endpoint] :
+       {std::pair(getSource(), StringRef("source")),
+        std::pair(getTarget(), StringRef("target"))}) {
+    if (reference.getKind() == VPIObjectRefKind::DefinitionMember) {
+      if (failed(verifyVPIDefinitionMemberRef(
+              *this, (*this)->getParentOfType<SimDesignOp>(), reference,
+              symbolTable)))
+        return failure();
+      continue;
+    }
+    if (reference.getKind() != VPIObjectRefKind::Symbol)
+      continue;
+    Operation *declaration =
+        symbolTable.lookupNearestSymbolFrom(*this, reference.getSymbol());
+    if (!declaration)
+      return emitOpError() << "references an unknown " << endpoint
+                           << " VPI symbol " << reference.getSymbol();
+    if (!isa<SimVPIObjectAnchorOp, SimVPITypespecDeclOp, SimVPINettypeDeclOp,
+             SimVPIClassMemberDeclOp, SimVPIUnresolvedTypeAliasDeclOp,
+             SimVPILexicalClassTypespecDeclOp, SimVPIClassExtendsDeclOp,
+             SimVPIClassParameterAssignDeclOp, SimVPILocalDeclOp,
+             SimVPIExpressionDeclOp, SimVPIDefinitionMemberDeclOp,
+             SimVPICallDeclOp>(declaration))
+      return emitOpError()
+             << endpoint << " VPI symbol " << reference.getSymbol()
+             << " must name an object anchor, typespec, or nettype";
+  }
+  if (getSource().getKind() == VPIObjectRefKind::Symbol &&
+      getTarget().getKind() == VPIObjectRefKind::Symbol) {
+    auto source = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+        *this, getSource().getSymbol());
+    auto target = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+        *this, getTarget().getSymbol());
+    using Kind = reflection::VPIObjectKind;
+    if (source &&
+        source.getVpiKind() == static_cast<uint32_t>(Kind::PrimTerm) &&
+        getSelector() ==
+            static_cast<uint32_t>(reflection::VPIRelationKind::PrimitiveRel) &&
+        (getMode() != VPIRelationMode::Handle || !target ||
+         source.getParentAttr() != getTarget().getSymbol()))
+      return emitOpError(
+          "primitive terminal relation must name its exact owner");
+    if (target &&
+        target.getVpiKind() == static_cast<uint32_t>(Kind::PrimTerm) &&
+        source &&
+        (source.getVpiKind() == static_cast<uint32_t>(Kind::Gate) ||
+         source.getVpiKind() == static_cast<uint32_t>(Kind::Switch) ||
+         source.getVpiKind() == static_cast<uint32_t>(Kind::Udp)) &&
+        getSelector() == static_cast<uint32_t>(Kind::PrimTerm) &&
+        (getMode() != VPIRelationMode::Iterate ||
+         target.getParentAttr() != getSource().getSymbol() ||
+         getOrdinal() != target.getOwnerOrdinal()))
+      return emitOpError(
+          "primitive terminal inventory must preserve exact owner and index");
+  }
+  if (getSelector() ==
+          static_cast<uint32_t>(reflection::VPIRelationKind::ExprRel) &&
+      getMode() == VPIRelationMode::Handle &&
+      getSource().getKind() == VPIObjectRefKind::Symbol) {
+    if (auto source = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+            *this, getSource().getSymbol());
+        source && source.getUnavailableDefaultAttr())
+      return emitOpError(
+          "unavailable source default cannot have an Expr relation");
+  }
+  if (getSelector() ==
+          static_cast<uint32_t>(reflection::VPIObjectKind::Typespec) &&
+      getMode() == VPIRelationMode::Handle &&
+      getSource().getKind() == VPIObjectRefKind::Symbol) {
+    if (auto source = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+            *this, getSource().getSymbol());
+        source && source.getUnresolvedTypeParameterAttr() &&
+        getTarget() != getSource())
+      return emitOpError(
+          "unresolved type parameter cannot reference an effective typespec");
+  }
+  return success();
+}
+
 LogicalResult SimVPINetIdentityDeclOp::verify() {
   if (failed(verifyNonnegative(*this, getIdAttr(), "VPI net identity ID")) ||
       failed(
@@ -581,14 +970,44 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
                                "enclosing scope ID")) ||
       failed(verifyNonnegative(*this, getOwnerOrdinalAttr(), "owner ordinal")))
     return failure();
-  if (getHierarchicalName().empty())
-    return emitOpError("requires a nonempty source hierarchy name");
   const auto *kind = reflection::findVPIObjectKind(getVpiKind());
   if (getVpiKind() > UINT16_MAX || !kind ||
       kind->role != reflection::VPIObjectRole::Concrete)
     return emitOpError("VPI kind is not a concrete object");
   using Kind = reflection::VPIObjectKind;
   Kind anchorKind = static_cast<Kind>(getVpiKind());
+  const bool sourceExpression =
+      anchorKind == Kind::Constant || anchorKind == Kind::Operation;
+  if (sourceExpression || anchorKind == Kind::PrimTerm) {
+    if (!getHierarchicalName().empty() || !getDebugName().empty() ||
+        !getParentAttr() || getBackingAttr())
+      return emitOpError("source expression or primitive terminal requires "
+                         "unnamed immutable ownership");
+  } else if (getHierarchicalName().empty()) {
+    return emitOpError("requires a nonempty source hierarchy name");
+  }
+  if (anchorKind == Kind::Parameter || anchorKind == Kind::Task ||
+      anchorKind == Kind::Function)
+    if (auto properties = reflectionProperties(*this))
+      for (Attribute attribute : properties.getProperties()) {
+        auto property = cast<VPIPropertyAttr>(attribute);
+        if (property.getSelector().getValue().getZExtValue() == 2 &&
+            property.getValue() != getDebugNameAttr())
+          return emitOpError(
+              "Name property must equal its exact declaration name");
+      }
+  if (getClassMethodAttr() && anchorKind != Kind::Task &&
+      anchorKind != Kind::Function)
+    return emitOpError("class_method requires a task or function anchor");
+  if (getClassMethodAttr() && getDebugName().empty())
+    return emitOpError("class_method requires a nonempty declaration name");
+  if (anchorKind == Kind::Modport &&
+      (!getParentAttr() || getDebugName().empty()))
+    return emitOpError(
+        "modport requires an interface parent and a nonempty declaration name");
+  if (anchorKind == Kind::Constraint &&
+      (!getParentAttr() || getDebugName().empty()))
+    return emitOpError("constraint requires a named class-owned declaration");
   if (failed(verifyFixedReflection(*this, getVpiKind(),
                                    reflectionProperties(*this),
                                    reflectionDefinitionLoc(*this))))
@@ -596,9 +1015,12 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
   switch (anchorKind) {
   case Kind::Module:
   case Kind::Interface:
+  case Kind::Modport:
   case Kind::Program:
   case Kind::Package:
   case Kind::ClassDefn:
+  case Kind::Extends:
+  case Kind::Constraint:
   case Kind::Task:
   case Kind::Function:
   case Kind::ClockingBlock:
@@ -618,8 +1040,12 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
   case Kind::Gate:
   case Kind::Switch:
   case Kind::Udp:
+  case Kind::PrimTerm:
   case Kind::NamedEvent:
   case Kind::Parameter:
+  case Kind::TypeParameter:
+  case Kind::Constant:
+  case Kind::Operation:
   case Kind::Assert:
   case Kind::Assume:
   case Kind::Cover:
@@ -661,6 +1087,11 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
         return emitOpError(
             "code-unit backing requires a task or function anchor");
       break;
+    case VPIObjectBackingKind::Storage:
+      if (anchorKind != Kind::NamedEvent)
+        return emitOpError(
+            "storage backing requires a scalar named-event anchor");
+      break;
     case VPIObjectBackingKind::Net:
       if (anchorKind != Kind::InterconnectNet)
         return emitOpError("net backing requires an interconnect-net anchor");
@@ -678,7 +1109,70 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
     return emitOpError("interconnect-net anchor requires a net backing");
   const bool hasVPIType = static_cast<bool>(getVpiTypeAttr());
   const bool hasImmutableValue = static_cast<bool>(getImmutableValueAttr());
-  if (hasVPIType != hasImmutableValue)
+  if (getUnresolvedValueParameterAttr() &&
+      (anchorKind != Kind::Parameter || hasVPIType || hasImmutableValue ||
+       getBackingAttr() || !getParentAttr()))
+    return emitOpError("unresolved value parameter requires a lexical owner "
+                       "and no effective payload");
+  if (anchorKind == Kind::PrimTerm) {
+    if (hasVPIType || hasImmutableValue || getOwnerOrdinal() > INT32_MAX)
+      return emitOpError(
+          "primitive terminal requires no payload and an encodable index");
+    IntegerAttr direction;
+    if (auto properties = reflectionProperties(*this))
+      for (Attribute attribute : properties.getProperties()) {
+        auto property = cast<VPIPropertyAttr>(attribute);
+        uint64_t selector = property.getSelector().getValue().getZExtValue();
+        if (selector == 20)
+          direction = dyn_cast<IntegerAttr>(property.getValue());
+      }
+    if (!direction || direction.getInt() < 1 || direction.getInt() > 3)
+      return emitOpError("primitive terminal requires exact input/output/inout "
+                         "direction and owner index");
+  }
+  if (anchorKind == Kind::Constant && !hasImmutableValue)
+    return emitOpError("source constant requires an exact immutable value");
+  if (anchorKind == Kind::Operation && (hasVPIType || hasImmutableValue))
+    return emitOpError(
+        "unbound source expression cannot carry an effective payload");
+  if (anchorKind == Kind::Operation || anchorKind == Kind::Constant) {
+    VPIPropertySetAttr properties = reflectionProperties(*this);
+    IntegerAttr classification;
+    if (properties)
+      for (Attribute attribute : properties.getProperties()) {
+        auto property = cast<VPIPropertyAttr>(attribute);
+        if (property.getSelector().getValue().getZExtValue() ==
+            (anchorKind == Kind::Operation ? 39 : 40))
+          classification = dyn_cast<IntegerAttr>(property.getValue());
+      }
+    if (!classification || classification.getValue().isNegative())
+      return emitOpError("source expression requires an exact operator or "
+                         "constant classification");
+    uint64_t value = classification.getValue().getZExtValue();
+    if (anchorKind == Kind::Operation &&
+        (value > UINT32_MAX || value == 67 ||
+         !reflection::findVPISourceOperator(value)))
+      return emitOpError(
+          "source operation has an unsupported operator classification");
+    if (anchorKind == Kind::Constant && value != 7)
+      return emitOpError(
+          "source packed constant requires integer constant classification");
+  }
+  if (getUnresolvedTypeParameterAttr() &&
+      (anchorKind != Kind::TypeParameter || hasVPIType || hasImmutableValue ||
+       getBackingAttr() || !getParentAttr()))
+    return emitOpError("unresolved type parameter requires a lexical owner and "
+                       "no effective payload");
+  if (anchorKind == Kind::TypeParameter &&
+      ((!hasVPIType && !getUnresolvedTypeParameterAttr()) || hasImmutableValue))
+    return emitOpError(
+        "type parameter requires a source type and no immutable value");
+  if (getUnavailableDefaultAttr() &&
+      ((anchorKind != Kind::Parameter && anchorKind != Kind::TypeParameter) ||
+       getUnavailableDefaultAttr().getValue().empty()))
+    return emitOpError("unavailable default requires a parameter and nonempty "
+                       "original syntax");
+  if (anchorKind != Kind::TypeParameter && hasVPIType != hasImmutableValue)
     return emitOpError(
         "immutable source type and value must be present together");
   if (getHasExplicitParameterRangeAttr() && anchorKind != Kind::Parameter)
@@ -688,10 +1182,33 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
     return emitOpError(
         "explicit parameter range marker requires immutable type and value");
   if (hasImmutableValue) {
-    if (anchorKind != Kind::Parameter)
+    if (anchorKind != Kind::Parameter && anchorKind != Kind::Constant)
       return emitOpError(
-          "immutable value is currently supported only on parameters");
+          "immutable value is supported only on parameters and constants");
     FrozenConstantAttr value = getImmutableValueAttr();
+    if (anchorKind == Kind::Constant) {
+      auto type = getVpiTypeAttr();
+      if (!type.getChildren().empty() ||
+          (type.getTypedefAliases() && !type.getTypedefAliases().empty()))
+        return emitOpError("source integer literal requires an unaliased "
+                           "scalar integral type");
+      switch (type.getKind()) {
+      case VPITypeKind::GenericIntegral:
+      case VPITypeKind::Bit:
+      case VPITypeKind::Logic:
+      case VPITypeKind::Reg:
+      case VPITypeKind::Byte:
+      case VPITypeKind::ShortInt:
+      case VPITypeKind::Int:
+      case VPITypeKind::LongInt:
+      case VPITypeKind::Integer:
+      case VPITypeKind::Time:
+        break;
+      default:
+        return emitOpError("source integer literal requires an unaliased "
+                           "scalar integral type");
+      }
+    }
     if (!getPackedScalarType(value.getType()))
       return emitOpError("immutable parameter requires a fixed packed value");
     if (value.getIsSigned() != getVpiTypeAttr().getIsSigned())
@@ -777,17 +1294,57 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
   return success();
 }
 
+static Operation *lookupVPILexicalOwner(Operation *from,
+                                        FlatSymbolRefAttr reference,
+                                        SymbolTableCollection &symbolTable) {
+  Operation *owner = symbolTable.lookupNearestSymbolFrom(from, reference);
+  if (isa_and_nonnull<SimVPIObjectAnchorOp, SimVPIClassParameterAssignDeclOp>(
+          owner))
+    return owner;
+  auto typespec = dyn_cast_or_null<SimVPITypespecDeclOp>(owner);
+  return typespec && (typespec.getOrigin() ==
+                          VPITypespecOrigin::ClassSpecialization ||
+                      typespec.getOrigin() == VPITypespecOrigin::BuiltinClass)
+             ? owner
+             : nullptr;
+}
+
+static uint32_t getVPILexicalOwnerKind(Operation *owner) {
+  if (auto anchor = dyn_cast<SimVPIObjectAnchorOp>(owner))
+    return anchor.getVpiKind();
+  return static_cast<uint32_t>(isa<SimVPIClassParameterAssignDeclOp>(owner)
+                                   ? reflection::VPIObjectKind::ParamAssign
+                                   : reflection::VPIObjectKind::ClassTypespec);
+}
+
+static uint64_t getVPILexicalOwnerScope(Operation *owner) {
+  if (auto anchor = dyn_cast<SimVPIObjectAnchorOp>(owner))
+    return anchor.getEnclosingScopeId();
+  if (auto assignment = dyn_cast<SimVPIClassParameterAssignDeclOp>(owner))
+    return assignment.getScopeId();
+  return cast<SimVPITypespecDeclOp>(owner).getScopeId();
+}
+
 LogicalResult
 SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (FlatSymbolRefAttr parent = getParentAttr()) {
-    SimVPIObjectAnchorOp target =
-        symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(*this,
-                                                                  parent);
-    if (!target)
+    Operation *owner = lookupVPILexicalOwner(*this, parent, symbolTable);
+    if (!owner)
       return emitOpError("references an unknown VPI parent anchor");
+    auto target = dyn_cast<SimVPIObjectAnchorOp>(owner);
     using Kind = reflection::VPIObjectKind;
     Kind childKind = static_cast<Kind>(getVpiKind());
-    Kind parentKind = static_cast<Kind>(target.getVpiKind());
+    Kind parentKind = static_cast<Kind>(getVPILexicalOwnerKind(owner));
+    if ((childKind == Kind::Constant || childKind == Kind::Operation ||
+         childKind == Kind::PrimTerm) &&
+        getEnclosingScopeId() != getVPILexicalOwnerScope(owner))
+      return emitOpError("source expression scope must match its exact owner");
+    if (getUnresolvedValueParameterAttr() && parentKind != Kind::ClassDefn)
+      return emitOpError("unresolved value parameter requires a lexical class "
+                         "definition owner");
+    if (getUnresolvedTypeParameterAttr() && parentKind != Kind::ClassDefn)
+      return emitOpError("unresolved type parameter requires a lexical class "
+                         "definition owner");
     bool parentFixedArray =
         parentKind == Kind::ModuleArray || parentKind == Kind::InterfaceArray ||
         parentKind == Kind::ProgramArray || parentKind == Kind::GateArray ||
@@ -830,11 +1387,17 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     };
     auto isDeclarationScope = [&](Kind kind) {
       return isDesignScope(kind) || kind == Kind::Package ||
-             kind == Kind::ClassDefn || kind == Kind::Task ||
+             kind == Kind::ClassDefn || kind == Kind::ClassTypespec ||
+             kind == Kind::Task ||
              kind == Kind::Function || kind == Kind::GenScope;
     };
     bool legal = false;
     switch (childKind) {
+    case Kind::Constant:
+    case Kind::Operation:
+      legal = parentKind == Kind::Parameter || parentKind == Kind::Operation ||
+              parentKind == Kind::ParamAssign;
+      break;
     case Kind::Module:
     case Kind::Interface:
     case Kind::Program:
@@ -849,12 +1412,30 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     case Kind::Function:
       legal = isDeclarationScope(parentKind);
       break;
+    case Kind::Extends:
+      legal = parentKind == Kind::ClassDefn;
+      break;
+    case Kind::Modport: {
+      auto interface = dyn_cast<SimVPIObjectAnchorOp>(owner);
+      legal =
+          parentKind == Kind::Interface && interface &&
+          interface.getBackingAttr() &&
+          interface.getBackingAttr().getKind() == VPIObjectBackingKind::Scope &&
+          interface.getBackingAttr().getId().getValue().getZExtValue() ==
+              getEnclosingScopeId();
+      break;
+    }
+    case Kind::Constraint:
+      legal =
+          parentKind == Kind::ClassDefn || parentKind == Kind::ClassTypespec;
+      break;
     case Kind::PropertyDecl:
     case Kind::SequenceDecl:
       legal =
           isDeclarationScope(parentKind) || parentKind == Kind::ClockingBlock;
       break;
     case Kind::Parameter:
+    case Kind::TypeParameter:
       legal = isDeclarationScope(parentKind);
       break;
     case Kind::ClockingBlock:
@@ -871,6 +1452,10 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     case Kind::GenScope:
       legal = isDesignScope(parentKind) || parentKind == Kind::GenScope ||
               parentKind == Kind::GenScopeArray;
+      break;
+    case Kind::PrimTerm:
+      legal = parentKind == Kind::Gate || parentKind == Kind::Switch ||
+              parentKind == Kind::Udp;
       break;
     case Kind::Gate:
       legal = parentKind == Kind::GateArray || isDeclarationScope(parentKind);
@@ -915,7 +1500,7 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     }
     if (!legal)
       return emitOpError("has an illegal lexical parent kind: child ")
-             << getVpiKind() << ", parent " << target.getVpiKind();
+             << getVpiKind() << ", parent " << getVPILexicalOwnerKind(owner);
   } else {
     using Kind = reflection::VPIObjectKind;
     Kind kind = static_cast<Kind>(getVpiKind());
@@ -933,19 +1518,327 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     if (!target)
       return emitOpError("references an unknown backing class declaration");
   }
+  if (auto methodRef = (*this)->getAttrOfType<FlatSymbolRefAttr>("class_method")) {
+    auto method = symbolTable.lookupNearestSymbolFrom<SimClassMethodDeclOp>(
+        *this, methodRef);
+    if (!method)
+      return emitOpError("references an unknown class method declaration");
+    uint32_t expected = static_cast<uint32_t>(
+        method.getIsTask() ? reflection::VPIObjectKind::Task
+                           : reflection::VPIObjectKind::Function);
+    if (getVpiKind() != expected)
+      return emitOpError("kind does not match its class method declaration");
+    Operation *owner = getParentAttr()
+                           ? lookupVPILexicalOwner(*this, getParentAttr(),
+                                                  symbolTable)
+                           : nullptr;
+    if (auto typespec = dyn_cast_or_null<SimVPITypespecDeclOp>(owner))
+      if (typespec.getTargetType().getSymbol() != method.getOwnerAttr())
+        return emitOpError(
+            "class method owner does not match its parent specialization");
+  }
   return verifyFixedReflection(*this, getVpiKind(), reflectionProperties(*this),
                                reflectionDefinitionLoc(*this));
 }
 
+LogicalResult SimVPIBoxTypeDeclOp::verify() {
+  if (getId() <= 0)
+    return emitOpError("box type ID must be positive");
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("must be directly contained in a simulation design");
+  auto emit = [&] { return emitOpError(); };
+  if (!getElementDescriptor(getValueType()))
+    return emitOpError("requires exact concrete value storage");
+  return verifyVPITypeSemantics(emit, getValueType(), getVpiType());
+}
+
+LogicalResult
+SimVPIBoxTypeDeclOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  SmallVector<VPITypeSemanticsAttr> pending{getVpiType()};
+  DenseSet<Attribute> visited;
+  while (!pending.empty()) {
+    auto semantic = pending.pop_back_val();
+    if (!visited.insert(semantic).second)
+      continue;
+    if (auto symbol = semantic.getSymbol();
+        symbol && !symbols.lookupNearestSymbolFrom(*this, symbol))
+      return emitOpError("references an unknown semantic type symbol ")
+             << symbol;
+    if (ArrayAttr aliases = semantic.getTypedefAliases())
+      for (Attribute alias : aliases)
+        if (!symbols.lookupNearestSymbolFrom<SimVPITypespecDeclOp>(
+                *this, cast<SymbolRefAttr>(alias)))
+          return emitOpError("references an unknown typedef symbol ") << alias;
+    for (Attribute child : semantic.getChildren())
+      pending.push_back(cast<VPITypeSemanticsAttr>(child));
+  }
+  return success();
+}
+
+LogicalResult
+SimBoxBindTypeOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  auto descriptor = symbols.lookupNearestSymbolFrom<SimVPIBoxTypeDeclOp>(
+      *this, getDescriptorAttr());
+  if (!descriptor)
+    return emitOpError("descriptor must name a VPI box type declaration");
+  if (cast<DynamicArrayType>(getInput().getType()).getElementType() !=
+      descriptor.getValueType())
+    return emitOpError("input element type must exactly match the descriptor");
+  return success();
+}
+
+static LogicalResult verifySourceClassInventory(Operation *op, IntegerAttr id,
+                                                IntegerAttr scope) {
+  if (!isa<SimDesignOp>(op->getParentOp()))
+    return op->emitOpError("requires a simulation.design owner");
+  if (failed(verifyNonnegative(op, id, "source inventory ID")) ||
+      failed(verifyNonnegative(op, scope, "scope ID")))
+    return failure();
+  for (StringRef name :
+       {"vpi_type", "target_type", "constant_value", "vpi_properties"})
+    if (op->hasAttr(name))
+      return op->emitOpError("source inheritance cannot carry an effective "
+                             "type, value, or arbitrary properties");
+  return success();
+}
+
+static LogicalResult verifySourceClassSyntax(Operation *op, StringAttr syntax) {
+  if (syntax && (syntax.getValue().empty() || syntax.getValue().contains('\0')))
+    return op->emitOpError("unavailable source syntax must be nonempty without "
+                           "NUL bytes");
+  return success();
+}
+
+static LogicalResult verifySourceClassOwner(Operation *op,
+                                            FlatSymbolRefAttr reference,
+                                            uint64_t scope,
+                                            SymbolTableCollection &symbols) {
+  auto owner =
+      symbols.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(op, reference);
+  if (!owner || owner.getVpiKind() !=
+                    static_cast<uint32_t>(reflection::VPIObjectKind::ClassDefn))
+    return op->emitOpError("owner must be a lexical class definition");
+  if (owner.getEnclosingScopeId() != scope)
+    return op->emitOpError("scope ID must match the lexical class owner");
+  return success();
+}
+
+LogicalResult SimVPILexicalClassTypespecDeclOp::verify() {
+  if (failed(
+          verifySourceClassInventory(*this, getIdAttr(), getScopeIdAttr())) ||
+      failed(verifySourceClassSyntax(*this, getUnavailableParametersAttr())))
+    return failure();
+  if (getDebugName().empty() || getDebugName().contains('\0'))
+    return emitOpError(
+        "requires the exact source class name without NUL bytes");
+  return success();
+}
+
+LogicalResult SimVPILexicalClassTypespecDeclOp::verifySymbolUses(
+    SymbolTableCollection &symbols) {
+  if (failed(
+          verifySourceClassOwner(*this, getOwnerAttr(), getScopeId(), symbols)))
+    return failure();
+  auto definition = symbols.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+      *this, getDefinitionAttr());
+  if (!definition ||
+      definition.getVpiKind() !=
+          static_cast<uint32_t>(reflection::VPIObjectKind::ClassDefn))
+    return emitOpError("definition must name a lexical class definition");
+  if (getDebugName() != definition.getDebugName())
+    return emitOpError("debug name must match the exact class declaration");
+  if (getOwnerAttr() == getDefinitionAttr())
+    return emitOpError("class cannot extend its own lexical definition");
+  return success();
+}
+
+LogicalResult SimVPIClassExtendsDeclOp::verify() {
+  if (failed(
+          verifySourceClassInventory(*this, getIdAttr(), getScopeIdAttr())) ||
+      failed(verifySourceClassSyntax(*this, getUnavailableBaseAttr())) ||
+      failed(verifySourceClassSyntax(*this, getUnavailableArgumentsAttr())))
+    return failure();
+  if (bool(getBaseTypespecAttr()) == bool(getUnavailableBaseAttr()))
+    return emitOpError(
+        "requires exactly one base typespec or unavailable base");
+  return success();
+}
+
+LogicalResult
+SimVPIClassExtendsDeclOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  if (failed(
+          verifySourceClassOwner(*this, getOwnerAttr(), getScopeId(), symbols)))
+    return failure();
+  if (auto reference = getBaseTypespecAttr()) {
+    auto type =
+        symbols.lookupNearestSymbolFrom<SimVPILexicalClassTypespecDeclOp>(
+            *this, reference);
+    if (!type || type.getOwnerAttr() != getOwnerAttr() ||
+        type.getScopeId() != getScopeId())
+      return emitOpError("base typespec must be the lexical type occurrence "
+                         "owned by this class");
+  }
+  return success();
+}
+
+LogicalResult SimVPIClassParameterAssignDeclOp::verify() {
+  if (failed(verifySourceClassInventory(*this, getIdAttr(), getScopeIdAttr())))
+    return failure();
+  if (failed(verifySourceClassSyntax(*this, getUnavailableRhsAttr())))
+    return failure();
+  if (getRhsAttr() && getUnavailableRhsAttr())
+    return emitOpError(
+        "explicit RHS and unavailable RHS are mutually exclusive");
+  return verifyNonnegative(*this, getOrdinalAttr(),
+                           "parameter assignment ordinal");
+}
+
+LogicalResult SimVPIClassParameterAssignDeclOp::verifySymbolUses(
+    SymbolTableCollection &symbols) {
+  auto owner =
+      symbols.lookupNearestSymbolFrom<SimVPILexicalClassTypespecDeclOp>(
+          *this, getOwnerAttr());
+  if (!owner || owner.getScopeId() != getScopeId() ||
+      owner.getUnavailableParametersAttr())
+    return emitOpError(
+        "owner must be a lexical class type with known formal assignments "
+        "in the same scope");
+  auto parameter = symbols.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+      *this, getParameterAttr());
+  using Kind = reflection::VPIObjectKind;
+  if (!parameter ||
+      (parameter.getVpiKind() != static_cast<uint32_t>(Kind::Parameter) &&
+       parameter.getVpiKind() != static_cast<uint32_t>(Kind::TypeParameter)) ||
+      parameter.getParentAttr() != owner.getDefinitionAttr())
+    return emitOpError(
+        "parameter must be declared in the exact base definition");
+  if (auto properties = reflectionProperties(parameter))
+    for (Attribute attribute : properties.getProperties()) {
+      auto property = cast<VPIPropertyAttr>(attribute);
+      if (property.getSelector().getValue().getZExtValue() == 70 &&
+          cast<BoolAttr>(property.getValue()).getValue())
+        return emitOpError(
+            "local parameter cannot have a class actual assignment");
+    }
+  if (auto rhs = getRhsAttr()) {
+    Operation *target = symbols.lookupNearestSymbolFrom(*this, rhs);
+    auto anchor = dyn_cast_or_null<SimVPIObjectAnchorOp>(target);
+    bool typeParameter =
+        parameter.getVpiKind() == static_cast<uint32_t>(Kind::TypeParameter);
+    if (auto concrete = dyn_cast_or_null<SimVPITypespecDeclOp>(target)) {
+      if (!typeParameter ||
+          concrete.getOrigin() != VPITypespecOrigin::SourceDefault ||
+          concrete.getOwnerAttr() != FlatSymbolRefAttr::get(getSymNameAttr()) ||
+          concrete.getScopeId() != getScopeId())
+        return emitOpError(
+            "type actual must preserve its exact owned source typespec");
+    } else if (anchor &&
+               anchor.getVpiKind() ==
+                   static_cast<uint32_t>(typeParameter ? Kind::TypeParameter
+                                                       : Kind::Parameter)) {
+      if (anchor.getParentAttr() != owner.getOwnerAttr())
+        return emitOpError(
+            "actual reference must name a parameter in the derived class");
+      if (auto properties = reflectionProperties(anchor))
+        for (Attribute attribute : properties.getProperties()) {
+          auto property = cast<VPIPropertyAttr>(attribute);
+          if (property.getSelector().getValue().getZExtValue() == 70 &&
+              cast<BoolAttr>(property.getValue()).getValue())
+            return emitOpError(
+                "actual reference cannot name a body local parameter");
+        }
+    } else if (!typeParameter && anchor &&
+               (anchor.getVpiKind() == static_cast<uint32_t>(Kind::Constant) ||
+                anchor.getVpiKind() ==
+                    static_cast<uint32_t>(Kind::Operation)) &&
+               anchor.getParentAttr() ==
+                   FlatSymbolRefAttr::get(getSymNameAttr()) &&
+               anchor.getOwnerOrdinal() == 0 &&
+               anchor.getEnclosingScopeId() == getScopeId()) {
+      // The design-level expression proof validates the entire occurrence tree.
+    } else {
+      return emitOpError(
+          "explicit RHS must match the exact formal parameter kind");
+    }
+  }
+  return success();
+}
+
+LogicalResult SimVPIUnresolvedTypeAliasDeclOp::verify() {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("requires a simulation.design owner");
+  if (failed(verifyNonnegative(*this, getIdAttr(), "typespec ID")) ||
+      failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")))
+    return failure();
+  if (getDebugName().empty() || getHierarchicalName().empty() ||
+      getDebugName().contains('\0') || getHierarchicalName().contains('\0'))
+    return emitOpError(
+        "requires nonempty source typedef names without NUL bytes");
+  if ((*this)->hasAttr("vpi_type") || (*this)->hasAttr("target_type") ||
+      (*this)->hasAttr("constant_value") || (*this)->hasAttr("vpi_properties"))
+    return emitOpError("unresolved typedef cannot carry an effective type or "
+                       "parameter payload");
+  return success();
+}
+
+LogicalResult SimVPIUnresolvedTypeAliasDeclOp::verifySymbolUses(
+    SymbolTableCollection &symbols) {
+  auto owner = symbols.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+      *this, getOwnerAttr());
+  if (!owner || owner.getVpiKind() !=
+                    static_cast<uint32_t>(reflection::VPIObjectKind::ClassDefn))
+    return emitOpError("owner must be a lexical class definition");
+  if (owner.getEnclosingScopeId() != getScopeId())
+    return emitOpError("scope ID must match the lexical class owner");
+  Operation *target = symbols.lookupNearestSymbolFrom(*this, getTargetAttr());
+  FlatSymbolRefAttr targetOwner;
+  if (auto parameter = dyn_cast_or_null<SimVPIObjectAnchorOp>(target)) {
+    if (parameter.getVpiKind() !=
+            static_cast<uint32_t>(reflection::VPIObjectKind::TypeParameter) ||
+        !parameter.getUnresolvedTypeParameterAttr())
+      return emitOpError(
+          "target must be an unresolved type parameter or alias");
+    targetOwner = parameter.getParentAttr();
+  } else if (auto alias =
+                 dyn_cast_or_null<SimVPIUnresolvedTypeAliasDeclOp>(target)) {
+    targetOwner = alias.getOwnerAttr();
+  } else {
+    return emitOpError("target must be an unresolved type parameter or alias");
+  }
+  if (targetOwner != getOwnerAttr())
+    return emitOpError("target must belong to the same lexical class");
+  if (target == getOperation() ||
+      target->getBlock() != getOperation()->getBlock() ||
+      !target->isBeforeInBlock(getOperation()))
+    return emitOpError("target must precede the typedef declaration");
+  return success();
+}
+
 LogicalResult SimVPITypespecDeclOp::verify() {
+  if (bool(getOwnerAttr()) == bool(getStatementScopeIdAttr()))
+    return emitOpError(
+        "requires exactly one symbolic or statement-scope owner");
+  if (getStatementScopeIdAttr()) {
+    if (failed(verifyNonnegative(*this, getStatementScopeIdAttr(),
+                                 "statement-scope ID")))
+      return failure();
+    if (getOrigin() != VPITypespecOrigin::Typedef &&
+        getOrigin() != VPITypespecOrigin::AnonymousEnum)
+      return emitOpError("statement-scope ownership is only valid for typedef "
+                         "and anonymous enum typespecs");
+  }
   if (failed(verifyNonnegative(*this, getIdAttr(), "typespec ID")) ||
       failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")) ||
       (getSourceTypeIdentityAttr() &&
        failed(verifyNonnegative(*this, getSourceTypeIdentityAttr(),
                                 "source type identity"))))
     return failure();
-  if (getHierarchicalName().empty() || getDebugName().empty())
+  if (getOrigin() == VPITypespecOrigin::SourceDefault) {
+    if (!getHierarchicalName().empty() || !getDebugName().empty())
+      return emitOpError("source default typespec must be unnamed");
+  } else if (getHierarchicalName().empty() || getDebugName().empty()) {
     return emitOpError("requires nonempty source names");
+  }
   if (getOrigin() == VPITypespecOrigin::Interface) {
     if (getTargetType().getKind() != VPITypeKind::VirtualInterface)
       return emitOpError("interface typespec origin requires an interface");
@@ -959,15 +1852,287 @@ LogicalResult SimVPITypespecDeclOp::verify() {
       return emitOpError(
           "raw interface hierarchy must equal its specialization identity");
   }
+  if (getOrigin() == VPITypespecOrigin::ClassSpecialization &&
+      (getTargetType().getKind() != VPITypeKind::Class ||
+       !getTargetType().getSymbol() ||
+       !getTargetType().getSymbol().getNestedReferences().empty() ||
+       (getTargetType().getTypedefAliases() &&
+        !getTargetType().getTypedefAliases().empty())))
+    return emitOpError(
+        "class-specialization origin requires an exact class symbol and no "
+        "typedef aliases");
+  if (getOrigin() == VPITypespecOrigin::BuiltinClass &&
+      ((getTargetType().getKind() != VPITypeKind::Process &&
+        getTargetType().getKind() != VPITypeKind::Semaphore &&
+        getTargetType().getKind() != VPITypeKind::Mailbox) ||
+       getTargetType().getSymbol() ||
+       stripVPITypedefAliases(getTargetType()) != getTargetType()))
+    return emitOpError(
+        "builtin-class origin requires an unaliased process, semaphore, or "
+        "mailbox type");
+  if (TypeAttr message = getMessageTypeAttr()) {
+    if (getOrigin() != VPITypespecOrigin::BuiltinClass ||
+        getTargetType().getKind() != VPITypeKind::Mailbox)
+      return emitOpError(
+          "message_type requires a canonical builtin mailbox typespec");
+    auto semantic =
+        cast<VPITypeSemanticsAttr>(getTargetType().getChildren()[0]);
+    if (failed(verifyVPITypeSemantics([&] { return emitOpError(); },
+                                      message.getValue(), semantic)))
+      return failure();
+    if (!getElementDescriptor(message.getValue()))
+      return emitOpError("message_type requires supported element storage");
+    // The executable i1 representation of void is only a tagged-union layout
+    // placeholder. It does not introduce a value into the message type.
+    SmallVector<VPITypeSemanticsAttr> pending{semantic};
+    llvm::DenseSet<Attribute> visited;
+    if (semantic.getKind() == VPITypeKind::Void)
+      return emitOpError("mailbox void storage requires a tagged union member");
+    while (!pending.empty()) {
+      auto parent = pending.pop_back_val();
+      if (!visited.insert(parent).second)
+        continue;
+      for (Attribute attribute : parent.getChildren()) {
+        auto child = cast<VPITypeSemanticsAttr>(attribute);
+        if (child.getKind() == VPITypeKind::Void &&
+            ((parent.getKind() != VPITypeKind::PackedUnion &&
+              parent.getKind() != VPITypeKind::UnpackedUnion) ||
+             !parent.getIsTagged().getValue()))
+          return emitOpError(
+              "mailbox void storage requires a tagged union member");
+        pending.push_back(child);
+      }
+    }
+  }
   if (getOrigin() == VPITypespecOrigin::AnonymousEnum &&
       (getTargetType().getKind() != VPITypeKind::Enum ||
        !getSourceTypeIdentityAttr()))
     return emitOpError(
         "anonymous-enum origin requires an enum typespec and exact source "
         "type identity");
-  return verifyFixedReflection(
-      *this, static_cast<uint16_t>(reflection::VPIObjectKind::LogicTypespec),
-      reflectionProperties(*this), reflectionDefinitionLoc(*this));
+  auto kind = vpiKindForTypespec(getTargetType());
+  if (!kind)
+    return emitOpError("declared data type has no concrete VPI typespec");
+  return verifyFixedReflection(*this, *kind, reflectionProperties(*this),
+                               reflectionDefinitionLoc(*this));
+}
+
+LogicalResult SimVPITerminalDriverBindingOp::verify() {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("requires a simulation.design owner");
+  if (failed(verifyNonnegative(*this, getLowDriverIdAttr(), "low driver ID")) ||
+      failed(
+          verifyNonnegative(*this, getBitOffsetAttr(), "driver bit offset")) ||
+      (getHighDriverIdAttr() &&
+       failed(
+           verifyNonnegative(*this, getHighDriverIdAttr(), "high driver ID"))))
+    return failure();
+  if (getBitOffset() > UINT32_MAX)
+    return emitOpError("driver bit offset exceeds the 32-bit reflection field");
+  for (auto other : (*this)
+                        ->getParentOp()
+                        ->getRegion(0)
+                        .getOps<SimVPITerminalDriverBindingOp>())
+    if (other != *this && other.getTerminalAttr() == getTerminalAttr())
+      return emitOpError("duplicates a primitive output binding");
+  return success();
+}
+
+LogicalResult SimVPITerminalDriverBindingOp::verifySymbolUses(
+    SymbolTableCollection &symbols) {
+  auto terminal = symbols.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+      *this, getTerminalAttr());
+  using Kind = reflection::VPIObjectKind;
+  if (!terminal || terminal->getParentOp() != (*this)->getParentOp() ||
+      terminal.getVpiKind() != static_cast<uint32_t>(Kind::PrimTerm) ||
+      !terminal.getParentAttr())
+    return emitOpError(
+        "terminal must name a primitive terminal in this design");
+  auto primitive = symbols.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+      terminal, terminal.getParentAttr());
+  if (!primitive ||
+      (primitive.getVpiKind() != static_cast<uint32_t>(Kind::Gate) &&
+       primitive.getVpiKind() != static_cast<uint32_t>(Kind::Udp)))
+    return emitOpError("requires a gate or UDP output terminal");
+  bool output = false;
+  if (auto properties = reflectionProperties(terminal))
+    for (Attribute attribute : properties.getProperties()) {
+      auto property = cast<VPIPropertyAttr>(attribute);
+      if (property.getSelector().getValue().getZExtValue() == 20)
+        if (auto direction = dyn_cast<IntegerAttr>(property.getValue()))
+          output = direction.getValue().getZExtValue() == 2;
+    }
+  if (!output)
+    return emitOpError("terminal must retain output direction");
+  // The retained primitive subtype determines whether one logical output uses
+  // an ordinary driver or the two complementary conditional-gate banks.
+  uint32_t primitiveType = 0;
+  if (primitive.getVpiKind() == static_cast<uint32_t>(Kind::Gate)) {
+    if (auto properties = reflectionProperties(primitive))
+      for (Attribute attribute : properties.getProperties()) {
+        auto property = cast<VPIPropertyAttr>(attribute);
+        if (property.getSelector().getValue().getZExtValue() == 33)
+          if (auto value = dyn_cast<IntegerAttr>(property.getValue()))
+            primitiveType = value.getValue().getZExtValue();
+      }
+    for (auto binding : (*this)
+                            ->getParentOp()
+                            ->getRegion(0)
+                            .getOps<SimVPIDefinitionBindingOp>())
+      if (binding.getSource() == primitive.getSymName()) {
+        auto definition =
+            symbols.lookupNearestSymbolFrom<SimVPIDefinitionDeclOp>(
+                binding, binding.getDefinitionAttr());
+        if (definition)
+          primitiveType = definition.getPrimitiveType().value_or(0);
+      }
+    const auto *descriptor = reflection::findVPIBuiltinPrimitive(primitiveType);
+    if (!descriptor ||
+        descriptor->objectKind != static_cast<uint32_t>(Kind::Gate))
+      return emitOpError("requires the exact retained gate primitive type");
+  }
+  bool conditional = primitiveType >= 9 && primitiveType <= 12;
+  if (conditional != bool(getHighDriverId()))
+    return emitOpError("driver bank count must match the primitive subtype");
+  SimDriverDeclOp low, high;
+  for (auto driver :
+       (*this)->getParentOp()->getRegion(0).getOps<SimDriverDeclOp>()) {
+    if (driver.getId() == getLowDriverId())
+      low = driver;
+    if (getHighDriverId() && driver.getId() == *getHighDriverId())
+      high = driver;
+  }
+  auto valid = [&](SimDriverDeclOp driver) {
+    auto width = driver ? getPackedWidth(driver.getType()) : std::nullopt;
+    uint64_t begin = driver ? driver.getDrivenLow().value_or(0) : 0;
+    uint64_t extent =
+        driver ? driver.getDrivenWidth().value_or(width.value_or(0)) : 0;
+    return driver && width && driver.getLifetime() == Lifetime::Design &&
+           driver.getScopeId() == terminal.getEnclosingScopeId() &&
+           getBitOffset() < *width && getBitOffset() >= begin &&
+           getBitOffset() - begin < extent;
+  };
+  if (!valid(low) || (getHighDriverId() && (!valid(high) || low == high)))
+    return emitOpError("drivers must contain the selected bit in the "
+                       "terminal's physical scope");
+  auto lowBank = get<metadata::StrengthBank>(low);
+  auto lowGroup = get<metadata::StrengthGroup>(low);
+  if (!getHighDriverId()) {
+    if (lowBank || lowGroup)
+      return emitOpError(
+          "a polarity bank requires its exact complementary driver");
+  } else {
+    auto highBank = get<metadata::StrengthBank>(high);
+    auto highGroup = get<metadata::StrengthGroup>(high);
+    if (!lowBank || !highBank || !lowGroup || !highGroup ||
+        lowBank.getInt() != 0 || highBank.getInt() != 1 ||
+        lowGroup != highGroup || low.getType() != high.getType() ||
+        low.getNetId() != high.getNetId() ||
+        low.getDrivenLow() != high.getDrivenLow() ||
+        low.getDrivenWidth() != high.getDrivenWidth() ||
+        low.getStrength1() != Strength::HighZ ||
+        high.getStrength0() != Strength::HighZ)
+      return emitOpError("drivers must be one exact low/high polarity pair");
+  }
+  return success();
+}
+
+LogicalResult SimVPIEventBindingOp::verify() {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("requires a simulation.design owner");
+  if (failed(verifyNonnegative(*this, getEventIdAttr(), "event ID")))
+    return failure();
+  for (auto other :
+       (*this)->getParentOp()->getRegion(0).getOps<SimVPIEventBindingOp>())
+    if (other != *this && other.getEventAttr() == getEventAttr())
+      return emitOpError("duplicates a named-event binding");
+  return success();
+}
+
+LogicalResult
+SimVPIEventBindingOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  auto anchor = symbols.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+      *this, getEventAttr());
+  if (!anchor || anchor->getParentOp() != (*this)->getParentOp() ||
+      anchor.getVpiKind() !=
+          static_cast<uint32_t>(
+              obelisk::reflection::VPIObjectKind::NamedEvent) ||
+      anchor.getBackingAttr() || anchor.getVpiTypeAttr() ||
+      anchor.getMemberIndicesAttr())
+    return emitOpError("event must name an unbacked scalar named-event anchor "
+                       "in the same design");
+  return success();
+}
+
+LogicalResult SimVPIClassMemberDeclOp::verify() {
+  if (failed(verifyNonnegative(*this, getIdAttr(), "VPI source inventory ID")) ||
+      failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")) ||
+      (getStaticStorageAttr() &&
+       failed(verifyNonnegative(*this, getStaticStorageAttr(), "static storage ID"))) ||
+      (getStaticEventAttr() &&
+       failed(verifyNonnegative(*this, getStaticEventAttr(), "static event ID"))))
+    return failure();
+  if (getHierarchicalName().empty() || getDebugName().empty())
+    return emitOpError("requires nonempty hierarchy and property names");
+  if (getStaticStorageAttr() && getStaticEventAttr())
+    return emitOpError("static storage and event bindings are mutually exclusive");
+  if (!getFieldAttr() && (getStaticStorageAttr() || getStaticEventAttr()))
+    return emitOpError("a lexical property cannot have executable backing");
+  // An unresolved type parameter has no generic public variable kind. Do not
+  // manufacture a reg declaration from the storage helper's legacy fallback.
+  if (!getFieldAttr() && (!vpiKindForTypespec(getVpiType()) ||
+                          getVpiType().getKind() == VPITypeKind::Void ||
+                          getVpiType().getKind() == VPITypeKind::Sequence ||
+                          getVpiType().getKind() == VPITypeKind::Property))
+    return emitOpError("class property requires a concrete declared type");
+  if (auto properties = reflectionProperties(*this))
+    for (Attribute attribute : properties.getProperties()) {
+      auto property = cast<VPIPropertyAttr>(attribute);
+      if (property.getSelector().getValue().getZExtValue() == 2 &&
+          property.getValue() != getDebugNameAttr())
+        return emitOpError(
+            "vpiName must match the exact property declaration name");
+    }
+  return verifyFixedReflection(*this, vpiKindForClassMember(getVpiType()),
+                               reflectionProperties(*this),
+                               reflectionDefinitionLoc(*this));
+}
+
+LogicalResult SimVPIClassMemberDeclOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  auto field = getFieldAttr()
+                   ? symbolTable.lookupNearestSymbolFrom<SimClassFieldDeclOp>(
+                         *this, getFieldAttr())
+                   : SimClassFieldDeclOp{};
+  if (getFieldAttr() && !field)
+    return emitOpError("references an unknown class field");
+  Operation *owner = symbolTable.lookupNearestSymbolFrom(*this, getOwnerAttr());
+  uint64_t ownerScope = UINT64_MAX;
+  if (auto anchor = dyn_cast_or_null<SimVPIObjectAnchorOp>(owner)) {
+    if (anchor.getVpiKind() !=
+        static_cast<uint32_t>(reflection::VPIObjectKind::ClassDefn))
+      return emitOpError("owner anchor must be a class definition");
+    ownerScope = anchor.getEnclosingScopeId();
+  } else if (auto typespec = dyn_cast_or_null<SimVPITypespecDeclOp>(owner)) {
+    if (!field ||
+        typespec.getOrigin() != VPITypespecOrigin::ClassSpecialization ||
+        typespec.getTargetType().getSymbol() != field.getOwnerAttr())
+      return emitOpError("owner must be the field's canonical class specialization");
+    ownerScope = typespec.getScopeId();
+  } else {
+    return emitOpError("owner must name a class definition or specialization");
+  }
+  if (ownerScope != getScopeId())
+    return emitOpError("scope ID does not match the class owner");
+  if (!field)
+    return success();
+  if (field.getIsStatic() !=
+      static_cast<bool>(getStaticStorageAttr() || getStaticEventAttr()))
+    return emitOpError("static class fields require exactly one static backing");
+  if (getStaticEventAttr() && getVpiType().getKind() != VPITypeKind::Event)
+    return emitOpError("static event backing requires a scalar named event");
+  return verifyVPITypeSemantics([&] { return emitOpError(); }, field.getType(),
+                                getVpiType());
 }
 
 LogicalResult SimVPINettypeDeclOp::verify() {
@@ -988,15 +2153,13 @@ LogicalResult SimVPINettypeDeclOp::verify() {
 
 LogicalResult
 SimVPINettypeDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  SimVPIObjectAnchorOp owner =
-      symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(*this,
-                                                                getOwnerAttr());
+  Operation *owner = lookupVPILexicalOwner(*this, getOwnerAttr(), symbolTable);
   if (!owner)
     return emitOpError("nettype must be owned by a VPI anchor");
-  if (owner.getEnclosingScopeId() != getScopeId())
+  if (getVPILexicalOwnerScope(owner) != getScopeId())
     return emitOpError("scope ID does not match the owner anchor");
   if (!reflection::findVPITraversal(
-          owner.getVpiKind(),
+          getVPILexicalOwnerKind(owner),
           static_cast<uint32_t>(reflection::VPIRelationKind::NetTypedefRel),
           reflection::VPITraversalMode::Iterate))
     return emitOpError("owner kind does not support vpiNetTypedef traversal");
@@ -1064,8 +2227,8 @@ LogicalResult SimVPIEnumConstDeclOp::verify() {
   if (failed(verifyNonnegative(*this, getIdAttr(), "enum-constant ID")) ||
       failed(verifyNonnegative(*this, getOrdinalAttr(), "enum ordinal")))
     return failure();
-  if (getName().empty() || getValue().empty())
-    return emitOpError("requires a nonempty name and constant value");
+  if (getName().empty() || getName().contains('\0') || getValue().empty())
+    return emitOpError("requires a nonempty NUL-free name and constant value");
   return verifyFixedReflection(
       *this, static_cast<uint16_t>(reflection::VPIObjectKind::EnumConst),
       reflectionProperties(*this), reflectionDefinitionLoc(*this));
@@ -1078,20 +2241,74 @@ SimVPIEnumConstDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
           *this, getEnumTypespecAttr());
   if (!target || target.getTargetType().getKind() != VPITypeKind::Enum)
     return emitOpError("references an unknown or non-enum typespec");
+  if (auto value = getImmutableValueAttr()) {
+    if (!getPackedScalarType(value.getType()) ||
+        value.getIsSigned() != target.getTargetType().getIsSigned())
+      return emitOpError(
+          "immutable enum value must match its packed enum base");
+    if (failed(verifyVPITypeSemantics([&] { return emitOpError(); },
+                                      value.getType(), target.getTargetType())))
+      return failure();
+  }
   return success();
 }
 
 LogicalResult
 SimVPITypespecDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  SimVPIObjectAnchorOp anchor =
-      symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(*this,
-                                                                getOwnerAttr());
-  if (!anchor)
+  if (getStatementScopeIdAttr()) {
+    auto design = (*this)->getParentOfType<SimDesignOp>();
+    if (!design)
+      return emitOpError("statement owner requires a simulation.design");
+    for (auto statement : design.getOps<SimStatementDeclOp>()) {
+      if (statement.getId() != *getStatementScopeId())
+        continue;
+      if (!statement.getCodeUnitId() || !statement.getIsScope().value_or(false))
+        return emitOpError("owner must name a procedural statement scope");
+      if (statement.getScopeId() != getScopeId())
+        return emitOpError("scope ID does not match the statement owner");
+      if (getOrigin() == VPITypespecOrigin::Typedef &&
+          !reflection::findVPITraversal(statement.getVpiKind(), 725,
+                                        reflection::VPITraversalMode::Iterate))
+        return emitOpError("owner kind does not support vpiTypedef traversal");
+      return success();
+    }
+    return emitOpError("references an unknown statement-scope owner");
+  }
+  Operation *owner = lookupVPILexicalOwner(*this, getOwnerAttr(), symbolTable);
+  if (!owner)
     return emitOpError("typespec must be owned by a VPI anchor");
-  if (anchor.getEnclosingScopeId() != getScopeId())
+  if (getVPILexicalOwnerScope(owner) != getScopeId())
     return emitOpError("scope ID does not match the owner anchor");
+  if (isa<SimVPIClassParameterAssignDeclOp>(owner) &&
+      getOrigin() != VPITypespecOrigin::SourceDefault)
+    return emitOpError("class actual owner requires source-default origin");
+  if (getOrigin() == VPITypespecOrigin::SourceDefault) {
+    auto parameter = dyn_cast<SimVPIObjectAnchorOp>(owner);
+    auto assignment = dyn_cast<SimVPIClassParameterAssignDeclOp>(owner);
+    if (assignment) {
+      parameter = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+          assignment, assignment.getParameterAttr());
+      if (assignment.getRhsAttr() != FlatSymbolRefAttr::get(getSymNameAttr()))
+        return emitOpError(
+            "source actual typespec must be its owner's exact RHS");
+    }
+    if (!parameter ||
+        parameter.getVpiKind() !=
+            static_cast<uint32_t>(reflection::VPIObjectKind::TypeParameter))
+      return emitOpError(
+          "source default requires a type parameter or type actual owner");
+  }
+  if (getOrigin() == VPITypespecOrigin::ClassSpecialization) {
+    if (getVPILexicalOwnerKind(owner) !=
+        static_cast<uint32_t>(reflection::VPIObjectKind::ClassDefn))
+      return emitOpError(
+          "class specialization requires a class-definition owner");
+    if (!symbolTable.lookupNearestSymbolFrom<SimClassDeclOp>(
+            *this, getTargetType().getSymbol()))
+      return emitOpError("class specialization references an unknown class");
+  }
   if (getOrigin() == VPITypespecOrigin::Typedef &&
-      !reflection::findVPITraversal(anchor.getVpiKind(), 725,
+      !reflection::findVPITraversal(getVPILexicalOwnerKind(owner), 725,
                                     reflection::VPITraversalMode::Iterate))
     return emitOpError("owner kind does not support vpiTypedef traversal");
   return success();
@@ -1828,6 +3045,10 @@ LogicalResult SimClassDeclOp::verify() {
     return emitOpError("interface classes must be abstract");
   if (getIsInterface() && getBaseAttr())
     return emitOpError("interface classes cannot have a base class");
+  if (getBuiltinBaseAttr() &&
+      (getBaseAttr() || getWeakReferentAttr() || getIsInterface()))
+    return emitOpError(
+        "builtin base requires a root class without a weak referent");
   if (getBaseAttr() && getBase() == getSymName())
     return emitOpError("class cannot extend itself");
   if (ArrayAttr interfaces = getInterfacesAttr()) {
@@ -1847,6 +3068,14 @@ LogicalResult SimClassDeclOp::verify() {
 
 LogicalResult
 SimClassDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (FlatSymbolRefAttr reference = getBuiltinBaseAttr()) {
+    SimClassFieldDeclOp field = lookupClassField(symbolTable, *this, reference);
+    if (!field || field.getOwner() != getSymName() || field.getIsStatic() ||
+        field.getIsWeak() || !isa<MailboxType, SemaphoreType>(field.getType()))
+      return emitOpError("builtin base must name an own strong instance "
+                         "mailbox or semaphore field");
+  }
+
   if (getWeakReferentAttr() &&
       !lookupClass(symbolTable, *this, getWeakReferentAttr()))
     return emitOpError("weak wrapper references an unknown referent class");
@@ -2361,6 +3590,27 @@ SimWeakClearOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 }
 
 LogicalResult
+SimClassBuiltinUpcastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  SimClassDeclOp declaration =
+      lookupClass(symbolTable, *this, getObject().getType().getClassName());
+  llvm::SmallPtrSet<Operation *, 8> visited;
+  while (declaration && visited.insert(declaration).second) {
+    if (FlatSymbolRefAttr base = declaration.getBuiltinBaseAttr()) {
+      SimClassFieldDeclOp field = lookupClassField(symbolTable, *this, base);
+      if (!field || field.getType() != getResult().getType())
+        return emitOpError(
+            "result does not match the declared builtin base type");
+      return success();
+    }
+    declaration =
+        declaration.getBaseAttr()
+            ? lookupClass(symbolTable, *this, declaration.getBaseAttr())
+            : SimClassDeclOp{};
+  }
+  return emitOpError("operand class has no declared builtin base");
+}
+
+LogicalResult
 SimClassIsInstanceOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (!lookupClass(symbolTable, *this, getTargetAttr()))
     return emitOpError("references an unknown target class");
@@ -2369,13 +3619,32 @@ SimClassIsInstanceOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
 LogicalResult
 SimClassCastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto source = getObject().getType();
+  auto source = dyn_cast<ClassHandleType>(getObject().getType());
   auto target = getResult().getType();
-  SimClassDeclOp sourceClass =
-      lookupClass(symbolTable, *this, source.getClassName());
   SimClassDeclOp targetClass =
       lookupClass(symbolTable, *this, target.getClassName());
-  if (!sourceClass || !targetClass)
+  if (!targetClass)
+    return emitOpError("cast references an unknown class");
+  if (!source) {
+    llvm::SmallPtrSet<Operation *, 8> visited;
+    for (SimClassDeclOp ancestor = targetClass;
+         ancestor && visited.insert(ancestor).second;
+         ancestor = ancestor.getBaseAttr() ? lookupClass(symbolTable, *this,
+                                                         ancestor.getBaseAttr())
+                                           : SimClassDeclOp{}) {
+      if (FlatSymbolRefAttr base = ancestor.getBuiltinBaseAttr()) {
+        SimClassFieldDeclOp field = lookupClassField(symbolTable, *this, base);
+        if (field && field.getType() == getObject().getType())
+          return success();
+        break;
+      }
+    }
+    return emitOpError(
+        "target class does not derive from the builtin source type");
+  }
+  SimClassDeclOp sourceClass =
+      lookupClass(symbolTable, *this, source.getClassName());
+  if (!sourceClass)
     return emitOpError("cast references an unknown class");
   bool targetInterface = targetClass.getIsInterface();
   bool sourceInterface = sourceClass.getIsInterface();
@@ -2653,6 +3922,8 @@ LogicalResult SimClassRootBindOp::verify() {
 
 LogicalResult
 SimClassDirectCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (failed(verifyVPICallSite(*this, symbolTable, false)))
+    return failure();
   auto callee =
       symbolTable.lookupNearestSymbolFrom<SimFuncOp>(*this, getCalleeAttr());
   if (!callee)
@@ -2688,6 +3959,8 @@ LogicalResult SimClassDispatchTargetsOp::verifySymbolUses(
 
 LogicalResult
 SimClassVirtualCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (failed(verifyVPICallSite(*this, symbolTable, false)))
+    return failure();
   auto method = symbolTable.lookupNearestSymbolFrom<SimClassMethodDeclOp>(
       *this, getMethodAttr());
   if (!method || !method.getIsVirtual() || !method.getSlot() ||
@@ -2710,7 +3983,42 @@ SimClassVirtualCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
+LogicalResult
+SimVPIClassCallDispatchOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("must be directly contained in a simulation design");
+  auto call =
+      symbols.lookupNearestSymbolFrom<SimVPICallDeclOp>(*this, getCallAttr());
+  if (!call || !call.getIsIndirect())
+    return emitOpError("must name an indirect VPI call declaration");
+  auto method = symbols.lookupNearestSymbolFrom<SimClassMethodDeclOp>(
+      *this, getMethodAttr());
+  if (!method || !method.getIsVirtual() || method.getIsStatic() ||
+      !method.getSlot() || !method.getSignatureId() ||
+      !*method.getSignatureId())
+    return emitOpError("must name an exact virtual method slot and signature");
+  auto receiver = cast<ClassHandleType>(getReceiverType());
+  auto declaration = symbols.lookupNearestSymbolFrom<SimClassDeclOp>(
+      *this, receiver.getClassName());
+  if (!declaration)
+    return emitOpError("receiver type must name a declared class");
+  auto signature = cast<FunctionType>(method.getFunctionType());
+  if (signature.getNumInputs() < 2 || signature.getInput(1) != receiver)
+    return emitOpError("receiver type disagrees with the virtual method ABI");
+  using Kind = reflection::VPIObjectKind;
+  auto kind = static_cast<Kind>(call.getVpiKind());
+  bool task = kind == Kind::TaskCall || kind == Kind::MethodTaskCall;
+  if (method.getIsTask() != task ||
+      (kind != Kind::FuncCall && kind != Kind::MethodFuncCall && !task))
+    return emitOpError("method task/function kind disagrees with the call");
+  return success();
+}
+
 LogicalResult SimDesignOp::verifyRegions() {
+  if (failed(verifyVPIExpressionInventory(*this)))
+    return failure();
+  if (failed(verifyVPIInterfaceDispatch(*this)))
+    return failure();
   // One cached table for the whole design walk below. The uncached lookups
   // rescan this design's block per call, which is quadratic across classes.
   SymbolTableCollection symbolTable;
@@ -2720,8 +4028,8 @@ LogicalResult SimDesignOp::verifyRegions() {
     return emitOpError("time precision must be a positive femtosecond value");
   llvm::DenseSet<uint64_t> scopeIds, coverageScopeIds, codeUnitIds,
       statementIds, statementSiteIds, storageIds, netIds, driverIds, portIds,
-      connectionIds, covergroupIds, classIds, vpiAnchorIds,
-      vpiNetIdentityIds, typespecIds, nettypeIds, enumConstIds;
+      connectionIds, covergroupIds, classIds, vpiAnchorIds, vpiNetIdentityIds,
+      typespecIds, nettypeIds, enumConstIds, vpiCallIds;
   llvm::DenseMap<uint64_t, SimScopeDeclOp> scopes;
   llvm::DenseMap<uint64_t, SimCodeUnitDeclOp> codeUnits;
   llvm::DenseMap<uint64_t, SimStatementDeclOp> statements;
@@ -2729,8 +4037,18 @@ LogicalResult SimDesignOp::verifyRegions() {
   llvm::DenseMap<uint64_t, SimStorageDeclOp> storagesById;
   SmallVector<SimStatementDeclOp> statementInventory;
   SmallVector<SimStatementSiteDeclOp> statementSites;
+  SmallVector<SimVPIThreadOriginBindingOp> threadOrigins;
+  SmallVector<SimVPICodeUnitScopeBindingOp> codeUnitScopes;
+  SmallVector<SimVPIInitializerBindingOp> initializerBindings;
+  SmallVector<SimVPICallDeclOp> vpiCalls;
+  SmallVector<SimVPILocalDeclOp> vpiLocals;
+  SmallVector<SimVPIStaticLocalBindingOp> staticLocals;
+  SmallVector<SimVPIForeachDeclOp> foreachDeclarations;
+  llvm::DenseSet<uint64_t> vpiLocalIds;
+  llvm::DenseMap<Attribute, SimVPIClassCallDispatchOp> vpiClassDispatchCalls;
   SmallVector<SimVPIStatementRelationDeclOp> statementRelations;
   SmallVector<SimVPIRelationDeclOp> vpiRelations;
+  DenseSet<Attribute> primitiveDefinitionSources;
   SmallVector<SimVPIDefinitionMemberDeclOp> definitionMembers;
   SmallVector<SimVPIDefinitionSpecializationDeclOp> definitionSpecializations;
   SmallVector<SimVPIDefinitionMemberSpecializationOp>
@@ -2744,6 +4062,12 @@ LogicalResult SimDesignOp::verifyRegions() {
   SmallVector<SimVPIObjectAnchorOp> vpiAnchors;
   SmallVector<SimVPINettypeDeclOp> nettypes;
   SmallVector<SimVPITypespecDeclOp> typespecs;
+  SmallVector<SimVPIUnresolvedTypeAliasDeclOp> unresolvedAliases;
+  SmallVector<SimVPILexicalClassTypespecDeclOp> lexicalClassTypes;
+  SmallVector<SimVPIClassExtendsDeclOp> lexicalExtends;
+  SmallVector<SimVPIClassParameterAssignDeclOp> lexicalClassAssignments;
+  DenseSet<uint64_t> boxTypeIDs;
+  SmallVector<SimVPIClassMemberDeclOp> classMembers;
   SmallVector<SimVPIEnumConstDeclOp> enumConstants;
   SmallVector<SimStorageDeclOp> storages;
   llvm::DenseMap<uint64_t, Type> storageTypes, netTypes, driverTypes;
@@ -2785,6 +4109,30 @@ LogicalResult SimDesignOp::verifyRegions() {
         return failure();
       statements[statement.getId()] = statement;
       statementInventory.push_back(statement);
+    } else if (auto local = dyn_cast<SimVPILocalDeclOp>(op)) {
+      if (failed(
+              addId(local.getIdAttr(), vpiLocalIds, "VPI local declaration")))
+        return failure();
+      vpiLocals.push_back(local);
+    } else if (auto declaration = dyn_cast<SimVPIForeachDeclOp>(op)) {
+      foreachDeclarations.push_back(declaration);
+    } else if (auto binding = dyn_cast<SimVPIStaticLocalBindingOp>(op)) {
+      staticLocals.push_back(binding);
+    } else if (auto call = dyn_cast<SimVPICallDeclOp>(op)) {
+      if (failed(addId(call.getIdAttr(), vpiCallIds, "VPI call-site")))
+        return failure();
+      vpiCalls.push_back(call);
+    } else if (auto dispatch = dyn_cast<SimVPIClassCallDispatchOp>(op)) {
+      if (!vpiClassDispatchCalls.try_emplace(dispatch.getCallAttr(), dispatch)
+               .second)
+        return dispatch.emitOpError(
+            "duplicates a class call dispatch contract");
+    } else if (auto binding = dyn_cast<SimVPIInitializerBindingOp>(op)) {
+      initializerBindings.push_back(binding);
+    } else if (auto binding = dyn_cast<SimVPICodeUnitScopeBindingOp>(op)) {
+      codeUnitScopes.push_back(binding);
+    } else if (auto binding = dyn_cast<SimVPIThreadOriginBindingOp>(op)) {
+      threadOrigins.push_back(binding);
     } else if (auto site = dyn_cast<SimStatementSiteDeclOp>(op)) {
       if (failed(addId(site.getIdAttr(), statementSiteIds, "statement-site")))
         return failure();
@@ -2793,6 +4141,9 @@ LogicalResult SimDesignOp::verifyRegions() {
       statementRelations.push_back(relation);
     } else if (auto relation = dyn_cast<SimVPIRelationDeclOp>(op)) {
       vpiRelations.push_back(relation);
+    } else if (auto binding = dyn_cast<SimVPIDefinitionBindingOp>(op)) {
+      if (!primitiveDefinitionSources.insert(binding.getSourceAttr()).second)
+        return binding.emitOpError("duplicate primitive definition binding");
     } else if (auto member = dyn_cast<SimVPIDefinitionMemberDeclOp>(op)) {
       definitionMembers.push_back(member);
     } else if (auto specialization =
@@ -2819,6 +4170,29 @@ LogicalResult SimDesignOp::verifyRegions() {
         return failure();
       vpiAnchors.push_back(anchor);
       vpiAnchorsById[anchor.getInventoryId()] = anchor;
+    } else if (auto member = dyn_cast<SimVPIClassMemberDeclOp>(op)) {
+      if (failed(addId(member.getIdAttr(), vpiAnchorIds, "VPI source inventory")))
+        return failure();
+      classMembers.push_back(member);
+    } else if (auto type = dyn_cast<SimVPILexicalClassTypespecDeclOp>(op)) {
+      if (failed(addId(type.getIdAttr(), typespecIds, "VPI typespec")))
+        return failure();
+      lexicalClassTypes.push_back(type);
+    } else if (auto clause = dyn_cast<SimVPIClassExtendsDeclOp>(op)) {
+      if (failed(
+              addId(clause.getIdAttr(), vpiAnchorIds, "VPI source inventory")))
+        return failure();
+      lexicalExtends.push_back(clause);
+    } else if (auto assignment =
+                   dyn_cast<SimVPIClassParameterAssignDeclOp>(op)) {
+      if (failed(addId(assignment.getIdAttr(), vpiAnchorIds,
+                       "VPI source inventory")))
+        return failure();
+      lexicalClassAssignments.push_back(assignment);
+    } else if (auto alias = dyn_cast<SimVPIUnresolvedTypeAliasDeclOp>(op)) {
+      if (failed(addId(alias.getIdAttr(), typespecIds, "typespec")))
+        return failure();
+      unresolvedAliases.push_back(alias);
     } else if (auto typespec = dyn_cast<SimVPITypespecDeclOp>(op)) {
       if (failed(addId(typespec.getIdAttr(), typespecIds, "VPI typespec")))
         return failure();
@@ -2874,7 +4248,14 @@ LogicalResult SimDesignOp::verifyRegions() {
                  llvm::DenseMap<uint64_t, SimVPIDefinitionMemberDeclOp>>
       definitionMemberOrdinals;
   SmallVector<Attribute> definitionMemberOrder;
+  llvm::DenseMap<Attribute, llvm::DenseSet<StringAttr>> definitionMemberNames;
   for (SimVPIDefinitionMemberDeclOp member : definitionMembers) {
+    if (!member.getMemberName().empty() &&
+        !definitionMemberNames[member.getDefinitionAttr()]
+             .insert(member.getMemberNameAttr())
+             .second)
+      return member.emitOpError(
+          "duplicates a declaration name in the same VPI definition");
     auto [definitionEntry, newDefinition] =
         definitionMemberOrdinals.try_emplace(member.getDefinitionAttr());
     if (newDefinition)
@@ -2897,6 +4278,37 @@ LogicalResult SimDesignOp::verifyRegions() {
                << " member ordinals must be dense declaration order";
   }
 
+  for (auto anchor : vpiAnchors) {
+    using Kind = reflection::VPIObjectKind;
+    if (anchor.getVpiKind() != static_cast<uint32_t>(Kind::Parameter) &&
+        anchor.getVpiKind() != static_cast<uint32_t>(Kind::TypeParameter))
+      continue;
+    auto scope = scopes.find(anchor.getEnclosingScopeId());
+    if (scope == scopes.end() || !scope->second.getVpiDefinitionAttr())
+      continue;
+    if (auto parent = anchor.getParentAttr()) {
+      auto owner = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+          anchor, parent);
+      auto backing = owner ? owner.getBackingAttr() : VPIObjectBackingAttr{};
+      if (!backing || backing.getKind() != VPIObjectBackingKind::Scope ||
+          backing.getId().getValue().getZExtValue() !=
+              anchor.getEnclosingScopeId())
+        continue;
+    }
+    auto members =
+        definitionMemberOrdinals.find(scope->second.getVpiDefinitionAttr());
+    if (members == definitionMemberOrdinals.end())
+      continue;
+    if (llvm::any_of(members->second, [](const auto &entry) {
+          auto member = entry.second;
+          uint32_t kind = member.getVpiKind();
+          return kind == static_cast<uint32_t>(Kind::Parameter) ||
+                 kind == static_cast<uint32_t>(Kind::TypeParameter);
+        }))
+      return anchor.emitOpError("parameter inventory cannot mix shared "
+                                "definition members and instance anchors");
+  }
+
   llvm::DenseMap<Attribute, llvm::DenseSet<Attribute>> specializedMembers;
   llvm::DenseMap<std::pair<Attribute, Attribute>, VPITypeSemanticsAttr>
       specializedMemberTypes;
@@ -2917,7 +4329,9 @@ LogicalResult SimDesignOp::verifyRegions() {
     if (auto definition =
             definitionMemberOrdinals.find(specialization.getDefinitionAttr());
         definition != definitionMemberOrdinals.end())
-      expectedMemberCount = definition->second.size();
+      for (auto entry : definition->second)
+        expectedMemberCount += entry.second.getVpiKind() !=
+                               uint32_t(reflection::VPIObjectKind::ParamAssign);
     size_t actualMemberCount = 0;
     auto specializationMembers = specializedMembers.find(
         FlatSymbolRefAttr::get(specialization.getSymNameAttr()));
@@ -2943,6 +4357,7 @@ LogicalResult SimDesignOp::verifyRegions() {
   llvm::DenseMap<std::pair<uint64_t, Attribute>,
                  SimVPIDefinitionMemberInstanceBindingOp>
       instanceMemberBindings;
+  llvm::DenseSet<std::pair<uint64_t, Attribute>> assignmentTargets;
   for (SimVPIDefinitionMemberInstanceBindingOp binding :
        definitionMemberInstanceBindings) {
     auto scope = scopes.find(binding.getScopeId());
@@ -2956,10 +4371,48 @@ LogicalResult SimDesignOp::verifyRegions() {
     if (scope->second.getVpiDefinitionAttr() != member.getDefinitionAttr())
       return binding.emitOpError(
           "member does not belong to the scope's VPI definition");
-    if (member.getVpiKind() !=
-        static_cast<uint32_t>(reflection::VPIObjectKind::IODecl))
+    if (member.getVpiKind() ==
+        uint32_t(reflection::VPIObjectKind::ParamAssign)) {
+      auto endpoint = binding.getExprTarget();
+      if (endpoint.getKind() != VPIObjectRefKind::DefinitionMember)
+        return binding.emitOpError(
+            "assignment Lhs requires an exact contextual parameter");
+      auto childScope = scopes.find(endpoint.getId().getValue().getZExtValue());
+      auto target =
+          symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionMemberDeclOp>(
+              binding, endpoint.getSymbol());
+      uint32_t targetKind =
+          member.getParamAssignType()
+              ? uint32_t(reflection::VPIObjectKind::TypeParameter)
+              : uint32_t(reflection::VPIObjectKind::Parameter);
+      if (childScope == scopes.end() || !target || target.getIsLocalParam() ||
+          target.getVpiKind() != targetKind ||
+          !childScope->second.getParentAttr() ||
+          *childScope->second.getParent() != binding.getScopeId() ||
+          childScope->second.getVpiDefinitionAttr() !=
+              target.getDefinitionAttr())
+        return binding.emitOpError("assignment Lhs must name a nonlocal "
+                                   "parameter of an exact child instance");
+      if (!assignmentTargets
+               .insert({uint64_t(binding.getScopeId()), Attribute(endpoint)})
+               .second)
+        return binding.emitOpError(
+            "duplicates a parameter override target in one parent instance");
+      if (!instanceMemberBindings
+               .try_emplace(std::make_pair(binding.getScopeId(),
+                                           Attribute(binding.getMemberAttr())),
+                            binding)
+               .second)
+        return binding.emitOpError(
+            "duplicates an instance binding for the same VPI member");
+      continue;
+    }
+    if (member.getVpiKind() != uint32_t(reflection::VPIObjectKind::IODecl))
       return binding.emitOpError(
-          "expression endpoint member is not a VPI IO declaration");
+          "endpoint member requires IODecl or ParamAssign kind");
+    if (binding.getExprTarget().getKind() == VPIObjectRefKind::DefinitionMember)
+      return binding.emitOpError(
+          "IO endpoint must be whole storage or a declared net");
 
     uint64_t targetId =
         binding.getExprTarget().getId().getValue().getZExtValue();
@@ -3002,6 +4455,8 @@ LogicalResult SimDesignOp::verifyRegions() {
     }
     case VPIObjectRefKind::Statement:
     case VPIObjectRefKind::Port:
+    case VPIObjectRefKind::Symbol:
+    case VPIObjectRefKind::DefinitionMember:
       return binding.emitOpError(
           "expression endpoint must be whole storage or a declared net");
     }
@@ -3072,6 +4527,23 @@ LogicalResult SimDesignOp::verifyRegions() {
     if (!inserted)
       return binding.emitOpError(
           "duplicates an instance binding for the same VPI member");
+  }
+
+  for (const auto &entry : scopes) {
+    auto scope = entry.second;
+    auto members = definitionMemberOrdinals.find(scope.getVpiDefinitionAttr());
+    if (members == definitionMemberOrdinals.end())
+      continue;
+    for (const auto &item : members->second) {
+      auto member = item.second;
+      if (member.getVpiKind() ==
+              uint32_t(reflection::VPIObjectKind::ParamAssign) &&
+          !instanceMemberBindings.count(
+              std::make_pair(uint64_t(scope.getId()),
+                             Attribute(FlatSymbolRefAttr::get(member)))))
+        return scope.emitOpError(
+            "requires every parameter assignment's exact child endpoint");
+    }
   }
 
   auto memberRelationKey = [](uint64_t scope, Attribute member,
@@ -3184,8 +4656,25 @@ LogicalResult SimDesignOp::verifyRegions() {
   }
 
   llvm::DenseMap<Attribute, SimVPIObjectAnchorOp> anchorsBySymbol;
-  for (SimVPIObjectAnchorOp anchor : vpiAnchors)
+  DenseSet<std::pair<Attribute, Attribute>> modportNames;
+  DenseSet<std::pair<Attribute, Attribute>> constraintNames;
+  for (SimVPIObjectAnchorOp anchor : vpiAnchors) {
     anchorsBySymbol[FlatSymbolRefAttr::get(anchor.getSymNameAttr())] = anchor;
+    if (anchor.getVpiKind() ==
+            static_cast<uint32_t>(reflection::VPIObjectKind::Modport) &&
+        !modportNames
+             .insert({anchor.getParentAttr(), anchor.getDebugNameAttr()})
+             .second)
+      return anchor.emitOpError(
+          "duplicates a modport declaration name in the same interface");
+    if (anchor.getVpiKind() ==
+            static_cast<uint32_t>(reflection::VPIObjectKind::Constraint) &&
+        !constraintNames
+             .insert({anchor.getParentAttr(), anchor.getDebugNameAttr()})
+             .second)
+      return anchor.emitOpError(
+          "duplicates a constraint declaration name in the same class");
+  }
 
   llvm::DenseMap<Operation *, llvm::DenseSet<uint32_t>> arrayMemberOrdinals;
   llvm::DenseMap<Operation *, uint32_t> arrayElementCounts;
@@ -3346,12 +4835,117 @@ LogicalResult SimDesignOp::verifyRegions() {
               "modport typespec requires its parent interface typespec");
   }
 
-  llvm::SmallDenseSet<Attribute, 8> classVPIIdentities;
+  llvm::DenseMap<Attribute, SimVPIObjectAnchorOp> classVPIIdentities;
   for (SimVPIObjectAnchorOp anchor : vpiAnchors) {
     VPIObjectBackingAttr backing = anchor.getBackingAttr();
     if (backing && backing.getKind() == VPIObjectBackingKind::Class &&
         backing.getSymbol())
-      classVPIIdentities.insert(backing.getSymbol());
+      classVPIIdentities[backing.getSymbol()] = anchor;
+  }
+
+  llvm::DenseMap<Attribute, SimVPIClassExtendsDeclOp> classExtendsByOwner;
+  llvm::DenseSet<Attribute> usedLexicalTypes;
+  for (auto clause : lexicalExtends) {
+    if (!classExtendsByOwner.try_emplace(clause.getOwnerAttr(), clause).second)
+      return clause.emitOpError("duplicates a class extends occurrence");
+    if (auto type = clause.getBaseTypespecAttr())
+      if (!usedLexicalTypes.insert(type).second)
+        return clause.emitOpError("duplicates a lexical class type occurrence");
+  }
+  for (auto type : lexicalClassTypes) {
+    if (!usedLexicalTypes.contains(
+            FlatSymbolRefAttr::get(type.getSymNameAttr())))
+      return type.emitOpError(
+          "lexical class type requires its exact extends occurrence");
+    llvm::DenseSet<Attribute> ancestors;
+    Attribute owner = type.getOwnerAttr();
+    while (auto clause = classExtendsByOwner.lookup(owner)) {
+      if (!ancestors.insert(owner).second)
+        return type.emitOpError("source class inheritance contains a cycle");
+      if (!clause.getBaseTypespecAttr())
+        break;
+      auto base =
+          symbolTable.lookupNearestSymbolFrom<SimVPILexicalClassTypespecDeclOp>(
+              clause, clause.getBaseTypespecAttr());
+      if (!base)
+        return clause.emitOpError("references an unknown lexical class type");
+      owner = base.getDefinitionAttr();
+    }
+    SmallVector<SimVPIObjectAnchorOp> formals;
+    if (!type.getUnavailableParametersAttr())
+      for (auto anchor : vpiAnchors) {
+        using Kind = reflection::VPIObjectKind;
+        if (anchor.getParentAttr() != type.getDefinitionAttr() ||
+            (anchor.getVpiKind() != static_cast<uint32_t>(Kind::Parameter) &&
+             anchor.getVpiKind() != static_cast<uint32_t>(Kind::TypeParameter)))
+          continue;
+        bool local = false;
+        if (auto properties = reflectionProperties(anchor))
+          for (Attribute attribute : properties.getProperties()) {
+            auto property = cast<VPIPropertyAttr>(attribute);
+            if (property.getSelector().getValue().getZExtValue() == 70)
+              local = cast<BoolAttr>(property.getValue()).getValue();
+          }
+        if (!local)
+          formals.push_back(anchor);
+      }
+    llvm::sort(formals, [](auto left, auto right) {
+      return left.getOwnerOrdinal() < right.getOwnerOrdinal();
+    });
+    SmallVector<SimVPIClassParameterAssignDeclOp> assignments;
+    for (auto assignment : lexicalClassAssignments)
+      if (assignment.getOwnerAttr() ==
+          FlatSymbolRefAttr::get(type.getSymNameAttr()))
+        assignments.push_back(assignment);
+    llvm::sort(assignments, [](auto left, auto right) {
+      return left.getOrdinal() < right.getOrdinal();
+    });
+    if (assignments.size() != formals.size())
+      return type.emitOpError("class actual assignments must cover every "
+                              "non-local base parameter");
+    for (auto [ordinal, assignment] : llvm::enumerate(assignments))
+      if (assignment.getOrdinal() != ordinal ||
+          assignment.getParameterAttr() !=
+              FlatSymbolRefAttr::get(formals[ordinal].getSymNameAttr()))
+        return assignment.emitOpError("class assignments must preserve dense "
+                                      "parameter declaration order");
+  }
+
+  llvm::DenseSet<std::pair<Attribute, Attribute>> typedefNames;
+  for (SimVPITypespecDeclOp typespec : typespecs)
+    if (typespec.getOrigin() == VPITypespecOrigin::Typedef)
+      if (!typedefNames
+               .insert({typespec.getOwnerAttr()
+                            ? Attribute(typespec.getOwnerAttr())
+                            : Attribute(typespec.getStatementScopeIdAttr()),
+                        typespec.getDebugNameAttr()})
+               .second)
+        return typespec.emitOpError(
+            "duplicates a typedef name in its lexical owner");
+  for (SimVPIUnresolvedTypeAliasDeclOp alias : unresolvedAliases)
+    if (!typedefNames.insert({alias.getOwnerAttr(), alias.getDebugNameAttr()})
+             .second)
+      return alias.emitOpError(
+          "duplicates a typedef name in its lexical owner");
+
+  llvm::SmallDenseSet<Attribute, 8> classSpecializations;
+  llvm::SmallDenseSet<Attribute, 8> builtinClassTypes;
+  for (SimVPITypespecDeclOp typespec : typespecs) {
+    if (typespec.getOrigin() == VPITypespecOrigin::BuiltinClass &&
+        !builtinClassTypes.insert(typespec.getTargetType()).second)
+      return typespec.emitOpError("duplicates a canonical builtin class type");
+    if (typespec.getOrigin() != VPITypespecOrigin::ClassSpecialization)
+      continue;
+    Attribute symbol = typespec.getTargetType().getSymbol();
+    if (!classSpecializations.insert(symbol).second)
+      return typespec.emitOpError(
+          "duplicates a canonical class specialization");
+    auto owner = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+        typespec, typespec.getOwnerAttr());
+    auto [existing, inserted] = classVPIIdentities.try_emplace(symbol, owner);
+    if (!inserted && existing->second != owner)
+      return typespec.emitOpError(
+          "class specialization owner disagrees with the class-backed anchor");
   }
 
   std::function<LogicalResult(Operation *, VPITypeSemanticsAttr)>
@@ -3413,6 +5007,64 @@ LogicalResult SimDesignOp::verifyRegions() {
     if (failed(verifyTypeReferences(nettype, nettype.getTargetType())))
       return failure();
 
+  DenseSet<std::pair<Attribute, Attribute>> classMemberIdentities;
+  DenseSet<std::pair<Attribute, Attribute>> classMethodIdentities;
+  for (SimVPIObjectAnchorOp anchor : vpiAnchors) {
+    if (!anchor.getClassMethodAttr())
+      continue;
+    if (!classMethodIdentities
+             .insert({anchor.getParentAttr(), anchor.getClassMethodAttr()})
+             .second)
+      return anchor.emitOpError("duplicates a class method in the same owner");
+    auto method = symbolTable.lookupNearestSymbolFrom<SimClassMethodDeclOp>(
+        anchor, anchor.getClassMethodAttr());
+    Operation *owner = anchor.getParentAttr()
+                           ? symbolTable.lookupNearestSymbolFrom(
+                                 anchor, anchor.getParentAttr())
+                           : nullptr;
+    if (!method || !classSpecializations.contains(method.getOwnerAttr()))
+      return anchor.emitOpError("class method requires a canonical class specialization");
+    if (auto lexical = dyn_cast_or_null<SimVPIObjectAnchorOp>(owner);
+        lexical && classVPIIdentities.lookup(method.getOwnerAttr()) != lexical)
+      return anchor.emitOpError("lexical owner does not define the method's class");
+  }
+  llvm::DenseSet<std::pair<Attribute, Attribute>> classPropertyNames;
+  for (SimVPIClassMemberDeclOp member : classMembers) {
+    if (!classPropertyNames
+             .insert({member.getOwnerAttr(), member.getDebugNameAttr()})
+             .second)
+      return member.emitOpError(
+          "duplicates a property name in the same class owner");
+    if (!scopes.contains(member.getScopeId()))
+      return member.emitOpError("references an unknown enclosing scope");
+    if (failed(verifyTypeReferences(member, member.getVpiType())))
+      return failure();
+    if (!member.getFieldAttr())
+      continue;
+    auto field = symbolTable.lookupNearestSymbolFrom<SimClassFieldDeclOp>(
+        member, member.getFieldAttr());
+    Operation *owner =
+        symbolTable.lookupNearestSymbolFrom(member, member.getOwnerAttr());
+    if (!classMemberIdentities
+             .insert({member.getOwnerAttr(), member.getFieldAttr()})
+             .second)
+      return member.emitOpError("duplicates a class field in the same owner");
+    if (!scopes.contains(member.getScopeId()))
+      return member.emitOpError("references an unknown enclosing scope");
+    if (!classSpecializations.contains(field.getOwnerAttr()))
+      return member.emitOpError("class field requires a canonical class specialization");
+    if (auto anchor = dyn_cast<SimVPIObjectAnchorOp>(owner);
+        anchor && classVPIIdentities.lookup(field.getOwnerAttr()) != anchor)
+      return member.emitOpError("lexical owner does not define the field's class");
+    if (auto storageID = member.getStaticStorage()) {
+      auto storage = storagesById.lookup(*storageID);
+      if (!storage || storage.getType() != field.getType())
+        return member.emitOpError("static storage must exist and match the class field type");
+    }
+    if (failed(verifyTypeReferences(member, member.getVpiType())))
+      return failure();
+  }
+
   // Validate the whole direct-alias forest once. Memoizing completed paths
   // keeps a long legal alias chain linear rather than retraversing every
   // suffix from every declaration.
@@ -3440,7 +5092,11 @@ LogicalResult SimDesignOp::verifyRegions() {
       return failure();
   for (Operation &op : getBody().front()) {
     VPITypeSemanticsAttr semantic;
-    if (auto storage = dyn_cast<SimStorageDeclOp>(op))
+    if (auto descriptor = dyn_cast<SimVPIBoxTypeDeclOp>(op)) {
+      if (!boxTypeIDs.insert(descriptor.getId()).second)
+        return descriptor.emitOpError("duplicates a box type ID");
+      semantic = descriptor.getVpiType();
+    } else if (auto storage = dyn_cast<SimStorageDeclOp>(op))
       semantic = storage.getVpiTypeAttr();
     else if (auto net = dyn_cast<SimNetDeclOp>(op))
       semantic = net.getVpiTypeAttr();
@@ -3451,6 +5107,12 @@ LogicalResult SimDesignOp::verifyRegions() {
     else if (auto specialization =
                  dyn_cast<SimVPIDefinitionMemberSpecializationOp>(op))
       semantic = specialization.getEffectiveTypeAttr();
+    else if (auto member = dyn_cast<SimVPIClassMemberDeclOp>(op))
+      semantic = member.getVpiType();
+    else if (auto local = dyn_cast<SimVPILocalDeclOp>(op))
+      semantic = local.getVpiType();
+    else if (auto anchor = dyn_cast<SimVPIObjectAnchorOp>(op))
+      semantic = anchor.getVpiTypeAttr();
     if (!semantic)
       continue;
     if (failed(verifyTypeReferences(&op, semantic)))
@@ -3480,6 +5142,313 @@ LogicalResult SimDesignOp::verifyRegions() {
       if (!entry.second.contains(ordinal))
         return emitOpError(
             "VPI enum-constant ordinals must be dense declaration order");
+
+  llvm::DenseSet<uint64_t> threadOriginCodeUnits;
+  const auto *originEdge = reflection::findVPITraversal(
+      static_cast<uint32_t>(reflection::VPIObjectKind::Thread),
+      static_cast<uint32_t>(reflection::VPIRelationKind::OriginRel),
+      reflection::VPITraversalMode::Handle);
+  llvm::DenseMap<std::pair<uint64_t, uint64_t>, SmallVector<uint32_t>>
+      localOrdinals, sourceLocalOrdinals;
+  llvm::DenseSet<std::pair<Operation *, Attribute>> localNames;
+  for (SimVPILocalDeclOp local : vpiLocals) {
+    auto owner = codeUnits.lookup(local.getCodeUnitId());
+    if (!owner || owner.getScopeId() != local.getScopeId())
+      return local.emitOpError(
+          "owner must name a code unit in its physical scope");
+    Operation *scope = owner;
+    if (auto statementID = local.getStatementScopeId()) {
+      auto statement = statements.lookup(*statementID);
+      if (!statement || !statement.getIsScope() ||
+          statement.getCodeUnitId() != local.getCodeUnitId())
+        return local.emitOpError(
+            "statement scope must belong to the exact lexical code unit");
+      scope = statement;
+    } else if (owner.getCodeUnitKind() != EntryKind::Task &&
+               owner.getCodeUnitKind() != EntryKind::Function) {
+      return local.emitOpError(
+          "local without a statement scope requires a task or function owner");
+    }
+    if (!localNames.insert({scope, local.getDebugNameAttr()}).second)
+      return local.emitOpError(
+          "duplicates a declaration name in the same procedural scope");
+    if (failed(verifyTypeReferences(local, local.getVpiType())))
+      return failure();
+    localOrdinals[{local.getCodeUnitId(),
+                   local.getStatementScopeId().value_or(0)}]
+        .push_back(local.getOrdinal());
+    if (auto ordinal = local.getSourceOrdinalAttr();
+        ordinal && ordinal.getValue().isNegative())
+      return local.emitOpError("source ordinal must be nonnegative");
+    sourceLocalOrdinals[{local.getCodeUnitId(),
+                         local.getStatementScopeId().value_or(0)}]
+        .push_back(local.getSourceOrdinal().value_or(local.getOrdinal()));
+  }
+  llvm::DenseSet<uint64_t> foreachStatements;
+  llvm::DenseSet<Operation *> foreachIndices;
+  for (auto declaration : foreachDeclarations) {
+    auto statement = statements.lookup(declaration.getStatementId());
+    if (!statement ||
+        statement.getVpiKind() !=
+            static_cast<uint32_t>(reflection::VPIObjectKind::ForeachStmt) ||
+        !statement.getIsScope() || !statement.getCodeUnitId() ||
+        !foreachStatements.insert(declaration.getStatementId()).second)
+      return declaration.emitOpError(
+          "requires one exact retained foreach statement");
+    VPITypeSemanticsAttr semantic;
+    if (declaration.getCollection().getKind() == VPIObjectRefKind::Storage) {
+      auto storage = storagesById.lookup(
+          declaration.getCollection().getId().getValue().getZExtValue());
+      if (storage)
+        semantic = storage.getVpiTypeAttr();
+    } else if (auto local =
+                   symbolTable.lookupNearestSymbolFrom<SimVPILocalDeclOp>(
+                       declaration, declaration.getCollection().getSymbol())) {
+      semantic = local.getVpiType();
+    }
+    uint64_t dimensions = 0;
+    auto element = semantic;
+    while (element && (element.getKind() == VPITypeKind::UnpackedArray ||
+                       element.getKind() == VPITypeKind::PackedArray)) {
+      if (!element.getRange() || !element.getChildren() ||
+          element.getChildren().size() != 1)
+        break;
+      ++dimensions;
+      element = cast<VPITypeSemanticsAttr>(element.getChildren()[0]);
+    }
+    const uint32_t collectionKind =
+        semantic ? vpiKindForClassMember(semantic) : 0;
+    if (!dimensions || declaration.getLoopVariables().size() > dimensions ||
+        (collectionKind !=
+             static_cast<uint32_t>(reflection::VPIObjectKind::RegArray) &&
+         collectionKind !=
+             static_cast<uint32_t>(reflection::VPIObjectKind::PackedArrayVar) &&
+         collectionKind !=
+             static_cast<uint32_t>(reflection::VPIObjectKind::BitVar) &&
+         collectionKind !=
+             static_cast<uint32_t>(reflection::VPIObjectKind::Reg)))
+      return declaration.emitOpError(
+          "collection must prove all retained fixed-array dimensions");
+    for (Attribute index : declaration.getLoopVariables()) {
+      auto reference = dyn_cast<FlatSymbolRefAttr>(index);
+      if (!reference)
+        continue;
+      auto local = symbolTable.lookupNearestSymbolFrom<SimVPILocalDeclOp>(
+          declaration, reference);
+      if (!local || local.getStatementScopeId() != statement.getId() ||
+          local.getCodeUnitId() != statement.getCodeUnitId() ||
+          local.getScopeId() != statement.getScopeId() ||
+          local.getVpiType().getKind() != VPITypeKind::Int ||
+          !foreachIndices.insert(local).second)
+        return declaration.emitOpError(
+            "index must be a unique int declaration of this foreach scope");
+    }
+  }
+  for (auto local : vpiLocals)
+    if (local.getStatementScopeId() &&
+        foreachStatements.contains(*local.getStatementScopeId()) &&
+        !foreachIndices.contains(local))
+      return local.emitOpError(
+          "foreach local declaration is absent from its index list");
+  llvm::DenseSet<uint64_t> staticLocalStorage;
+  for (auto binding : staticLocals) {
+    auto storage = storagesById.lookup(binding.getStorageId());
+    auto owner = codeUnits.lookup(binding.getCodeUnitId());
+    if (!storage || storage.getLifetime() == Lifetime::Automatic || !owner ||
+        owner.getInternal() || storage.getScopeId() != owner.getScopeId())
+      return binding.emitOpError("requires static storage in the exact source "
+                                 "code unit's physical scope");
+    if (sim::has<metadata::VpiIdentityDelegated>(storage) ||
+        llvm::any_of(classMembers, [&](auto member) {
+          return member.getStaticStorage() == binding.getStorageId();
+        }))
+      return binding.emitOpError(
+          "delegated storage retains its canonical owner");
+    if (!storage.getVpiTypeAttr() ||
+        !reflection::vpiObjectSetContains(
+            reflection::VPIObjectSetID::DataVariableObjects,
+            vpiKindForStorage(storage.getVpiTypeAttr())))
+      return binding.emitOpError("requires a reflected data variable");
+    Operation *scope = owner;
+    if (auto id = binding.getStatementScopeId()) {
+      auto statement = statements.lookup(*id);
+      if (!statement || !statement.getIsScope() ||
+          statement.getCodeUnitId() != binding.getCodeUnitId())
+        return binding.emitOpError(
+            "statement scope must belong to the exact lexical code unit");
+      scope = statement;
+    } else if (owner.getCodeUnitKind() != EntryKind::Task &&
+               owner.getCodeUnitKind() != EntryKind::Function) {
+      return binding.emitOpError("static local without a statement scope "
+                                 "requires a task or function owner");
+    }
+    if (!staticLocalStorage.insert(binding.getStorageId()).second)
+      return binding.emitOpError("duplicates a static local storage binding");
+    auto name = storage.getDebugNameAttr();
+    if (!name || name.getValue().empty() || name.getValue().contains('\0') ||
+        !localNames.insert({scope, name}).second)
+      return binding.emitOpError("requires a unique exact declaration name");
+    sourceLocalOrdinals[{binding.getCodeUnitId(),
+                         binding.getStatementScopeId().value_or(0)}]
+        .push_back(binding.getOrdinal());
+  }
+  for (auto &entry : sourceLocalOrdinals) {
+    llvm::sort(entry.second);
+    for (auto [index, ordinal] : llvm::enumerate(entry.second))
+      if (index != ordinal)
+        return emitOpError(
+            "procedural source declaration ordinals must be dense "
+            "and unique within each scope");
+  }
+  for (auto &entry : localOrdinals) {
+    llvm::sort(entry.second);
+    for (auto [index, ordinal] : llvm::enumerate(entry.second))
+      if (index != ordinal)
+        return emitOpError("VPI local declaration ordinals must be dense and "
+                           "unique within each scope");
+  }
+
+  if (getOperation()
+          ->walk([&](Operation *operation) -> WalkResult {
+            auto source = get<metadata::VpiCallSite>(operation);
+            if (!source)
+              return WalkResult::advance();
+            auto contract = vpiClassDispatchCalls.find(source);
+            if (contract == vpiClassDispatchCalls.end())
+              return WalkResult::advance();
+            Value receiver;
+            FlatSymbolRefAttr method;
+            if (auto call = dyn_cast<SimClassVirtualCallOp>(operation)) {
+              receiver = call.getReceiver();
+              method = call.getMethodAttr();
+            } else if (auto call =
+                           dyn_cast<SimClassVirtualTaskCallOp>(operation)) {
+              receiver = call.getReceiver();
+              method = call.getMethodAttr();
+            } else {
+              // Devirtualized executable calls retain the original indirect
+              // source contract; their direct callee is checked independently.
+              return WalkResult::advance();
+            }
+            if (receiver.getType() != contract->second.getReceiverType() ||
+                method != contract->second.getMethodAttr()) {
+              operation->emitOpError("executable dispatch disagrees with its "
+                                     "VPI class call contract");
+              return WalkResult::interrupt();
+            }
+            return WalkResult::advance();
+          })
+          .wasInterrupted())
+    return failure();
+  llvm::DenseSet<uint64_t> boundCodeUnitScopes;
+  llvm::DenseSet<Operation *> boundSourceScopes;
+  for (SimVPICodeUnitScopeBindingOp binding : codeUnitScopes) {
+    auto unit = codeUnits.lookup(binding.getCodeUnitId());
+    auto source = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+        binding, binding.getSourceAttr());
+    if (!unit || isVPIVisibleCodeUnit(unit) || !vpiCallableSourceKind(unit))
+      return binding.emitOpError(
+          "requires an internal task/function code unit");
+    if (!source)
+      return binding.emitOpError("source must name a callable anchor");
+    uint32_t expected =
+        static_cast<uint32_t>(vpiCallableSourceKind(unit) == EntryKind::Task
+                                  ? reflection::VPIObjectKind::Task
+                                  : reflection::VPIObjectKind::Function);
+    if (source.getVpiKind() != expected ||
+        source.getEnclosingScopeId() != unit.getScopeId() ||
+        source.getHierarchicalName() != unit.getHierarchicalName())
+      return binding.emitOpError("source callable kind, physical scope, and "
+                                 "hierarchy must match its code unit");
+    if (!boundCodeUnitScopes.insert(binding.getCodeUnitId()).second ||
+        !boundSourceScopes.insert(source).second)
+      return binding.emitOpError(
+          "duplicates a code-unit or source scope binding");
+  }
+
+  llvm::DenseSet<uint64_t> initializerUnits, initializedStorages;
+  for (SimVPIInitializerBindingOp binding : initializerBindings) {
+    auto unit = codeUnits.lookup(binding.getCodeUnitId());
+    auto storage = storagesById.lookup(binding.getStorageId());
+    if (!unit || !unit.getInternal() ||
+        unit.getCodeUnitKind() != EntryKind::Function ||
+        boundCodeUnitScopes.contains(binding.getCodeUnitId()))
+      return binding.emitOpError("initializer requires an internal function "
+                                 "without a callable source scope");
+    if (!storage || storage.getLifetime() == Lifetime::Automatic ||
+        storage.getScopeId() != unit.getScopeId())
+      return binding.emitOpError(
+          "initializer requires static storage in its exact physical scope");
+    if (!initializerUnits.insert(binding.getCodeUnitId()).second ||
+        !initializedStorages.insert(binding.getStorageId()).second)
+      return binding.emitOpError(
+          "duplicates an initializer or source storage binding");
+  }
+
+  llvm::DenseSet<uint64_t> callStatementAliases;
+  for (SimVPICallDeclOp call : vpiCalls) {
+    auto owner = codeUnits.lookup(call.getCodeUnitId());
+    if (!owner || owner.getScopeId() != call.getScopeId())
+      return call.emitOpError(
+          "owner must name a code unit in its physical scope");
+    if (initializerUnits.contains(call.getCodeUnitId()) &&
+        (call.getStatementId() || call.getEnclosingStatementId()))
+      return call.emitOpError("a nonprocedural initializer call cannot name a "
+                              "procedural statement");
+    auto checkStatement = [&](uint64_t id) -> SimStatementDeclOp {
+      auto statement = statements.lookup(id);
+      return statement && statement.getCodeUnitId() &&
+                     *statement.getCodeUnitId() == call.getCodeUnitId() &&
+                     statement.getScopeId() == call.getScopeId()
+                 ? statement
+                 : SimStatementDeclOp{};
+    };
+    if (auto id = call.getStatementId()) {
+      auto statement = checkStatement(*id);
+      if (!statement || statement.getVpiKind() != call.getVpiKind())
+        return call.emitOpError(
+            "statement alias must name the same call kind and owner");
+      if (!callStatementAliases.insert(*id).second)
+        return call.emitOpError("duplicates a source call statement identity");
+    }
+    if (auto id = call.getEnclosingStatementId(); id && !checkStatement(*id))
+      return call.emitOpError(
+          "enclosing statement must have the same lexical owner");
+    if (auto id = call.getCalleeCodeUnitId()) {
+      auto callee = codeUnits.lookup(*id);
+      using Kind = reflection::VPIObjectKind;
+      bool task =
+          call.getVpiKind() == static_cast<uint32_t>(Kind::TaskCall) ||
+          call.getVpiKind() == static_cast<uint32_t>(Kind::MethodTaskCall);
+      if (vpiCallableSourceKind(callee) !=
+          (task ? EntryKind::Task : EntryKind::Function))
+        return call.emitOpError(
+            "callee must name the corresponding task/function declaration");
+    }
+  }
+
+  for (SimVPIThreadOriginBindingOp binding : threadOrigins) {
+    auto codeUnit = codeUnits.find(binding.getCodeUnitId());
+    auto statement = statements.find(binding.getStatementId());
+    if (codeUnit == codeUnits.end())
+      return binding.emitOpError("references an unknown code-unit ID");
+    if (statement == statements.end() || !statement->second.getCodeUnitId())
+      return binding.emitOpError(
+          "origin must name an existing behavioral statement");
+    if (!threadOriginCodeUnits.insert(binding.getCodeUnitId()).second)
+      return binding.emitOpError(
+          "duplicates a thread-origin code-unit binding");
+    if (statement->second.getScopeId() != codeUnit->second.getScopeId())
+      return binding.emitOpError(
+          "origin and code unit must have the same scope");
+    if (*statement->second.getCodeUnitId() != binding.getCodeUnitId() &&
+        isVPIVisibleCodeUnit(codeUnit->second))
+      return binding.emitOpError(
+          "only an internal code unit may reference another owner's statement");
+    if (!originEdge || !reflection::vpiObjectSetContains(
+                           originEdge->targets, statement->second.getVpiKind()))
+      return binding.emitOpError("statement is not a legal thread origin");
+  }
 
   llvm::DenseMap<uint64_t, uint8_t> statementSiteMasks;
   for (SimStatementSiteDeclOp site : statementSites) {
@@ -3835,6 +5804,8 @@ LogicalResult SimDesignOp::verifyRegions() {
   // exact endpoint kinds are derived from inventory declarations so stale or
   // hand-authored metadata cannot smuggle a mismatched kind into the image.
   struct GeneralRelation {
+    uint64_t sourceIdentity;
+    uint64_t targetIdentity;
     uint32_t sourceTag;
     uint64_t sourceId;
     uint32_t selector;
@@ -3842,14 +5813,56 @@ LogicalResult SimDesignOp::verifyRegions() {
     uint64_t ordinal;
     uint32_t targetTag;
     uint64_t targetId;
+    bool sharedDeclarationSlot;
     SimVPIRelationDeclOp relation;
   };
+  // Resolve aliases to the same inventory declaration before grouping. Stable
+  // block-order IDs avoid pointer ordering and preserve deterministic
+  // diagnostics.
+  DenseMap<uint64_t, uint32_t> anchoredNetKinds;
+  for (SimVPIObjectAnchorOp anchor : vpiAnchors)
+    if (auto backing = anchor.getBackingAttr();
+        backing && backing.getKind() == VPIObjectBackingKind::Net)
+      anchoredNetKinds[backing.getId().getValue().getZExtValue()] =
+          anchor.getVpiKind();
+  DenseMap<Operation *, uint64_t> declarationIds;
+  for (auto [index, operation] : llvm::enumerate(getBody().front()))
+    declarationIds[&operation] = index;
+  auto canonicalDeclaration = [&](Operation *operation) -> Operation * {
+    if (auto call = dyn_cast<SimVPICallDeclOp>(operation))
+      if (auto statement = call.getStatementId())
+        return statements.lookup(*statement);
+    auto anchor = dyn_cast<SimVPIObjectAnchorOp>(operation);
+    if (!anchor || !anchor.getBackingAttr())
+      return operation;
+    auto backing = anchor.getBackingAttr();
+    if (backing.getKind() == VPIObjectBackingKind::Class)
+      return operation;
+    uint64_t id = backing.getId().getValue().getZExtValue();
+    switch (backing.getKind()) {
+    case VPIObjectBackingKind::Scope:
+      return scopes.lookup(id);
+    case VPIObjectBackingKind::CodeUnit:
+      return codeUnits.lookup(id);
+    case VPIObjectBackingKind::Storage:
+      return storagesById.lookup(id);
+    case VPIObjectBackingKind::Net:
+      return nets.lookup(id);
+    case VPIObjectBackingKind::Class:
+      llvm_unreachable("class anchor handled above");
+    }
+    llvm_unreachable("unknown backing kind");
+  };
+  DenseMap<Attribute, uint64_t> contextualDeclarationIds;
+  uint64_t nextContextualDeclarationId = declarationIds.size();
   SmallVector<GeneralRelation> generalRelations;
   generalRelations.reserve(vpiRelations.size());
   for (SimVPIRelationDeclOp relation : vpiRelations) {
-    auto resolveKind = [&](VPIObjectRefAttr reference,
-                           StringRef endpoint) -> FailureOr<uint32_t> {
-      uint64_t id = reference.getId().getValue().getZExtValue();
+    auto resolveKind = [&](VPIObjectRefAttr reference, StringRef endpoint,
+                           uint64_t &identity) -> FailureOr<uint32_t> {
+      uint64_t id =
+          reference.getId() ? reference.getId().getValue().getZExtValue() : 0;
+      Operation *declaration = nullptr;
       auto missing = [&]() -> FailureOr<uint32_t> {
         relation.emitOpError()
             << "references an unknown " << endpoint << " "
@@ -3863,6 +5876,7 @@ LogicalResult SimDesignOp::verifyRegions() {
         if (found == statements.end())
           return missing();
         kind = found->second.getVpiKind();
+        declaration = found->second;
         break;
       }
       case VPIObjectRefKind::Storage: {
@@ -3870,13 +5884,18 @@ LogicalResult SimDesignOp::verifyRegions() {
         if (found == storagesById.end())
           return missing();
         kind = vpiKindForStorage(found->second.getVpiTypeAttr());
+        declaration = found->second;
         break;
       }
       case VPIObjectRefKind::Net: {
         auto found = nets.find(id);
         if (found == nets.end())
           return missing();
-        kind = vpiKindForNet(found->second.getVpiTypeAttr());
+        auto anchored = anchoredNetKinds.find(id);
+        kind = anchored != anchoredNetKinds.end()
+                   ? anchored->second
+                   : vpiKindForNet(found->second.getVpiTypeAttr());
+        declaration = found->second;
         break;
       }
       case VPIObjectRefKind::NetIdentity: {
@@ -3884,6 +5903,7 @@ LogicalResult SimDesignOp::verifyRegions() {
         if (found == vpiNetIdentitiesById.end())
           return missing();
         kind = vpiKindForNet(found->second.getVpiTypeAttr());
+        declaration = found->second;
         break;
       }
       case VPIObjectRefKind::Port: {
@@ -3891,6 +5911,49 @@ LogicalResult SimDesignOp::verifyRegions() {
         if (found == portsById.end())
           return missing();
         kind = static_cast<uint32_t>(reflection::VPIObjectKind::Port);
+        declaration = found->second;
+        break;
+      }
+      case VPIObjectRefKind::DefinitionMember: {
+        auto member =
+            symbolTable.lookupNearestSymbolFrom<SimVPIDefinitionMemberDeclOp>(
+                relation, reference.getSymbol());
+        declaration = member;
+        kind = member.getVpiKind();
+        break;
+      }
+      case VPIObjectRefKind::Symbol: {
+        declaration = symbolTable.lookupNearestSymbolFrom(
+            relation, reference.getSymbol());
+        // SymbolUserOpInterface validates the declaration category first.
+        if (auto anchor = dyn_cast<SimVPIObjectAnchorOp>(declaration))
+          kind = anchor.getVpiKind();
+        else if (auto call = dyn_cast<SimVPICallDeclOp>(declaration))
+          kind = call.getVpiKind();
+        else if (auto expression =
+                     dyn_cast<SimVPIExpressionDeclOp>(declaration))
+          kind = expression.getVpiKind();
+        else if (auto member =
+                     dyn_cast<SimVPIDefinitionMemberDeclOp>(declaration))
+          kind = member.getVpiKind();
+        else if (auto typespec = dyn_cast<SimVPITypespecDeclOp>(declaration))
+          kind = vpiKindForTypespec(typespec.getTargetType()).value_or(0);
+        else if (isa<SimVPILexicalClassTypespecDeclOp>(declaration))
+          kind =
+              static_cast<uint32_t>(reflection::VPIObjectKind::ClassTypespec);
+        else if (isa<SimVPIClassExtendsDeclOp>(declaration))
+          kind = static_cast<uint32_t>(reflection::VPIObjectKind::Extends);
+        else if (isa<SimVPIClassParameterAssignDeclOp>(declaration))
+          kind = static_cast<uint32_t>(reflection::VPIObjectKind::ParamAssign);
+        else if (isa<SimVPIUnresolvedTypeAliasDeclOp>(declaration))
+          kind =
+              static_cast<uint32_t>(reflection::VPIObjectKind::TypeParameter);
+        else if (isa<SimVPINettypeDeclOp>(declaration))
+          kind = static_cast<uint32_t>(reflection::VPIObjectKind::NettypeDecl);
+        else if (auto member = dyn_cast<SimVPIClassMemberDeclOp>(declaration))
+          kind = vpiKindForClassMember(member.getVpiType());
+        else if (auto local = dyn_cast<SimVPILocalDeclOp>(declaration))
+          kind = vpiKindForClassMember(local.getVpiType());
         break;
       }
       }
@@ -3902,19 +5965,82 @@ LogicalResult SimDesignOp::verifyRegions() {
             << " ID " << id << " is not VPI-visible";
         return failure();
       }
+      if (reference.getKind() == VPIObjectRefKind::DefinitionMember) {
+        auto [entry, inserted] = contextualDeclarationIds.try_emplace(
+            reference, nextContextualDeclarationId);
+        if (inserted)
+          ++nextContextualDeclarationId;
+        identity = entry->second;
+      } else
+        identity = declarationIds.lookup(canonicalDeclaration(declaration));
       return kind;
     };
 
+    uint64_t sourceIdentity = 0, targetIdentity = 0;
     FailureOr<uint32_t> sourceKind =
-        resolveKind(relation.getSource(), "source");
+        resolveKind(relation.getSource(), "source", sourceIdentity);
     if (failed(sourceKind))
       return failure();
     FailureOr<uint32_t> targetKind =
-        resolveKind(relation.getTarget(), "target");
+        resolveKind(relation.getTarget(), "target", targetIdentity);
     if (failed(targetKind))
       return failure();
     auto mode = static_cast<reflection::VPITraversalMode>(
         static_cast<uint32_t>(relation.getMode()));
+    auto symbolDeclaration = [&](VPIObjectRefAttr reference) -> Operation * {
+      return reference.getKind() == VPIObjectRefKind::Symbol
+                 ? symbolTable.lookupNearestSymbolFrom(relation,
+                                                       reference.getSymbol())
+                 : nullptr;
+    };
+    if (isa_and_nonnull<SimVPILexicalClassTypespecDeclOp,
+                        SimVPIClassExtendsDeclOp,
+                        SimVPIClassParameterAssignDeclOp>(
+            symbolDeclaration(relation.getSource())))
+      return relation.emitOpError("source inheritance relations are supplied "
+                                  "by their typed declarations");
+    if (isa_and_nonnull<SimVPILexicalClassTypespecDeclOp,
+                        SimVPIClassExtendsDeclOp,
+                        SimVPIClassParameterAssignDeclOp>(
+            symbolDeclaration(relation.getTarget())))
+      return relation.emitOpError("source inheritance objects are reached "
+                                  "through their typed declarations");
+    if (relation.getSource().getKind() == VPIObjectRefKind::Symbol &&
+        classExtendsByOwner.contains(relation.getSource().getSymbol()) &&
+        relation.getSelector() ==
+            static_cast<uint32_t>(reflection::VPIRelationKind::ExtendsRel))
+      return relation.emitOpError("duplicates a class extends occurrence");
+    if (relation.getSelector() ==
+            static_cast<uint32_t>(reflection::VPIRelationKind::ExprRel) &&
+        relation.getSource().getKind() == VPIObjectRefKind::Symbol &&
+        llvm::any_of(lexicalClassAssignments,
+                     [&](auto assignment) {
+                       return assignment.getParameterAttr() ==
+                              relation.getSource().getSymbol();
+                     }) &&
+        !isa_and_nonnull<SimVPIObjectAnchorOp, SimVPITypespecDeclOp,
+                         SimVPIUnresolvedTypeAliasDeclOp>(
+            symbolDeclaration(relation.getTarget())))
+      return relation.emitOpError("original base parameter default must retain "
+                                  "a symbolic source expression or type");
+    if (isa_and_nonnull<SimVPIUnresolvedTypeAliasDeclOp>(
+            symbolDeclaration(relation.getSource())))
+      return relation.emitOpError(
+          "unresolved typedef relations are supplied by its declaration");
+    if (isa_and_nonnull<SimVPIUnresolvedTypeAliasDeclOp>(
+            symbolDeclaration(relation.getTarget())) &&
+        relation.getSelector() ==
+            static_cast<uint32_t>(reflection::VPIObjectKind::Parameter) &&
+        mode == reflection::VPITraversalMode::Iterate)
+      return relation.emitOpError(
+          "unresolved typedef is not a parameter declaration");
+    if (*sourceKind ==
+            static_cast<uint32_t>(reflection::VPIObjectKind::ClassTypespec) &&
+        relation.getSelector() ==
+            static_cast<uint32_t>(reflection::VPIObjectKind::Parameter) &&
+        mode == reflection::VPITraversalMode::Iterate)
+      return relation.emitOpError(
+          "class parameter inventory is supplied by exact declaration owners");
     const auto *edge =
         reflection::findVPITraversal(*sourceKind, relation.getSelector(), mode);
     bool declaredNetConnection =
@@ -3933,32 +6059,117 @@ LogicalResult SimDesignOp::verifyRegions() {
           "is not a legal non-containment traversal in the generated VPI "
           "model");
 
-    uint64_t sourceId = relation.getSource().getId().getValue().getZExtValue();
-    uint64_t targetId = relation.getTarget().getId().getValue().getZExtValue();
+    if (relation.getSelector() ==
+        uint32_t(reflection::VPIRelationKind::ReturnRel)) {
+      auto anchor = dyn_cast_or_null<SimVPIObjectAnchorOp>(
+          symbolDeclaration(relation.getSource()));
+      auto backing = anchor ? anchor.getBackingAttr() : VPIObjectBackingAttr{};
+      auto unit = backing && backing.getKind() == VPIObjectBackingKind::CodeUnit
+                      ? codeUnits.lookup(backing.getId().getInt())
+                      : SimCodeUnitDeclOp{};
+      bool exact = unit && !unit.getInternal() &&
+                   unit.getCodeUnitKind() == EntryKind::Function;
+      if (auto properties =
+              unit ? reflectionProperties(unit) : VPIPropertySetAttr{})
+        for (Attribute property : properties.getProperties())
+          exact &= cast<VPIPropertyAttr>(property).getSelector().getInt() != 4;
+      if (!exact)
+        return relation.emitOpError(
+            "Return requires a nonvoid public function owner");
+      StringRef name;
+      if (auto local = dyn_cast_or_null<SimVPILocalDeclOp>(
+              symbolDeclaration(relation.getTarget()))) {
+        exact &= local.getCodeUnitId() == unit.getId() &&
+                 !local.getStatementScopeIdAttr();
+        name = local.getDebugName();
+      } else if (relation.getTarget().getKind() == VPIObjectRefKind::Storage) {
+        uint64_t id = relation.getTarget().getId().getInt();
+        auto storage = storagesById.lookup(id);
+        exact &= llvm::any_of(staticLocals, [&](auto binding) {
+          return binding.getStorageId() == id &&
+                 binding.getCodeUnitId() == unit.getId() &&
+                 !binding.getStatementScopeIdAttr();
+        });
+        if (storage)
+          name = storage.getDebugName().value_or("");
+      } else
+        exact = false;
+      if (!exact || name.empty() || name != anchor.getDebugName())
+        return relation.emitOpError(
+            "Return requires the function's exact root-scope return variable");
+    }
+
+    auto numericId = [](VPIObjectRefAttr reference) {
+      return reference.getId() ? reference.getId().getValue().getZExtValue()
+                               : 0;
+    };
+    uint64_t sourceId = numericId(relation.getSource());
+    uint64_t targetId = numericId(relation.getTarget());
     if (relation.getSource().getKind() == VPIObjectRefKind::Port &&
         memberRelationInverseKeys.contains(
             {sourceId, static_cast<uint32_t>(relation.getSelector())}))
       return relation.emitOpError(
           "port connection is already supplied by a synthetic RefObj");
+    const auto *use = reflection::findVPITraversal(
+        *targetKind, static_cast<uint32_t>(reflection::VPIRelationKind::UseRel),
+        reflection::VPITraversalMode::Iterate);
+    bool repeatedCaseDeclaration =
+        *sourceKind ==
+            static_cast<uint32_t>(reflection::VPIObjectKind::CaseItem) &&
+        relation.getSelector() ==
+            static_cast<uint32_t>(reflection::VPIRelationKind::ExprRel) &&
+        mode == reflection::VPITraversalMode::Iterate && use &&
+        reflection::vpiObjectSetContains(
+            use->targets,
+            static_cast<uint32_t>(reflection::VPIObjectKind::Case));
+    using ExpressionKind = reflection::VPIObjectKind;
+    bool repeatedCallDeclaration =
+        (*sourceKind == uint32_t(ExpressionKind::FuncCall) ||
+         *sourceKind == uint32_t(ExpressionKind::TaskCall)) &&
+        relation.getSelector() ==
+            uint32_t(reflection::VPIRelationKind::ArgumentRel) &&
+        mode == reflection::VPITraversalMode::Iterate && use &&
+        reflection::vpiObjectSetContains(use->targets, *sourceKind);
+    bool repeatedCompactDeclaration =
+        isa_and_nonnull<SimVPIExpressionDeclOp>(
+            symbolDeclaration(relation.getSource())) &&
+        *sourceKind == uint32_t(ExpressionKind::Operation) &&
+        relation.getSelector() ==
+            uint32_t(reflection::VPIRelationKind::OperandRel) &&
+        mode == reflection::VPITraversalMode::Iterate &&
+        *targetKind != uint32_t(ExpressionKind::Constant) &&
+        *targetKind != uint32_t(ExpressionKind::Operation) &&
+        *targetKind != uint32_t(ExpressionKind::PartSelect) &&
+        *targetKind != uint32_t(ExpressionKind::IndexedPartSelect);
     generalRelations.push_back(
-        {static_cast<uint32_t>(relation.getSource().getKind()), sourceId,
+        {sourceIdentity, targetIdentity,
+         static_cast<uint32_t>(relation.getSource().getKind()), sourceId,
          static_cast<uint32_t>(relation.getSelector()),
          static_cast<uint32_t>(relation.getMode()), relation.getOrdinal(),
          static_cast<uint32_t>(relation.getTarget().getKind()), targetId,
+         repeatedCaseDeclaration || repeatedCallDeclaration ||
+             repeatedCompactDeclaration ||
+             (*sourceKind ==
+                  static_cast<uint32_t>(reflection::VPIObjectKind::Operation) &&
+              *targetKind ==
+                  static_cast<uint32_t>(reflection::VPIObjectKind::Parameter) &&
+              relation.getSelector() ==
+                  static_cast<uint32_t>(
+                      reflection::VPIRelationKind::OperandRel) &&
+              mode == reflection::VPITraversalMode::Iterate),
          relation});
   }
-  llvm::sort(generalRelations, [](const GeneralRelation &left,
-                                  const GeneralRelation &right) {
-    return std::tie(left.sourceTag, left.sourceId, left.selector, left.mode,
-                    left.ordinal, left.targetTag, left.targetId) <
-           std::tie(right.sourceTag, right.sourceId, right.selector, right.mode,
-                    right.ordinal, right.targetTag, right.targetId);
-  });
+  llvm::sort(generalRelations,
+             [](const GeneralRelation &left, const GeneralRelation &right) {
+               return std::tie(left.sourceIdentity, left.selector, left.mode,
+                               left.ordinal, left.targetIdentity) <
+                      std::tie(right.sourceIdentity, right.selector, right.mode,
+                               right.ordinal, right.targetIdentity);
+             });
   auto sameGeneralGroup = [](const GeneralRelation &left,
                              const GeneralRelation &right) {
-    return std::tie(left.sourceTag, left.sourceId, left.selector, left.mode) ==
-           std::tie(right.sourceTag, right.sourceId, right.selector,
-                    right.mode);
+    return std::tie(left.sourceIdentity, left.selector, left.mode) ==
+           std::tie(right.sourceIdentity, right.selector, right.mode);
   };
   constexpr uint32_t simNetSelector =
       static_cast<uint32_t>(reflection::VPIRelationKind::SimNetRel);
@@ -3973,10 +6184,13 @@ LogicalResult SimDesignOp::verifyRegions() {
         end - begin > 1)
       return generalRelations[end - 1].relation.emitOpError(
           "vpi_handle relation may expose at most one target");
-    llvm::DenseSet<std::pair<uint32_t, uint64_t>> targets;
+    llvm::DenseSet<uint64_t> targets;
     for (size_t index = begin; index != end; ++index) {
       GeneralRelation &entry = generalRelations[index];
-      if (!targets.insert({entry.targetTag, entry.targetId}).second)
+      // Repeated operands and case labels can name one declaration. Owned
+      // Constant/Operation occurrences must still have distinct identities.
+      if (!targets.insert(entry.targetIdentity).second &&
+          !entry.sharedDeclarationSlot)
         return entry.relation.emitOpError(
             "duplicates a target in the same source, selector, and access "
             "mode");
@@ -3996,6 +6210,163 @@ LogicalResult SimDesignOp::verifyRegions() {
     }
     begin = end;
   }
+  // Original expressions contain owned Constant/Operation occurrences and
+  // shared terminal Parameter declarations (37.28 and 37.58). Parameter leaves
+  // retain declaration identity; their own Expr relation is not a child edge.
+  DenseMap<uint64_t, SmallVector<GeneralRelation *>> expressionIncoming,
+      expressionOutgoing;
+  for (GeneralRelation &relation : generalRelations) {
+    expressionOutgoing[relation.sourceIdentity].push_back(&relation);
+    expressionIncoming[relation.targetIdentity].push_back(&relation);
+  }
+  auto expressionRoot = [&](SimVPIObjectAnchorOp anchor) -> Operation * {
+    SmallPtrSet<Operation *, 8> ancestry;
+    Operation *cursor = anchor;
+    while (cursor) {
+      if (!ancestry.insert(cursor).second)
+        return nullptr;
+      if (isa<SimVPIClassParameterAssignDeclOp>(cursor))
+        return cursor;
+      auto declaration = dyn_cast<SimVPIObjectAnchorOp>(cursor);
+      if (!declaration)
+        return nullptr;
+      if (declaration.getVpiKind() ==
+          static_cast<uint32_t>(reflection::VPIObjectKind::Parameter))
+        return declaration;
+      cursor = declaration.getParentAttr()
+                   ? symbolTable.lookupNearestSymbolFrom(
+                         declaration, declaration.getParentAttr())
+                   : nullptr;
+    }
+    return nullptr;
+  };
+  for (SimVPIObjectAnchorOp anchor : vpiAnchors) {
+    using Kind = reflection::VPIObjectKind;
+    Kind kind = static_cast<Kind>(anchor.getVpiKind());
+    bool expression = kind == Kind::Constant || kind == Kind::Operation;
+    if (!expression && kind != Kind::Parameter)
+      continue;
+    uint64_t identity = declarationIds.lookup(anchor);
+    Operation *root = expressionRoot(anchor);
+    if (!root)
+      return anchor.emitOpError("source expression requires an acyclic "
+                                "parameter default or class actual root");
+    if (expression) {
+      Operation *parent =
+          symbolTable.lookupNearestSymbolFrom(anchor, anchor.getParentAttr());
+      auto incoming = expressionIncoming.lookup(identity);
+      if (auto assignment =
+              dyn_cast_or_null<SimVPIClassParameterAssignDeclOp>(parent)) {
+        if (assignment.getRhsAttr() !=
+                FlatSymbolRefAttr::get(anchor.getSymNameAttr()) ||
+            !incoming.empty() || anchor.getOwnerOrdinal() != 0 ||
+            anchor.getEnclosingScopeId() != assignment.getScopeId())
+          return anchor.emitOpError(
+              "source actual requires its exact owning RHS relation");
+      } else {
+        auto owner = dyn_cast_or_null<SimVPIObjectAnchorOp>(parent);
+        if (!owner)
+          return anchor.emitOpError(
+              "source expression requires an anchor or class actual owner");
+        bool operand =
+            owner.getVpiKind() == static_cast<uint32_t>(Kind::Operation);
+        uint32_t selector = static_cast<uint32_t>(
+            operand ? reflection::VPIRelationKind::OperandRel
+                    : reflection::VPIRelationKind::ExprRel);
+        uint32_t mode = static_cast<uint32_t>(
+            operand ? VPIRelationMode::Iterate : VPIRelationMode::Handle);
+        if (incoming.size() != 1)
+          return anchor.emitOpError("source expression requires one owning "
+                                    "default or operand relation");
+        auto &edge = *incoming.front();
+        if (edge.sourceIdentity != declarationIds.lookup(parent) ||
+            edge.selector != selector || edge.mode != mode ||
+            (!operand && edge.ordinal != anchor.getOwnerOrdinal()))
+          return edge.relation.emitOpError(
+              "source expression relation disagrees with exact ownership");
+      }
+    }
+    unsigned operands = 0;
+    uint64_t ownedOrdinal = 0;
+    for (GeneralRelation *entry : expressionOutgoing.lookup(identity)) {
+      auto relation = entry->relation;
+      bool operand =
+          entry->selector ==
+          static_cast<uint32_t>(reflection::VPIRelationKind::OperandRel);
+      bool defaultExpr =
+          entry->selector ==
+          static_cast<uint32_t>(reflection::VPIRelationKind::ExprRel);
+      if (expression && !operand)
+        return relation.emitOpError(
+            "source operation permits only Operand relations");
+      if (!operand && !defaultExpr)
+        continue;
+      auto target =
+          relation.getTarget().getKind() == VPIObjectRefKind::Symbol
+              ? symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+                    relation, relation.getTarget().getSymbol())
+              : SimVPIObjectAnchorOp{};
+      if (!target)
+        return relation.emitOpError(
+            "original value expression requires an exact anchor target");
+      if (target.getVpiKind() == static_cast<uint32_t>(Kind::Parameter)) {
+        if (auto parameter = dyn_cast<SimVPIObjectAnchorOp>(root)) {
+          if (target.getParentAttr() != parameter.getParentAttr() ||
+              target.getOwnerOrdinal() >= parameter.getOwnerOrdinal() ||
+              target.getDebugName().empty())
+            return relation.emitOpError(
+                "source reference requires an exact preceding parameter in the "
+                "same declaration scope");
+        } else {
+          auto assignment = cast<SimVPIClassParameterAssignDeclOp>(root);
+          auto type =
+              symbolTable
+                  .lookupNearestSymbolFrom<SimVPILexicalClassTypespecDeclOp>(
+                      assignment, assignment.getOwnerAttr());
+          if (!type || target.getParentAttr() != type.getOwnerAttr() ||
+              target.getDebugName().empty())
+            return relation.emitOpError(
+                "class actual reference must name an exact derived parameter");
+          if (auto properties = reflectionProperties(target))
+            for (Attribute attribute : properties.getProperties()) {
+              auto property = cast<VPIPropertyAttr>(attribute);
+              if (property.getSelector().getValue().getZExtValue() == 70 &&
+                  cast<BoolAttr>(property.getValue()).getValue())
+                return relation.emitOpError("class actual reference cannot "
+                                            "name a body local parameter");
+            }
+        }
+      } else if ((target.getVpiKind() !=
+                      static_cast<uint32_t>(Kind::Constant) &&
+                  target.getVpiKind() !=
+                      static_cast<uint32_t>(Kind::Operation)) ||
+                 target.getParentAttr() !=
+                     FlatSymbolRefAttr::get(anchor.getSymNameAttr())) {
+        return relation.emitOpError(
+            "source operand requires an owned expression occurrence or "
+            "parameter declaration");
+      } else if (target.getOwnerOrdinal() != ownedOrdinal++) {
+        return relation.emitOpError(
+            "source expression ownership ordinals must follow owned operand "
+            "order");
+      }
+      operands += operand;
+    }
+    if (kind == Kind::Operation) {
+      uint32_t opcode = 0;
+      for (Attribute attribute : reflectionProperties(anchor).getProperties()) {
+        auto property = cast<VPIPropertyAttr>(attribute);
+        if (property.getSelector().getValue().getZExtValue() == 39)
+          opcode = static_cast<uint32_t>(
+              cast<IntegerAttr>(property.getValue()).getInt());
+      }
+      const auto *descriptor = reflection::findVPISourceOperator(opcode);
+      if (!descriptor || operands != descriptor->arity)
+        return anchor.emitOpError(
+            "source operation operand count does not match its operator");
+    }
+  }
+
   for (SimVPINetIdentityDeclOp identity : vpiNetIdentities) {
     auto found = identitySimNets.find(identity.getId());
     if (found == identitySimNets.end())
@@ -4155,6 +6526,27 @@ LogicalResult SimDesignOp::verifyRegions() {
       break;
     case VPIObjectBackingKind::Class:
       break;
+    case VPIObjectBackingKind::Storage: {
+      auto storage =
+          storagesById.lookup(backing.getId().getValue().getZExtValue());
+      if (!storage)
+        return anchor.emitOpError("references an unknown backing storage ID");
+      if (!isa<EventType>(storage.getType()) || !storage.getVpiTypeAttr() ||
+          storage.getVpiTypeAttr().getKind() != VPITypeKind::Event)
+        return anchor.emitOpError("backing named event requires exact event "
+                                  "storage and VPI semantics");
+      if (storage.getLifetime() == Lifetime::Automatic)
+        return anchor.emitOpError(
+            "backing named event requires static storage");
+      if (storage.getScopeId() != anchor.getEnclosingScopeId())
+        return anchor.emitOpError(
+            "backing storage scope must equal the anchor's enclosing scope");
+      if (!storage.getHierarchicalName() ||
+          *storage.getHierarchicalName() != anchor.getHierarchicalName())
+        return anchor.emitOpError(
+            "backing storage hierarchy must equal the anchor hierarchy");
+      break;
+    }
     case VPIObjectBackingKind::Net: {
       uint64_t id = backing.getId().getValue().getZExtValue();
       auto found = nets.find(id);
@@ -4205,22 +6597,52 @@ LogicalResult SimDesignOp::verifyRegions() {
     }
     }
   }
-  for (const auto &entry : anchorOrdinals)
+  llvm::DenseMap<Operation *, uint64_t> terminalInputCounts;
+  for (auto terminal : vpiAnchors) {
+    if (terminal.getVpiKind() !=
+        static_cast<uint32_t>(reflection::VPIObjectKind::PrimTerm))
+      continue;
+    auto primitive = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+        terminal, terminal.getParentAttr());
+    if (!primitive)
+      continue; // The symbol verifier diagnoses the missing owner.
+    auto properties = reflectionProperties(terminal);
+    if (!properties)
+      continue;
+    auto &count = terminalInputCounts[primitive];
+    for (Attribute attribute : properties.getProperties()) {
+      auto property = cast<VPIPropertyAttr>(attribute);
+      if (property.getSelector().getInt() == 20 &&
+          cast<IntegerAttr>(property.getValue()).getInt() == 1)
+        ++count;
+    }
+  }
+  for (auto [owner, count] : terminalInputCounts)
+    if (cast<SimVPIObjectAnchorOp>(owner).getPrimitiveInputCount() != count)
+      return owner->emitOpError(
+          "primitive input count must match its terminal directions");
+  for (const auto &entry : anchorOrdinals) {
     for (uint64_t ordinal = 0; ordinal != entry.second.size(); ++ordinal)
       if (!entry.second.contains(ordinal))
         return emitOpError(
             "VPI anchor ordinals must be dense under each lexical parent");
+  }
 
   for (SimVPIObjectAnchorOp anchor : vpiAnchors) {
     llvm::SmallPtrSet<Operation *, 8> path;
-    for (SimVPIObjectAnchorOp cursor = anchor; cursor;) {
+    for (Operation *cursor = anchor; cursor;) {
       if (!path.insert(cursor).second)
         return anchor.emitOpError("lexical parent relation contains a cycle");
-      FlatSymbolRefAttr parent = cursor.getParentAttr();
-      cursor = parent
-                   ? symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
-                         cursor, parent)
-                   : SimVPIObjectAnchorOp{};
+      FlatSymbolRefAttr parent;
+      if (auto object = dyn_cast<SimVPIObjectAnchorOp>(cursor))
+        parent = object.getParentAttr();
+      else if (isa<SimVPIClassParameterAssignDeclOp>(cursor))
+        break; // Its lexical type owner has a separate acyclic inheritance
+               // proof.
+      else
+        parent = cast<SimVPITypespecDeclOp>(cursor).getOwnerAttr();
+      cursor = parent ? lookupVPILexicalOwner(cursor, parent, symbolTable)
+                      : nullptr;
     }
   }
   for (uint64_t id = 1; id <= classIds.size(); ++id)
@@ -4376,6 +6798,13 @@ LogicalResult SimDesignOp::verifyRegions() {
               statement->second.getVpiKind(), phase))
         return site.emitOpError(
             "phase is not legal for the statement's Table 38-6 policy");
+    } else if (isa<SimVPILexicalClassTypespecDeclOp, SimVPIClassExtendsDeclOp,
+                   SimVPIClassParameterAssignDeclOp>(op)) {
+      if (!scopeIds.count(cast<IntegerAttr>(op.getAttr("scope_id")).getInt()))
+        return op.emitOpError("references an unknown scope ID");
+    } else if (auto alias = dyn_cast<SimVPIUnresolvedTypeAliasDeclOp>(op)) {
+      if (!scopeIds.count(alias.getScopeId()))
+        return alias.emitOpError("references an unknown scope ID");
     } else if (auto typespec = dyn_cast<SimVPITypespecDeclOp>(op)) {
       if (!scopeIds.count(typespec.getScopeId()))
         return typespec.emitOpError("references an unknown scope ID");

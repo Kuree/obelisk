@@ -253,7 +253,8 @@ static void updateBindings(sim::SimFuncOp function,
     uint64_t newIndex = oldIndex - removedBefore[oldIndex];
     updated.push_back(sim::ArgumentBindingAttr::get(
         function.getContext(), argument.getPath(), newIndex, argument.getKind(),
-        argument.getCopyOut(), argument.getLvalueNode(), argument.getCopyIn()));
+        argument.getCopyOut(), argument.getLvalueNode(), argument.getCopyIn(),
+        argument.getVpiLocal()));
   }
   sim::set<sim::metadata::Bindings>(
       function, ArrayAttr::get(function.getContext(), updated));

@@ -289,6 +289,16 @@ bool compatible(const Layout &left, const Layout &right) {
 }
 
 bool bitcastCompatible(const Layout &left, const Layout &right) {
+  // A builtin base view preserves the class object's managed word. Only
+  // the forward class-to-builtin conversion is implicit; the interpreter
+  // checks the allocated class's builtin ancestry before changing its view.
+  if (left.kind == OBELISK_RT_DBREG_MANAGED &&
+      right.kind == OBELISK_RT_DBREG_MANAGED)
+    return right.flags == OBELISK_RT_DBREG_CLASS_HANDLE &&
+           (left.flags == OBELISK_RT_DBREG_MAILBOX ||
+            left.flags == OBELISK_RT_DBREG_SEMAPHORE) &&
+           left.width == 64 && right.width == 64 && left.size == 8 &&
+           right.size == 8 && left.auxiliary == 0 && right.auxiliary == 0;
   auto floatingWidth = [](const Layout &layout) -> uint32_t {
     if (layout.kind == OBELISK_RT_DBREG_REAL32)
       return 32;
@@ -394,6 +404,10 @@ bool validIntrinsic(const Image &image, const Function &function,
                          std::optional<uint32_t> width = std::nullopt) {
     return layout && layout->kind == OBELISK_RT_DBREG_BITS &&
            (!width || layout->width == *width);
+  };
+  auto vpiIdentity = [](const std::optional<Layout> &layout) {
+    return layout && layout->kind == OBELISK_RT_DBREG_BITS &&
+           layout->flags == 0 && layout->width == 64 && layout->size == 8;
   };
   auto bytes = [](const std::optional<Layout> &layout) {
     return layout && layout->kind == OBELISK_RT_DBREG_BYTES;
@@ -653,6 +667,14 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.inputCount <= 1 && site.outputCount == 0 &&
            (site.inputCount == 0 || bits(input(0), 64)) &&
            ((signature.flags >> 31) == 0 || site.inputCount == 0);
+  case OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE_SELECTED:
+    return signature.flags == 0 && site.inputCount == 3 &&
+           site.outputCount == 1 && twoStateBits(input(0), 64) &&
+           twoStateBits(input(1), 64) && twoStateBits(input(2), 64) &&
+           twoStateBits(output(0), 64) && input(0)->flags == 0 &&
+           input(1)->flags == 0 && input(2)->flags == 0 &&
+           output(0)->flags == 0 && input(0)->size == 8 &&
+           input(1)->size == 8 && input(2)->size == 8 && output(0)->size == 8;
   case OBELISK_RT_INTRINSIC_V1_CONTROL_ESCAPE_PENDING:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 1 && bits(output(0), 1);
@@ -993,6 +1015,16 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && managed(input(0)) &&
            twoStateBits(output(0), 32);
+  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_BIND:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 0 && twoStateBits(input(0), 64) &&
+           input(0)->flags == 0 && input(0)->size == 8 && handle(input(1)) &&
+           input(1)->flags == 0 && input(1)->width == 256 &&
+           input(1)->size == 32;
+  case OBELISK_RT_INTRINSIC_V1_BOX_BIND_TYPE:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 0 && managed(input(0)) &&
+           twoStateBits(input(1), 64);
   case OBELISK_RT_INTRINSIC_V1_BOX_IS_TYPE:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && managed(input(0)) &&
@@ -1651,6 +1683,25 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_FILE_TELL:
     return site.inputCount == 1 && site.outputCount == 1 &&
            bits(input(0), 32) && bits(output(0), 64);
+  case OBELISK_RT_INTRINSIC_V1_VPI_RESOLUTION_PREPARE:
+  case OBELISK_RT_INTRINSIC_V1_VPI_CALL_PREPARE:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 1 && vpiIdentity(input(0)) &&
+           vpiIdentity(output(0));
+  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER_PREPARED:
+    return signature.flags == 0 && site.inputCount == 2 &&
+           site.outputCount == 1 && vpiIdentity(input(0)) &&
+           vpiIdentity(input(1)) && vpiIdentity(output(0));
+  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER:
+    return signature.flags == 0 && site.inputCount == 3 &&
+           site.outputCount == 1 && vpiIdentity(input(0)) &&
+           vpiIdentity(input(1)) && vpiIdentity(input(2)) &&
+           vpiIdentity(output(0));
+  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_CHECKPOINT:
+  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_LEAVE:
+  case OBELISK_RT_INTRINSIC_V1_VPI_CALL_FINISH:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 0 && vpiIdentity(input(0));
   case OBELISK_RT_INTRINSIC_V1_VPI_ROOT:
     return site.inputCount == 0 && site.outputCount == 2 && cursor(output(0)) &&
            status(output(1));

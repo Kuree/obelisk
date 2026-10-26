@@ -48,7 +48,8 @@ NativeDialect::verifyOperationAttribute(Operation *operation,
              TransferredReferences, NoTransitionRoots, StringGlobal,
              ScanPrefixGlobal, FileScanPrefixGlobal,
              AggregateBitstreamPlanGlobal, ContainerPatternPlanGlobal,
-             ContainerPatternPlanSize>(operation, attribute)))
+             ContainerPatternPlanSize, BoxTypeId, VpiCallId, VpiLocalId>(
+          operation, attribute)))
     return failure();
   StringRef name = attribute.getName().strref();
   Attribute value = attribute.getValue();

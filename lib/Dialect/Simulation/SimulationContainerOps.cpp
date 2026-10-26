@@ -890,8 +890,10 @@ bool getManagedHandleSlots(Type type,
       return static_cast<uint32_t>(ManagedHandleKind::Class);
     if (isa<StringType>(leaf))
       return static_cast<uint32_t>(ManagedHandleKind::String);
-    if (isa<DynamicArrayType, QueueType, MailboxType, BoxType, SemaphoreType,
-            AssocArrayType>(leaf))
+    if (isa<MailboxType, SemaphoreType>(leaf))
+      return static_cast<uint32_t>(ManagedHandleKind::Class) |
+             static_cast<uint32_t>(ManagedHandleKind::Container);
+    if (isa<DynamicArrayType, QueueType, BoxType, AssocArrayType>(leaf))
       return static_cast<uint32_t>(ManagedHandleKind::Container);
     if (isa<ReferencePathType>(leaf))
       return static_cast<uint32_t>(ManagedHandleKind::ReferencePath);
@@ -901,7 +903,11 @@ bool getManagedHandleSlots(Type type,
   std::function<bool(Type, uint64_t, bool)> collect =
       [&](Type nestedType, uint64_t baseOffset, bool conditional) {
         if (std::optional<uint32_t> kind = leafKind(nestedType)) {
-          slots.push_back({baseOffset, *kind, conditional});
+          slots.push_back(
+              {baseOffset, *kind, conditional,
+               isa<MailboxType>(nestedType)     ? ManagedBuiltinKind::Mailbox
+               : isa<SemaphoreType>(nestedType) ? ManagedBuiltinKind::Semaphore
+                                                : ManagedBuiltinKind::None});
           return true;
         }
         if (!isAggregateType(nestedType))
@@ -1002,6 +1008,8 @@ bool getManagedHandleSlots(Type type,
         slots[output - 1].bitOffset == slot.bitOffset) {
       slots[output - 1].kindMask |= slot.kindMask;
       slots[output - 1].conditional |= slot.conditional;
+      if (slots[output - 1].builtinKind != slot.builtinKind)
+        slots[output - 1].builtinKind = ManagedBuiltinKind::None;
       continue;
     }
     slots[output++] = slot;
@@ -1021,6 +1029,12 @@ getManagedHandleTraceKind(const ManagedHandleSlot &slot) {
     return std::nullopt;
   if (slot.conditional)
     return managedHandleCandidateFlag | slot.kindMask;
+  if (slot.builtinKind != ManagedBuiltinKind::None) {
+    if (slot.kindMask != (static_cast<uint32_t>(ManagedHandleKind::Class) |
+                          static_cast<uint32_t>(ManagedHandleKind::Container)))
+      return std::nullopt;
+    return slot.builtinKind == ManagedBuiltinKind::Mailbox ? 5 : 6;
+  }
   switch (static_cast<ManagedHandleKind>(slot.kindMask)) {
   case ManagedHandleKind::Class:
     return 1;
@@ -1037,7 +1051,7 @@ getManagedHandleTraceKind(const ManagedHandleSlot &slot) {
 static bool isValidManagedTraceKind(int32_t signedKind) {
   uint32_t kind = static_cast<uint32_t>(signedKind);
   if ((kind & managedHandleCandidateFlag) == 0)
-    return kind >= 1 && kind <= 4;
+    return kind >= 1 && kind <= 6;
   uint32_t mask = kind & ~managedHandleCandidateFlag;
   constexpr uint32_t allKinds =
       static_cast<uint32_t>(ManagedHandleKind::Class) |
@@ -1055,9 +1069,13 @@ static LogicalResult verifyManagedTraceInventory(Operation *operation,
   if (traceOffsets.size() != traceKinds.size())
     return operation->emitOpError(
         "trace offset and kind inventories must match");
-  if (elementKind != ElementKind::Aggregate && !traceOffsets.empty())
+  bool builtinHandle = elementKind == ElementKind::ContainerHandle &&
+                       traceOffsets.size() == 1 && traceOffsets[0] == 0 &&
+                       (traceKinds[0] == 5 || traceKinds[0] == 6);
+  if (elementKind != ElementKind::Aggregate && !traceOffsets.empty() &&
+      !builtinHandle)
     return operation->emitOpError(
-        "only aggregate elements carry explicit trace slots");
+        "explicit trace slots require an aggregate or a typed builtin handle");
   int64_t previousOffset = -1;
   for (auto [offset, kind] : llvm::zip_equal(traceOffsets, traceKinds)) {
     if (offset < 0 || static_cast<uint64_t>(offset) > valueSize ||
@@ -1171,6 +1189,10 @@ std::optional<ElementDescriptor> getElementDescriptor(Type type) {
           AssocArrayType>(type)) {
     result.kind = ElementKind::ContainerHandle;
     result.valueSize = managedHandleByteWidth;
+    if (isa<MailboxType, SemaphoreType>(type) &&
+        failed(collectExpectedManagedTrace(type, result.traceOffsets,
+                                           result.traceKinds)))
+      return std::nullopt;
     return result;
   }
   if (Type scalar = getPackedScalarType(type)) {
@@ -1186,7 +1208,7 @@ std::optional<ElementDescriptor> getElementDescriptor(Type type) {
   }
   if (!isAggregateType(type))
     return std::nullopt;
-  std::optional<uint64_t> width = getProvenanceSpan(type);
+  std::optional<uint64_t> width = getElementStorageSpan(type);
   if (!width || *width == 0 ||
       failed(collectExpectedManagedTrace(type, result.traceOffsets,
                                          result.traceKinds)))

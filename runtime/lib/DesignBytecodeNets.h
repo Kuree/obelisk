@@ -22,6 +22,14 @@ obelisk_rt_status obelisk_rt_design_net_strength(obelisk_rt_context *context,
                                                  uint16_t *outStrengths,
                                                  bool useNativeState) noexcept;
 
+// Read one logical driver's exact published strength range. highOffset is
+// UINT64_MAX for a single driver, or the matching bit in the explicitly
+// validated complementary bank. Net resolution, force, and other drivers do
+// not contribute. This query does not mutate scheduler or state ownership.
+obelisk_rt_status obelisk_rt_design_driver_strength(
+    obelisk_rt_context *context, uint64_t lowOffset, uint64_t highOffset,
+    uint16_t *outStrengths, bool useNativeState) noexcept;
+
 namespace obelisk::designbytecode {
 
 using obelisk::runtime::rangesOverlap;
