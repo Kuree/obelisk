@@ -18,8 +18,9 @@
 // CHECK: %[[STAGED:.*]] = llvm.icmp "ne" %[[WIDE]], %{{.*}} : i64
 // CHECK-NEXT: llvm.cond_br %[[STAGED]], ^[[MARK:bb[0-9]+]], ^[[STAGE:bb[0-9]+]]
 // CHECK-NEXT: ^[[MARK]]:
-// CHECK-NEXT: %[[ONE:.*]] = llvm.mlir.constant(1 : i8)
-// CHECK-NEXT: %[[FALLBACK:.*]] = llvm.mlir.addressof @__obelisk_eval_step_four_state_fallback_v1
+// The store's independent operands may be emitted in either order.
+// CHECK-DAG: %[[ONE:.*]] = llvm.mlir.constant(1 : i8)
+// CHECK-DAG: %[[FALLBACK:.*]] = llvm.mlir.addressof @__obelisk_eval_step_four_state_fallback_v1
 // CHECK-NEXT: llvm.store %[[ONE]], %[[FALLBACK]]
 // CHECK-NEXT: %[[ROOTS:.*]] = llvm.mlir.addressof @__obelisk_eval_step_four_state_nba_roots_v1
 // CHECK-NEXT: %[[WORD:.*]] = llvm.getelementptr %[[ROOTS]][0]

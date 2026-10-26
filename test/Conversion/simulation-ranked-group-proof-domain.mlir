@@ -13,9 +13,11 @@
 // CHECK-LABEL: llvm.func @__obelisk_eval_promotion_invalidate_v1()
 // CHECK: llvm.mlir.addressof @__obelisk_eval_kernel_promotion_latched_v1
 // CHECK: "llvm.intr.memset"
-// CHECK: llvm.mlir.addressof @__obelisk_eval_group_promotion_latched_v1
-// CHECK: llvm.mlir.constant(1 : i64)
-// CHECK: "llvm.intr.memset"
+// The memset's independent operands may be emitted in either order.
+// CHECK-DAG: %[[GROUP_LATCH:.*]] = llvm.mlir.addressof @__obelisk_eval_group_promotion_latched_v1
+// CHECK-DAG: %[[ZERO:.*]] = llvm.mlir.constant(0 : i8)
+// CHECK-DAG: %[[GROUP_COUNT:.*]] = llvm.mlir.constant(1 : i64)
+// CHECK: "llvm.intr.memset"(%[[GROUP_LATCH]], %[[ZERO]], %[[GROUP_COUNT]])
 // CHECK: llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1
 // CHECK: llvm.mlir.constant(510 : i64)
 // CHECK-LABEL: llvm.func @__obelisk_eval_group_promotion_ready_v1

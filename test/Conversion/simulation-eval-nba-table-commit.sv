@@ -28,9 +28,11 @@
 // CHECK-NEXT: llvm.load %[[WORD_ADDRESS]]
 // CHECK-NOT: llvm.store {{.*}}, %[[WORD_ADDRESS]]
 // CHECK: %[[BIT:.*]] = "llvm.intr.cttz"
-// CHECK: %[[CURRENT:.*]] = llvm.load %[[WORD_ADDRESS]]
-// CHECK-NEXT: %[[ONE_HOT:.*]] = llvm.shl %{{.*}}, %[[BIT]] : i64
-// CHECK-NEXT: %[[KEEP:.*]] = llvm.xor %[[ONE_HOT]], %{{.*}} : i64
+// The load and mask calculation are independent builder arguments; their
+// emission order depends on the host compiler's argument evaluation order.
+// CHECK-DAG: %[[CURRENT:.*]] = llvm.load %[[WORD_ADDRESS]]
+// CHECK-DAG: %[[ONE_HOT:.*]] = llvm.shl %{{.*}}, %[[BIT]] : i64
+// CHECK-DAG: %[[KEEP:.*]] = llvm.xor %[[ONE_HOT]], %{{.*}} : i64
 // CHECK-NEXT: %[[REST:.*]] = llvm.and %[[CURRENT]], %[[KEEP]] : i64
 // CHECK-NEXT: llvm.store %[[REST]], %[[WORD_ADDRESS]]
 // CHECK: llvm.getelementptr %[[OFFSETS]][%{{.*}}] : (!llvm.ptr, i64) -> !llvm.ptr, i64
