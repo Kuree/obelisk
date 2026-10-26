@@ -10910,6 +10910,47 @@ TEST(Scheduler, AllKnownSummaryRetainsUnknownsAcrossPartialKnownWrites) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, UnknownSummaryRefreshRereadsLastDifference) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  std::array<uint64_t, 4> unknown{};
+  uint64_t summary = 0;
+  // One 256-bit root whose pattern holds X/Z in bits [64, 72).
+  const obelisk_rt_native_unknown_root_v1 roots[] = {{0, 256, 0, 1}};
+  const uint64_t patterns[] = {64, 8};
+  unknown[1] = 0xff;
+  ASSERT_EQ(obelisk_rt_v1_native_state_bind_unknown_summary(
+                context, reinterpret_cast<uint8_t *>(unknown.data()), 256,
+                &summary, roots, 1, patterns, 1),
+            OBELISK_RT_OK);
+  const uint64_t gate[] = {0, 1};
+  auto refresh = [&] {
+    return obelisk_rt_v1_native_state_refresh_unknown_summary(context, gate, 1,
+                                                              nullptr);
+  };
+  const auto &mismatch = context->nativeUnknownSummary->mismatches[0];
+  ASSERT_EQ(refresh(), 1u);
+  EXPECT_EQ(mismatch.bit, UINT64_MAX);
+  // A difference in the last chunk is remembered there.
+  unknown[3] = 1;
+  obelisk_rt_v1_native_state_mark_unknown(context, 192, 1);
+  EXPECT_EQ(refresh(), 0u);
+  EXPECT_EQ(mismatch.bit, 192u);
+  EXPECT_EQ(refresh(), 0u);
+  EXPECT_EQ(mismatch.bit, 192u);
+  // Once that chunk matches again, the full scan finds a difference that
+  // appeared in an earlier chunk, including a known bit inside the pattern.
+  unknown[3] = 0;
+  unknown[1] = 0x7f;
+  EXPECT_EQ(refresh(), 0u);
+  EXPECT_EQ(mismatch.bit, 64u);
+  unknown[1] = 0xff;
+  EXPECT_EQ(refresh(), 1u);
+  EXPECT_EQ(mismatch.bit, UINT64_MAX);
+  EXPECT_EQ(summary, 0u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(SchedulerDeathTest, UnknownSummaryVerificationRejectsUnreportedWrites) {
   // With verification, a root whose summary bit is clear while its plane
   // holds X/Z (a writer that skipped its report) stops the simulation.

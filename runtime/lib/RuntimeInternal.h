@@ -878,6 +878,13 @@ struct NativeUnknownSummary {
   std::vector<uint64_t> patterns;
   // Root indices sorted by bit offset; roots are disjoint.
   std::vector<uint32_t> byOffset;
+  // Per root, the 64-bit chunk where the last refresh found it differing from
+  // its pattern (bit = UINT64_MAX if none) and the pattern cursor for it.
+  struct Mismatch {
+    uint64_t bit = UINT64_MAX;
+    uint32_t cursor = 0;
+  };
+  std::vector<Mismatch> mismatches;
   bool verify = false;
   // Reported with OBELISK_RT_SIGNAL_DIAGNOSTICS.
   uint64_t refreshes = 0, rescans = 0, cleared = 0, markedAll = 0,

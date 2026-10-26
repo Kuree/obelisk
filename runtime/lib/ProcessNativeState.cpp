@@ -274,6 +274,36 @@ bool unknownRootClean(const NativeUnknownSummary &summary, uint32_t root) {
   return true;
 }
 
+/// unknownRootClean for refresh: first rereads the chunk where the previous
+/// refresh found `root` differing. While that chunk still differs the root
+/// cannot be clean, so a root that stays X/Z costs one chunk, not a scan of
+/// the whole root. Otherwise the full scan decides and records the first
+/// differing chunk again.
+bool refreshUnknownRoot(NativeUnknownSummary &summary, uint32_t root) {
+  const obelisk_rt_native_unknown_root_v1 &entry = summary.roots[root];
+  NativeUnknownSummary::Mismatch &mismatch = summary.mismatches[root];
+  uint64_t end = entry.bit_offset + entry.bit_width;
+  auto differs = [&](uint64_t bit, uint32_t *cursor) {
+    uint64_t count = std::min<uint64_t>(64, end - bit);
+    return ((loadPackedBytes(summary.plane, bit, count) ^
+             patternBits(summary, entry, bit, count, cursor)) &
+            lowBits(count)) != 0;
+  };
+  if (mismatch.bit != UINT64_MAX) {
+    uint32_t cursor = mismatch.cursor;
+    if (differs(mismatch.bit, &cursor))
+      return false;
+  }
+  uint32_t cursor = 0;
+  for (uint64_t bit = entry.bit_offset; bit < end; bit += 64)
+    if (differs(bit, &cursor)) {
+      mismatch = {bit, cursor};
+      return false;
+    }
+  mismatch = {};
+  return true;
+}
+
 /// The roots overlapping plane bits [bitOffset, bitOffset + bitWidth).
 template <typename Callback>
 void forEachUnknownRoot(const NativeUnknownSummary &summary, uint64_t bitOffset,
@@ -406,6 +436,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_bind_unknown_summary(
         position = range[0] + range[1];
       }
     }
+    bound->mismatches.resize(rootCount);
     bound->byOffset.resize(rootCount);
     for (uint32_t root = 0; root != rootCount; ++root)
       bound->byOffset[root] = root;
@@ -456,7 +487,7 @@ extern "C" uint32_t obelisk_rt_v1_native_state_refresh_unknown_summary(
         if (root >= summary->roots.size())
           return 0;
         ++summary->rescans;
-        if (unknownRootClean(*summary, root)) {
+        if (refreshUnknownRoot(*summary, root)) {
           summary->generated[word] &= ~(uint64_t{1} << bit);
           ++summary->cleared;
         } else {
