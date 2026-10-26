@@ -304,3 +304,60 @@ module {
 // CHECK-NEXT: read invalid: dynamic
 // CHECK-NEXT: read element: dynamic
 // CHECK-NEXT: read island-index: dynamic
+
+// -----
+
+// Only writes a later question about their root can observe are recorded:
+// a gated read of the root, or a store to it asking whether X/Z reached it
+// first. In a loop the next iteration asks again, so the quotient stored
+// after the read of `r` in the same block still reaches that read (IEEE
+// 1800-2023 11.4.2: a zero divisor yields X), and the one stored to `s`
+// reaches the final store. The store to `t` precedes no question.
+
+!c = !simulation.context
+!l8 = !simulation.logic<8>
+!r8 = !simulation.ref<!l8>
+module {
+  simulation.design @revisits {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !l8 design
+    simulation.storage.decl 1 in 0 : !l8 design
+    simulation.storage.decl 2 in 0 : !l8 design
+    simulation.storage.decl 3 in 0 : !l8 design
+    simulation.code_unit.decl 1 in 0 function hierarchy "top.f"
+    simulation.func @revisits(%ctx: !c {simulation.capture_kind = 0 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64} {
+      %r = simulation.context.storage %ctx[0] : !r8
+      %src = simulation.context.storage %ctx[1] : !r8
+      %s = simulation.context.storage %ctx[2] : !r8
+      %t = simulation.context.storage %ctx[3] : !r8
+      %zero = arith.constant 0 : i32
+      %one = arith.constant 1 : i32
+      %four = arith.constant 4 : i32
+      cf.br ^loop(%zero : i32)
+    ^loop(%i: i32):
+      %old = simulation.ref.load %r {test.read = "revisited"} : !r8 -> !l8
+      %v = simulation.ref.load %src {test.read = "source"} : !r8 -> !l8
+      %ratio = simulation.logic.binary udiv %v, %old : !l8
+      simulation.ref.store %ratio to %r {test.store = "loop-quotient"} : !l8, !r8
+      simulation.ref.store %ratio to %s {test.store = "loop-to-s"} : !l8, !r8
+      simulation.ref.store %ratio to %t {test.store = "unasked"} : !l8, !r8
+      %next = arith.addi %i, %one : i32
+      %more = arith.cmpi ult, %next, %four : i32
+      cf.cond_br %more, ^loop(%next : i32), ^exit
+    ^exit:
+      %last = simulation.ref.load %src {test.read = "after-loop"} : !r8 -> !l8
+      simulation.ref.store %last to %s {test.store = "final"} : !l8, !r8
+      simulation.return
+    }
+  }
+}
+
+// CHECK-LABEL: local-unknown @revisits benefit={{[0-9]+}} gate: 1
+// CHECK-NEXT: read revisited: written
+// CHECK-NEXT: read source: gated
+// CHECK-NEXT: read after-loop: gated
+// CHECK-NEXT: store loop-quotient: four-state
+// CHECK-NEXT: store loop-to-s: four-state
+// CHECK-NEXT: store unasked: four-state
+// CHECK-NEXT: store final: four-state

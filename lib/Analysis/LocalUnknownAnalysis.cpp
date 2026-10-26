@@ -16,6 +16,7 @@
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/IR/RegionGraphTraits.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -760,6 +761,45 @@ struct Inputs {
     return state && provesSelectionInRange(selection, *ranges, *state);
   }
 
+  /// The dense state answers questions about one storage root at a time: at
+  /// a gated read of it, and at a store to it about earlier writes. A write
+  /// of a root that no such question can follow changes no answer, so it is
+  /// not recorded; a kernel's thousands of written roots otherwise reach
+  /// every join. Positions order the top-level operations: components of
+  /// the block graph topologically, then block order, and a cyclic
+  /// component may revisit any of its operations.
+  DenseMap<Block *, std::pair<unsigned, bool>> components;
+  DenseMap<Operation *, unsigned> positions;
+  DenseMap<unsigned, std::pair<unsigned, unsigned>> lastQuery;
+  Region *body = nullptr;
+  std::optional<std::pair<unsigned, unsigned>> position(Operation *op) const {
+    auto component = components.find(op->getBlock());
+    if (component == components.end())
+      return std::nullopt;
+    return std::make_pair(component->second.first, positions.lookup(op));
+  }
+  bool mayQueryAfter(Operation *op, unsigned root) const {
+    if (!body)
+      return true;
+    auto query = lastQuery.find(root);
+    if (query == lastQuery.end())
+      return false;
+    Operation *top = body->findAncestorOpInRegion(*op);
+    if (!top)
+      return true;
+    std::optional<std::pair<unsigned, unsigned>> at = position(top);
+    if (!at)
+      return false;
+    if (query->second.first != at->first)
+      return query->second.first > at->first;
+    if (components.lookup(top->getBlock()).second)
+      return true;
+    // A write inside a region operation may be followed by a query in the
+    // same operation.
+    return top == op ? query->second.second > at->second
+                     : query->second.second >= at->second;
+  }
+
   /// Whether a write through `reference` may reach bits that a gated read
   /// loads as the constant X of `simulation.steady_unknown`.
   bool mayWriteSteady(Value reference) const {
@@ -1146,6 +1186,8 @@ public:
         exact = fact != inputs.handles.end() && !fact->second.dynamic &&
                 fact->second.resource == schedule::ComputeResourceKind::Local;
       } else if (resolveWrite(inputs, reference, interval)) {
+        if (!inputs.mayQueryAfter(op, interval.root))
+          return;
         exact = !inputs.handles.lookup(reference).dynamic;
       } else {
         (void)next.setAll();
@@ -1252,7 +1294,9 @@ public:
           (void)next.setAll();
           break;
         }
-        if (!known || inputs.mayWriteSteady(reference))
+        if ((!known || inputs.mayWriteSteady(reference)) &&
+            (isSlotRoot(interval.root) ||
+             inputs.mayQueryAfter(call.getOperation(), interval.root)))
           next.add(interval.root, interval.low, interval.high);
       }
     }
@@ -1466,6 +1510,42 @@ LocalUnknownAnalysis::LocalUnknownAnalysis(sim::SimFuncOp function,
     if ((site.kind == ReadKind::Dynamic || site.kind == ReadKind::Unresolved) &&
         checkable(read))
       site.kind = ReadKind::Checked;
+  }
+
+  // Where the dense state is asked about each storage root (Inputs::
+  // mayQueryAfter): gated reads, and stores testing earlier writes.
+  {
+    SmallVector<std::pair<SmallVector<Block *>, bool>> components;
+    for (auto scc = llvm::scc_begin(&function.getBody()); !scc.isAtEnd(); ++scc)
+      components.push_back(
+          {SmallVector<Block *>(scc->begin(), scc->end()), scc.hasCycle()});
+    // Tarjan's order lists a component after every component it reaches.
+    for (auto [index, component] : llvm::enumerate(llvm::reverse(components)))
+      for (Block *block : component.first)
+        inputs.components[block] = {index, component.second};
+    for (Block &block : function.getBody())
+      for (auto [index, op] : llvm::enumerate(block))
+        inputs.positions[&op] = index;
+    inputs.body = &function.getBody();
+    auto query = [&](Operation *op, unsigned root) {
+      Operation *top = function.getBody().findAncestorOpInRegion(*op);
+      std::optional<std::pair<unsigned, unsigned>> at =
+          top ? inputs.position(top) : std::nullopt;
+      if (!at)
+        return;
+      auto [found, inserted] = inputs.lastQuery.try_emplace(root, *at);
+      if (!inserted && found->second < *at)
+        found->second = *at;
+    };
+    for (Operation *read : reads)
+      if (const ReadSite &site = inputs.sites[read];
+          site.kind == ReadKind::Gated)
+        query(read, site.root);
+    for (sim::SimRefStoreOp store : stores) {
+      Interval interval;
+      if (resolveWrite(inputs, store.getReference(), interval))
+        query(store, interval.root);
+    }
   }
 
   DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
