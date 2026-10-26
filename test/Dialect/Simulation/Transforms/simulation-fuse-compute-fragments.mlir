@@ -15,6 +15,8 @@ module {
     simulation.code_unit.decl 2 in 0 always hierarchy "fusion.b"
     simulation.scope.decl 0
     simulation.storage.decl 0 in 0 : !simulation.logic<1> design
+    simulation.storage.decl 1 in 0 : i32 design
+    simulation.code_unit.decl 3 in 0 initial hierarchy "fusion.sink"
 
     simulation.func @root(
         %ctx: !simulation.context
@@ -22,12 +24,25 @@ module {
         attributes {entry_kind = 0 : i32} {
       %clock = simulation.context.storage %ctx[0] :
         !simulation.ref<!simulation.logic<1>>
-      %a = simulation.spawn @a(%ctx, %clock) :
-        !simulation.context, !simulation.ref<!simulation.logic<1>>
-        -> !simulation.process
-      %b = simulation.spawn @b(%ctx, %clock) :
-        !simulation.context, !simulation.ref<!simulation.logic<1>>
-        -> !simulation.process
+      %sink = simulation.context.storage %ctx[1] : !simulation.ref<i32>
+      %reader = simulation.spawn @sink(%ctx, %sink) :
+        !simulation.context, !simulation.ref<i32> -> !simulation.process
+      %a = simulation.spawn @a(%ctx, %clock, %sink) :
+        !simulation.context, !simulation.ref<!simulation.logic<1>>,
+        !simulation.ref<i32> -> !simulation.process
+      %b = simulation.spawn @b(%ctx, %clock, %sink) :
+        !simulation.context, !simulation.ref<!simulation.logic<1>>,
+        !simulation.ref<i32> -> !simulation.process
+      simulation.return
+    }
+
+    simulation.func private @sink(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %sink: !simulation.ref<i32>
+          {simulation.capture_kind = 3 : i32,
+           simulation.descriptor_id = 1 : i64})
+        attributes {entry_kind = 1 : i32, code_unit_id = 3 : i64} {
+      %value = simulation.ref.load %sink : !simulation.ref<i32> -> i32
       simulation.return
     }
 
@@ -35,7 +50,10 @@ module {
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %clock: !simulation.ref<!simulation.logic<1>>
           {simulation.capture_kind = 3 : i32,
-           simulation.descriptor_id = 0 : i64})
+           simulation.descriptor_id = 0 : i64},
+        %sink: !simulation.ref<i32>
+          {simulation.capture_kind = 3 : i32,
+           simulation.descriptor_id = 1 : i64})
         attributes {entry_kind = 3 : i32, code_unit_id = 1 : i64} {
       cf.br ^wait
     ^wait:
@@ -52,6 +70,7 @@ module {
       cf.br ^join(%two : i32)
     ^join(%value: i32):
       %sum = arith.addi %value, %one : i32
+      simulation.ref.store %sum to %sink : i32, !simulation.ref<i32>
       cf.br ^wait
     }
 
@@ -59,13 +78,18 @@ module {
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %clock: !simulation.ref<!simulation.logic<1>>
           {simulation.capture_kind = 3 : i32,
-           simulation.descriptor_id = 0 : i64})
+           simulation.descriptor_id = 0 : i64},
+        %sink: !simulation.ref<i32>
+          {simulation.capture_kind = 3 : i32,
+           simulation.descriptor_id = 1 : i64})
         attributes {entry_kind = 3 : i32, code_unit_id = 2 : i64} {
       cf.br ^wait
     ^wait:
       simulation.suspend.edge posedge %clock to ^body :
         !simulation.ref<!simulation.logic<1>>
     ^body:
+      %zero = arith.constant 0 : i32
+      simulation.ref.store %zero to %sink : i32, !simulation.ref<i32>
       cf.br ^wait
     }
   }

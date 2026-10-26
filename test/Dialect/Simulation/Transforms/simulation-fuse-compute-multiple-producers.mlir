@@ -26,6 +26,7 @@ module multiple_clock_producers;
 
   initial begin
     #2;
+    $display("%0d %0d", first, second);
     $finish;
   end
 endmodule

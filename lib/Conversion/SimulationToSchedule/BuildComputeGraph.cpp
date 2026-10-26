@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "obelisk/Conversion/SimulationToSchedule/ComputeGraph.h"
+#include "obelisk/Conversion/SimulationToSchedule/Utils.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
 #include "obelisk/Analysis/DPIEffectAnalysis.h"
@@ -198,7 +199,14 @@ void ObeliskSimBuildComputeGraphPass::runOnOperation() {
     return signalPassFailure();
   }
   options.vpi = *vpiMode;
-  if (reuseKnownCurrentGraph) {
+  // Earlier passes may have removed a root's last stores (write-only state,
+  // IEEE 1800-2023 4.3) and left processes that only read and wait. They are
+  // no actors and no observers; erase them before describing the design, and
+  // never reuse a graph that still names them.
+  bool pruned = pruneEffectFree &&
+                *vpiMode == schedule::ComputeVPIMode::Off &&
+                simlowering::removeEffectFreeProcesses(design) != 0;
+  if (reuseKnownCurrentGraph && !pruned) {
     schedule::ComputeGraphAttr graph = design.getComputeGraphAttr();
     if (graph && graph.getWorkers() == options.workers &&
         graph.getVpi() == options.vpi) {

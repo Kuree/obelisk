@@ -41,6 +41,8 @@ module rejected_fusions;
   initial begin
     #1 clock = 1;
     #1;
+    $display("%b %b %b %0d %0d %s %s", published, other, observed,
+             controlled_a, controlled_b, managed_a, managed_b);
     $finish;
   end
 endmodule

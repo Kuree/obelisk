@@ -14,6 +14,7 @@ module schedule_smoke;
   // LOC-SAME: source_locations = [
   // LOC-SAME: #1 = "{{.*schedule.sv}}":[[# @LINE + 1]]:3
   always_comb destination = source;
+  final $display("%b", destination);
 endmodule
 
 // CHECK: schedule @design #schedule.graph<version = 1, vpi = read, workers = 2

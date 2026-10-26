@@ -2,6 +2,9 @@
 // RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{max-members=3},obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s --check-prefix=CAP
 // RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{grow-acyclic=false},obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s --check-prefix=NOGROW
 
+// Every design has an `initial` sink that reads the roots only written by
+// the processes under test; a write-only root would lose its stores and then
+// its writer process before the cohort is planned.
 // IEEE 1800-2023 4.3, 4.7: a cohort runs the acyclic combinational owners
 // connected to it, or woken by the same edge-triggered procedure, in data
 // order. Owners whose intermediate values an edge waiter could see, or that
@@ -80,7 +83,9 @@ module {
     simulation.code_unit.decl 5 in 0 always_comb hierarchy "after"
     simulation.code_unit.decl 6 in 0 always_comb hierarchy "woken"
     simulation.code_unit.decl 7 in 0 always_comb hierarchy "island"
+    simulation.code_unit.decl 8 in 0 initial hierarchy "sink"
     simulation.func @root(%ctx: !c {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32} {
+      %sink = simulation.spawn @sink(%ctx) : !c -> !simulation.process
       %0 = simulation.spawn @producer_and_consumer(%ctx) : !c -> !simulation.process
       %1 = simulation.spawn @transform(%ctx) : !c -> !simulation.process
       %2 = simulation.spawn @flop(%ctx) : !c -> !simulation.process
@@ -88,6 +93,13 @@ module {
       %4 = simulation.spawn @after(%ctx) : !c -> !simulation.process
       %5 = simulation.spawn @woken(%ctx) : !c -> !simulation.process
       %6 = simulation.spawn @island(%ctx) : !c -> !simulation.process
+      simulation.return
+    }
+    simulation.func @sink(%ctx: !c {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 8 : i64} {
+      %s7 = simulation.context.storage %ctx[7] : !r
+      %l7 = simulation.ref.load %s7 : !r -> i8
+      %s8 = simulation.context.storage %ctx[8] : !r
+      %l8 = simulation.ref.load %s8 : !r -> i8
       simulation.return
     }
     simulation.func @producer_and_consumer(%ctx: !c {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 4 : i32, code_unit_id = 1 : i64} {
@@ -203,6 +215,8 @@ module {
     simulation.storage.decl 8 in 0 : i8 design
     simulation.storage.decl 9 in 0 : i8 design
     simulation.storage.decl 10 in 0 : i8 design
+    simulation.storage.decl 11 in 0 : i8 design
+    simulation.storage.decl 12 in 0 : i8 design
     simulation.code_unit.decl 1 in 0 always_comb hierarchy "producer_and_consumer"
     simulation.code_unit.decl 2 in 0 always_comb hierarchy "transform"
     simulation.code_unit.decl 3 in 0 always hierarchy "flop"
@@ -213,7 +227,9 @@ module {
     simulation.code_unit.decl 8 in 0 always_comb hierarchy "pre"
     simulation.code_unit.decl 9 in 0 always_comb hierarchy "gate"
     simulation.code_unit.decl 10 in 0 always_comb hierarchy "after"
+    simulation.code_unit.decl 11 in 0 initial hierarchy "sink"
     simulation.func @root(%ctx: !c {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32} {
+      %sink = simulation.spawn @sink(%ctx) : !c -> !simulation.process
       %0 = simulation.spawn @producer_and_consumer(%ctx) : !c -> !simulation.process
       %1 = simulation.spawn @transform(%ctx) : !c -> !simulation.process
       %2 = simulation.spawn @flop(%ctx) : !c -> !simulation.process
@@ -224,6 +240,17 @@ module {
       %7 = simulation.spawn @pre(%ctx) : !c -> !simulation.process
       %8 = simulation.spawn @gate(%ctx) : !c -> !simulation.process
       %9 = simulation.spawn @after(%ctx) : !c -> !simulation.process
+      simulation.return
+    }
+    simulation.func @sink(%ctx: !c {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 11 : i64} {
+      %s11 = simulation.context.storage %ctx[11] : !r
+      %l11 = simulation.ref.load %s11 : !r -> i8
+      %s12 = simulation.context.storage %ctx[12] : !r
+      %l12 = simulation.ref.load %s12 : !r -> i8
+      %s6 = simulation.context.storage %ctx[6] : !r
+      %l6 = simulation.ref.load %s6 : !r -> i8
+      %s8 = simulation.context.storage %ctx[8] : !r
+      %l8 = simulation.ref.load %s8 : !r -> i8
       simulation.return
     }
     simulation.func @producer_and_consumer(%ctx: !c {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 4 : i32, code_unit_id = 1 : i64} {
@@ -254,7 +281,12 @@ module {
       %clk = simulation.context.storage %ctx[5] : !b
       cf.br ^wait
     ^wait:
-      simulation.suspend.edge posedge %clk to ^wait : !b
+      simulation.suspend.edge posedge %clk to ^tick : !b
+    ^tick:
+      %out11 = simulation.context.storage %ctx[11] : !r
+      %one11 = arith.constant 1 : i8
+      simulation.ref.store %one11 to %out11 : i8, !r
+      cf.br ^wait
     }
     simulation.func @clocked(%ctx: !c {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 4 : i32, code_unit_id = 4 : i64} {
       %in3 = simulation.context.storage %ctx[3] : !r
@@ -291,7 +323,12 @@ module {
       %clk = simulation.context.storage %ctx[7] : !r
       cf.br ^wait
     ^wait:
-      simulation.suspend.edge posedge %clk to ^wait : !r
+      simulation.suspend.edge posedge %clk to ^tick : !r
+    ^tick:
+      %out12 = simulation.context.storage %ctx[12] : !r
+      %one12 = arith.constant 1 : i8
+      simulation.ref.store %one12 to %out12 : i8, !r
+      cf.br ^wait
     }
     simulation.func @pre(%ctx: !c {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 4 : i32, code_unit_id = 8 : i64} {
       %in9 = simulation.context.storage %ctx[9] : !r
@@ -420,6 +457,7 @@ module {
     simulation.storage.decl 7 in 0 : i8 design
     simulation.storage.decl 8 in 0 : i8 design
     simulation.storage.decl 9 in 0 : i8 design
+    simulation.storage.decl 10 in 0 : i8 design
     simulation.code_unit.decl 1 in 0 always_comb hierarchy "first_outer"
     simulation.code_unit.decl 2 in 0 always_comb hierarchy "first_inner"
     simulation.code_unit.decl 3 in 0 always_comb hierarchy "second_outer"
@@ -427,7 +465,9 @@ module {
     simulation.code_unit.decl 5 in 0 always_comb hierarchy "observed"
     simulation.code_unit.decl 6 in 0 always hierarchy "watcher"
     simulation.code_unit.decl 7 in 0 always_comb hierarchy "bridge"
+    simulation.code_unit.decl 8 in 0 initial hierarchy "sink"
     simulation.func @root(%ctx: !c {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32} {
+      %sink = simulation.spawn @sink(%ctx) : !c -> !simulation.process
       %0 = simulation.spawn @first_outer(%ctx) : !c -> !simulation.process
       %1 = simulation.spawn @first_inner(%ctx) : !c -> !simulation.process
       %2 = simulation.spawn @second_outer(%ctx) : !c -> !simulation.process
@@ -435,6 +475,15 @@ module {
       %4 = simulation.spawn @observed(%ctx) : !c -> !simulation.process
       %5 = simulation.spawn @watcher(%ctx) : !c -> !simulation.process
       %6 = simulation.spawn @bridge(%ctx) : !c -> !simulation.process
+      simulation.return
+    }
+    simulation.func @sink(%ctx: !c {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 8 : i64} {
+      %s10 = simulation.context.storage %ctx[10] : !r
+      %l10 = simulation.ref.load %s10 : !r -> i8
+      %s8 = simulation.context.storage %ctx[8] : !r
+      %l8 = simulation.ref.load %s8 : !r -> i8
+      %s9 = simulation.context.storage %ctx[9] : !r
+      %l9 = simulation.ref.load %s9 : !r -> i8
       simulation.return
     }
     // First cyclic cohort: 0 -> outer -> 1 -> inner -> 2 -> outer -> 3.
@@ -497,7 +546,12 @@ module {
       %w = simulation.context.storage %ctx[4] : !r
       cf.br ^wait
     ^wait:
-      simulation.suspend.edge posedge %w to ^wait : !r
+      simulation.suspend.edge posedge %w to ^tick : !r
+    ^tick:
+      %out10 = simulation.context.storage %ctx[10] : !r
+      %one10 = arith.constant 1 : i8
+      simulation.ref.store %one10 to %out10 : i8, !r
+      cf.br ^wait
     }
     // @bridge reads both cohorts' outputs, which joins their islands.
     simulation.func @bridge(%ctx: !c {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 4 : i32, code_unit_id = 7 : i64} {
@@ -550,6 +604,7 @@ module {
     simulation.storage.decl 7 in 0 : i8 design
     simulation.storage.decl 8 in 0 : i8 design
     simulation.storage.decl 9 in 0 : i8 design
+    simulation.storage.decl 10 in 0 : i8 design
     simulation.code_unit.decl 1 in 0 always_comb hierarchy "first_outer"
     simulation.code_unit.decl 2 in 0 always_comb hierarchy "first_inner"
     simulation.code_unit.decl 3 in 0 always_comb hierarchy "second_outer"
@@ -557,7 +612,9 @@ module {
     simulation.code_unit.decl 5 in 0 always_comb hierarchy "observed"
     simulation.code_unit.decl 6 in 0 always hierarchy "watcher"
     simulation.code_unit.decl 7 in 0 always_comb hierarchy "bridge"
+    simulation.code_unit.decl 8 in 0 initial hierarchy "sink"
     simulation.func @root(%ctx: !c {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32} {
+      %sink = simulation.spawn @sink(%ctx) : !c -> !simulation.process
       %0 = simulation.spawn @first_outer(%ctx) : !c -> !simulation.process
       %1 = simulation.spawn @first_inner(%ctx) : !c -> !simulation.process
       %2 = simulation.spawn @second_outer(%ctx) : !c -> !simulation.process
@@ -565,6 +622,15 @@ module {
       %4 = simulation.spawn @observed(%ctx) : !c -> !simulation.process
       %5 = simulation.spawn @watcher(%ctx) : !c -> !simulation.process
       %6 = simulation.spawn @bridge(%ctx) : !c -> !simulation.process
+      simulation.return
+    }
+    simulation.func @sink(%ctx: !c {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 8 : i64} {
+      %s10 = simulation.context.storage %ctx[10] : !r
+      %l10 = simulation.ref.load %s10 : !r -> i8
+      %s8 = simulation.context.storage %ctx[8] : !r
+      %l8 = simulation.ref.load %s8 : !r -> i8
+      %s9 = simulation.context.storage %ctx[9] : !r
+      %l9 = simulation.ref.load %s9 : !r -> i8
       simulation.return
     }
     // First cyclic cohort: 0 -> outer -> 1 -> inner -> 2 -> outer -> 3.
@@ -627,7 +693,12 @@ module {
       %w = simulation.context.storage %ctx[4] : !r
       cf.br ^wait
     ^wait:
-      simulation.suspend.edge posedge %w to ^wait : !r
+      simulation.suspend.edge posedge %w to ^tick : !r
+    ^tick:
+      %out10 = simulation.context.storage %ctx[10] : !r
+      %one10 = arith.constant 1 : i8
+      simulation.ref.store %one10 to %out10 : i8, !r
+      cf.br ^wait
     }
     // @bridge reads both cohorts' outputs, which joins their islands.
     simulation.func @bridge(%ctx: !c {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 4 : i32, code_unit_id = 7 : i64} {

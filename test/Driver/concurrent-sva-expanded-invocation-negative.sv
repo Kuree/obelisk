@@ -21,7 +21,9 @@ module concurrent_sva_expanded_invocation_negative;
   endproperty
 
 `ifdef LOCAL_INVOCATION
-  restrict property (with_local(request));
+  // An assertion keeps its report effect; a restrict has none in simulation
+  // (IEEE 1800-2023 16.14.4) and its effect-free process is removed.
+  assert property (with_local(request));
 `elsif RECURSIVE_INVOCATION
   restrict property (recursive(countdown));
 `elsif RANGED_INVOCATION

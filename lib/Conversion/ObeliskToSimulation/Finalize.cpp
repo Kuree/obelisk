@@ -553,6 +553,7 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   ObeliskSimBuildComputeGraphPassOptions graphOptions;
   graphOptions.workers = workers;
   graphOptions.vpi = vpiMode.str();
+  graphOptions.pruneEffectFree = optLevel > 0;
   designManager.addPass(
       createObeliskSimBuildComputeGraphPass(std::move(graphOptions)));
   // Forced-native generated gate cohorts must not materialize one LLVM
@@ -578,6 +579,7 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     ObeliskSimBuildComputeGraphPassOptions primitiveGraphOptions;
     primitiveGraphOptions.workers = workers;
     primitiveGraphOptions.vpi = vpiMode.str();
+    primitiveGraphOptions.pruneEffectFree = optLevel > 0;
     designManager.addPass(createObeliskSimBuildCurrentComputeGraphPass(
         std::move(primitiveGraphOptions)));
   }
@@ -592,6 +594,7 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
       ObeliskSimBuildComputeGraphPassOptions clockedGraphOptions;
       clockedGraphOptions.workers = workers;
       clockedGraphOptions.vpi = vpiMode.str();
+      clockedGraphOptions.pruneEffectFree = optLevel > 0;
       designManager.addPass(createObeliskSimBuildCurrentComputeGraphPass(
           std::move(clockedGraphOptions)));
     }
@@ -604,6 +607,7 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
       ObeliskSimBuildComputeGraphPassOptions statementGraphOptions;
       statementGraphOptions.workers = workers;
       statementGraphOptions.vpi = vpiMode.str();
+      statementGraphOptions.pruneEffectFree = optLevel > 0;
       designManager.addPass(createObeliskSimBuildCurrentComputeGraphPass(
           std::move(statementGraphOptions)));
     }
@@ -638,6 +642,7 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
     ObeliskSimBuildComputeGraphPassOptions fusedGraphOptions;
     fusedGraphOptions.workers = workers;
     fusedGraphOptions.vpi = vpiMode.str();
+    fusedGraphOptions.pruneEffectFree = optLevel > 0;
     // Body fusion removes the graph exactly when it changes executable CFG.
     // If no candidate materialized, the late inliner is also a no-op and the
     // already verified graph remains authoritative.

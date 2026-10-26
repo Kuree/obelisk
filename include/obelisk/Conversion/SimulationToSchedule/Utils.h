@@ -42,6 +42,13 @@ ReexecutingBlockSet getReexecutingBlocks(sim::SimFuncOp function);
 using HandleFact = ::obelisk::analysis::HandleFact;
 using HandleFacts = ::obelisk::analysis::HandleFacts;
 
+/// Erase processes that only read state and wait for changes (IEEE 1800-2023
+/// 4.3: no user-visible effect) together with their result-less spawns, and
+/// return how many. The caller guarantees the VPI-off contract and rebuilds
+/// the compute graph when the result is nonzero; the design's own attributes
+/// are not consulted.
+unsigned removeEffectFreeProcesses(sim::SimDesignOp design);
+
 } // namespace obelisk::simlowering
 
 #endif // OBELISK_CONVERSION_SIMULATIONTOSCHEDULE_UTILS_H

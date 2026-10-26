@@ -477,7 +477,10 @@ def ObeliskSimBuildComputeGraphPass
     Option<"workers", "workers", "uint32_t", "1",
            "Number of generated static worker lanes">,
     Option<"vpi", "vpi", "std::string", "\"off\"",
-           "VPI observability mode: off, read, or full">
+           "VPI observability mode: off, read, or full">,
+    Option<"pruneEffectFree", "prune-effect-free", "bool", "false",
+           "Erase processes that only read and wait before deriving the graph "
+           "(VPI off)">
   ];
 }
 

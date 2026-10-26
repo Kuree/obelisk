@@ -11,6 +11,7 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "obelisk/Analysis/ActivationRegionAnalysis.h"
+#include "obelisk/Conversion/SimulationToSchedule/Utils.h"
 #include "obelisk/Analysis/DemandedBitAnalysis.h"
 #include "obelisk/Analysis/HandleDataflowAnalysis.h"
 #include "obelisk/Analysis/LogicBitAnalysis.h"
@@ -416,6 +417,49 @@ void promotePrivateReductions(sim::SimDesignOp design) {
     }
   }
 }
+/// IEEE 1800-2023 9.6.2: a named block's activation only matters to a
+/// `disable` statement that names it. Foreign code has no disable primitive;
+/// it reaches SystemVerilog only through exported subroutines (35.7, 35.8),
+/// whose disable statements are part of the design. An enter/leave pair with
+/// no boundary and no disable of its target anywhere in the design therefore
+/// has no user-visible effect (4.3). Unrolled named loop bodies leave many of
+/// them in combinational processes, where they are the only scheduler
+/// interaction.
+/// A process with deferred assertions keeps every activation: their pending
+/// reports belong to the innermost activation (16.4.1), which the runtime
+/// tracks through these entries.
+void removeUnusedControlActivations(sim::SimDesignOp design) {
+  DenseSet<uint64_t> targets;
+  design.walk([&](Operation *operation) {
+    if (auto disable = dyn_cast<sim::SimControlDisableOp>(operation))
+      targets.insert(disable.getTargetId());
+    else if (auto exit = dyn_cast<sim::SimControlNonlocalExitOp>(operation))
+      targets.insert(exit.getTargetId());
+  });
+  SmallVector<sim::SimControlEnterOp> unused;
+  for (auto function : design.getBody().front().getOps<sim::SimFuncOp>()) {
+    bool deferred = function
+                        .walk([](sim::SimDeferredEnqueueOp) {
+                          return WalkResult::interrupt();
+                        })
+                        .wasInterrupted();
+    if (deferred)
+      continue;
+    function.walk([&](sim::SimControlEnterOp enter) {
+      if (!targets.contains(enter.getTargetId()) &&
+          llvm::all_of(enter.getControl().getUsers(), [](Operation *user) {
+            return isa<sim::SimControlLeaveOp>(user);
+          }))
+        unused.push_back(enter);
+    });
+  }
+  for (sim::SimControlEnterOp enter : unused) {
+    for (Operation *leave :
+         llvm::make_early_inc_range(enter.getControl().getUsers()))
+      leave->erase();
+    enter.erase();
+  }
+}
 void promotePrivateAggregates(sim::SimDesignOp design) {
   analysis::PrivateStorageAnalysis storage(design);
   analysis::HandleDataflowAnalysis handles(design);
@@ -663,6 +707,8 @@ struct ObeliskSimSimplifyBodiesPass
     if (canonicalWrites) {
       promotePrivateReductions(design);
       promotePrivateAggregates(design);
+      removeUnusedControlActivations(design);
+      simlowering::removeEffectFreeProcesses(design);
     }
     // Promotion and forwarding rewrite storage and function bodies, never
     // drivers or nets, so the driver index above still serves every function.
