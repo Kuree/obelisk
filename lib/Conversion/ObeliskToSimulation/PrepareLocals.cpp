@@ -221,9 +221,18 @@ materializeProceduralLocals(sim::SimDesignOp design, const PreparedUnits &units,
       bool isVoid = functionType && functionType.getNumResults() == 1 &&
                     isa<semantic::VoidType>(functionType.getResult(0));
       if (isVoid) {
+        Operation *propertyOwner = owner;
+        if (routine.getIsDpiImport().value_or(false)) {
+          auto anchor = sim::get<sim::metadata::VpiAnchor>(routine);
+          propertyOwner =
+              anchor ? sourceSymbols.lookupSymbolIn(design, anchor) : nullptr;
+        }
+        if (!propertyOwner)
+          continue;
         SmallVector<Attribute> properties;
         if (auto existing =
-                owner->getAttrOfType<sim::VPIPropertySetAttr>("vpi_properties"))
+                propertyOwner->getAttrOfType<sim::VPIPropertySetAttr>(
+                    "vpi_properties"))
           llvm::append_range(properties, existing.getProperties());
         properties.push_back(sim::VPIPropertyAttr::get(
             builder.getContext(), builder.getI32IntegerAttr(4),
@@ -232,9 +241,10 @@ materializeProceduralLocals(sim::SimDesignOp design, const PreparedUnits &units,
           return cast<sim::VPIPropertyAttr>(left).getSelector().getInt() <
                  cast<sim::VPIPropertyAttr>(right).getSelector().getInt();
         });
-        owner->setAttr("vpi_properties", sim::VPIPropertySetAttr::get(
-                                             builder.getContext(),
-                                             builder.getArrayAttr(properties)));
+        propertyOwner->setAttr(
+            "vpi_properties",
+            sim::VPIPropertySetAttr::get(builder.getContext(),
+                                         builder.getArrayAttr(properties)));
       } else if (auto reference = routine.getReturnVariableSymbolAttr()) {
         auto variable = dyn_cast_or_null<semantic::SVVariableSymbolOp>(
             sourceSymbols.lookupSymbolIn(module, reference));

@@ -72,7 +72,7 @@ module {
 // CHECK: simulation.func private @[[IMPL:unit_[0-9]+]]
 // CHECK-SAME: descriptor = [[BIAS]]
 // CHECK-SAME: simulation.hierarchical_name = "top.p.foo"
-// CHECK: simulation.call @[[IMPL]](%{{.*}}) : (!simulation.context) -> i32
+// CHECK: simulation.call @[[IMPL]](%{{.*}}) {simulation.vpi_call_site = @{{[^}]+}}} : (!simulation.context) -> i32
 
 // MISSING: error: modport-exported interface extern has no implementation
 // MULTI: error: modport-exported interface extern has 2 implementations; exactly one is executable

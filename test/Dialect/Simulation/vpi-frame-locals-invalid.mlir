@@ -91,7 +91,7 @@ module {
 
 #word = #simulation.vpi_type<kind = int, isSigned = true, isFourState = false, range = [31, 0], children = [], childNames = []>
 module {
- // expected-error @+1 {{VPI local declaration ordinals must be dense and unique within each scope}}
+ // expected-error @+1 {{procedural source declaration ordinals must be dense and unique within each scope}}
  simulation.design @sparse {
   simulation.scope.decl 0 hierarchy "$root"
   simulation.scope.decl 1 parent 0 hierarchy "top" vpi_kind 32

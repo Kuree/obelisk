@@ -43,7 +43,7 @@ module {
     simulation.vpi_object.anchor @pkg id 0 type 600 in 0 ordinal 0 hierarchy "pkg" debug "pkg"
     simulation.vpi_object.anchor @class id 1 type 652 in 0 parent @pkg ordinal 0 hierarchy "pkg::G" debug "G"
     simulation.vpi_object.anchor @p id 2 type 41 in 0 parent @class ordinal 0 hierarchy "pkg::G::P" debug "P" {unresolved_value_parameter}
-    // expected-error @+1 {{source expression requires unnamed immutable ownership}}
+    // expected-error @+1 {{source expression or primitive terminal requires unnamed immutable ownership}}
     simulation.vpi_object.anchor @e id 3 type 7 in 0 parent @p ordinal 0 hierarchy "named" debug ""
   }
 }

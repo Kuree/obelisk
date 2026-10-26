@@ -395,7 +395,8 @@ def SimVPIFrameBindOp : SimOp<"vpi.frame.bind", [
   }];
   let arguments = (ins SimContextType:$context, SimRefType:$reference,
                        FlatSymbolRefAttr:$declaration);
-  let assemblyFormat = "$context `,` $reference `to` $declaration attr-dict `:` type($reference)";
+  let assemblyFormat = "$context `,` $reference `to` $declaration attr-dict "
+                       "`:` qualified(type($reference))";
 }
 
 def SimVPIInitializerBindingOp : SimOp<"vpi_initializer_binding",
@@ -2146,7 +2147,8 @@ def SimBoxBindTypeOp : SimOp<"box.bind_type", [
   }];
   let arguments = (ins SimDynamicArrayType:$input,
                        FlatSymbolRefAttr:$descriptor);
-  let assemblyFormat = "$input `to` $descriptor attr-dict `:` type($input)";
+  let assemblyFormat =
+      "$input `to` $descriptor attr-dict `:` qualified(type($input))";
 }
 
 def SimBoxCastOp : SimOp<"box.cast", [Pure]> {

@@ -697,6 +697,19 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
                     ArrayAttr::get(foreach.getContext(), dimensions));
     });
 
+    unit.source->walk([&](semantic::SVCallExpressionOp call) {
+      auto reference = call.getIteratorVariableSymbolAttr();
+      auto path = call.getIteratorVariablePathAttr();
+      if (!reference || !path)
+        return;
+      auto *source = sourceSymbols.lookupSymbolIn(
+          unit.source->getParentOfType<ModuleOp>(), reference);
+      if (auto qualified =
+              qualifiedAutomaticPath(path.getValue(), reference, source))
+        call.setIteratorVariablePathAttr(
+            StringAttr::get(call.getContext(), *qualified));
+    });
+
     bool initializesDesignStorage =
         isa<semantic::SVVariableSymbolOp>(unit.source);
     if (auto property =

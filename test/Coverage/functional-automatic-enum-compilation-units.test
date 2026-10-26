@@ -1,0 +1,44 @@
+# RUN: %split-file %s %t
+# RUN: %obelisk --std=1800-2023 -O0 --target=native --coverage=functional \
+# RUN:   %t/first.sv %t/second.sv -o %t/native
+# RUN: %t/native --coverage-output=%t/native.obcov
+# RUN: obelisk-cov report --format=text %t/native.obcov | FileCheck %s
+# RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode --coverage=functional \
+# RUN:   %t/first.sv %t/second.sv -o %t/bytecode
+# RUN: %t/bytecode --coverage-output=%t/bytecode.obcov
+# RUN: obelisk-cov report --format=text %t/bytecode.obcov | FileCheck %s
+
+# LRM 19.5.3: automatic bins use the exact enum's members. The two $unit
+# color_t declarations have identical display names but different values.
+# CHECK-DAG: coverpoint first_colors: 1/2 (50.00%)
+# CHECK-DAG: coverpoint second_colors: 1/2 (50.00%)
+
+#--- first.sv
+typedef enum logic [3:0] {RED = 1, BLUE = 2} color_t;
+module first;
+  color_t color;
+  covergroup cg;
+    first_colors: coverpoint color;
+  endgroup
+  cg cov;
+  initial begin
+    cov = new;
+    color = RED;
+    cov.sample();
+  end
+endmodule
+
+#--- second.sv
+typedef enum logic [3:0] {RED = 5, BLUE = 6} color_t;
+module second;
+  color_t color;
+  covergroup cg;
+    second_colors: coverpoint color;
+  endgroup
+  cg cov;
+  initial begin
+    cov = new;
+    color = BLUE;
+    cov.sample();
+  end
+endmodule

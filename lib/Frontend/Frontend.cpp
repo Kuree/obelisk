@@ -1301,9 +1301,22 @@ public:
       for (StringRef component : targetPath.drop_front())
         nested.push_back(
             FlatSymbolRefAttr::get(builder.getContext(), component));
-      pending.operation->setAttr(
-          pending.attributeName,
-          SymbolRefAttr::get(builder.getContext(), targetPath.front(), nested));
+      auto reference =
+          SymbolRefAttr::get(builder.getContext(), targetPath.front(), nested);
+      if (pending.dimension) {
+        auto original =
+            pending.operation->getAttrOfType<ArrayAttr>(pending.attributeName);
+        SmallVector<Attribute> dimensions(original.begin(), original.end());
+        NamedAttrList dimension(
+            cast<DictionaryAttr>(dimensions[*pending.dimension]));
+        dimension.set(foreach_metadata::iteratorSymbol, reference);
+        dimensions[*pending.dimension] =
+            dimension.getDictionary(builder.getContext());
+        pending.operation->setAttr(pending.attributeName,
+                                   builder.getArrayAttr(dimensions));
+      } else {
+        pending.operation->setAttr(pending.attributeName, reference);
+      }
     }
     for (const PendingReferenceArray &pending : pendingReferenceArrays) {
       SmallVector<Attribute> references;
@@ -5447,6 +5460,9 @@ private:
         if (dimension.loopVar) {
           attributes.set(foreach_metadata::iteratorSymbol,
                          getSemanticSymbolReference(*dimension.loopVar));
+          currentPendingReferences.push_back(
+              {dimension.loopVar, builder.getStringAttr("loop_dimensions"),
+               dimensions.size()});
           attributes.set(
               foreach_metadata::iteratorPath,
               builder.getStringAttr(getSymbolPath(*dimension.loopVar)));
@@ -6860,8 +6876,8 @@ private:
       emittedSymbolOperations.try_emplace(&node, operation);
     }
     for (const PendingReferenceSeed &pending : currentPendingReferences)
-      pendingReferences.push_back(
-          {operation, pending.target, pending.attributeName});
+      pendingReferences.push_back({operation, pending.target,
+                                   pending.attributeName, pending.dimension});
     for (PendingReferenceArraySeed &pending : currentPendingReferenceArrays)
       pendingReferenceArrays.push_back(
           {operation, std::move(pending.targets), pending.attributeName});
@@ -7409,7 +7425,7 @@ private:
       record.getActual().emplaceBlock();
       for (const PendingReferenceSeed &pending : currentPendingReferences)
         pendingReferences.push_back(
-            {record, pending.target, pending.attributeName});
+            {record, pending.target, pending.attributeName, pending.dimension});
 
       if (internal) {
         OpBuilder::InsertionGuard guard(builder);
@@ -7514,11 +7530,13 @@ private:
     Operation *operation;
     const slang::ast::Symbol *target;
     StringAttr attributeName;
+    std::optional<size_t> dimension = std::nullopt;
   };
 
   struct PendingReferenceSeed {
     const slang::ast::Symbol *target;
     StringAttr attributeName;
+    std::optional<size_t> dimension = std::nullopt;
   };
 
   struct PendingReferenceArray {

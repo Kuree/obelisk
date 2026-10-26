@@ -227,7 +227,7 @@ module attributes {
 // CHECK-NEXT: %[[WRITE_REBUILT:.*]] = simulation.packed.unflatten %[[WRITE_UPDATED]]
 // CHECK-NEXT: simulation.managed.store %[[WRITE_REBUILT]] to %[[BITS_REF]]
 // CHECK: simulation.ref.store
-// CHECK: simulation.call @{{unit_[0-9]+}}({{.*}}) : (!simulation.context, i32) -> ()
+// CHECK: simulation.call @{{unit_[0-9]+}}({{.*}}) {simulation.vpi_call_site = @{{[^}]+}}} : (!simulation.context, i32) -> ()
 // The common interface receiver lets canonicalization share one dominating
 // dynamic-class guard across all three stream operations.
 // CHECK: simulation.class.is_instance {{.*}} is @{{.*}}supported_object

@@ -1347,6 +1347,9 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
         return std::nullopt;
       if (isa<semantic::SVTypeParameterSymbolOp>(operation))
         return VPIKind::TypeParameter;
+      if (auto value = operation->getAttrOfType<StringAttr>("constant_value");
+          value && value.getValue() == "$")
+        return std::nullopt;
       FailureOr<Type> normalized = getNormalizedSemanticType(operation);
       if (failed(normalized) || !sim::getPackedScalarType(*normalized))
         return std::nullopt;
@@ -2164,7 +2167,9 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
               invalid = true;
               return;
             }
-            if (!sim::getPackedScalarType(*type))
+            auto value = child.getAttrOfType<StringAttr>("constant_value");
+            if (!sim::getPackedScalarType(*type) ||
+                (value && value.getValue() == "$"))
               unsupportedParameters[definition].insert(parameterOrdinal);
           }
           ++parameterOrdinal;
@@ -2510,7 +2515,8 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
         return anchor;
       if (FlatSymbolRefAttr typespec = classTypespecSymbols.lookup(cursor))
         return typespec;
-      if (isa<semantic::SVStatementBlockSymbolOp>(cursor))
+      if (isa<semantic::SVStatementBlockSymbolOp, semantic::SVCovergroupTypeOp>(
+              cursor))
         return {};
     }
     return {};
@@ -3342,6 +3348,10 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
          type.getName() ? type.getName() : builder.getStringAttr("")});
   };
   for (semantic::SVTypeAliasTypeOp alias : aliases) {
+    FlatSymbolRefAttr owner = ownerAnchorFor(alias);
+    Operation *block = owner ? nullptr : proceduralOwnerFor(alias);
+    if (!owner && !block)
+      continue;
     auto semanticType = alias->getAttrOfType<TypeAttr>("semantic_type");
     ArrayAttr layers = typedefLayersFor(alias);
     FailureOr<sim::VPITypeSemanticsAttr> target =
@@ -3361,9 +3371,7 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
       invalid = true;
       continue;
     }
-    FlatSymbolRefAttr owner = ownerAnchorFor(alias);
-    Operation *block = owner ? nullptr : proceduralOwnerFor(alias);
-    if (!owner && !block)
+    if (!sim::vpiKindForTypespec(*target))
       continue;
     auto sourceTypeIdentity =
         alias->getAttrOfType<IntegerAttr>(vpiSourceTypeIdentityAttrName);
@@ -3795,10 +3803,34 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
       operation = reflection::findVPISourceOperator("conditional", 3);
     } else if (isa<semantic::SVIntegerLiteralOp>(node)) {
       kind = VPIKind::Constant;
-      auto semantic = makeVPITypeSemantics(
-          node->getAttrOfType<TypeAttr>("semantic_type").getValue(),
-          getSemanticLocation(node), {}, node);
-      auto frozen = freezeSemanticConstant(node);
+      Type sourceType =
+          node->getAttrOfType<TypeAttr>("semantic_type").getValue();
+      auto semantic =
+          makeVPITypeSemantics(sourceType, getSemanticLocation(node), {}, node);
+      auto normalized = getNormalizedSemanticType(node);
+      if (failed(semantic) || failed(normalized))
+        return failure();
+      // A sized integer literal is one integral value. Slang may represent
+      // its bits as a packed array, which is not a source array declaration.
+      if (semantic->getKind() == sim::VPITypeKind::PackedArray) {
+        *normalized = sim::getPackedScalarType(*normalized);
+        auto width = sim::getPackedWidth(*normalized);
+        if (!width)
+          return failure();
+        bool projected =
+            semantic->getProjected() && semantic->getProjected().getValue();
+        sourceType = semantic::IntegralType::get(
+            builder.getContext(), *width, semantic->getIsSigned(),
+            semantic->getIsFourState() && !projected, *width - 1, 0,
+            semantic->getIsFourState() ? semantic::SVIntegralFlavor::Logic
+                                       : semantic::SVIntegralFlavor::Generic);
+        semantic = makeVPITypeSemantics(sourceType, getSemanticLocation(node),
+                                        {}, node);
+      }
+      auto frozen = freezeConstantSpelling(
+          *normalized, sourceType,
+          node->getAttrOfType<StringAttr>("constant_value").getValue(),
+          getSemanticLocation(node));
       if (failed(semantic) || failed(frozen))
         return failure();
       type = *semantic;
@@ -4456,7 +4488,7 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
         // Runtime storage must still exist now, but it must not retain a
         // typedef or interface-typespec symbol whose local declaration was
         // deliberately deferred with that owner.
-        if (!ownerAnchorFor(owner))
+        if (!ownerAnchorFor(owner) || !sim::vpiKindForTypespec(type))
           return sim::VPITypeSemanticsAttr{};
         // Anonymous enum reflection is only sound when the frontend supplied
         // the exact declaration identity used to join the value to its
@@ -5013,6 +5045,10 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
         invalid = true;
         continue;
       }
+      if (vpiType->getKind() == sim::VPITypeKind::Enum &&
+          !vpiType->getTypedefAliases() &&
+          !property->getAttrOfType<IntegerAttr>(vpiSourceTypeIdentityAttrName))
+        continue;
       IntegerAttr storageID, eventID;
       if (field.getIsStatic()) {
         auto descriptor = descriptors.find(getHierarchyName(property));

@@ -36,7 +36,7 @@ module {
   }
 }
 
-// CHECK: simulation.vpi_object.anchor {{.*}} type 59 {{.*}} hierarchy "static_task_event.fire" {{.*}}{backing = #simulation.vpi_backing<kind = code_unit, id = {{[0-9]+}} : i64>}
+// CHECK: simulation.vpi_object.anchor {{.*}} type 59 {{.*}} hierarchy "static_task_event.fire" {{.*}}{backing = #simulation.vpi_backing<kind = code_unit, id = {{[0-9]+}} : i64>{{.*}}}
 // CHECK: simulation.code_unit.decl {{[0-9]+}} in {{[0-9]+}} task hierarchy "static_task_event.fire"
 // CHECK: simulation.func @__obelisk_root
 // CHECK: simulation.context.event %{{.*}}[0] : !simulation.event

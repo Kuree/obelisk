@@ -20,7 +20,8 @@ module {
 }
 
 // CHECK: module {
-// CHECK-NOT: sdf_annotate
+// CHECK: simulation.vpi_call.decl {{.*}}name "$sdf_annotate"
+// CHECK-NOT: callee_name = "$sdf_annotate"
 // CHECK-NOT: obelisk.sdf
 // CHECK-NOT: sdf.table
 // CHECK-NOT: sdf.reader

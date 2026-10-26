@@ -6,6 +6,23 @@
 #include "obelisk/Reflection/VPIObjectModel.h.inc"
 
 namespace obelisk::reflection {
+// Reverse uses and connectivity are derived from the owning source slot;
+// only these forward relations belong to a compact expression's syntax tree.
+inline constexpr bool isVPIExpressionChildRelation(uint32_t selector) {
+  switch (static_cast<VPIRelationKind>(selector)) {
+  case VPIRelationKind::OperandRel:
+  case VPIRelationKind::ParentRel:
+  case VPIRelationKind::IndexRel:
+  case VPIRelationKind::LeftRangeRel:
+  case VPIRelationKind::RightRangeRel:
+  case VPIRelationKind::BaseExprRel:
+  case VPIRelationKind::WidthExprRel:
+    return true;
+  default:
+    return false;
+  }
+}
+
 // Source-only recipes preserve syntax, independently of any elaborated value.
 // Concatenation and event lists have variable arity; ordinary operator arities
 // come from the generated source-operator inventory.

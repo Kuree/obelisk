@@ -69,7 +69,7 @@ module {
     simulation.scope.decl 0
     simulation.vpi_object.anchor @pkg id 0 type 600 in 0 ordinal 0 hierarchy "pkg" debug "pkg"
     simulation.vpi_object.anchor @class id 1 type 652 in 0 parent @pkg ordinal 0 hierarchy "pkg::G" debug "G"
-    // expected-error @+1 {{source default requires a type parameter owner}}
+    // expected-error @+1 {{source default requires a type parameter or type actual owner}}
     simulation.vpi_typespec.decl @default id 0 in 0 owner @class hierarchy "" debug "" {origin = 5 : i32, target_type = #simulation.vpi_type<kind = int, isSigned = true, isFourState = false, range = [31, 0], children = [], childNames = []>}
   }
 }

@@ -78,7 +78,7 @@ module attributes {llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8", llv
 // CHECK-NOT: dpi.has_exports
 // CHECK-DAG: simulation.vpi_object.anchor {{.*}} type 20 {{.*}} hierarchy "dpi_imports.sv_add" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 50 : i32, value = true>{{.*}}>
 // CHECK-DAG: simulation.vpi_object.anchor {{.*}} type 59 {{.*}} hierarchy "dpi_imports.update" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 50 : i32, value = true>{{.*}}>
-// CHECK-DAG: simulation.vpi_object.anchor {{.*}} type 20 {{.*}} hierarchy "dpi_imports.notify" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 50 : i32, value = true>{{.*}}>
+// CHECK-DAG: simulation.vpi_object.anchor {{.*}} type 20 {{.*}} hierarchy "dpi_imports.notify" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 4 : i32, value = 0 : i32>, #simulation.vpi_property<selector = 50 : i32, value = true>{{.*}}>
 // CHECK: simulation.dpi.call "c_add" id {{-?[0-9]+}} scope 1
 // CHECK-SAME: context
 // CHECK-SAME: kind = int

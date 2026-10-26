@@ -64,7 +64,7 @@ module {
 module {
   simulation.design @immutable_non_parameter {
     simulation.scope.decl 0
-    // expected-error @+1 {{immutable value is currently supported only on parameters}}
+    // expected-error @+1 {{immutable value is supported only on parameters and constants}}
     simulation.vpi_object.anchor @event id 0 type 34 in 0 ordinal 0
         hierarchy "event" debug "event" {
       immutable_value = #simulation.frozen_constant<

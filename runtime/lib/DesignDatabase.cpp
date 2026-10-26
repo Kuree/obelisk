@@ -1904,6 +1904,7 @@ bool packedFrameLocalScopeOffset(const Database &database, uint32_t packed,
   const uint32_t index = obelisk::reflection::unpackTableIndex(packed);
   switch (obelisk::reflection::unpackTableIndexKind(packed)) {
   case TableKind::Object:
+  case TableKind::StaticObject:
     return packedObjectReferenceOffset(database, packed, offset);
   case TableKind::Statement:
     if (index >= database.statementCount)
@@ -5316,7 +5317,8 @@ bool validateDatabaseImpl(const Database &database) {
                                     OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE |
                                     OBELISK_RT_DESIGN_SEMANTIC_TAGGED |
                                     OBELISK_RT_DESIGN_SEMANTIC_SOFT |
-                                    OBELISK_RT_DESIGN_SEMANTIC_WILDCARD_INDEX;
+                                    OBELISK_RT_DESIGN_SEMANTIC_WILDCARD_INDEX |
+                                    OBELISK_RT_DESIGN_SEMANTIC_PROJECTED;
   std::vector<uint8_t> semanticState(database.semanticTypeCount, 0);
   for (uint32_t index = 0; index != database.semanticTypeCount; ++index) {
     const uint8_t *type = database.data + database.semanticTypes +
@@ -5412,6 +5414,8 @@ bool validateDatabaseImpl(const Database &database) {
     bool soft = (flags & OBELISK_RT_DESIGN_SEMANTIC_SOFT) != 0;
     bool isSigned = (flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0;
     bool isFourState = (flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0;
+    if ((flags & OBELISK_RT_DESIGN_SEMANTIC_PROJECTED) && !isFourState)
+      return false;
     bool packedAggregate = kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
                            kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION;
     bool unionType = kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION ||
@@ -6214,15 +6218,14 @@ bool validateDatabaseImpl(const Database &database) {
     const uint32_t scopeIndex = obelisk::reflection::unpackTableIndex(scope);
     switch (obelisk::reflection::unpackTableIndexKind(scope)) {
     case TableKind::Object:
-      if (scopeIndex != codeUnitIndex ||
-          (recordVPIKind(codeUnit) !=
-               static_cast<uint32_t>(
-                   obelisk::reflection::VPIObjectKind::Task) &&
-           recordVPIKind(codeUnit) !=
-               static_cast<uint32_t>(
-                   obelisk::reflection::VPIObjectKind::Function)))
+    case TableKind::StaticObject: {
+      uint32_t source = 0;
+      uint64_t sourceOffset = 0;
+      if (!findCallableSource(database, codeUnitIndex, source, sourceOffset) ||
+          source != scope)
         return false;
       break;
+    }
     case TableKind::Statement: {
       if (scopeIndex >= database.statementCount)
         return false;
@@ -6398,7 +6401,8 @@ bool validateDatabaseImpl(const Database &database) {
       const uint32_t physicalKind = read32(physical + 4) & UINT32_C(0xff);
       const uint32_t physicalFlags = read32(physical + 4) >> 8;
       const bool fourState =
-          (read32(semantic) & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0;
+          (read32(semantic) & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0 &&
+          (read32(semantic) & OBELISK_RT_DESIGN_SEMANTIC_PROJECTED) == 0;
       const bool physicalFourState =
           (physicalFlags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0;
       const bool physicalPacked =
@@ -6423,7 +6427,9 @@ bool validateDatabaseImpl(const Database &database) {
                  (flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0 &&
                  ((flags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0) ==
                      ((read32(childSemantic) &
-                       OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0);
+                       OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0 &&
+                      (read32(childSemantic) &
+                       OBELISK_RT_DESIGN_SEMANTIC_PROJECTED) == 0);
         }
         auto child = layouts.find(childIndex);
         return child != layouts.end() &&
@@ -10482,7 +10488,8 @@ designSemanticTypeInfo(const Database &database,
                               OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE |
                               OBELISK_RT_DESIGN_SEMANTIC_TAGGED |
                               OBELISK_RT_DESIGN_SEMANTIC_SOFT |
-                              OBELISK_RT_DESIGN_SEMANTIC_WILDCARD_INDEX);
+                              OBELISK_RT_DESIGN_SEMANTIC_WILDCARD_INDEX |
+                              OBELISK_RT_DESIGN_SEMANTIC_PROJECTED);
   outInfo->public_vpi_kind =
       (encoded & OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) >>
       OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT;

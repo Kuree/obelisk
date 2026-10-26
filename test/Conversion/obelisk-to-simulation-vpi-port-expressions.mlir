@@ -58,6 +58,13 @@ module attributes {llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8", llv
               obelisk.sv.expression.empty_argument attributes {node_id = 25 : i64, semantic_type = !half} {}
             }
           }
+          obelisk.sv.port.connection attributes {node_id = 45 : i64, actual_is_constant = false, direction = 0 : i32, formal_name = "bit", formal_ordinal = 4 : i64, formal_path = "top.child.bit", formal_symbol = @root::@top::@body::@child::@body::@bit, formal_type = !bit, internal_path = "top.child.inside_bit", internal_symbol = @root::@top::@body::@child::@body::@inside_bit, is_ansi = true, is_net = false, provenance = 0 : i32} {
+          } {
+            obelisk.sv.expression.element_select attributes {node_id = 46 : i64, semantic_type = !bit, is_signed = false} {
+              obelisk.sv.expression.named_value attributes {node_id = 47 : i64, referenced_path = "top.source", referenced_symbol = @root::@top::@body::@source, semantic_type = !word} {}
+              obelisk.sv.expression.integer_literal attributes {node_id = 48 : i64, constant_value = "7", semantic_type = !int, is_signed = true} {}
+            }
+          }
           obelisk.sv.symbol.instance_body @body attributes {node_id = 36 : i64, hierarchical_name = "top.child", name = "Child"} {
             obelisk.sv.symbol.port @first attributes {node_id = 28 : i64, direction = 0 : i32, hierarchical_name = "top.child.first", name = "first", semantic_type = !half} {}
             obelisk.sv.symbol.variable @inside_first attributes {node_id = 29 : i64, hierarchical_name = "top.child.inside_first", name = "inside_first", lifetime = 1 : i32, semantic_type = !half} {}
@@ -67,6 +74,8 @@ module attributes {llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8", llv
             obelisk.sv.symbol.variable @inside_concat attributes {node_id = 33 : i64, hierarchical_name = "top.child.inside_concat", name = "inside_concat", lifetime = 1 : i32, semantic_type = !half} {}
             obelisk.sv.symbol.port @output attributes {node_id = 34 : i64, direction = 1 : i32, hierarchical_name = "top.child.output", name = "output", semantic_type = !half} {}
             obelisk.sv.symbol.variable @inside_output attributes {node_id = 35 : i64, hierarchical_name = "top.child.inside_output", name = "inside_output", lifetime = 1 : i32, semantic_type = !half} {}
+            obelisk.sv.symbol.port @bit attributes {node_id = 49 : i64, direction = 0 : i32, hierarchical_name = "top.child.bit", name = "bit", semantic_type = !bit} {}
+            obelisk.sv.symbol.variable @inside_bit attributes {node_id = 50 : i64, hierarchical_name = "top.child.inside_bit", name = "inside_bit", lifetime = 1 : i32, semantic_type = !bit} {}
           }
         }
       }

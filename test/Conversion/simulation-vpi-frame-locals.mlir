@@ -2,6 +2,7 @@
 // RUN: env OBELISK_TEST_INPUT=%s %obj_root/test/obelisk-design-database-dump-test \
 // RUN:   --gtest_filter=GeneratedDesignDatabase.FrameAutomaticVariables
 #word = #simulation.vpi_type<kind = int, isSigned = true, isFourState = false, range = [31, 0], children = [], childNames = []>
+#bits = #simulation.vpi_type<kind = bit, isSigned = false, isFourState = false, range = [31, 0], children = [], childNames = []>
 #flags = #simulation.vpi_type<kind = logic, isSigned = false, isFourState = true, range = [7, 0], children = [], childNames = []>
 #array = #simulation.vpi_type<kind = unpacked_array, isSigned = false, isFourState = true, range = [2, 1], children = [#flags], childNames = []>
 #semaphore = #simulation.vpi_type<kind = semaphore, isSigned = false, isFourState = false, range = [], children = [], childNames = []>
@@ -29,6 +30,13 @@ module attributes {
     simulation.vpi_relation.decl #simulation.vpi_ref<kind = statement, id = 13 : i64> selector 82 handle ordinal 0 to #simulation.vpi_ref<kind = symbol, symbol = @sum>
     simulation.vpi_relation.decl #simulation.vpi_ref<kind = symbol, symbol = @sum> selector 97 iterate ordinal 0 to #simulation.vpi_ref<kind = symbol, symbol = @value> {simulation.vpi_expression_identifier = "value"}
     simulation.vpi_relation.decl #simulation.vpi_ref<kind = symbol, symbol = @sum> selector 97 iterate ordinal 1 to #simulation.vpi_ref<kind = symbol, symbol = @shadow> {simulation.vpi_expression_identifier = "value"}
+    simulation.vpi_expression.decl @selected id 101 type 42 in 1 owned_by #simulation.vpi_ref<kind = statement, id = 13 : i64> selector 77 handle ordinal 0 : i32 {vpi_type = #bits}
+    simulation.vpi_relation.decl #simulation.vpi_ref<kind = statement, id = 13 : i64> selector 77 handle ordinal 0 to #simulation.vpi_ref<kind = symbol, symbol = @selected>
+    simulation.vpi_relation.decl #simulation.vpi_ref<kind = symbol, symbol = @selected> selector 81 handle ordinal 0 to #simulation.vpi_ref<kind = symbol, symbol = @shadow>
+    simulation.vpi_expression.decl @selected_left id 102 type 7 in 1 owned_by #simulation.vpi_ref<kind = symbol, symbol = @selected> selector 79 handle ordinal 0 : i32 {vpi_type = #word, immutable_value = #simulation.frozen_constant<value = [31 : i32, 0 : i32], isSigned = true> : i32}
+    simulation.vpi_relation.decl #simulation.vpi_ref<kind = symbol, symbol = @selected> selector 79 handle ordinal 0 to #simulation.vpi_ref<kind = symbol, symbol = @selected_left>
+    simulation.vpi_expression.decl @selected_right id 103 type 7 in 1 owned_by #simulation.vpi_ref<kind = symbol, symbol = @selected> selector 83 handle ordinal 0 : i32 {vpi_type = #word, immutable_value = #simulation.frozen_constant<value = [0 : i32, 0 : i32], isSigned = true> : i32}
+    simulation.vpi_relation.decl #simulation.vpi_ref<kind = symbol, symbol = @selected> selector 83 handle ordinal 0 to #simulation.vpi_ref<kind = symbol, symbol = @selected_right>
     simulation.statement_site.decl 1100 on 11 phase 0
     simulation.statement_site.decl 1200 on 12 phase 0
     simulation.statement_site.decl 1300 on 13 phase 0

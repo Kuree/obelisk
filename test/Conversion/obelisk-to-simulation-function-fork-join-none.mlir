@@ -45,7 +45,7 @@ module {
 
 // The function remains a zero-time function; only its detached branch owns
 // the suspension.
-// CHECK: simulation.vpi_object.anchor {{.*}} type 20 {{.*}} hierarchy "top.spawn" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 50 : i32, value = true>]>
+// CHECK: simulation.vpi_object.anchor {{.*}} type 20 {{.*}} hierarchy "top.spawn" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 50 : i32, value = true>{{.*}}]>
 // CHECK: simulation.code_unit.decl {{[0-9]+}} in {{[0-9]+}} function hierarchy "top.spawn"
 // CHECK: simulation.code_unit.decl {{[0-9]+}} in {{[0-9]+}} fork hierarchy "top.spawn.$fork.6.0"
 // CHECK-LABEL: simulation.func private @unit_0.fork.6.0.0(%{{.*}}: !simulation.context {simulation.capture_kind = 0 : i32}) attributes

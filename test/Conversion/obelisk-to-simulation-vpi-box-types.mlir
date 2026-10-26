@@ -39,7 +39,7 @@ module attributes {llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8", llv
 }
 // CHECK: simulation.vpi_box_type.decl @[[BOX:__obelisk_vpi_box_type_[0-9]+]] id 1 : i32
 // CHECK-SAME: typedefAliases = [@{{.*}}]
-// CHECK: simulation.box.bind_type %{{.*}} to @[[BOX]] : <i32>
+// CHECK: simulation.box.bind_type %{{.*}} to @[[BOX]] : !simulation.dynamic_array<i32>
 // OFF-NOT: simulation.vpi_box_type.decl
 // OFF-NOT: simulation.box.bind_type
 // OFF: simulation.box.pack

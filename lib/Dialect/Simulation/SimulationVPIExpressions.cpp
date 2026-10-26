@@ -647,7 +647,7 @@ LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
         return std::nullopt;
       SmallVector<const Endpoint *, 3> result(count, nullptr);
       for (auto relation : relations) {
-        if (relation.getSelector() == uint32_t(Relation::UseRel))
+        if (!reflection::isVPIExpressionChildRelation(relation.getSelector()))
           continue;
         if (relation.getSelector() != uint32_t(Relation::OperandRel) ||
             relation.getMode() != VPIRelationMode::Iterate ||
@@ -783,7 +783,7 @@ LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
                         right.getOrdinal());
     });
     for (auto relation : ordered) {
-      if (relation.getSelector() == uint32_t(Relation::UseRel))
+      if (!reflection::isVPIExpressionChildRelation(relation.getSelector()))
         continue;
       auto target = endpoints.find(relation.getTarget());
       bool sourceOnlyChild =

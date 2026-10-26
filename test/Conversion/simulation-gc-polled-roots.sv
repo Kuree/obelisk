@@ -41,7 +41,7 @@
 // CHECK: simulation.call @unit_6(%{{.*}}) :
 // CHECK: simulation.class.direct_call @unit_2 {{.*}}{simulation.gc_poll_free}
 // CHECK: simulation.call @unit_7(%{{.*}}) :
-// CHECK: simulation.class.virtual_call {{[^{]*}} :
+// CHECK: simulation.class.virtual_call {{[^{]*}} {simulation.vpi_call_site = @{{[^}]+}}} :
 // CHECK-NOT: simulation.gc.safepoint
 // CHECK: simulation.return
 

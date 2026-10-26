@@ -13,8 +13,8 @@
 // The zero-total path reaches the next randcase without a draw, and the weight
 // function of that randcase is evaluated exactly once.
 // CHECK: ^[[SKIP]]:
-// CHECK-NEXT: simulation.call @{{[^(]*}}(%{{.*}}) : (!simulation.context) -> i8
-// CHECK-NOT: simulation.call @{{[^(]*}}(%{{.*}}) : (!simulation.context) -> i8
+// CHECK-NEXT: simulation.call @{{[^(]*}}(%{{.*}}) {simulation.vpi_call_site = @{{[^}]+}}} : (!simulation.context) -> i8
+// CHECK-NOT: simulation.call @{{[^(]*}}(%{{.*}}) {simulation.vpi_call_site = @{{[^}]+}}} : (!simulation.context) -> i8
 // CHECK: ^[[DRAW]]:
 // CHECK-NEXT: %[[RANGE:.*]] = arith.extui %[[TOTAL]] : i8 to i64
 // CHECK-NEXT: %[[RAW:.*]] = simulation.random.bounded %{{.*}}, %[[RANGE]]

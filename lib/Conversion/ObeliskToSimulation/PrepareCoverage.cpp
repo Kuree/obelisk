@@ -3146,7 +3146,12 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
     SmallVector<PendingTransitionProgram, 0> pendingTransitionPrograms;
     llvm::DenseMap<uint64_t, Operation *> valueSetOwners;
     llvm::StringMap<ir::SVCovergroupTypeOp> semanticCovergroups;
-    llvm::DenseMap<Type, ir::SVEnumTypeOp> enumDeclarations;
+    using EnumIdentity = std::pair<Type, Attribute>;
+    llvm::DenseMap<EnumIdentity, SmallVector<ir::SVEnumValueSymbolOp>>
+        enumDeclarations;
+    auto enumIdentity = [](Operation *owner, Type type) -> EnumIdentity {
+      return {type, owner->getAttr(simlowering::vpiSourceTypeIdentityAttrName)};
+    };
     module.walk([&](ir::SVCovergroupTypeOp covergroup) {
       auto handle =
           dyn_cast<ir::CovergroupHandleType>(covergroup.getSemanticType());
@@ -3156,8 +3161,20 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
           handle.getCovergroupName());
       semanticCovergroups.try_emplace(symbol.getValue(), covergroup);
     });
-    module.walk([&](ir::SVEnumTypeOp enumeration) {
-      enumDeclarations.try_emplace(enumeration.getSemanticType(), enumeration);
+    // Enumerators can be imported directly into their lexical scope, without
+    // an enum-type AST wrapper. Display names can coincide across compilation
+    // units, so use the exact source type identity when it is available.
+    module.walk([&](ir::SVEnumValueSymbolOp enumerator) {
+      auto type = enumerator->getAttrOfType<TypeAttr>("semantic_type");
+      if (!type || !isa<ir::EnumType>(type.getValue()))
+        return;
+      auto &members =
+          enumDeclarations[enumIdentity(enumerator, type.getValue())];
+      if (llvm::none_of(members, [&](auto member) {
+            return simlowering::getDebugName(member) ==
+                   simlowering::getDebugName(enumerator);
+          }))
+        members.push_back(enumerator);
     });
     auto reportName = [](StringRef explicitName, StringRef hierarchy) {
       if (!explicitName.empty())
@@ -5193,8 +5210,8 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
             if (!hasNamedCoverageBin && pointSourceType &&
                 isa<ir::EnumType>(pointSourceType.getValue())) {
               const uint64_t pointBitWidth = pointWidth;
-              auto declaration =
-                  enumDeclarations.find(pointSourceType.getValue());
+              auto declaration = enumDeclarations.find(enumIdentity(
+                  pointSourceExpression, pointSourceType.getValue()));
               if (!pointBitWidth || pointBitWidth > UINT32_MAX ||
                   declaration == enumDeclarations.end()) {
                 coverpoint.emitError(
@@ -5204,11 +5221,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                 return;
               }
               bool hasEnumerator = false;
-              for (Operation *enumMember :
-                   simlowering::getChildren(declaration->second)) {
-                auto enumerator = dyn_cast<ir::SVEnumValueSymbolOp>(enumMember);
-                if (!enumerator)
-                  continue;
+              for (auto enumerator : declaration->second) {
                 hasEnumerator = true;
                 StringRef enumeratorName =
                     simlowering::getDebugName(enumerator);

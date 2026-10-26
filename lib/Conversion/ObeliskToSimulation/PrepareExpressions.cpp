@@ -106,7 +106,7 @@ VPIExpressionResolver::resolve(Operation *expression) {
           sim::vpiKindForNet(identity.getVpiType())};
     }
     auto net = nets.lookup(descriptor.id);
-    if (!net || net.getHierarchicalName() != path)
+    if (!net || !net.getVpiTypeAttr() || net.getHierarchicalName() != path)
       return std::nullopt;
     return VPIExpressionEndpoint{
         sim::VPIObjectRefAttr::get(expression->getContext(),
@@ -116,7 +116,8 @@ VPIExpressionResolver::resolve(Operation *expression) {
   }
   if (descriptor.kind == DescriptorInfo::Kind::Storage) {
     auto storage = storages.lookup(descriptor.id);
-    if (!storage || storage.getHierarchicalName() != path)
+    if (!storage || !storage.getVpiTypeAttr() ||
+        storage.getHierarchicalName() != path)
       return std::nullopt;
     return VPIExpressionEndpoint{
         sim::VPIObjectRefAttr::get(expression->getContext(),

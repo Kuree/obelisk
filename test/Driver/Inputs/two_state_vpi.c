@@ -38,7 +38,55 @@ static int put_scalar(const char *name, int bit, int mode) {
   return vpi_chk_error(0) != 0;
 }
 
+static int check_message_value(vpiHandle message, uint32_t expected) {
+  if (!message || vpi_get(vpiSize, message) != 8)
+    return 1;
+  s_vpi_value value = {vpiVectorVal};
+  vpi_get_value(message, &value);
+  return vpi_chk_error(0) || !value.value.vector ||
+         (uint32_t)value.value.vector[0].aval != expected ||
+         value.value.vector[0].bval;
+}
+
+static int check_messages(const char *name, int array, uint32_t expected) {
+  vpiHandle variable = vpi_handle_by_name((PLI_BYTE8 *)name, 0);
+  vpiHandle object = vpi_handle(vpiClassObj, variable);
+  vpiHandle iterator = vpi_iterate(vpiMessages, object);
+  if (!iterator) {
+    vpi_printf("%s: missing mailbox messages\n", name);
+    return 1;
+  }
+  vpiHandle message = vpi_scan(iterator);
+  if (!message)
+    return 1;
+  if (array) {
+    vpiHandle operands = vpi_iterate(vpiOperand, message);
+    if (!operands)
+      return 1;
+    for (int index = 0; index != 2; ++index) {
+      vpiHandle operand = vpi_scan(operands);
+      if (check_message_value(operand, index ? 0x82 : 0x41))
+        return 1;
+      vpi_release_handle(operand);
+    }
+    if (vpi_scan(operands) || vpi_chk_error(0))
+      return 1;
+  } else if (check_message_value(message, expected)) {
+    return 1;
+  }
+  if (vpi_scan(iterator) || vpi_chk_error(0))
+    return 1;
+  vpi_release_handle(message);
+  vpi_release_handle(object);
+  vpi_release_handle(variable);
+  return vpi_chk_error(0) != 0;
+}
+
 int check_two_state_vpi(void) {
+  if (check_messages("top.messages", 0, 0) ||
+      check_messages("top.array_messages", 1, 0) ||
+      check_messages("top.boxed_messages", 0, 0x5a))
+    return 1;
   if (check("$root.top.scalar", vpiLogicVar, 1, 1, 0, 0) ||
       check("$root.top.flag", vpiReg, 1, 1, 0, 0) ||
       check("$root.top.declared_bit", vpiBitVar, 1, 1, 0, 0) ||

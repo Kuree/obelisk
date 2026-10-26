@@ -115,13 +115,17 @@ expressions and deduplicated declaration uses. `vpi_compare_objects` compares
 bit/part-selects by their currently existing backing spans: equivalent ordinary and
 indexed selections compare equal, including a whole-span or indexed-bit handle.
 Unknown or out-of-range selections compare unequal, including to themselves.
+Selections of live frame locals also compare by automatic allocation and bit
+offset, including aliases to automatic state. Unbound or expired actuals compare
+unequal. Selected frame aliases to other storage kinds report a notice until
+their backing identities can be resolved.
 Constant and Operation occurrences keep their source identities. These connections reuse the same
 expression templates and bindings.
 
 Continuous-assignment `vpiLhs`/`vpiRhs` and primitive-terminal `vpiExpr`
 relations use the same expression records for supported selections, constants,
-and compound operands. Whole-declaration connectivity remains available;
-selected-net driver/load connectivity is a separate remaining step.
+and compound operands. Selected-net driver/load queries derive connectivity
+from these records as described below.
 
 Identical syntax templates share their node and type metadata across instances;
 small root and leaf bindings preserve distinct occurrence identities and values.
@@ -280,8 +284,9 @@ context. Automatic operands resolve exact declarations within that invocation,
 including enclosing lexical blocks. Source statements and expressions survive
 frame expiry, while reads requiring expired actuals report a notice. This reuses
 the existing automatic declaration inventory without adding image records.
-Compiler frame instrumentation and source-level local bindings are still being
-completed; ordinary source execution does not yet populate these frame queries.
+Compiler instrumentation populates these queries for supported source scopes,
+calls, and local bindings in native and bytecode execution. Unsupported source
+forms retain the availability limits described above.
 
 `vpiMessages` snapshots mailbox contents in FIFO order without consuming them.
 Integral and packed values retain every bit and unknown bit; real and string
@@ -487,3 +492,6 @@ forms of dependency occur. Truncated data does not hide source index reads.
 Primitive input concatenations use the scalar result boundary, and output
 terminal indices remain loads. Selected port connectivity, variable loads,
 call-argument loads, and assignment-bit contribution values remain followups.
+`vpiPortInst` on a selected net or variable bit reports a notice: returning only
+the port that owns one source occurrence would omit other connected ports and
+their corresponding port bits (37.16).

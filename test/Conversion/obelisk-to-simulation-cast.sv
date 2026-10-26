@@ -58,8 +58,7 @@
 // CHECK: %[[BASE:.*]] = simulation.ref.load {{.*}} : {{.*}} -> !simulation.class_handle<@[[BASE_CLASS:[^>]+]]>
 // CHECK-NEXT: %[[DOWNCAST:.*]] = simulation.class.cast %[[BASE]] : !simulation.class_handle<@[[BASE_CLASS]]> to !simulation.class_handle<@[[DERIVED_CLASS:[^>]+]]>
 // CHECK-NEXT: %[[INSTANCE:.*]] = simulation.class.is_instance %[[BASE]] is @[[DERIVED_CLASS]]
-// CHECK-NEXT: %[[CLASS_ID:.*]] = simulation.class.id %[[BASE]]
-// CHECK: %[[IS_NULL:.*]] = arith.cmpi eq, %[[CLASS_ID]], {{.*}} : i64
+// CHECK-NEXT: %[[IS_NULL:.*]] = simulation.managed.is_null %[[BASE]]
 // CHECK-NEXT: %[[CLASS_OK:.*]] = arith.ori %[[INSTANCE]], %[[IS_NULL]] : i1
 // CHECK-NEXT: cf.cond_br %[[CLASS_OK]], ^[[CLASS_STORE:bb[0-9]+]], ^[[CLASS_DONE:bb[0-9]+]]
 // CHECK: ^[[CLASS_STORE]]:

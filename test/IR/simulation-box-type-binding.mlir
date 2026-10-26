@@ -10,7 +10,7 @@ module attributes {llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8", llv
     simulation.func @bind(%ctx: !simulation.context {simulation.capture_kind = 0 : i32},
                          %array: !simulation.dynamic_array<i32> {simulation.capture_kind = 1 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32} {
-      // CHECK: simulation.box.bind_type %{{.*}} to @integer : <i32>
+      // CHECK: simulation.box.bind_type %{{.*}} to @integer : !simulation.dynamic_array<i32>
       simulation.box.bind_type %array to @integer : !simulation.dynamic_array<i32>
       simulation.return
     }

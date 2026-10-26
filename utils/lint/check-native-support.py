@@ -157,6 +157,7 @@ native_members = [
     "System.o",
     "VCD.o",
     "VPI.o",
+    "VPIValueLayout.o",
     # Pay-for-play services are deliberately the archive tail. The wasm graph
     # uses the same order when it cannot provide an ELF feature text section.
     "ScanFormat.o",

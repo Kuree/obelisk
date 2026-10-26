@@ -1891,6 +1891,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
     llvm::sort(codeUnitScopeBindings, [](auto left, auto right) {
       return left.codeUnitID < right.codeUnitID;
     });
+    for (auto &local : frameLocalBindings) {
+      if (unpackTableIndexKind(local.scope) == TableKind::Statement)
+        continue;
+      auto source = codeUnitSourceRefs.find(objects[local.owner].id);
+      if (source != codeUnitSourceRefs.end() &&
+          !tryPackTableIndex(source->second.table, source->second.index,
+                             local.scope))
+        return {};
+    }
     for (auto [storage, anchor] : eventArrayStorage) {
       ImageObjectRef target = anchorRefs.lookup(anchor);
       uint32_t packed = 0;
@@ -2510,6 +2519,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint32_t scopeIndex = unpackTableIndex(variable.scope);
     uint32_t scopeKind = scopeTable == TableKind::Statement
                              ? statements[scopeIndex].declaration.getVpiKind()
+                         : scopeTable == TableKind::StaticObject
+                             ? staticObjects[scopeIndex].vpiKind
                              : objects[scopeIndex].vpiKind;
     uint32_t kind = objects[variable.object].vpiKind;
     if (failed(addAutomaticRelation(scopeTable, scopeIndex, scopeKind,
@@ -3994,7 +4005,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       continue;
     }
     if (auto expression = expressionFor(relation.getSource())) {
-      expressionChildren[expression].push_back(relation);
+      if (reflection::isVPIExpressionChildRelation(relation.getSelector()))
+        expressionChildren[expression].push_back(relation);
       continue;
     }
     if (((isCaseLabel(relation) || isCallArgument(relation)) &&
@@ -5711,7 +5723,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
           leaf = leaf.drop_front(colon + 2);
         else if (dot != StringRef::npos)
           leaf = leaf.drop_front(dot + 1);
-        return leaf != debugName.getValue();
+        if (!leaf.consume_front(debugName.getValue()))
+          return true;
+        // Flattened array elements retain their declared subscripts in the
+        // hierarchy. Those suffixes belong to vpiName, too.
+        while (leaf.consume_front("[")) {
+          int64_t index;
+          if (leaf.consumeInteger(10, index) || !leaf.consume_front("]"))
+            return true;
+        }
+        return !leaf.empty();
       };
       if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation);
           storage && (staticLocalBindings.contains(storage.getId()) ||
@@ -6635,6 +6656,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
       flags |= OBELISK_RT_DESIGN_SEMANTIC_SIGNED;
     if (entry.semantic.getIsFourState())
       flags |= OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE;
+    if (entry.semantic.getProjected() &&
+        entry.semantic.getProjected().getValue())
+      flags |= OBELISK_RT_DESIGN_SEMANTIC_PROJECTED;
     // Scalar bit/logic/reg types have a one-bit intrinsic [0:0] range. Wider
     // direct integral nodes retain an explicit source packed dimension; an
     // explicitly ranged one-bit type remains a PackedArray node.

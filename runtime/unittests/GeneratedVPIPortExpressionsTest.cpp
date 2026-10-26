@@ -79,13 +79,13 @@ TEST(GeneratedDesignDatabase, PortExpressions) {
   ASSERT_NE(source, nullptr);
   ASSERT_NE(destination, nullptr);
   auto ports = children(child, vpiPort);
-  ASSERT_EQ(ports.size(), 4u);
-  std::array<vpiHandle, 4> ordered{}, connections{};
-  const char *names[] = {"first", "again", "concat", "output"};
+  ASSERT_EQ(ports.size(), 5u);
+  std::array<vpiHandle, 5> ordered{}, connections{};
+  const char *names[] = {"first", "again", "concat", "output", "bit"};
   for (auto port : ports) {
     int index = vpi_get(vpiPortIndex, port);
     ASSERT_GE(index, 0);
-    ASSERT_LT(index, 4);
+    ASSERT_LT(index, 5);
     ASSERT_EQ(ordered[index], nullptr);
     ordered[index] = port;
     EXPECT_STREQ(vpi_get_str(vpiName, port), names[index]);
@@ -96,9 +96,20 @@ TEST(GeneratedDesignDatabase, PortExpressions) {
     EXPECT_EQ(vpi_compare_objects(keep(vpi_handle(vpiHighConn, port)), high),
               1);
     EXPECT_EQ(vpi_compare_objects(high, index == 3 ? destination : source), 0);
-    EXPECT_EQ(vpi_get(vpiType, high),
-              index == 2 ? vpiOperation : vpiPartSelect);
-    EXPECT_EQ(vpi_get(vpiSize, high), 4);
+    EXPECT_EQ(vpi_get(vpiType, high), index == 2   ? vpiOperation
+                                      : index == 4 ? vpiRegBit
+                                                   : vpiPartSelect);
+    EXPECT_EQ(vpi_get(vpiSize, high), index == 4 ? 1 : 4);
+    if (index == 4) {
+      // This bit also feeds the vector ports above. Until those port-bit
+      // identities are supported, the query must not return only this port.
+      EXPECT_EQ(vpi_iterate(vpiPortInst, high), nullptr);
+      EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+      auto indexed = keep(vpi_handle_by_index(source, 7));
+      ASSERT_NE(indexed, nullptr);
+      EXPECT_EQ(vpi_iterate(vpiPortInst, indexed), nullptr);
+      EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+    }
     EXPECT_EQ(vpi_compare_objects(keep(vpi_handle(vpiModule, high)), top), 1);
     EXPECT_EQ(vpi_compare_objects(keep(vpi_handle(vpiInstance, high)), top), 1);
     auto low = keep(vpi_handle(vpiLowConn, port));
@@ -146,7 +157,7 @@ TEST(GeneratedDesignDatabase, PortExpressions) {
   };
   write(source, 0xa5);
   write(destination, 0x3c);
-  const int first[] = {0xa, 0xa, 9, 0xc};
+  const int first[] = {0xa, 0xa, 9, 0xc, 1};
   for (unsigned i = 0; i != connections.size(); ++i)
     EXPECT_EQ(read(connections[i]), first[i]);
   write(source, 0x5a);
@@ -154,9 +165,10 @@ TEST(GeneratedDesignDatabase, PortExpressions) {
   EXPECT_EQ(read(connections[1]), 5);
   EXPECT_EQ(read(connections[2]), 6);
   EXPECT_EQ(read(connections[3]), 12);
+  EXPECT_EQ(read(connections[4]), 0);
   auto uses = children(source, vpiUse);
-  ASSERT_EQ(uses.size(), 3u);
-  for (unsigned i = 0; i != 3; ++i)
+  ASSERT_EQ(uses.size(), 4u);
+  for (unsigned i : {0u, 1u, 2u, 4u})
     EXPECT_EQ(std::count_if(uses.begin(), uses.end(),
                             [&](auto use) {
                               return vpi_compare_objects(use, ordered[i]) == 1;

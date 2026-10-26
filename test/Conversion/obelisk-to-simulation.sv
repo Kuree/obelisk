@@ -4,7 +4,7 @@
 // RUN: obelisk-opt %t.obelisk.mlir '--lower-obelisk-to-sim=workers=2 vpi=read' | FileCheck %s --check-prefix=OPTIONS
 // RUN: FileCheck %s --check-prefix=SIM < %t.threaded.mlir
 // RUN: FileCheck %s --check-prefix=FINAL < %t.threaded.mlir
-// RUN: FileCheck %s --check-prefix=SCCP --implicit-check-not=123456789 < %t.threaded.mlir
+// RUN: FileCheck %s --check-prefix=SCCP --implicit-check-not='arith.constant 123456789' < %t.threaded.mlir
 // RUN: FileCheck %s --check-prefix=COPYBACK < %t.threaded.mlir
 
 // OPTIONS: #schedule.graph<version = 1, vpi = read, workers = 2

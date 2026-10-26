@@ -30,7 +30,19 @@ module top;
   logic [64:0] wide = 65'h1_12345678_abcdef01;
   state_t state = ACTIVE;
   packet_t packet = '{data: 8'h5a, valid: 1};
+  typedef logic [7:0] message_t [2];
+  mailbox #(logic [7:0]) messages;
+  mailbox #(message_t) array_messages;
+  mailbox boxed_messages;
   initial begin
+    message_t payload;
+    payload = '{8'h41, 8'h82};
+    messages = new;
+    array_messages = new;
+    boxed_messages = new;
+    messages.put(8'hxz);
+    array_messages.put(payload);
+    boxed_messages.put(8'h5a);
     if (PARAM !== 0 || TIME_PARAM !== 12) $fatal(1, "projected parameters");
     if (check_two_state_vpi()) $fatal(1, "VPI reflection or write projection");
     if (scalar !== 0 || flag !== 0 || wide !== 65'h1_00000000_00001234)

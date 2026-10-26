@@ -45,7 +45,7 @@
 
 // Embedded group/point/cross copies each call the receiver function once.
 // Every field in a copy uses the same loaded handle and stable item ID.
-// OWNER: simulation.call @[[RECEIVER:unit_[0-9]+]]({{.*}}) : {{.*}} -> !simulation.class_handle<
+// OWNER: simulation.call @[[RECEIVER:unit_[0-9]+]]({{.*}}) {simulation.vpi_call_site = @{{[^}]+}}} : {{.*}} -> !simulation.class_handle<
 // OWNER-NOT: simulation.call @[[RECEIVER]]
 // OWNER: simulation.covergroup.get_string_option {{.*}}, %[[GROUP_HANDLE:[0-9]+]] item 0 option name
 // OWNER-NOT: simulation.call @[[RECEIVER]]

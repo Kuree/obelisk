@@ -13,6 +13,7 @@
 #include "VPIInternal.h"
 #include "obelisk/Reflection/DesignReflection.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
+#include "obelisk/Runtime/StableHandle.h"
 
 // Native VPI startup finds tables in libraries already linked into the image.
 // ELF provides a symbol size; Mach-O/PE use readable mapped memory bounds.
@@ -354,7 +355,10 @@ struct VPIFrameReference {
   uint64_t payload = 0;
   obelisk_rt_object_v1 *owner = nullptr;
   uint64_t identity = 0;
-  bool operator==(const VPIFrameReference &) const = default;
+  bool operator==(const VPIFrameReference &other) const {
+    return kind == other.kind && payload == other.payload &&
+           owner == other.owner && identity == other.identity;
+  }
 };
 
 struct VPIFrameActivation {
@@ -6504,8 +6508,43 @@ bool selectedObjectIdentity(__vpiHandle *handle,
                 span.offset, span.width};
     return true;
   }
-  // Weak automatic/class storage needs its exact live binding. A recipe
-  // cursor alone cannot prove that a selected simulation object exists.
+  if (span.info.capabilities & OBELISK_RT_DESIGN_CAP_FRAME_LOCAL) {
+    // Source selections keep their occurrence after return, but 38.3 requires
+    // a currently existing actual. Resolve the declaration in this invocation
+    // before comparing allocation identity, including aliases to automatics.
+    __vpiHandle actual;
+    actual.owner = handle->owner;
+    actual.cursor = span.cursor;
+    inheritExpressionContext(actual, *handle);
+    auto frame = handle->owner->frames.find(actual.frameActivation);
+    if (!actual.localDeclarationID || frame == handle->owner->frames.end())
+      return false;
+    auto bound = frame->second.localReferences.find(actual.localDeclarationID);
+    obelisk_rt_design_info_v1 declaration{};
+    if (bound == frame->second.localReferences.end() ||
+        obelisk_rt_cached_design_info(handle->owner->context, span.cursor,
+                                      &declaration) != OBELISK_RT_OK ||
+        readFrameReference(handle->owner, bound->second, span.cursor,
+                           declaration, span.offset, span.width, nullptr,
+                           nullptr) != OBELISK_RT_OK)
+      return false;
+    obelisk_rt_stable_handle_v1 decoded{};
+    if (bound->second.kind <= 1 &&
+        obelisk_rt_stable_handle_decode(bound->second.payload, &decoded) &&
+        decoded.kind == OBELISK_RT_STABLE_HANDLE_AUTOMATIC &&
+        decoded.offset >= 0 &&
+        span.offset <= UINT64_MAX - uint64_t(decoded.offset)) {
+      // Automatic allocation IDs occupy a domain separate from image records
+      // and from bit offsets in the persistent design state.
+      identity = {UINT32_MAX, decoded.id,
+                  uint64_t(decoded.offset) + span.offset, span.width};
+      return true;
+    }
+    setError(handle->owner,
+             "selected alias backing identity is not yet available", vpiNotice);
+  }
+  // Other weak storage requires its exact live backing identity; a recipe
+  // cursor alone cannot establish equivalence.
   return false;
 }
 
@@ -7641,7 +7680,8 @@ snapshotMailboxValue(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
            element.kind == OBELISK_RT_ELEMENT_LOGIC) &&
           element.bit_width == semanticWidth &&
           fourState ==
-              ((info.flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0);
+              ((info.flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0 &&
+               (info.flags & OBELISK_RT_DESIGN_SEMANTIC_PROJECTED) == 0);
       break;
     }
     default:
@@ -7734,15 +7774,17 @@ bool messageElementDescriptor(__vpiHandle *source,
   obelisk_rt_design_semantic_type_info_v1 info{};
   if (!semanticTypeInfo(source, semantic, info))
     return false;
+  const bool fourState =
+      (info.flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0 &&
+      (info.flags & OBELISK_RT_DESIGN_SEMANTIC_PROJECTED) == 0;
   uint64_t width = 0;
   if (obelisk_rt_cached_design_semantic_bit_width(
           source->owner->context, semantic, &width) == OBELISK_RT_OK &&
       info.kind != OBELISK_RT_DESIGN_SEMANTIC_REAL &&
       info.kind != OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL &&
       info.kind != OBELISK_RT_DESIGN_SEMANTIC_REALTIME) {
-    element.kind = (info.flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE)
-                       ? OBELISK_RT_ELEMENT_LOGIC
-                       : OBELISK_RT_ELEMENT_BITS;
+    element.kind =
+        fourState ? OBELISK_RT_ELEMENT_LOGIC : OBELISK_RT_ELEMENT_BITS;
     element.bit_width = width;
     element.value_size = (width - 1) / 8 + 1;
   } else if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
@@ -7792,7 +7834,7 @@ bool messageElementDescriptor(__vpiHandle *source,
       break;
     }
   }
-  if (info.flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE)
+  if (fourState)
     element.flags |= OBELISK_RT_ELEMENT_FOUR_STATE;
   return true;
 }
@@ -10871,6 +10913,15 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
         obelisk_rt_cached_vpi_type(state->context, parent, &sourceType) !=
             OBELISK_RT_OK)
       return nullptr;
+    if (type == vpiPortInst &&
+        (sourceType == vpiNetBit || sourceType == vpiRegBit)) {
+      // 37.16 requires all connected ports/bits of the underlying object.
+      // Returning just a source expression's owning port loses other uses
+      // and cannot represent the corresponding bits of vector ports.
+      setError(state, "selected port connectivity is not yet available",
+               vpiNotice);
+      return nullptr;
+    }
     if (sourceType == vpiNamedEvent && type == vpiWaitingProcesses)
       return namedEventWaitingProcesses(handle);
     if (type == vpiIndex && !isSourceSelection(handle) &&

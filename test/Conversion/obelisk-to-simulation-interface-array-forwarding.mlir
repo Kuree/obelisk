@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s --obelisk-sim-prepare | FileCheck %s
-// RUN: obelisk-opt %s '--test-obelisk-edit-attributes=replace-from=\"host\" replace-to=\"\"' --obelisk-sim-prepare | FileCheck %s
+// RUN: obelisk-opt %s '--test-obelisk-edit-attributes=op=obelisk.sv.port.connection replace-from=\"host\" replace-to=\"\"' --obelisk-sim-prepare | FileCheck %s
 // RUN: not obelisk-opt %s '--test-obelisk-edit-attributes=match={array_range = array<i64: 0, 2>} set={array_range = array<i64: 0, 3>}' --obelisk-sim-prepare 2>&1 | FileCheck %s --check-prefix=INVALID
 // Forwarding a received interface array introduces a detached symbol stub.
 // It must not acquire a duplicate VPI array identity or fail extent checks.
