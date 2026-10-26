@@ -25,9 +25,9 @@ ManagedSlot managedLeaf(uint32_t kind) {
     return {0,
             OBELISK_RT_MANAGED_ROOT_KIND_CLASS |
                 OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER,
-            kind == OBELISK_RT_DESIGN_SEMANTIC_MAILBOX
-                ? OBELISK_RT_MANAGED_SLOT_MAILBOX
-                : OBELISK_RT_MANAGED_SLOT_SEMAPHORE};
+            static_cast<uint32_t>(kind == OBELISK_RT_DESIGN_SEMANTIC_MAILBOX
+                                      ? OBELISK_RT_MANAGED_SLOT_MAILBOX
+                                      : OBELISK_RT_MANAGED_SLOT_SEMAPHORE)};
   case OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY:
   case OBELISK_RT_DESIGN_SEMANTIC_QUEUE:
   case OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY:

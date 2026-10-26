@@ -1,0 +1,9 @@
+# RUN: %llvm_dist/bin/llvm-nm --defined-only %runtime_archive | FileCheck %s
+# RUN: %llvm_dist/bin/llvm-nm --defined-only %native_support/libobelisk_rt.a | FileCheck %s
+# RUN: %llvm_dist/bin/llvm-nm --defined-only %native_support/libobelisk_rt_lto.a | FileCheck %s
+
+# Container type binding needs this helper even with VPI disabled. Each target
+# archive must define it, independently of the host runtime used by unit tests.
+# In particular, both native and LTO archives need VPIValueLayout.cpp on macOS
+# and Windows as well as Linux.
+# CHECK: {{ T .*}}obelisk_rt_vpi_element_matches

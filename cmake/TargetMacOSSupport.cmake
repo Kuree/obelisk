@@ -95,7 +95,7 @@ set(_obelisk_macos_runtime_sources
   DPI FileIO Format ManagedHeap Plusargs Process ProcessAllocation ProcessAOT
   ProcessNativeState ProcessNBA ProcessObservers ProcessSignals ProcessState
   ProcessTable ProcessTransitions ProcessValidation Random RandSolve RandSamplePlan
-  RandReal RandSolveWide Runtime Sampled StochasticQueue System VCD VPI
+  RandReal RandSolveWide Runtime Sampled StochasticQueue System VCD VPI VPIValueLayout
   ScanFormat DynamicScanBytecode ContainerBitstream RecursiveBitstream
   ContainerBitstreamBytecode ClassBitstream ClassBitstreamBytecode DPIExport
   DPIExportBytecode DPIOpenArray DPIAggregate)
