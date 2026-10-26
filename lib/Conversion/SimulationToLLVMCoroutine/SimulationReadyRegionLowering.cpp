@@ -1,3 +1,4 @@
+#include "SimulationAOTPlanning.h"
 #include "SimulationEvalReadySet.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/Interfaces/CallInterfaces.h"
@@ -12,6 +13,31 @@
 
 using namespace mlir;
 namespace obelisk::detail {
+
+bool isReadinessTransparentCallee(StringRef callee) {
+  // Runtime leaves: each formats, latches or allocates on runtime-owned
+  // storage that no ready set shares (the same leaves stay transparent to
+  // pending NBA captures).
+  // Generated promotion queries: they read canonical X/Z state, proof tables
+  // and hints and update only proof latches, hints and the promotion-pending
+  // mask. They activate no process and select only a value domain (IEEE
+  // 1800-2023 4.3, 4.5, 6.3.1), so they cannot observe an activation.
+  return callee == "obelisk_rt_v1_eval_display" ||
+         callee == "obelisk_rt_v1_scheduler_fail" ||
+         callee == "obelisk_rt_v1_eval_nba_reserve" ||
+         callee == "obelisk_rt_v1_scheduler_termination_requested" ||
+         callee == "obelisk_rt_v1_scheduler_time" ||
+         callee == "obelisk_rt_v1_coverage_point_hit" ||
+         callee == "obelisk_rt_v1_native_promotion_invalidate_ranges" ||
+         callee == "obelisk_rt_v1_native_promotion_recheck_ranges" ||
+         callee == "obelisk_rt_v1_native_promotion_invalidate_buckets" ||
+         callee == "obelisk_rt_v1_native_promotion_recheck_buckets" ||
+         callee == "obelisk_rt_v1_native_state_mark_unknown" ||
+         callee == "obelisk_rt_v1_native_state_refresh_unknown_summary" ||
+         callee == kernelPromotionReadyName ||
+         callee == groupPromotionReadyName;
+}
+
 namespace {
 struct Key {
   StringRef global;
@@ -46,27 +72,10 @@ std::optional<Key> keyFor(Operation *op,
   return Key{address.getGlobalName(), capacity, word};
 }
 
-// Runtime leaves that cannot inspect readiness: they neither execute an
-// actor nor enter the scheduler, so pending words may stay local across them.
-// Each formats, latches or allocates on runtime-owned storage that no ready
-// set shares (the same leaves stay transparent to pending NBA captures).
 bool readinessTransparentCall(Operation *op) {
   auto call = dyn_cast<LLVM::CallOp>(op);
-  if (!call || !call.getCallee())
-    return false;
-  StringRef callee = *call.getCallee();
-  return callee == "obelisk_rt_v1_eval_display" ||
-         callee == "obelisk_rt_v1_scheduler_fail" ||
-         callee == "obelisk_rt_v1_eval_nba_reserve" ||
-         callee == "obelisk_rt_v1_scheduler_termination_requested" ||
-         callee == "obelisk_rt_v1_scheduler_time" ||
-         callee == "obelisk_rt_v1_coverage_point_hit" ||
-         callee == "obelisk_rt_v1_native_promotion_invalidate_ranges" ||
-         callee == "obelisk_rt_v1_native_promotion_recheck_ranges" ||
-         callee == "obelisk_rt_v1_native_promotion_invalidate_buckets" ||
-         callee == "obelisk_rt_v1_native_promotion_recheck_buckets" ||
-         callee == "obelisk_rt_v1_native_state_mark_unknown" ||
-         callee == "obelisk_rt_v1_native_state_refresh_unknown_summary";
+  return call && call.getCallee() &&
+         isReadinessTransparentCallee(*call.getCallee());
 }
 
 // Ordinary accesses to distinct LLVM globals or local allocas cannot inspect

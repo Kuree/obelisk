@@ -236,7 +236,8 @@ static LogicalResult materializePromotionReadiness(ModuleOp module,
                                                    ArrayRef<uint64_t> owners,
                                                    ArrayRef<uint64_t> scans,
                                                    uint64_t domainCount,
-                                                   bool group) {
+                                                   bool group,
+                                                   uint64_t stateBits) {
   MLIRContext *context = module.getContext();
   OpBuilder builder(context);
   Location loc = module.getLoc();
@@ -323,8 +324,16 @@ static LogicalResult materializePromotionReadiness(ModuleOp module,
           arith::AddIOp::create(builder, loc, hintIndex, constant(1)));
   Value hintWord = LLVM::LoadOp::create(builder, loc, i64, hintWordAddress, 8);
   Value hintMask = LLVM::LoadOp::create(builder, loc, i64, hintMaskAddress, 8);
-  Value hintBits =
+  // Both scan loads stay inside the certified words of the unknown plane.
+  // Declaring that interval keeps the value plane out of the query's state
+  // footprint, so callers need not materialize value-plane state around it.
+  auto unknownPlaneBytes = builder.getDenseI64ArrayAttr(
+      {0, int64_t(llvm::divideCeil(stateBits, 64) * 8)});
+  auto hintLoad =
       LLVM::LoadOp::create(builder, loc, i64, gep(state, i64, hintWord), 8);
+  schedule::set<schedule::Field::EvalStateAccessBytes>(hintLoad,
+                                                       unknownPlaneBytes);
+  Value hintBits = hintLoad;
   Value stillUnknown = arith::CmpIOp::create(
       builder, loc, arith::CmpIPredicate::ne,
       arith::AndIOp::create(builder, loc, hintBits, hintMask), constant(0));
@@ -360,8 +369,11 @@ static LogicalResult materializePromotionReadiness(ModuleOp module,
       builder, loc,
       arith::SelectOp::create(builder, loc, isFirst, firstMask, fullMask),
       arith::SelectOp::create(builder, loc, isLast, lastMask, fullMask));
-  Value bits =
+  auto wordLoad =
       LLVM::LoadOp::create(builder, loc, i64, gep(state, i64, word), 8);
+  schedule::set<schedule::Field::EvalStateAccessBytes>(wordLoad,
+                                                       unknownPlaneBytes);
+  Value bits = wordLoad;
   Value hasUnknown = arith::CmpIOp::create(
       builder, loc, arith::CmpIPredicate::ne,
       arith::AndIOp::create(builder, loc, bits, mask), constant(0));
@@ -478,7 +490,8 @@ LogicalResult materializeNativeKernelPromotionReadiness(
   }
 
   return materializePromotionReadiness(module, owners, scans,
-                                       twoStateExecutors.size(), false);
+                                       twoStateExecutors.size(), false,
+                                       stateBits);
 }
 
 LogicalResult verifyNativeGroupProofDomains(ModuleOp module) {
@@ -625,8 +638,9 @@ LogicalResult materializeNativeGroupPromotionReadiness(ModuleOp module) {
   // members nor changes their pending bits/latches. Exact unknown-write
   // publication and the full context/runtime reset revoke positive results;
   // a negative hint rereads its immutable exact mask on every query.
-  return materializePromotionReadiness(module, records, scans, domains.size(),
-                                       true);
+  return materializePromotionReadiness(
+      module, records, scans, domains.size(), true,
+      runtime::get<runtime::StateBits>(module).getUInt());
 }
 
 } // namespace obelisk::detail

@@ -14,6 +14,11 @@
 
 namespace obelisk::detail {
 
+/// Whether a direct call to `callee` can neither inspect nor change any ready
+/// set: it executes no actor and does not enter the scheduler. Pending ready
+/// words may stay local across such a call.
+bool isReadinessTransparentCallee(llvm::StringRef callee);
+
 // APInt is only a compiler-side constant set. Generated storage and operations
 // are always machine words, never wide LLVM integers.
 inline uint64_t ownerMaskWord(const llvm::APInt &mask, unsigned word) {

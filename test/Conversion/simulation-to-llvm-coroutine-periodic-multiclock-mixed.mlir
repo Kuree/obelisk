@@ -9,14 +9,15 @@
 // CHECK-NEXT: %[[BIT:.*]] = llvm.mlir.constant(2 : i64)
 // CHECK-NEXT: %[[LOCAL:.*]] = llvm.and %[[BITS]], %[[BIT]] : i64
 // CHECK: %[[KNOWN:.*]] = llvm.icmp "eq" %[[LOCAL]], {{.*}} : i64
-// The run body's pending ready masks are block arguments; each arm stores
-// them before its observation point.
-// CHECK-NEXT: llvm.cond_br %[[KNOWN]], ^[[FAST:bb[0-9]+]](%{{.*}} : i64, i64), ^[[SCAN:bb[0-9]+]]
+// The promotion query inspects only X/Z state and proof caches, so the run
+// body's pending ready masks stay in SSA across it. Each arm stores them
+// before its observation point.
+// CHECK-NEXT: llvm.cond_br %[[KNOWN]], ^[[FAST:bb[0-9]+]], ^[[SCAN:bb[0-9]+]]
 // CHECK: ^[[SCAN]]:
-// CHECK: %[[OWNER:.*]] = llvm.mlir.constant(1 : i64)
-// CHECK: llvm.store
-// CHECK-NEXT: {{.*}}llvm.call @__obelisk_eval_kernel_promotion_ready_v1(%[[OWNER]])
-// CHECK: ^[[FAST]](%{{.*}}: i64, %{{.*}}: i64):
+// CHECK-NEXT: %[[OWNER:.*]] = llvm.mlir.constant(1 : i64)
+// CHECK-NEXT: %[[READY:.*]] = llvm.call @__obelisk_eval_kernel_promotion_ready_v1(%[[OWNER]])
+// CHECK-NEXT: llvm.cond_br %[[READY]], ^[[FAST]], ^{{bb[0-9]+}}
+// CHECK: ^[[FAST]]:
 // CHECK: llvm.store
 // CHECK-NEXT: llvm.call @body1.__obelisk_two_state_0(
 

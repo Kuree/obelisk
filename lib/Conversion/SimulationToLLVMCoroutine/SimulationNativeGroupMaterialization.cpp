@@ -444,8 +444,10 @@ buildNativeStateFootprints(ModuleOp module,
 /// Keep the ready words in SSA between executor boundaries. This is a local
 /// representation of the original pending activations, not a second queue.
 /// Retained calls may publish, observe, or reenter: materialize before them
-/// and acquire their result afterward. Returns publish even on rejection or
-/// error, so a handoff never restarts completed work or loses pending work.
+/// and acquire their result afterward, unless the callee is transparent to
+/// readiness (isReadinessTransparentCallee). Returns publish even on
+/// rejection or error, so a handoff never restarts completed work or loses
+/// pending work.
 LogicalResult promoteGroupReadyWords(LLVM::LLVMFuncOp function,
                                      const llvm::StringMap<Type> &globalTypes,
                                      uint64_t &budget) {
@@ -467,7 +469,10 @@ LogicalResult promoteGroupReadyWords(LLVM::LLVMFuncOp function,
     if (auto address = dyn_cast<LLVM::AddressOfOp>(operation);
         address && address.getGlobalName() == reference.getValue())
       pointers.push_back(address.getResult());
-    if (isa<LLVM::CallOp, LLVM::ReturnOp>(operation))
+    auto call = dyn_cast<LLVM::CallOp>(operation);
+    if (isa<LLVM::ReturnOp>(operation) ||
+        (call && !(call.getCallee() &&
+                   isReadinessTransparentCallee(*call.getCallee()))))
       boundaries.push_back(operation);
     if (isa<LLVM::InvokeOp, LLVM::InlineAsmOp>(operation))
       supported = false;
