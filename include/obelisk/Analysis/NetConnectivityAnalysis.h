@@ -11,6 +11,7 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <utility>
 
@@ -23,16 +24,38 @@ namespace obelisk::analysis {
 /// Disjoint strong contributions to isolated, undelayed plain wire nets.
 /// Sparse intervals are sorted [low, high) ranges. They certify exclusivity
 /// only within a contribution, never knownness or coverage of undriven bits.
+///
+/// Nets collapsed by `simulation.net.connect.decl` are merged into one
+/// simulated net (IEEE 1800-2023 23.3.3.7), so the drivers of every member
+/// are that net's contributions. `connectedExclusiveRanges` holds the bits of
+/// such nets whose whole component is plain, undelayed wire with exactly one
+/// strong contribution: Table 6-2 (6.6.1) resolves a lone contribution to its
+/// own value, so a drive of them is a plain write to every member.
+/// `connectedExclusiveAliases` names the other members of those bits.
 struct IsolatedWireDriverTopology {
   using SparseRanges =
       llvm::DenseMap<uint64_t,
                      mlir::SmallVector<std::pair<uint64_t, uint64_t>>>;
+  /// Bits [low, low + width) of the owning net are the same simulated bits as
+  /// [memberLow, memberLow + width) of `member`, bit `low + i` matching
+  /// `memberLow + i`, or `memberLow + width - 1 - i` when reversed.
+  struct AliasRun {
+    uint64_t low = 0, width = 0, member = 0, memberLow = 0,
+             memberWidth = 0;
+    bool reversed = false;
+  };
   llvm::DenseSet<uint64_t> singleDriverNets;
   llvm::DenseSet<uint64_t> partitionedDriverNets;
   SparseRanges sparseDriverRanges;
+  SparseRanges connectedExclusiveRanges;
+  llvm::DenseMap<uint64_t, mlir::SmallVector<AliasRun>>
+      connectedExclusiveAliases;
 };
 
-IsolatedWireDriverTopology
+/// Memoized per design: the result is recomputed only when a net, driver,
+/// connection or pass-switch declaration of the design changed. Analyses
+/// constructed per function share one immutable snapshot.
+std::shared_ptr<const IsolatedWireDriverTopology>
 getIsolatedWireDriverTopology(sim::SimDesignOp design);
 
 /// Plain, undelayed wire nets with one full-width strong driver, no collapsed

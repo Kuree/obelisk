@@ -504,14 +504,46 @@ HandleDataflowAnalysis::HandleDataflowAnalysis(sim::SimDesignOp design) {
     drivers = getIsolatedWireDriverTopology(design);
     for (auto driver : design.getOps<sim::SimDriverDeclOp>())
       driverNets[driver.getId()] = driver.getNetId();
+  } else {
+    static const auto empty =
+        std::make_shared<const IsolatedWireDriverTopology>();
+    drivers = empty;
   }
-  SmallVector<std::pair<uint64_t, uint64_t>> drivers(driverNets.begin(),
-                                                     driverNets.end());
-  llvm::sort(drivers);
-  driverDigest = llvm::hash_combine_range(drivers.begin(), drivers.end());
+  SmallVector<std::pair<uint64_t, uint64_t>> pairs(driverNets.begin(),
+                                                   driverNets.end());
+  llvm::sort(pairs);
+  driverDigest = llvm::hash_combine_range(pairs.begin(), pairs.end());
 }
 HandleDataflowAnalysis::HandleDataflowAnalysis(sim::SimFuncOp function)
     : HandleDataflowAnalysis(getDriverDesign(function)) {}
+SmallVector<HandleDataflowAnalysis::DriveAlias>
+HandleDataflowAnalysis::getExclusiveDriveAliases(uint64_t net, uint64_t low,
+                                                 uint64_t width) const {
+  SmallVector<DriveAlias> aliases;
+  auto runs = drivers->connectedExclusiveAliases.find(net);
+  if (runs == drivers->connectedExclusiveAliases.end() || !width ||
+      low > UINT64_MAX - width || !hasExclusiveDriverSlice(net, low, width))
+    return aliases;
+  for (const auto &run : runs->second) {
+    uint64_t first = std::max(low, run.low);
+    uint64_t end = std::min(low + width, run.low + run.width);
+    if (first >= end)
+      continue;
+    // Driven bit `first - low` lands on the run's bit `first - run.low`.
+    uint64_t skipped = first - run.low;
+    uint64_t taken = end - first;
+    DriveAlias alias;
+    alias.net = run.member;
+    alias.width = taken;
+    alias.rootWidth = run.memberWidth;
+    alias.drivenLow = first - low;
+    alias.reversed = run.reversed;
+    alias.low = run.reversed ? run.memberLow + run.width - skipped - taken
+                             : run.memberLow + skipped;
+    aliases.push_back(alias);
+  }
+  return aliases;
+}
 namespace {
 HandleDataflowResult
 solveHandles(sim::SimFuncOp function,

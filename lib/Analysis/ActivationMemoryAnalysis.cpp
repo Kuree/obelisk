@@ -710,7 +710,9 @@ public:
       finalSinks.insert(node);
   }
   void pure(Operation *op, const DenseMap<Value, Attribute> &constants);
-  unsigned publication(Operation *store, Range output, bool exact) {
+  /// `lane` is the stored value's lane published at `output.low` when exact.
+  unsigned publication(Operation *store, Range output, bool exact,
+                       uint64_t lane = 0) {
     auto key = std::make_pair(store, currentContext);
     auto [it, inserted] = stores.try_emplace(key, 0);
     if (inserted)
@@ -730,7 +732,7 @@ public:
                               nodes[node]->width));
     append(node, links);
     sinks.insert(node);
-    records.push_back({store, node, output, exact});
+    records.push_back({store, node, output, exact, lane});
     return node;
   }
   /// The value a store writes into a private slot: its value, address and
@@ -782,22 +784,25 @@ public:
       return success();
     for (unsigned node : finalSinks)
       unite(finalInputs, sources(facts(node)));
-    DenseMap<Operation *, Influences> stored;
+    // Influences are per written root: a store of a collapsed net publishes
+    // the same value to every member, each at its own offsets.
+    DenseMap<std::pair<Operation *, uint64_t>, Influences> stored;
     DenseMap<Operation *, Ranges> written;
     for (const auto &record : records) {
       auto inputs = facts(record.node);
       if (!record.exact)
         inputs = spread(sources(inputs), record.output.width);
-      auto &output = stored[record.operation];
-      llvm::append_range(
-          output, project(inputs, 0, record.output.width, record.output.low));
+      auto &output = stored[{record.operation, record.output.root}];
+      llvm::append_range(output, project(inputs, record.exact ? record.lane : 0,
+                                         record.output.width,
+                                         record.output.low));
       normalize(output);
       unite(written[record.operation], {record.output});
     }
     for (const auto &[operation, ranges] : written) {
-      const auto &influences = stored.at(operation);
       auto &lanes = publications[operation];
       for (Range output : ranges) {
+        const auto &influences = stored.at({operation, output.root});
         SmallVector<uint64_t> bounds{output.low, output.low + output.width};
         for (const auto &influence : influences) {
           uint64_t low = std::max(output.low, influence.low);
@@ -906,6 +911,7 @@ private:
     unsigned node;
     Range output;
     bool exact;
+    uint64_t lane;
   };
   sim::SimFuncOp function;
   const DenseMap<uint64_t, ArrayRef<Range>> &rootLanes;
@@ -1980,6 +1986,26 @@ private:
               : load->getResult(0).getType();
     Ranges access =
         logical.access(accessedType, {*root, fact->low, fact->width}, exact);
+    // Port-connected nets merge into one simulated net (IEEE 1800-2023
+    // 23.3.3.7), so a drive of an exclusive slice (6.6.1, Table 6-2) updates
+    // every collapsed member. Record the write on each alias as the compute
+    // graph expands producers, so ordering, self-feedback through a port and
+    // exclusive-writer proofs see the same roots; a later read of an alias in
+    // this activation sees this value.
+    SmallVector<HandleDataflowAnalysis::DriveAlias> aliases;
+    if (store && isa<sim::SimDriverDriveOp>(op) && !fact->dynamic)
+      aliases = provenance.getExclusiveDriveAliases(*fact->descriptor,
+                                                    fact->low, fact->width);
+    for (const auto &alias : aliases) {
+      auto aliasRoot = ActivationMemoryAnalysis::getRoot(
+          schedule::ComputeResourceKind::Net, alias.net);
+      if (!aliasRoot || alias.low > alias.rootWidth ||
+          alias.width > alias.rootWidth - alias.low)
+        return failure();
+      access.push_back({*aliasRoot, alias.low, alias.width});
+    }
+    if (!aliases.empty())
+      normalize(access);
     if (values) {
       ReachingDefinitions incoming;
       if (inputsOnly)
@@ -1992,6 +2018,40 @@ private:
       else
         writeReaching(inputsOnly ? incoming : *state.reaching.write(*root),
                       store, *fact, exact, Range{*root, fact->low, fact->width});
+      for (const auto &alias : aliases) {
+        uint64_t aliasRoot = *ActivationMemoryAnalysis::getRoot(
+            schedule::ComputeResourceKind::Net, alias.net);
+        HandleFact aliasFact = *fact;
+        aliasFact.descriptor = alias.net;
+        aliasFact.low = alias.low;
+        aliasFact.width = alias.width;
+        aliasFact.rootWidth = alias.rootWidth;
+        // An ascending run receives the driven lanes from `drivenLow` one
+        // to one; a reversed run receives them bit by bit in reverse order.
+        ReachingDefinitions incoming;
+        ReachingDefinitions *cell;
+        if (inputsOnly) {
+          incoming = incomingCell(aliasRoot, aliasFact, state);
+          cell = &incoming;
+        } else {
+          trackedCell(state, aliasRoot, alias.rootWidth);
+          cell = state.reaching.write(aliasRoot);
+        }
+        if (!exact || !alias.reversed) {
+          writeReaching(*cell, store, aliasFact, exact,
+                        Range{aliasRoot, alias.low, alias.width},
+                        alias.drivenLow);
+          continue;
+        }
+        for (uint64_t bit = 0; bit != alias.width; ++bit) {
+          HandleFact bitFact = aliasFact;
+          bitFact.low = alias.low + bit;
+          bitFact.width = 1;
+          writeReaching(*cell, store, bitFact, /*exact=*/true,
+                        Range{aliasRoot, bitFact.low, 1},
+                        alias.drivenLow + alias.width - 1 - bit);
+        }
+      }
     }
     if (load) {
       unite(reads[op], access);
@@ -2029,12 +2089,13 @@ private:
     values->append(values->valueNode(load->getResult(0)), links);
   }
   /// The new reaching definition of a store. A design store also records its
-  /// publication; a private slot store does not.
+  /// publication; a private slot store does not. An exact write places the
+  /// stored value's lanes from `lane` onto the written bits.
   void writeReaching(ReachingDefinitions &cell, Operation *store,
                      const HandleFact &fact, bool exact,
-                     std::optional<Range> publication) {
+                     std::optional<Range> publication, uint64_t lane = 0) {
     unsigned node =
-        publication ? values->publication(store, *publication, exact)
+        publication ? values->publication(store, *publication, exact, lane)
                     : values->privateStore(cast<sim::SimRefStoreOp>(store));
     if (exact) {
       auto retained = projectLinks(cell.links, 0, fact.low);
@@ -2044,10 +2105,11 @@ private:
                                       fact.low + fact.width));
       cell.links = std::move(retained);
     }
-    cell.links.push_back(
-        {fact.low, fact.width, node, 0,
-         valueSpan(ActivationMemoryAnalysis::getStoredValue(store)),
-         exact ? LaneMapping::Identity : LaneMapping::AllToAll});
+    uint64_t span = valueSpan(ActivationMemoryAnalysis::getStoredValue(store));
+    cell.links.push_back({fact.low, fact.width, node, exact ? lane : 0,
+                          exact ? span - std::min(lane, span) : span,
+                          exact ? LaneMapping::Identity
+                                : LaneMapping::AllToAll});
     normalize(cell.links);
   }
   sim::SimFuncOp function;

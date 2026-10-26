@@ -6,7 +6,10 @@
 
 // IEEE 1800-2023 6.6.1, 4.9.1: only a plain single-driver wire may use the
 // driver's publication as its resolved value. Delays, strengths, user
-// resolution, connected aliases and competing drivers retain resolution.
+// resolution and competing drivers retain resolution. Port-connected nets
+// merged into one simulated net (23.3.3.7) share that proof: a drive of its
+// only contribution (Table 6-2) publishes to every member at the member's own
+// offsets.
 module {
   simulation.design @isolated {
     simulation.scope.decl 0
@@ -156,8 +159,76 @@ module {
     simulation.storage.decl 1 in 0 : !simulation.logic<8> design
     simulation.driver.decl 0 in 0 drives 0 : !simulation.logic<8> design
     simulation.code_unit.decl 1 in 0 continuous hierarchy "connected"
-    // CHECK-LABEL: regions @connected valid=0 reason=memory effects
+    // CHECK-LABEL: regions @connected valid=1
+    // CHECK-NEXT: node simulation.ref.load read:s0[0,8)
+    // CHECK-NEXT: node simulation.driver.drive write:s4611686018427387904[0,8) write:s4611686018427387905[0,8)
+    // CHECK-NEXT: node simulation.net.read read:s4611686018427387904[0,8)
+    // CHECK-NEXT: node simulation.ref.store write:s1[0,8)
+    // CHECK-NEXT: publication read:s0[0,8) write:s4611686018427387904[0,8)
+    // CHECK-NEXT: publication read:s0[0,8) write:s4611686018427387905[0,8)
     simulation.func @connected(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 7 : i32, code_unit_id = 1 : i64} {
+      %net = simulation.context.net %ctx[0] : !simulation.net<!simulation.logic<8>>
+      %driver = simulation.context.driver %ctx[0] : !simulation.driver<!simulation.logic<8>>
+      %in = simulation.context.storage %ctx[0] : !simulation.ref<!simulation.logic<8>>
+      %out = simulation.context.storage %ctx[1] : !simulation.ref<!simulation.logic<8>>
+      cf.br ^body
+    ^body:
+      %value = simulation.ref.load %in : !simulation.ref<!simulation.logic<8>> -> !simulation.logic<8>
+      simulation.driver.drive %driver = %value : !simulation.driver<!simulation.logic<8>>, !simulation.logic<8>
+      %resolved = simulation.net.read %net : !simulation.net<!simulation.logic<8>> -> !simulation.logic<8>
+      simulation.ref.store %resolved to %out : !simulation.logic<8>, !simulation.ref<!simulation.logic<8>>
+      simulation.suspend.change %in to ^body : !simulation.ref<!simulation.logic<8>>
+    }
+  }
+  // The member net has a contribution of its own: the component resolves.
+  simulation.design @connected_competing {
+    simulation.scope.decl 0
+    simulation.net.decl 0 in 0 : !simulation.logic<8> design
+    simulation.net.decl 1 in 0 : !simulation.logic<8> design
+    simulation.net.connect.decl 0 in 0 0[0] to 1[0] width 8 reversed = false
+    simulation.storage.decl 0 in 0 : !simulation.logic<8> design
+    simulation.storage.decl 1 in 0 : !simulation.logic<8> design
+    simulation.driver.decl 0 in 0 drives 0 : !simulation.logic<8> design
+    simulation.driver.decl 1 in 0 drives 1 : !simulation.logic<8> design {driven_low = 6 : i64, driven_width = 2 : i64}
+    simulation.code_unit.decl 1 in 0 continuous hierarchy "connected_competing"
+    // CHECK-LABEL: regions @connected_competing valid=0 reason=memory effects
+    simulation.func @connected_competing(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 7 : i32, code_unit_id = 1 : i64} {
+      %net = simulation.context.net %ctx[0] : !simulation.net<!simulation.logic<8>>
+      %driver = simulation.context.driver %ctx[0] : !simulation.driver<!simulation.logic<8>>
+      %in = simulation.context.storage %ctx[0] : !simulation.ref<!simulation.logic<8>>
+      %out = simulation.context.storage %ctx[1] : !simulation.ref<!simulation.logic<8>>
+      cf.br ^body
+    ^body:
+      %value = simulation.ref.load %in : !simulation.ref<!simulation.logic<8>> -> !simulation.logic<8>
+      simulation.driver.drive %driver = %value : !simulation.driver<!simulation.logic<8>>, !simulation.logic<8>
+      %resolved = simulation.net.read %net : !simulation.net<!simulation.logic<8>> -> !simulation.logic<8>
+      simulation.ref.store %resolved to %out : !simulation.logic<8>, !simulation.ref<!simulation.logic<8>>
+      simulation.suspend.change %in to ^body : !simulation.ref<!simulation.logic<8>>
+    }
+  }
+  // Bits 4-7 of the driven net are a reversed port slice of a 4-bit member:
+  // the alias write names the member's own bits, each lane fed by its mirrored
+  // driven lane.
+  simulation.design @connected_reversed {
+    simulation.scope.decl 0
+    simulation.net.decl 0 in 0 : !simulation.logic<8> design
+    simulation.net.decl 1 in 0 : !simulation.logic<4> design
+    simulation.net.connect.decl 0 in 0 0[4] to 1[3] width 4 reversed = true
+    simulation.storage.decl 0 in 0 : !simulation.logic<8> design
+    simulation.storage.decl 1 in 0 : !simulation.logic<8> design
+    simulation.driver.decl 0 in 0 drives 0 : !simulation.logic<8> design
+    simulation.code_unit.decl 1 in 0 continuous hierarchy "connected_reversed"
+    // CHECK-LABEL: regions @connected_reversed valid=1
+    // CHECK-NEXT: node simulation.ref.load read:s0[0,8)
+    // CHECK-NEXT: node simulation.driver.drive write:s4611686018427387904[0,8) write:s4611686018427387905[0,4)
+    // CHECK-NEXT: node simulation.net.read read:s4611686018427387904[0,8)
+    // CHECK-NEXT: node simulation.ref.store write:s1[0,8)
+    // CHECK-NEXT: publication read:s0[0,8) write:s4611686018427387904[0,8)
+    // CHECK-NEXT: publication read:s0[7,8) write:s4611686018427387905[0,1)
+    // CHECK-NEXT: publication read:s0[6,7) write:s4611686018427387905[1,2)
+    // CHECK-NEXT: publication read:s0[5,6) write:s4611686018427387905[2,3)
+    // CHECK-NEXT: publication read:s0[4,5) write:s4611686018427387905[3,4)
+    simulation.func @connected_reversed(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 7 : i32, code_unit_id = 1 : i64} {
       %net = simulation.context.net %ctx[0] : !simulation.net<!simulation.logic<8>>
       %driver = simulation.context.driver %ctx[0] : !simulation.driver<!simulation.logic<8>>
       %in = simulation.context.storage %ctx[0] : !simulation.ref<!simulation.logic<8>>

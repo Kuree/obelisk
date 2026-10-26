@@ -8,13 +8,61 @@
 #include "llvm/ADT/DenseSet.h"
 
 #include <algorithm>
+#include <memory>
+#include <mutex>
 
 using namespace mlir;
 
 namespace obelisk::analysis {
 
-IsolatedWireDriverTopology
+namespace {
+/// Content digest of the declarations the topology depends on. Attribute
+/// dictionaries are uniqued, so their identity covers ids, offsets, widths,
+/// strengths, delays and types.
+uint64_t inventoryDigest(sim::SimDesignOp design) {
+  llvm::hash_code digest = llvm::hash_value(size_t{0});
+  for (Operation &op : design.getBody().front())
+    if (isa<sim::SimNetDeclOp, sim::SimDriverDeclOp, sim::SimNetConnectDeclOp,
+            sim::SimPassSwitchDeclOp>(op))
+      digest = llvm::hash_combine(digest, op.getName().getAsOpaquePointer(),
+                                  op.getAttrDictionary().getAsOpaquePointer());
+  return digest;
+}
+struct TopologyCache {
+  std::mutex mutex;
+  llvm::DenseMap<Operation *,
+                 std::pair<uint64_t,
+                           std::shared_ptr<const IsolatedWireDriverTopology>>>
+      entries;
+};
+TopologyCache &getTopologyCache() {
+  static TopologyCache cache;
+  return cache;
+}
+IsolatedWireDriverTopology computeIsolatedWireDriverTopology(
+    sim::SimDesignOp design);
+} // namespace
+
+std::shared_ptr<const IsolatedWireDriverTopology>
 getIsolatedWireDriverTopology(sim::SimDesignOp design) {
+  uint64_t digest = inventoryDigest(design);
+  TopologyCache &cache = getTopologyCache();
+  {
+    std::lock_guard<std::mutex> lock(cache.mutex);
+    auto found = cache.entries.find(design.getOperation());
+    if (found != cache.entries.end() && found->second.first == digest)
+      return found->second.second;
+  }
+  auto result = std::make_shared<const IsolatedWireDriverTopology>(
+      computeIsolatedWireDriverTopology(design));
+  std::lock_guard<std::mutex> lock(cache.mutex);
+  cache.entries[design.getOperation()] = {digest, result};
+  return result;
+}
+
+namespace {
+IsolatedWireDriverTopology
+computeIsolatedWireDriverTopology(sim::SimDesignOp design) {
   IsolatedWireDriverTopology result;
   DenseSet<uint64_t> connected;
   DenseMap<uint64_t, SmallVector<sim::SimDriverDeclOp>> drivers;
@@ -81,15 +129,151 @@ getIsolatedWireDriverTopology(sim::SimDesignOp design) {
       result.sparseDriverRanges.try_emplace(net.getId(), std::move(ranges));
     }
   }
+  if (connected.empty())
+    return result;
+
+  // IEEE 1800-2023 23.3.3.7: nets connected through a port may be merged into
+  // a single simulated net, which takes the dominating net's delay; the
+  // drivers of every collapsed member are then contributions to that one net.
+  // A bit is exclusively driven when its whole component is plain wire
+  // (Table 23-1 keeps wire/tri for wire/tri members), no member declares a
+  // delay (stricter than the dominating net's delay) and exactly one strong
+  // contribution reaches it: Table 6-2 (6.6.1) resolves a lone contribution
+  // against z to its own value in every member. Driver legality is checked
+  // for the whole member net, as above, so a malformed driver keeps its
+  // component resolved.
+  struct ConnectedNet {
+    uint64_t width = 0;
+    bool plain = false;
+  };
+  DenseMap<uint64_t, ConnectedNet> connectedNets;
+  for (auto net : design.getOps<sim::SimNetDeclOp>()) {
+    if (!connected.contains(net.getId()))
+      continue;
+    auto width = sim::getProvenanceSpan(net.getType());
+    auto storageWidth = getSimulationStorageBitWidth(net.getType());
+    ConnectedNet info;
+    info.width = width.value_or(0);
+    info.plain = width && storageWidth && *width == *storageWidth &&
+                 !net.getNettypeAttr() &&
+                 net.getResolutionKind() == sim::NetResolutionKind::Wire;
+    if (auto delays = net.getPropagationDelays())
+      info.plain &= llvm::none_of(*delays,
+                                  [](int64_t delay) { return delay != -1; });
+    connectedNets[net.getId()] = info;
+  }
+  // Strong contributions covering one bit, or nothing for a malformed or
+  // non-strong driver of the net.
+  auto contributions = [&](uint64_t net,
+                           uint64_t bit) -> std::optional<unsigned> {
+    uint64_t width = connectedNets.lookup(net).width;
+    auto found = drivers.find(net);
+    unsigned count = 0;
+    if (found == drivers.end())
+      return count;
+    for (auto driver : found->second) {
+      uint64_t low = driver.getDrivenLow().value_or(0);
+      uint64_t size = driver.getDrivenWidth().value_or(width);
+      if (sim::getProvenanceSpan(driver.getType()) != width || !size ||
+          low > width || size > width - low ||
+          driver.getStrength0() != sim::Strength::Strong ||
+          driver.getStrength1() != sim::Strength::Strong)
+        return std::nullopt;
+      count += bit >= low && bit < low + size;
+    }
+    return count;
+  };
+  NetConnectivityAnalysis connectivity(design);
+  DenseMap<std::pair<uint64_t, uint64_t>, bool> exclusiveComponents;
+  for (const auto &[netId, info] : connectedNets) {
+    if (!info.plain)
+      continue;
+    SmallVector<std::pair<uint64_t, uint64_t>> ranges;
+    SmallVector<IsolatedWireDriverTopology::AliasRun> runs;
+    // Runs ending at the current bit, extended before new ones start.
+    SmallVector<unsigned> open, nextOpen;
+    for (uint64_t bit = 0; bit != info.width; ++bit) {
+      NetBit self{netId, bit};
+      ArrayRef<NetBit> component = connectivity.getComponent(self);
+      if (component.empty())
+        component = ArrayRef(self);
+      NetBit canonical = component.front();
+      auto [slot, inserted] = exclusiveComponents.try_emplace(
+          std::make_pair(canonical.net, canonical.offset), false);
+      if (inserted) {
+        unsigned total = 0;
+        bool plain = true;
+        for (NetBit member : component) {
+          auto memberInfo = connectedNets.find(member.net);
+          std::optional<unsigned> count;
+          if (memberInfo != connectedNets.end() && memberInfo->second.plain &&
+              member.offset < memberInfo->second.width)
+            count = contributions(member.net, member.offset);
+          if (!count) {
+            plain = false;
+            break;
+          }
+          total += *count;
+        }
+        slot->second = plain && total == 1;
+      }
+      nextOpen.clear();
+      if (!slot->second) {
+        open.clear();
+        continue;
+      }
+      if (!ranges.empty() && ranges.back().second == bit)
+        ++ranges.back().second;
+      else
+        ranges.emplace_back(bit, bit + 1);
+      for (NetBit member : component) {
+        if (member == self)
+          continue;
+        bool extended = false;
+        for (unsigned index : open) {
+          auto &run = runs[index];
+          if (run.member != member.net)
+            continue;
+          // A one-bit run takes the direction of its second bit.
+          bool ascending = (run.width == 1 || !run.reversed) &&
+                           member.offset == run.memberLow + run.width;
+          bool descending = (run.width == 1 || run.reversed) &&
+                            run.memberLow != 0 &&
+                            member.offset == run.memberLow - 1;
+          if (!ascending && !descending)
+            continue;
+          if (descending)
+            run.memberLow = member.offset;
+          run.reversed = descending;
+          ++run.width;
+          nextOpen.push_back(index);
+          extended = true;
+          break;
+        }
+        if (extended)
+          continue;
+        nextOpen.push_back(runs.size());
+        runs.push_back({bit, 1, member.net, member.offset,
+                        connectedNets.lookup(member.net).width, false});
+      }
+      std::swap(open, nextOpen);
+    }
+    if (ranges.empty())
+      continue;
+    result.connectedExclusiveRanges.try_emplace(netId, std::move(ranges));
+    if (!runs.empty())
+      result.connectedExclusiveAliases.try_emplace(netId, std::move(runs));
+  }
   return result;
 }
+} // namespace
 
 DenseSet<uint64_t> getIsolatedSingleDriverNets(sim::SimDesignOp design) {
-  return getIsolatedWireDriverTopology(design).singleDriverNets;
+  return getIsolatedWireDriverTopology(design)->singleDriverNets;
 }
 
 DenseSet<uint64_t> getIsolatedPartitionedDriverNets(sim::SimDesignOp design) {
-  return getIsolatedWireDriverTopology(design).partitionedDriverNets;
+  return getIsolatedWireDriverTopology(design)->partitionedDriverNets;
 }
 
 NetConnectivityAnalysis::NetConnectivityAnalysis(sim::SimDesignOp design) {

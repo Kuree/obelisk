@@ -4,8 +4,9 @@
 // the resolved value of those bits (IEEE 1800-2023 6.6.1): re-driving them with
 // unchanged inputs changes no bit and is no update event (4.4.1, 4.9.1), so the
 // activation is repeatable like a variable copy. Drivers that partition a wire
-// or own a sparse slice qualify; overlapping drivers and nets collapsed into a
-// connection keep their resolution and stay unproved.
+// or own a sparse slice qualify, as does the only contribution to nets merged
+// into one simulated net by a port connection (23.3.3.7); overlapping drivers,
+// in one net or across a connection, keep their resolution and stay unproved.
 !bits = !simulation.logic<4>
 !word = !simulation.logic<8>
 !in = !simulation.ref<!bits>
@@ -25,13 +26,18 @@ module {
     simulation.net.decl 2 in 0 : !word design
     simulation.net.decl 3 in 0 : !word design
     simulation.net.decl 4 in 0 : !word design
+    simulation.net.decl 5 in 0 : !word design
+    simulation.net.decl 6 in 0 : !word design
     simulation.net.connect.decl 0 in 0 3[0] to 4[0] width 8 reversed = false provenance "ordered" rhs_dominates = false
+    simulation.net.connect.decl 1 in 0 5[0] to 6[0] width 8 reversed = false provenance "ordered" rhs_dominates = false
     simulation.driver.decl 0 in 0 drives 0 : !word design {driven_low = 0 : i64, driven_width = 4 : i64}
     simulation.driver.decl 1 in 0 drives 0 : !word design {driven_low = 4 : i64, driven_width = 4 : i64}
     simulation.driver.decl 2 in 0 drives 1 : !word design {driven_low = 2 : i64, driven_width = 4 : i64}
     simulation.driver.decl 3 in 0 drives 2 : !word design
     simulation.driver.decl 4 in 0 drives 2 : !word design {driven_low = 0 : i64, driven_width = 4 : i64}
     simulation.driver.decl 5 in 0 drives 3 : !word design {driven_low = 0 : i64, driven_width = 4 : i64}
+    simulation.driver.decl 6 in 0 drives 5 : !word design {driven_low = 0 : i64, driven_width = 4 : i64}
+    simulation.driver.decl 7 in 0 drives 6 : !word design {driven_low = 2 : i64, driven_width = 4 : i64}
     simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
     simulation.code_unit.decl 2 in 0 continuous hierarchy "partition_low"
     simulation.code_unit.decl 3 in 0 continuous hierarchy "partition_high"
@@ -39,6 +45,7 @@ module {
     simulation.code_unit.decl 5 in 0 continuous hierarchy "overlap_whole"
     simulation.code_unit.decl 6 in 0 continuous hierarchy "overlap_low"
     simulation.code_unit.decl 7 in 0 continuous hierarchy "connected"
+    simulation.code_unit.decl 8 in 0 continuous hierarchy "connected_competing"
     simulation.func @root(%ctx: !c {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
       %a = simulation.spawn @partition_low(%ctx) : !c -> !simulation.process
       %b = simulation.spawn @partition_high(%ctx) : !c -> !simulation.process
@@ -46,6 +53,7 @@ module {
       %d = simulation.spawn @overlap_whole(%ctx) : !c -> !simulation.process
       %e = simulation.spawn @overlap_low(%ctx) : !c -> !simulation.process
       %f = simulation.spawn @connected(%ctx) : !c -> !simulation.process
+      %g = simulation.spawn @connected_competing(%ctx) : !c -> !simulation.process
       simulation.return
     }
     // CHECK: repeatable @partition_low = 1
@@ -103,11 +111,23 @@ module {
       simulation.driver.drive %driver = %v : !d4, !bits
       simulation.suspend.change %input to ^body : !in
     }
-    // A collapsed connection resolves across both nets (6.6.1, 23.3.3).
-    // CHECK: repeatable @connected = 0
+    // The only contribution to a collapsed component (6.6.1, 23.3.3.7).
+    // CHECK: repeatable @connected = 1
     simulation.func @connected(%ctx: !c {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 7 : i32, code_unit_id = 7 : i64} {
       %input = simulation.context.storage %ctx[0] : !in
       %whole = simulation.context.driver %ctx[5] : !d8
+      %driver = simulation.driver.extract %whole from 0 : !d8 -> !d4
+      cf.br ^body
+    ^body:
+      %v = simulation.ref.load %input : !in -> !bits
+      simulation.driver.drive %driver = %v : !d4, !bits
+      simulation.suspend.change %input to ^body : !in
+    }
+    // The connected member has a driver overlapping bits 2-3: resolution.
+    // CHECK: repeatable @connected_competing = 0
+    simulation.func @connected_competing(%ctx: !c {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 7 : i32, code_unit_id = 8 : i64} {
+      %input = simulation.context.storage %ctx[0] : !in
+      %whole = simulation.context.driver %ctx[6] : !d8
       %driver = simulation.driver.extract %whole from 0 : !d8 -> !d4
       cf.br ^body
     ^body:
