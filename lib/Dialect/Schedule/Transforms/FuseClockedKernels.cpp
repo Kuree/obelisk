@@ -59,9 +59,9 @@
 // Active finisher of its pass needs nothing.
 //
 // Cost: direct stores wake their combinational readers in the kernel's phase,
-// the NBAs the kernel keeps wake theirs in the next. Logic both reach would
-// settle twice per slot, so direct roots that reach it keep their NBAs too.
-// NBAs of other processes wake their readers with or without the kernel.
+// the NBAs the kernel keeps wake theirs in the next, so logic both reach may
+// settle twice per slot. Every eligible root is still stored directly: the
+// NBA staging and commit it saves have cost more than the second settle.
 //
 // The kernel never suspends between its members. 4.7 permits interleaving
 // other processes inside an activation but does not require it, so nothing
@@ -1387,45 +1387,6 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
     return periodic;
   };
 
-  // Cost: a direct store wakes the combinational logic that reads its root
-  // in the kernel's phase, a retained NBA of the same activation wakes its
-  // readers in the next. A process both can wake would settle twice per
-  // slot, so direct roots that reach such a process keep their NBAs, which
-  // may in turn reach more of them. Returns the roots to keep.
-  auto secondWave = [&](SmallVector<uint64_t> later,
-                        DenseSet<uint64_t> direct) -> SmallVector<uint64_t> {
-    SmallVector<uint64_t> kept;
-    while (!later.empty() && !direct.empty()) {
-      DataFlowSolver woken;
-      woken.load<ConeAnalysis>(design.getOperation(), combinationalProcesses,
-                               later, ConeAnalysis::Direction::Readers);
-      SmallVector<uint64_t> shared;
-      bool solved = succeeded(woken.initializeAndRun(design));
-      for (const ConeAnalysis::Process &process : combinationalProcesses)
-        if (!solved || llvm::any_of(process.watched, [&](uint64_t root) {
-              return ConeAnalysis::contains(woken, design.getOperation(), root);
-            }))
-          llvm::append_range(shared, process.watched);
-      DataFlowSolver feeding;
-      feeding.load<ConeAnalysis>(design.getOperation(), combinationalProcesses,
-                                 shared, ConeAnalysis::Direction::Sources);
-      solved &= succeeded(feeding.initializeAndRun(design));
-      SmallVector<uint64_t> twice;
-      for (uint64_t root : direct)
-        if (!solved ||
-            ConeAnalysis::contains(feeding, design.getOperation(), root))
-          twice.push_back(root);
-      if (twice.empty())
-        break;
-      for (uint64_t root : twice) {
-        direct.erase(root);
-        later.push_back(root);
-        kept.push_back(root);
-      }
-    }
-    return kept;
-  };
-
   // Waits of every planned member, which a deferred kernel resumes after.
   DenseSet<Operation *> memberWaits;
   for (auto &[key, members] : groups)
@@ -2466,27 +2427,7 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
       }
     }
 
-    // 7. Keep the NBAs of roots whose direct store would make shared
-    // combinational logic settle twice (see secondWave).
-    {
-      SmallVector<uint64_t> later;
-      for (Member &member : members)
-        for (uint64_t root : member.nbaWrites)
-          if (!plan.eligibleRoots.contains(root))
-            later.push_back(root);
-      DenseSet<uint64_t> direct;
-      for (auto [index, root] : llvm::enumerate(rootList))
-        if (unsupported.test(index))
-          later.push_back(root);
-        else
-          direct.insert(root);
-      for (uint64_t root : secondWave(std::move(later), std::move(direct))) {
-        unsupported.set(rootIndex.lookup(root));
-        ++rejections["root second wave"];
-      }
-    }
-
-    // 8. Store at the NBA statements of every remaining root, or delay them.
+    // 7. Store at the NBA statements of every remaining root, or delay them.
     for (Block *block : blocks)
       for (const Event &event : events[block]) {
         if (event.kind != EventKind::Enqueue || unsupported.test(event.root) ||

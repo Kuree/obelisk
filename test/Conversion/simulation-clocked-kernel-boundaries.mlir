@@ -582,14 +582,14 @@ module attributes {native.debug_timing} {
 // -----
 
 // Cost: `q` keeps its NBA because a same-edge sampler reads it, and `s`
-// depends on both `q` and `r`. Storing `r` directly would settle `s` once
-// after the kernel and again after the NBA region, so `r` keeps its NBA too.
-// `t` wakes no combinational logic and is stored directly.
+// depends on both `q` and `r`. `r` is still stored directly: `s` may then
+// settle once after the kernel and again after the NBA region, which costs
+// less than staging and committing `r`. `t` is stored directly too.
 
 !bit = !simulation.logic<1>
 !ref = !simulation.ref<!bit>
 module attributes {native.debug_timing} {
-  simulation.design @second_wave {
+  simulation.design @settle_twice {
     simulation.scope.decl 0
     simulation.storage.decl 0 in 0 : !bit design
     simulation.storage.decl 1 in 0 : !bit design
@@ -631,14 +631,14 @@ module attributes {native.debug_timing} {
       simulation.nba.enqueue %zero to %clk : (!bit, !ref) -> ()
       cf.br ^low
     }
-    // CHECK-LABEL: simulation.design @second_wave
+    // CHECK-LABEL: simulation.design @settle_twice
     // CHECK-LABEL: simulation.func private @__obelisk_clocked_0_1_0
     // CHECK: simulation.nba.enqueue %{{.*}} to %[[Q:arg[0-9]+]]
-    // CHECK-NEXT: simulation.nba.enqueue %{{.*}} to %[[R:arg[0-9]+]]
+    // CHECK-NEXT: simulation.ref.store %{{.*}} to %[[R:arg[0-9]+]]
     // CHECK-NEXT: simulation.ref.store %{{.*}} to %[[T:arg[0-9]+]]
-    // REPORT-LABEL: obelisk clocked kernel: __obelisk_clocked_0_1_0 members=1 eligible=2 retained=1
-    // REPORT-DAG: obelisk clocked kernel rejection: root accessed by event activation = 1
-    // REPORT-DAG: obelisk clocked kernel rejection: root second wave = 1
+    // REPORT-LABEL: obelisk clocked kernel: __obelisk_clocked_0_1_0 members=1 eligible=2 retained=0 snapshots=0 deferred=0 delayed=0
+    // REPORT-NOT: root second wave
+    // REPORT: obelisk clocked kernel rejection: root accessed by event activation = 1
     simulation.func private @stages(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %q: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %r: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}, %t: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 3 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 3 : i64} {
       cf.br ^wait
     ^wait:

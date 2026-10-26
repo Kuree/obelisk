@@ -964,16 +964,14 @@ formed only when each phase sees clock changes from one atomic source:
 A clock that rises again through an Inactive (`#0`) event keeps all of its
 NBAs.
 
-A conversion must not split the kernel's own NBA wave. Direct stores wake
-their combinational readers in the kernel's phase, while the NBAs the kernel
-keeps wake theirs after the NBA region. A combinational process both can reach
-would settle twice per slot, so direct roots whose readers reach it keep their
-NBAs as well, until no such process remains (two cone analyses: toward readers
-from the kept roots, then toward sources from what they wake). Converting part
-of a combinationally connected kernel was measured to cost more than
-converting nothing. NBAs of other processes wake their readers whether or not
-the kernel converts, and whether they change value every cycle is a dynamic
-property, so they do not decide the conversion.
+A conversion may split the kernel's own NBA wave. Direct stores wake their
+combinational readers in the kernel's phase, while the NBAs the kernel keeps
+wake theirs after the NBA region, so a combinational process both can reach
+may settle twice per slot. Every eligible root is still stored directly: on
+black-parrot, where about a thousand refused roots share the core's
+combinational logic with the eligible ones, converting all of them executes
+fewer instructions than keeping every NBA that could reach such a process.
+NBAs of other processes wake their readers whether or not the kernel converts.
 
 A simulation can also end within a slot. `$finish`, `$fatal`, `$exit` and a
 batch `$stop` (20.2, 24.7) stop the remaining events, so final procedures
