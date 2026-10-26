@@ -1514,8 +1514,12 @@ LogicalResult UnitLowering::lowerCase(semantic::SVCaseStatementOp op) {
       inspectAll && op.getConditionKind() == semantic::SVCaseCondition::Normal;
   // IEEE 1800-2023 12.5.3 counts matching items, not labels within one item.
   // Exact equal-width constant labels from different items cannot both match
-  // the same selector, including X/Z. Keep dynamic, wildcard, real, string,
-  // and width-changing cases on the general checked path.
+  // the same selector, including X/Z (12.5: case equality compares every bit
+  // after both sides are sized to the common width). A label the importer
+  // wrapped in an implicit conversion to that width, such as `2'd1` against a
+  // `logic [1:0]` selector, carries its folded constant in the converted type
+  // and is as exact as a literal. Keep dynamic, wildcard, real, string, and
+  // width-changing cases on the general checked path.
   auto selectorWidth = sim::getPackedWidth((*selector).getType());
   DenseMap<std::pair<APInt, APInt>, size_t> constantItems;
   size_t nextConstant = 0;
@@ -1524,8 +1528,7 @@ LogicalResult UnitLowering::lowerCase(semantic::SVCaseStatementOp op) {
       Operation *label = labels[nextConstant++];
       auto labelType = getNormalizedSemanticType(label);
       auto spelling = getConstantSpelling(label);
-      if (isa<semantic::SVConversionExpressionOp>(label) || failed(labelType) ||
-          !spelling || !selectorWidth ||
+      if (failed(labelType) || !spelling || !selectorWidth ||
           sim::getPackedWidth(*labelType) != selectorWidth) {
         disjointConstants = false;
         break;
