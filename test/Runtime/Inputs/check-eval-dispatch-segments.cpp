@@ -6,13 +6,19 @@
 #include <cstdint>
 #include <cstdio>
 
+// asm labels are final symbol names; Mach-O prefixes C symbols with '_'.
+#define OBELISK_TEST_STRINGIFY_(text) #text
+#define OBELISK_TEST_STRINGIFY(text) OBELISK_TEST_STRINGIFY_(text)
+#define OBELISK_TEST_SYMBOL(name)                                              \
+  OBELISK_TEST_STRINGIFY(__USER_LABEL_PREFIX__) name
+
 extern "C" {
 extern uint64_t __obelisk_aot_model_ingress_v1[];
 extern uint32_t *__obelisk_periodic_termination_v1;
-int segment0(obelisk_rt_context *, uint64_t, bool *)
-    asm("__obelisk_eval_dispatch_v1.segment_0");
-int segment1(obelisk_rt_context *, uint64_t, bool *)
-    asm("__obelisk_eval_dispatch_v1.segment_1");
+int segment0(obelisk_rt_context *, uint64_t, bool *) asm(
+    OBELISK_TEST_SYMBOL("__obelisk_eval_dispatch_v1.segment_0"));
+int segment1(obelisk_rt_context *, uint64_t, bool *) asm(
+    OBELISK_TEST_SYMBOL("__obelisk_eval_dispatch_v1.segment_1"));
 #ifdef ORDERED_NBA
 extern obelisk::runtime::EvalNBAQueue __obelisk_eval_ordered_nba_queue_v1;
 int __obelisk_eval_dispatch_v1(void *, obelisk_rt_context *);
