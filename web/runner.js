@@ -1,6 +1,6 @@
 // Makes SystemVerilog code blocks on any website runnable.
 //
-//   <script src="https://keyizhang.com/talos/runner.js" defer></script>
+//   <script src="https://playground.talos-sv.org/runner.js" defer></script>
 //
 // Every SystemVerilog code block gets a Run button and an output panel. A block
 // is a `pre > code` carrying `language-systemverilog` or `language-sv`, either
