@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/cloudflare/workers-sdk/main/packages/wrangler/config-schema.json",
+  "name": "talos-sites",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-26",
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "SITE_RELEASE": "unpublished"
+  },
+  "r2_buckets": [
+    {
+      "binding": "SITES",
+      "bucket_name": "talos-sites"
+    }
+  ],
+  "routes": [
+    { "pattern": "docs.talos-sv.org", "custom_domain": true },
+    { "pattern": "playground.talos-sv.org", "custom_domain": true }
+  ]
+}

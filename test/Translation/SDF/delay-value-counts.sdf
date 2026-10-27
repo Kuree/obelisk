@@ -23,16 +23,16 @@
 // IEEE 1800-2017 32.3 permits 1, 2, 3, 6, and 12 delay-value forms. Keep
 // these distinctions typed in the transient IR so application can fold them
 // without introducing simulation/runtime SDF state.
-// CHECK: talos_sdf.delay_file
-// CHECK-SAME: temperature = #talos_sdf.delay_value<form = scalar, typ = <"25">>
-// CHECK-SAME: voltage = #talos_sdf.delay_value<form = scalar, typ = <"1.0">>
-// CHECK: talos_sdf.cell
+// CHECK: sdf.delay_file
+// CHECK-SAME: temperature = #sdf.delay_value<form = scalar, typ = <"25">>
+// CHECK-SAME: voltage = #sdf.delay_value<form = scalar, typ = <"1.0">>
+// CHECK: sdf.cell
 // CHECK-SAME: instance "top/u"
-// CHECK-NEXT: talos_sdf.path_delay absolute iopath {{.*}}delays [#talos_sdf.delay_value<form = scalar, typ = <"1.25">>]
-// CHECK-NEXT: talos_sdf.path_delay absolute iopath #talos_sdf.port<name = "source", hasIndex = false, index = 0, edge = posedge> to {{.*}}delays [#talos_sdf.delay_value<form = scalar, typ = <"2">>, #talos_sdf.delay_value<form = scalar, typ = <"3">>]
-// CHECK-NEXT: talos_sdf.path_delay absolute iopath {{.*}}delays [#talos_sdf.delay_value<form = scalar, typ = <"4">>, #talos_sdf.delay_value<form = scalar, typ = <"5">>, #talos_sdf.delay_value<form = scalar, typ = <"6">>]
-// CHECK-NEXT: talos_sdf.path_delay absolute iopath {{.*}}delays [#talos_sdf.delay_value<form = scalar, typ = <"7">>, #talos_sdf.delay_value<form = scalar, typ = <"8">>, #talos_sdf.delay_value<form = scalar, typ = <"9">>, #talos_sdf.delay_value<form = scalar, typ = <"10">>, #talos_sdf.delay_value<form = scalar, typ = <"11">>, #talos_sdf.delay_value<form = scalar, typ = <"12">>]
-// CHECK-NEXT: talos_sdf.path_delay absolute iopath #talos_sdf.port<name = "source", hasIndex = true, index = 2, edge = none> to #talos_sdf.port<name = "destination", hasIndex = true, index = 1, edge = none> delays [#talos_sdf.delay_value<form = scalar, typ = <"13">>, #talos_sdf.delay_value<form = scalar, typ = <"14">>, #talos_sdf.delay_value<form = scalar, typ = <"15">>, #talos_sdf.delay_value<form = scalar, typ = <"16">>, #talos_sdf.delay_value<form = scalar, typ = <"17">>, #talos_sdf.delay_value<form = scalar, typ = <"18">>, #talos_sdf.delay_value<form = scalar, typ = <"19">>, #talos_sdf.delay_value<form = scalar, typ = <"20">>, #talos_sdf.delay_value<form = scalar, typ = <"21">>, #talos_sdf.delay_value<form = scalar, typ = <"22">>, #talos_sdf.delay_value<form = scalar, typ = <"23">>, #talos_sdf.delay_value<form = scalar, typ = <"24">>]
+// CHECK-NEXT: sdf.path_delay absolute iopath {{.*}}delays [#sdf.delay_value<form = scalar, typ = <"1.25">>]
+// CHECK-NEXT: sdf.path_delay absolute iopath #sdf.port<name = "source", hasIndex = false, index = 0, edge = posedge> to {{.*}}delays [#sdf.delay_value<form = scalar, typ = <"2">>, #sdf.delay_value<form = scalar, typ = <"3">>]
+// CHECK-NEXT: sdf.path_delay absolute iopath {{.*}}delays [#sdf.delay_value<form = scalar, typ = <"4">>, #sdf.delay_value<form = scalar, typ = <"5">>, #sdf.delay_value<form = scalar, typ = <"6">>]
+// CHECK-NEXT: sdf.path_delay absolute iopath {{.*}}delays [#sdf.delay_value<form = scalar, typ = <"7">>, #sdf.delay_value<form = scalar, typ = <"8">>, #sdf.delay_value<form = scalar, typ = <"9">>, #sdf.delay_value<form = scalar, typ = <"10">>, #sdf.delay_value<form = scalar, typ = <"11">>, #sdf.delay_value<form = scalar, typ = <"12">>]
+// CHECK-NEXT: sdf.path_delay absolute iopath #sdf.port<name = "source", hasIndex = true, index = 2, edge = none> to #sdf.port<name = "destination", hasIndex = true, index = 1, edge = none> delays [#sdf.delay_value<form = scalar, typ = <"13">>, #sdf.delay_value<form = scalar, typ = <"14">>, #sdf.delay_value<form = scalar, typ = <"15">>, #sdf.delay_value<form = scalar, typ = <"16">>, #sdf.delay_value<form = scalar, typ = <"17">>, #sdf.delay_value<form = scalar, typ = <"18">>, #sdf.delay_value<form = scalar, typ = <"19">>, #sdf.delay_value<form = scalar, typ = <"20">>, #sdf.delay_value<form = scalar, typ = <"21">>, #sdf.delay_value<form = scalar, typ = <"22">>, #sdf.delay_value<form = scalar, typ = <"23">>, #sdf.delay_value<form = scalar, typ = <"24">>]
 // CHECK-NEXT: }
 
 // CHECK-NOT: simulation

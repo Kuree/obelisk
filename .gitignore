@@ -3,6 +3,8 @@
 /dist/
 /tmp/
 /site/
+/docs/reference/
+/docs/_site/
 /.ccache/
 /web/talos.js
 /web/talos.wasm

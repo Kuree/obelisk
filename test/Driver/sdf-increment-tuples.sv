@@ -33,4 +33,4 @@ endmodule
 // CHECK-DAG: timing_delay_count = 12 : i64, timing_delay_fs = array<i64: 101, 98, 103, 96, 105, 94, 107, 92, 109, 90, 111, 88>
 // CHECK-NOT: slang.symbol.sdf
 // CHECK-NOT: talos.sdf.table
-// CHECK-NOT: talos_sdf.
+// CHECK-NOT: sdf.

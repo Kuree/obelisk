@@ -9,8 +9,8 @@
     (INSTANCE)
     (DELAY (ABSOLUTE))))
 
-// CHECK: talos_sdf.delay_file
+// CHECK: sdf.delay_file
 // CHECK-SAME: version "4.0"
-// CHECK-SAME: timescale = #talos_sdf.timescale<amount = <"1">, unit = ns>
-// CHECK: talos_sdf.cell
+// CHECK-SAME: timescale = #sdf.timescale<amount = <"1">, unit = ns>
+// CHECK: sdf.cell
 // CHECK-SAME: "sdf_aot_static"

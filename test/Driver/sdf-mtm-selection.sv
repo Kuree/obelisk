@@ -45,5 +45,5 @@ endmodule
 // CHECK-DAG: hierarchical_name = "sdf_mtm_selection.maximum.dut"{{.*}}timing_delay_count = 1 : i64, timing_delay_fs = array<i64: 3000000>
 // CHECK-DAG: hierarchical_name = "sdf_mtm_selection.tool.dut"{{.*}}timing_delay_count = 1 : i64, timing_delay_fs = array<i64: 2000000>
 // CHECK-DAG: hierarchical_name = "sdf_mtm_selection.default_selection.dut"{{.*}}timing_delay_count = 1 : i64, timing_delay_fs = array<i64: 2000000>
-// CHECK-NOT: talos_sdf.
+// CHECK-NOT: sdf.
 // CHECK-NOT: talos.sdf.table

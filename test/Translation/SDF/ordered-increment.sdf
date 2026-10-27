@@ -27,14 +27,14 @@
 // IEEE 1800-2017 32.5 and 32.6 preserve source order, sparse fields, and
 // signed decimal spellings in transient IR. Tuple expansion and arithmetic
 // happen only when the production frontend applies this IR to Clause 30 paths.
-// CHECK: talos_sdf.path_delay absolute
-// CHECK-NEXT: talos_sdf.path_delay absolute {{.*}}#talos_sdf.delay_value<form = empty>
-// CHECK-NEXT: talos_sdf.path_delay absolute {{.*}}#talos_sdf.delay_value<form = empty>{{.*}}#talos_sdf.delay_value<form = scalar, typ = <"3">>
-// CHECK-NEXT: talos_sdf.path_delay absolute
-// CHECK-NEXT: talos_sdf.path_delay absolute
-// CHECK-NEXT: talos_sdf.path_delay increment {{.*}}typ = <"-9223372036854775808">
-// CHECK-NEXT: talos_sdf.path_delay increment {{.*}}typ = <"-2">{{.*}}#talos_sdf.delay_value<form = empty>
-// CHECK-NEXT: talos_sdf.path_delay increment {{.*}}typ = <"-12">
-// CHECK-NEXT: talos_sdf.path_delay absolute {{.*}}typ = <"9">
+// CHECK: sdf.path_delay absolute
+// CHECK-NEXT: sdf.path_delay absolute {{.*}}#sdf.delay_value<form = empty>
+// CHECK-NEXT: sdf.path_delay absolute {{.*}}#sdf.delay_value<form = empty>{{.*}}#sdf.delay_value<form = scalar, typ = <"3">>
+// CHECK-NEXT: sdf.path_delay absolute
+// CHECK-NEXT: sdf.path_delay absolute
+// CHECK-NEXT: sdf.path_delay increment {{.*}}typ = <"-9223372036854775808">
+// CHECK-NEXT: sdf.path_delay increment {{.*}}typ = <"-2">{{.*}}#sdf.delay_value<form = empty>
+// CHECK-NEXT: sdf.path_delay increment {{.*}}typ = <"-12">
+// CHECK-NEXT: sdf.path_delay absolute {{.*}}typ = <"9">
 // CHECK-NOT: simulation
 // CHECK-NOT: runtime

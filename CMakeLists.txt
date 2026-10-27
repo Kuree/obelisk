@@ -792,6 +792,7 @@ endif()
 add_subdirectory(runtime)
 add_subdirectory(lib)
 add_subdirectory(tools)
+add_subdirectory(docs)
 
 if(TALOS_INCLUDE_TESTS)
   add_subdirectory(test)

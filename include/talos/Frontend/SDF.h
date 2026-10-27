@@ -38,7 +38,7 @@ struct SDFResourceLimits {
   uint64_t maxApplicationWork = 1 << 22;
 };
 
-/// Parse one SDF DELAYFILE into a verified module of typed talos_sdf ops.
+/// Parse one SDF DELAYFILE into a verified module of typed sdf ops.
 /// Decimal tokens are retained exactly; this API performs no timescale
 /// conversion or destination-precision rounding.
 mlir::FailureOr<mlir::OwningOpRef<mlir::ModuleOp>>

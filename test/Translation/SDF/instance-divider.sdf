@@ -11,7 +11,7 @@
 // Preserve the SDF default dotted hierarchy text in transient IR. Per IEEE
 // 1800-2017 32.4, matching remains an annotator/frontend concern and adds no
 // runtime hierarchy lookup.
-// CHECK: talos_sdf.delay_file
+// CHECK: sdf.delay_file
 // CHECK-NOT: divider =
-// CHECK: talos_sdf.cell
+// CHECK: sdf.cell
 // CHECK-SAME: instance "top.middle.leaf"

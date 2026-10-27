@@ -10,4 +10,4 @@
       (ABSOLUTE
         (IOPATH source destination (1) (2) (3) (4))))))
 
-// CHECK: error: 'talos_sdf.path_delay' op requires 1, 2, 3, 6, or 12 delay values
+// CHECK: error: 'sdf.path_delay' op requires 1, 2, 3, 6, or 12 delay values

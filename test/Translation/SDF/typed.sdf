@@ -43,24 +43,24 @@
       (ABSOLUTE (LATENCY (1:2:3)))
       (INCREMENT (LATENCY (4))))))
 
-// CHECK: talos_sdf.delay_file
+// CHECK: sdf.delay_file
 // CHECK-SAME: version "4.0"
-// CHECK-SAME: timescale = #talos_sdf.timescale
-// CHECK-SAME: voltage = #talos_sdf.delay_value<form = triple, min = <"0.9">, typ = <"1.0">, max = <"1.1">>
-// CHECK: talos_sdf.cell
-// CHECK: talos_sdf.path_delay
-// CHECK-SAME: delays [#talos_sdf.delay_value
-// CHECK: #talos_sdf.condition_token
-// CHECK: talos_sdf.interconnect_delay
-// CHECK: talos_sdf.terminal_delay
-// CHECK: talos_sdf.pulse
-// CHECK: talos_sdf.timing_check
-// CHECK: talos_sdf.timing_check bidirectskew
-// CHECK: talos_sdf.label absolute "LATENCY" = #talos_sdf.delay_value
-// CHECK: talos_sdf.label increment "LATENCY" = #talos_sdf.delay_value
+// CHECK-SAME: timescale = #sdf.timescale
+// CHECK-SAME: voltage = #sdf.delay_value<form = triple, min = <"0.9">, typ = <"1.0">, max = <"1.1">>
+// CHECK: sdf.cell
+// CHECK: sdf.path_delay
+// CHECK-SAME: delays [#sdf.delay_value
+// CHECK: #sdf.condition_token
+// CHECK: sdf.interconnect_delay
+// CHECK: sdf.terminal_delay
+// CHECK: sdf.pulse
+// CHECK: sdf.timing_check
+// CHECK: sdf.timing_check bidirectskew
+// CHECK: sdf.label absolute "LATENCY" = #sdf.delay_value
+// CHECK: sdf.label increment "LATENCY" = #sdf.delay_value
 // CHECK-NOT: simulation
 // CHECK-NOT: runtime
 
-// GENERIC: "talos_sdf.delay_file"
-// GENERIC: "talos_sdf.path_delay"
-// GENERIC: #talos_sdf.condition<tokens = [#talos_sdf.condition_token
+// GENERIC: "sdf.delay_file"
+// GENERIC: "sdf.path_delay"
+// GENERIC: #sdf.condition<tokens = [#sdf.condition_token

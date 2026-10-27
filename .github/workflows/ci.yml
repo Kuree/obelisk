@@ -21,6 +21,19 @@ env:
   WASM_IMAGE: ghcr.io/kuree/obelisk-llvm-wasm32:latest@sha256:7e679d82f15d0455379891c22ee43da20224951a3d36db3204d0b4d6ad493d9c
 
 jobs:
+  hosting-checks:
+    name: Test static hosting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test R2 uploader and Worker
+        run: |
+          python3 -m unittest discover -s test/hosting -p '*_test.py'
+          node --test test/hosting/*.test.mjs
+
   # Only project-owned TableGen outputs are needed to start the wasm build.
   generate-wasm-inputs:
     name: Generate wasm inputs
@@ -105,7 +118,7 @@ jobs:
                        | cut -d' ' -f1 | sort -V | tail -1)
           test -n "$llvm_tools"
           sudo apt-get install -y --no-install-recommends ninja-build cmake ccache \
-            python3-pip "$llvm_tools"
+            python3-pip python3-venv "$llvm_tools"
           # Permit a user install with the runner's externally managed Python.
           python3 -m pip install --user --break-system-packages lit
           # An unversioned name avoids lit.cfg.py's fixed version fallback list.
@@ -218,6 +231,24 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Build generated reference site
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/talos-docs"
+          "$RUNNER_TEMP/talos-docs/bin/python" -m pip install -r docs/requirements.txt
+          cmake --build build --target talos-docs
+          "$RUNNER_TEMP/talos-docs/bin/python" -m sphinx \
+            -b dirhtml -W --keep-going -c docs docs/reference docs/_site
+          python3 utils/docs/check.py docs/_site
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu-latest' && github.ref == 'refs/heads/main'
+        with:
+          name: talos-docs-site
+          path: docs/_site
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Compiler cache stats
         if: always()
@@ -401,24 +432,100 @@ jobs:
           docker run --rm -v "$PWD:/src" -w /src -e TALOS_WEB_SITE=site \
             "$WASM_IMAGE" node test/web/examples-test.mjs -O0
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-artifact@v4
         if: github.ref == 'refs/heads/main'
         with:
+          name: talos-playground-site
           path: site
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
 
   # Building wasm can overlap native tests; publication still requires both.
-  deploy-pages:
-    name: Deploy Pages
-    needs: [build-and-test, wasm-build-and-test]
-    if: github.ref == 'refs/heads/main'
+  deploy-cloudflare:
+    name: Deploy Cloudflare and R2
+    needs: [hosting-checks, build-and-test, wasm-build-and-test]
+    # Setting the account variable enables publication after credentials exist.
+    if: github.ref == 'refs/heads/main' && vars.CLOUDFLARE_ACCOUNT_ID != ''
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
+    timeout-minutes: 20
     environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+      name: cloudflare
+      url: https://playground.talos-sv.org
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      # Retries never overwrite the objects used by an active deployment.
+      SITE_RELEASE: ${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
-      - id: deploy
-        uses: actions/deploy-pages@v4
+      - uses: actions/checkout@v4
+
+      - name: Check deployment credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          python3 - <<'PY'
+          import os
+          required = ("CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN",
+                      "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY")
+          missing = [name for name in required if not os.environ.get(name)]
+          if missing:
+              raise SystemExit("Configure GitHub Actions credentials: " + ", ".join(missing))
+          PY
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: talos-playground-site
+          path: build-sites/playground
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: talos-docs-site
+          path: build-sites/docs
+
+      - name: Upload both sites to R2
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/talos-upload"
+          "$RUNNER_TEMP/talos-upload/bin/python" -m pip install -r utils/cloudflare/requirements.txt
+          "$RUNNER_TEMP/talos-upload/bin/python" utils/cloudflare/upload.py \
+            --playground build-sites/playground --docs build-sites/docs \
+            --release "$SITE_RELEASE"
+
+      # Switch the serving Worker only after the entire R2 release is present.
+      - name: Deploy site router
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: utils/cloudflare
+          wranglerVersion: '4.153.0'
+          command: deploy
+          vars: SITE_RELEASE
+
+      - name: Check public sites
+        run: |
+          curl --fail --retry 8 --retry-delay 5 --retry-all-errors \
+            --dump-header "$RUNNER_TEMP/talos-docs-headers" \
+            --head https://docs.talos-sv.org/
+          curl --fail --retry 8 --retry-delay 5 --retry-all-errors \
+            --dump-header "$RUNNER_TEMP/talos-wasm-headers" \
+            --head https://playground.talos-sv.org/talos.wasm
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          for name, content_type in (("docs", "text/html"), ("wasm", "application/wasm")):
+              path = Path(os.environ["RUNNER_TEMP"]) / f"talos-{name}-headers"
+              headers = dict(line.lower().split(":", 1) for line in path.read_text().splitlines() if ":" in line)
+              assert headers["x-talos-release"].strip() == os.environ["SITE_RELEASE"]
+              assert headers["content-type"].strip().startswith(content_type)
+          print("Both public sites serve the expected release and MIME types")
+          PY

@@ -1,5 +1,5 @@
 // RUN: talos-opt %s --verify-roundtrip -o %t
-// RUN: FileCheck %s --implicit-check-not='"slang.' --implicit-check-not='"talos.' --implicit-check-not='"runtime.' --implicit-check-not='"schedule.' --implicit-check-not='"talos_sdf.' < %t
+// RUN: FileCheck %s --implicit-check-not='"slang.' --implicit-check-not='"talos.' --implicit-check-not='"runtime.' --implicit-check-not='"schedule.' --implicit-check-not='"sdf.' < %t
 // RUN: talos-opt %t -o %t.again
 // RUN: diff %t %t.again
 

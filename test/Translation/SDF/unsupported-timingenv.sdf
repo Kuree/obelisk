@@ -14,10 +14,10 @@
 // timing to be ignored without warning. Talos
 // deliberately omits unsupported environment constraints from the transient
 // import dialect while retaining supported CELL data for static application.
-// CHECK: talos_sdf.delay_file
+// CHECK: sdf.delay_file
 // CHECK-NOT: PATHCONSTRAINT
 // CHECK-NOT: timing_env
-// CHECK: talos_sdf.cell
+// CHECK: sdf.cell
 // CHECK-SAME: "dut"
 // CHECK-SAME: instance "top/dut"
-// CHECK: talos_sdf.timing_check setup
+// CHECK: sdf.timing_check setup

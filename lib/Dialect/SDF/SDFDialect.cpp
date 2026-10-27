@@ -217,7 +217,7 @@ LogicalResult SDFDelayFileOp::verify() {
     return emitOpError("requires one body block");
   for (Operation &operation : getBody().front())
     if (!isa<SDFCellOp>(operation))
-      return emitOpError("body may contain only talos_sdf.cell operations");
+      return emitOpError("body may contain only sdf.cell operations");
   return success();
 }
 

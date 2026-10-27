@@ -55,9 +55,9 @@ endmodule
 // MLIR: timing_delay_fs = array<i64: 8000000, 7000000, 8000000, 8000000, 7000000, 7000000, 8000000, 8000000, 7000000, 7000000, 12000000, 7000000>
 // NO-SDF-NOT: slang.symbol.sdf
 // NO-SDF-NOT: talos.sdf.table
-// NO-SDF-NOT: talos_sdf.
+// NO-SDF-NOT: sdf.
 // AOT-NO-SDF-NOT: @__talos_sdf
 // AOT-NO-SDF-NOT: @talos_rt_v1_sdf
 // AOT-NO-SDF-NOT: sdf_annotate
-// AOT-NO-SDF-NOT: talos_sdf.
+// AOT-NO-SDF-NOT: sdf.
 // OUTPUT: SDF INCREMENT PASSED

@@ -18,11 +18,11 @@
 
 // IEEE 1800-2017 32.3 gives both forms retention behavior, but normalization
 // and textual roundtrip must preserve whether a tuple was written.
-// CHECK: talos_sdf.cell
-// CHECK-NEXT: talos_sdf.path_delay absolute iopath {{.*}}delays [#talos_sdf.delay_value<form = empty>]
-// CHECK-NEXT: talos_sdf.path_delay absolute iopath {{.*}}delays [#talos_sdf.delay_value<form = scalar, typ = <"2">>, #talos_sdf.delay_value<form = empty>]
-// CHECK-NEXT: talos_sdf.path_delay absolute iopath {{.*}}delays [#talos_sdf.delay_value<form = scalar, typ = <"2">>, #talos_sdf.delay_value<form = empty>, #talos_sdf.delay_value<form = scalar, typ = <"4">>]
-// CHECK-NEXT: talos_sdf.path_delay absolute iopath {{.*}}delays [#talos_sdf.delay_value<form = scalar, typ = <"2">>, #talos_sdf.delay_value<form = empty>, #talos_sdf.delay_value<form = scalar, typ = <"4">>, #talos_sdf.delay_value<form = empty>, #talos_sdf.delay_value<form = scalar, typ = <"6">>, #talos_sdf.delay_value<form = empty>]
-// CHECK-NEXT: talos_sdf.path_delay absolute iopath {{.*}}delays [#talos_sdf.delay_value<form = scalar, typ = <"2">>, #talos_sdf.delay_value<form = empty>, #talos_sdf.delay_value<form = scalar, typ = <"4">>, #talos_sdf.delay_value<form = empty>, #talos_sdf.delay_value<form = scalar, typ = <"6">>, #talos_sdf.delay_value<form = empty>, #talos_sdf.delay_value<form = scalar, typ = <"8">>, #talos_sdf.delay_value<form = empty>, #talos_sdf.delay_value<form = scalar, typ = <"10">>, #talos_sdf.delay_value<form = empty>, #talos_sdf.delay_value<form = scalar, typ = <"12">>, #talos_sdf.delay_value<form = empty>]
-// CHECK-NEXT: talos_sdf.path_delay absolute iopath {{.*}} to #talos_sdf.port<name = "z", hasIndex = false, index = 0, edge = none> delays [#talos_sdf.delay_value<form = triple>]
+// CHECK: sdf.cell
+// CHECK-NEXT: sdf.path_delay absolute iopath {{.*}}delays [#sdf.delay_value<form = empty>]
+// CHECK-NEXT: sdf.path_delay absolute iopath {{.*}}delays [#sdf.delay_value<form = scalar, typ = <"2">>, #sdf.delay_value<form = empty>]
+// CHECK-NEXT: sdf.path_delay absolute iopath {{.*}}delays [#sdf.delay_value<form = scalar, typ = <"2">>, #sdf.delay_value<form = empty>, #sdf.delay_value<form = scalar, typ = <"4">>]
+// CHECK-NEXT: sdf.path_delay absolute iopath {{.*}}delays [#sdf.delay_value<form = scalar, typ = <"2">>, #sdf.delay_value<form = empty>, #sdf.delay_value<form = scalar, typ = <"4">>, #sdf.delay_value<form = empty>, #sdf.delay_value<form = scalar, typ = <"6">>, #sdf.delay_value<form = empty>]
+// CHECK-NEXT: sdf.path_delay absolute iopath {{.*}}delays [#sdf.delay_value<form = scalar, typ = <"2">>, #sdf.delay_value<form = empty>, #sdf.delay_value<form = scalar, typ = <"4">>, #sdf.delay_value<form = empty>, #sdf.delay_value<form = scalar, typ = <"6">>, #sdf.delay_value<form = empty>, #sdf.delay_value<form = scalar, typ = <"8">>, #sdf.delay_value<form = empty>, #sdf.delay_value<form = scalar, typ = <"10">>, #sdf.delay_value<form = empty>, #sdf.delay_value<form = scalar, typ = <"12">>, #sdf.delay_value<form = empty>]
+// CHECK-NEXT: sdf.path_delay absolute iopath {{.*}} to #sdf.port<name = "z", hasIndex = false, index = 0, edge = none> delays [#sdf.delay_value<form = triple>]
 // CHECK-NEXT: }

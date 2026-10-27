@@ -1,0 +1,8 @@
+.sidebar-brand {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.65rem;
+}
+.sidebar-logo-container { margin: 0; }
+.sidebar-logo { width: 2rem; height: 2rem; }
+.sidebar-brand-text { font-size: 1.35rem; }
