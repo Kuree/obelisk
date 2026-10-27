@@ -379,6 +379,11 @@ set(MLIR_TABLEGEN_EXE "${TALOS_LLVM_TOOLS_DIR}/mlir-tblgen${_talos_host_executab
 
 list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}" "${LLVM_CMAKE_DIR}")
 
+# Declare this before either platform's linker selection. Fresh macOS builds
+# must see the default so they enable the shared host ThinLTO cache.
+option(TALOS_USE_SDK_LLD
+  "Link host executables with the prebuilt LLVM distribution's lld" ON)
+
 # The macOS SDK ships its libraries as ThinLTO bitcode, which only its own LLD
 # can link. Select it before LLVM's options detect the linker, and share one
 # ThinLTO cache across the host executables.
@@ -425,8 +430,6 @@ endif()
 # into 1.3-1.5 GB executables. GNU ld takes ~15 s for each, longer than a
 # one-file library edit takes to compile; the SDK's lld takes ~2 s. An explicit
 # LLVM_USE_LINKER, handled by HandleLLVMOptions above, takes precedence.
-option(TALOS_USE_SDK_LLD
-  "Link host executables with the prebuilt LLVM distribution's lld" ON)
 if(TALOS_USE_SDK_LLD AND NOT LLVM_USE_LINKER AND NOT EMSCRIPTEN AND
    CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
    EXISTS "${TALOS_LLVM_TOOLS_DIR}/ld.lld")

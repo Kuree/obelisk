@@ -21,19 +21,6 @@ env:
   WASM_IMAGE: ghcr.io/kuree/obelisk-llvm-wasm32:latest@sha256:7e679d82f15d0455379891c22ee43da20224951a3d36db3204d0b4d6ad493d9c
 
 jobs:
-  hosting-checks:
-    name: Test static hosting
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Test R2 uploader and Worker
-        run: |
-          python3 -m unittest discover -s test/hosting -p '*_test.py'
-          node --test test/hosting/*.test.mjs
-
   # Only project-owned TableGen outputs are needed to start the wasm build.
   generate-wasm-inputs:
     name: Generate wasm inputs
@@ -417,6 +404,8 @@ jobs:
           docker run --rm -v "$PWD:/src" -w /src "$WASM_IMAGE" bash -c '
             set -euo pipefail
             for test in test/web/*.test.mjs; do node "$test"; done
+            python3 -m unittest discover -s test/hosting -p "*_test.py"
+            node --test test/hosting/*.test.mjs
           '
 
       - name: Run browser-toolchain smoke test
@@ -444,7 +433,7 @@ jobs:
   # Building wasm can overlap native tests; publication still requires both.
   deploy-cloudflare:
     name: Deploy Cloudflare and R2
-    needs: [hosting-checks, build-and-test, wasm-build-and-test]
+    needs: [build-and-test, wasm-build-and-test]
     # Setting the account variable enables publication after credentials exist.
     if: github.ref == 'refs/heads/main' && vars.CLOUDFLARE_ACCOUNT_ID != ''
     runs-on: ubuntu-latest
